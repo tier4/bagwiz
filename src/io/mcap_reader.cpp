@@ -12,7 +12,10 @@
 #include "bagcli/io/bag_io.hpp"
 #include "bagcli/io/metadata_yaml.hpp"
 
-#define MCAP_IMPLEMENTATION
+// mcap_vendor ships MCAP as a pre-compiled library, so MCAP_IMPLEMENTATION
+// must NOT be defined here — the symbols are provided via linkage against
+// mcap_vendor::mcap. Defining it would try to pull in .inl files that the
+// vendor package does not install.
 #include <mcap/reader.hpp>
 
 #include <algorithm>

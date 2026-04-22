@@ -18,8 +18,9 @@ void init_logging()
   // rcutils_logging_initialize() is idempotent and reads
   // RCUTILS_LOGGING_DEFAULT_LEVEL / RCUTILS_CONSOLE_OUTPUT_FORMAT from the
   // environment. If it fails we continue silently; the macros will fall
-  // back to stderr via rcutils' own default path.
-  (void)rcutils_logging_initialize();
+  // back to stderr via rcutils' own default path. The function is marked
+  // warn_unused_result, so capture the value explicitly.
+  [[maybe_unused]] const auto ret = rcutils_logging_initialize();
 }
 
 }  // namespace bagcli::core
