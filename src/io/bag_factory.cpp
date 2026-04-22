@@ -10,6 +10,7 @@
 #include "bagcli/io/bag_io.hpp"
 #include "bagcli/io/mcap_reader.hpp"
 #include "bagcli/io/metadata_yaml.hpp"
+#include "bagcli/io/sqlite3_reader.hpp"
 
 #include <array>
 #include <cstring>
@@ -89,7 +90,7 @@ std::unique_ptr<BagReader> open_read(const std::filesystem::path & path, OpenOpt
       return detail::open_mcap_directory(path);
     }
     if (md.storage_identifier == "sqlite3") {
-      throw std::runtime_error("sqlite3 storage is not yet implemented");
+      return detail::open_sqlite3_directory(path);
     }
     throw std::runtime_error("unknown storage_identifier: " + md.storage_identifier);
   }
@@ -103,7 +104,7 @@ std::unique_ptr<BagReader> open_read(const std::filesystem::path & path, OpenOpt
     case Format::Mcap:
       return detail::open_mcap_file(path);
     case Format::Sqlite3:
-      throw std::runtime_error("sqlite3 storage is not yet implemented");
+      return detail::open_sqlite3_file(path);
     case Format::Auto:
       throw std::runtime_error("format auto-detection failed: " + path.string());
   }

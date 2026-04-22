@@ -17,6 +17,7 @@ find_package(mcap_vendor REQUIRED)
 # yaml_cpp_vendor sets yaml-cpp_DIR so the real yaml-cpp package is found.
 find_package(yaml_cpp_vendor REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(SQLite3 REQUIRED)
 
 # CLI11 is not available via rosdep; fetch at configure time.
 include(FetchContent)
@@ -41,6 +42,7 @@ add_library(bagcli_core
   src/io/bag_factory.cpp
   src/io/mcap_reader.cpp
   src/io/metadata_yaml.cpp
+  src/io/sqlite3_reader.cpp
 )
 target_include_directories(bagcli_core
   PUBLIC
@@ -48,7 +50,7 @@ target_include_directories(bagcli_core
     $<INSTALL_INTERFACE:include>
 )
 ament_target_dependencies(bagcli_core PUBLIC rcutils mcap_vendor yaml_cpp_vendor)
-target_link_libraries(bagcli_core PUBLIC yaml-cpp)
+target_link_libraries(bagcli_core PUBLIC yaml-cpp SQLite::SQLite3)
 
 # ---------------------------------------------------------------------------
 # bagcli: CLI executable. Installs to bin/ so users run it directly after
@@ -66,7 +68,7 @@ install(TARGETS bagcli_core
 install(DIRECTORY include/ DESTINATION include)
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(rcutils mcap_vendor yaml_cpp_vendor)
+ament_export_dependencies(rcutils mcap_vendor yaml_cpp_vendor SQLite3)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
@@ -76,6 +78,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagcli_mcap_reader_test test/io/mcap_reader_test.cpp)
   target_link_libraries(bagcli_mcap_reader_test bagcli_core)
+
+  ament_add_gtest(bagcli_sqlite3_reader_test test/io/sqlite3_reader_test.cpp)
+  target_link_libraries(bagcli_sqlite3_reader_test bagcli_core)
 endif()
 
 ament_package()
