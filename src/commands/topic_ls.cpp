@@ -117,6 +117,6 @@ private:
   Op selected_op_ = Op::None;
 };
 
-}  // namespace bagcli::commands
+BAGCLI_REGISTER_COMMAND(TopicCommand)
 
-BAGCLI_REGISTER_COMMAND(bagcli::commands::TopicCommand)
+}  // namespace bagcli::commands
