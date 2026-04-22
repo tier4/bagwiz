@@ -18,10 +18,11 @@ find_package(mcap_vendor REQUIRED)
 find_package(yaml_cpp_vendor REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(SQLite3 REQUIRED)
-find_package(fmt REQUIRED)
 
-# CLI11 is not available via rosdep; fetch at configure time.
+# CLI11 and fmt are not available as rosdep keys on all supported distros, so
+# fetch them at configure time. Both are small, header-light libraries.
 include(FetchContent)
+
 FetchContent_Declare(
   cli11
   GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
@@ -30,7 +31,18 @@ FetchContent_Declare(
 )
 set(CLI11_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(CLI11_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(cli11)
+
+FetchContent_Declare(
+  fmt
+  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+  GIT_TAG 11.0.2
+  GIT_SHALLOW TRUE
+)
+set(FMT_TEST OFF CACHE BOOL "" FORCE)
+set(FMT_DOC OFF CACHE BOOL "" FORCE)
+set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(cli11 fmt)
 
 # ---------------------------------------------------------------------------
 # bagcli_core: shared library with logging, command registry, and IO
@@ -72,7 +84,7 @@ install(TARGETS bagcli_core
 install(DIRECTORY include/ DESTINATION include)
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(rcutils mcap_vendor yaml_cpp_vendor SQLite3 fmt)
+ament_export_dependencies(rcutils mcap_vendor yaml_cpp_vendor SQLite3)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
