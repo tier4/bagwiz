@@ -202,8 +202,8 @@ TEST_F(McapReaderTest, StatsFromSummary)
 
   EXPECT_TRUE(stats.from_summary);
   EXPECT_EQ(stats.total_messages, 5);
-  EXPECT_EQ(stats.per_topic["/foo"], 3);
-  EXPECT_EQ(stats.per_topic["/bar"], 2);
+  EXPECT_EQ(stats.per_topic.at("/foo"), 3);
+  EXPECT_EQ(stats.per_topic.at("/bar"), 2);
 }
 
 TEST_F(McapReaderTest, OpensDirectoryWithMetadata)
