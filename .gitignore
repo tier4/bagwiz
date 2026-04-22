@@ -1,0 +1,74 @@
+# ROS2 build artifacts
+build/
+install/
+log/
+.colcon/
+COLCON_IGNORE
+AMENT_IGNORE
+
+# ROS bag files
+*.bag
+*.db3
+*.db3-shm
+*.db3-wal
+*.mcap
+rosbag2_*/
+
+# Generated ROS files
+*.idl
+*.msg.py
+*_pb2.py
+*_pb2_grpc.py
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env
+.envrc
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.cproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Claude Code / local tooling
+.claude/
+CLAUDE.local.md
