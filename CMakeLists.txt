@@ -18,6 +18,7 @@ find_package(mcap_vendor REQUIRED)
 find_package(yaml_cpp_vendor REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(SQLite3 REQUIRED)
+find_package(fmt REQUIRED)
 
 # CLI11 is not available via rosdep; fetch at configure time.
 include(FetchContent)
@@ -56,8 +57,11 @@ target_link_libraries(bagcli_core PUBLIC yaml-cpp SQLite::SQLite3)
 # bagcli: CLI executable. Installs to bin/ so users run it directly after
 # sourcing the ROS setup.
 # ---------------------------------------------------------------------------
-add_executable(bagcli src/main.cpp)
-target_link_libraries(bagcli PRIVATE bagcli_core CLI11::CLI11)
+add_executable(bagcli
+  src/main.cpp
+  src/commands/topic_ls.cpp
+)
+target_link_libraries(bagcli PRIVATE bagcli_core CLI11::CLI11 fmt::fmt)
 
 install(TARGETS bagcli RUNTIME DESTINATION bin)
 install(TARGETS bagcli_core
@@ -68,7 +72,7 @@ install(TARGETS bagcli_core
 install(DIRECTORY include/ DESTINATION include)
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(rcutils mcap_vendor yaml_cpp_vendor SQLite3)
+ament_export_dependencies(rcutils mcap_vendor yaml_cpp_vendor SQLite3 fmt)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
