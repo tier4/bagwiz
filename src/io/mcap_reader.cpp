@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -76,13 +77,17 @@ public:
   bool next(RawMessage & out) override
   {
     ensure_iterator();
+    if (!it_) {
+      return false;
+    }
 
-    while (it_ != view_->end()) {
-      const auto & mv = *it_;
+    auto & iter = *it_;
+    while (iter != view_->end()) {
+      const auto & mv = *iter;
       auto idx_it = channel_to_topic_idx_.find(mv.channel->id);
       if (idx_it == channel_to_topic_idx_.end()) {
         // Channel appeared mid-stream without a schema entry we know about.
-        ++it_;
+        ++iter;
         continue;
       }
       out.topic = &topics_[idx_it->second];
@@ -90,7 +95,7 @@ public:
       out.payload = std::span<const std::byte>(
         reinterpret_cast<const std::byte *>(mv.message.data),
         static_cast<std::size_t>(mv.message.dataSize));
-      ++it_;
+      ++iter;
       return true;
     }
     return false;
@@ -162,8 +167,14 @@ private:
       };
     }
 
-    view_ = std::make_unique<mcap::LinearMessageView>(reader_.readMessages(opts));
-    it_ = view_->begin();
+    // mcap requires a problem callback alongside options; surface problems
+    // as warnings and continue.
+    auto problem_cb = [](const mcap::Status & s) {
+      BAGCLI_LOG_WARN(kLogger, "mcap read problem: %s", s.message.c_str());
+    };
+
+    view_ = std::make_unique<mcap::LinearMessageView>(reader_.readMessages(problem_cb, opts));
+    it_.emplace(view_->begin());
   }
 
   std::filesystem::path path_;
@@ -174,7 +185,7 @@ private:
   ReadFilter filter_;
   bool iteration_started_ = false;
   std::unique_ptr<mcap::LinearMessageView> view_;
-  mcap::LinearMessageView::Iterator it_;
+  std::optional<mcap::LinearMessageView::Iterator> it_;
 };
 
 // ---------------------------------------------------------------------------
