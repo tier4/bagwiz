@@ -64,6 +64,9 @@ ENV/
 *.sublime-project
 *.sublime-workspace
 
+# Node.js
+node_modules/
+
 # OS files
 .DS_Store
 Thumbs.db
