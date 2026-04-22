@@ -14,7 +14,9 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rcutils REQUIRED)
 find_package(mcap_vendor REQUIRED)
+# yaml_cpp_vendor sets yaml-cpp_DIR so the real yaml-cpp package is found.
 find_package(yaml_cpp_vendor REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 # CLI11 is not available via rosdep; fetch at configure time.
 include(FetchContent)
@@ -46,6 +48,7 @@ target_include_directories(bagcli_core
     $<INSTALL_INTERFACE:include>
 )
 ament_target_dependencies(bagcli_core PUBLIC rcutils mcap_vendor yaml_cpp_vendor)
+target_link_libraries(bagcli_core PUBLIC yaml-cpp)
 
 # ---------------------------------------------------------------------------
 # bagcli: CLI executable. Installs to bin/ so users run it directly after
