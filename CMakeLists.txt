@@ -75,7 +75,7 @@ target_link_libraries(bagwiz_core PUBLIC yaml-cpp SQLite::SQLite3)
 add_executable(bagwiz
   src/main.cpp
   src/commands/comp.cpp
-  src/commands/topic_ls.cpp
+  src/commands/ls.cpp
 )
 target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt)
 

@@ -32,7 +32,7 @@ namespace bagwiz::commands
 
 namespace
 {
-constexpr const char * kLogger = "bagwiz.cmd.topic";
+constexpr const char * kLogger = "bagwiz.cmd.ls";
 
 // Minimum widths so the header never looks cramped for short topic lists.
 // Actual widths are computed from the data so long topic / type names do
@@ -51,49 +51,35 @@ struct AggregatedTopic
 
 }  // namespace
 
-// `bagwiz topic ls <input>...` accepts one or many bag paths. With multiple
-// inputs the output is the union of all topics across every bag, with
-// counts summed and frequency computed against the total observed duration
-// (max-end minus min-start across all bags).
-class TopicCommand : public Command
+// `bagwiz ls <input>... [-p <pattern>]` accepts one or many bag paths and
+// lists the topics contained in them. With multiple inputs the output is
+// the union of all topics across every bag, with counts summed and frequency
+// computed against the total observed duration (max-end minus min-start
+// across all bags). `--pattern` narrows the listing; see TopicPattern for
+// its grammar.
+class LsCommand : public Command
 {
 public:
-  std::string_view name() const override { return "topic"; }
-  std::string_view description() const override { return "Inspect topics in rosbags"; }
+  std::string_view name() const override { return "ls"; }
+  std::string_view description() const override
+  {
+    return "List topics in rosbags (union + summed counts when multiple bags are given)";
+  }
 
   void configure(CLI::App & app) override
   {
-    app.require_subcommand(1);
-
-    auto * ls =
-      app.add_subcommand("ls", "List topics (union + summed counts when multiple bags are given)");
-    ls->add_option("inputs", input_paths_, "One or more bag paths (file or directory)")
+    app.add_option("inputs", input_paths_, "One or more bag paths (file or directory)")
       ->required()
       ->expected(-1)
       ->check(CLI::ExistingPath);
-    ls->add_option(
-        "-p,--pattern", pattern_,
-        "Keep only topics matching the pattern. '/prefix' is a prefix match, "
-        "'substring' is unanchored, and '*' matches any characters except '/' "
-        "within a single segment (e.g. '/*/nebula_packets').");
-    ls->callback([this]() { selected_op_ = Op::Ls; });
+    app.add_option(
+      "-p,--pattern", pattern_,
+      "Keep only topics matching the pattern. '/prefix' is a prefix match, "
+      "'substring' is unanchored, and '*' matches any characters except '/' "
+      "within a single segment (e.g. '/*/nebula_packets').");
   }
 
   int run() override
-  {
-    switch (selected_op_) {
-      case Op::Ls:
-        return run_ls();
-      case Op::None:
-        return 1;
-    }
-    return 1;
-  }
-
-private:
-  enum class Op { None, Ls };
-
-  int run_ls()
   {
     std::unique_ptr<core::TopicPattern> filter;
     try {
@@ -188,11 +174,11 @@ private:
     return failures == 0 ? 0 : 1;
   }
 
+private:
   std::vector<std::filesystem::path> input_paths_;
   std::string pattern_;
-  Op selected_op_ = Op::None;
 };
 
-BAGWIZ_REGISTER_COMMAND(TopicCommand)
+BAGWIZ_REGISTER_COMMAND(LsCommand)
 
 }  // namespace bagwiz::commands
