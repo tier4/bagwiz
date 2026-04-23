@@ -73,6 +73,7 @@ target_link_libraries(bagcli_core PUBLIC yaml-cpp SQLite::SQLite3)
 # ---------------------------------------------------------------------------
 add_executable(bagcli
   src/main.cpp
+  src/commands/comp.cpp
   src/commands/topic_ls.cpp
 )
 target_link_libraries(bagcli PRIVATE bagcli_core CLI11::CLI11 fmt::fmt)
