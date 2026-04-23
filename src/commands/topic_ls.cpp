@@ -16,10 +16,13 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace bagcli::commands
@@ -29,28 +32,39 @@ namespace
 {
 constexpr const char * kLogger = "bagcli.cmd.topic";
 
-// Column widths for the text table. Names/types rarely exceed these; if they
-// do, fmt wraps the field rather than truncating.
 constexpr int kNameWidth = 40;
 constexpr int kTypeWidth = 40;
 constexpr int kCountWidth = 10;
 constexpr int kFreqWidth = 10;
 
+struct AggregatedTopic
+{
+  std::string type;
+  std::string serialization_format;
+  int64_t count = 0;
+};
+
 }  // namespace
 
+// `bagcli topic ls <input>...` accepts one or many bag paths. With multiple
+// inputs the output is the union of all topics across every bag, with
+// counts summed and frequency computed against the total observed duration
+// (max-end minus min-start across all bags).
 class TopicCommand : public Command
 {
 public:
   std::string_view name() const override { return "topic"; }
-  std::string_view description() const override { return "Inspect topics in a rosbag"; }
+  std::string_view description() const override { return "Inspect topics in rosbags"; }
 
   void configure(CLI::App & app) override
   {
     app.require_subcommand(1);
 
-    auto * ls = app.add_subcommand("ls", "List topics with type, message count, and frequency");
-    ls->add_option("input", input_path_, "Bag file (.mcap/.db3) or directory with metadata.yaml")
+    auto * ls =
+      app.add_subcommand("ls", "List topics (union + summed counts when multiple bags are given)");
+    ls->add_option("inputs", input_paths_, "One or more bag paths (file or directory)")
       ->required()
+      ->expected(-1)
       ->check(CLI::ExistingPath);
     ls->callback([this]() { selected_op_ = Op::Ls; });
   }
@@ -71,49 +85,73 @@ private:
 
   int run_ls()
   {
-    std::unique_ptr<io::BagReader> reader;
-    try {
-      reader = io::open_read(input_path_);
-    } catch (const std::exception & e) {
-      BAGCLI_LOG_ERROR(kLogger, "Failed to open %s: %s", input_path_.c_str(), e.what());
-      return 1;
+    std::unordered_map<std::string, AggregatedTopic> aggregated;
+    int64_t earliest_ns = 0;
+    int64_t latest_ns = 0;
+    bool any_stats = false;
+    int failures = 0;
+
+    for (const auto & path : input_paths_) {
+      std::unique_ptr<io::BagReader> reader;
+      try {
+        reader = io::open_read(path);
+      } catch (const std::exception & e) {
+        BAGCLI_LOG_ERROR(kLogger, "Failed to open %s: %s", path.c_str(), e.what());
+        ++failures;
+        continue;
+      }
+
+      const auto stats = reader->compute_stats();
+      if (stats.total_messages > 0) {
+        if (!any_stats || stats.start_ns < earliest_ns) {
+          earliest_ns = stats.start_ns;
+        }
+        if (!any_stats || stats.end_ns > latest_ns) {
+          latest_ns = stats.end_ns;
+        }
+        any_stats = true;
+      }
+
+      for (const auto & t : reader->topics()) {
+        auto & agg = aggregated[t.name];
+        if (agg.type.empty()) {
+          agg.type = t.type;
+          agg.serialization_format = t.serialization_format;
+        } else if (agg.type != t.type) {
+          BAGCLI_LOG_WARN(
+            kLogger, "topic %s has conflicting types across bags: %s vs %s", t.name.c_str(),
+            agg.type.c_str(), t.type.c_str());
+        }
+        if (auto it = stats.per_topic.find(t.name); it != stats.per_topic.end()) {
+          agg.count += it->second;
+        }
+      }
     }
 
-    auto stats = reader->compute_stats();
-
-    // Duration in seconds; protected against empty bags and single-message
-    // bags where end - start == 0.
-    double duration_sec = 0.0;
-    if (stats.end_ns > stats.start_ns) {
-      duration_sec = static_cast<double>(stats.end_ns - stats.start_ns) / 1e9;
-    }
+    const double duration_sec = any_stats && latest_ns > earliest_ns
+                                  ? static_cast<double>(latest_ns - earliest_ns) / 1e9
+                                  : 0.0;
 
     // Sort topics by name for stable output that pipelines can diff.
-    std::vector<io::TopicInfo> sorted(reader->topics().begin(), reader->topics().end());
+    std::vector<std::pair<std::string, AggregatedTopic>> rows(aggregated.begin(), aggregated.end());
     std::sort(
-      sorted.begin(), sorted.end(), [](const auto & a, const auto & b) { return a.name < b.name; });
+      rows.begin(), rows.end(), [](const auto & a, const auto & b) { return a.first < b.first; });
 
     fmt::print(
       stdout, "{:<{}} {:<{}} {:>{}} {:>{}}\n", "NAME", kNameWidth, "TYPE", kTypeWidth, "COUNT",
       kCountWidth, "FREQ(Hz)", kFreqWidth);
-
-    for (const auto & t : sorted) {
-      int64_t count = 0;
-      if (auto it = stats.per_topic.find(t.name); it != stats.per_topic.end()) {
-        count = it->second;
-      }
-      // n-1 intervals between n messages; for single-message topics the
-      // frequency is undefined (report 0.00).
-      const double freq =
-        (duration_sec > 0.0 && count > 1) ? static_cast<double>(count - 1) / duration_sec : 0.0;
+    for (const auto & [name, agg] : rows) {
+      const double freq = (duration_sec > 0.0 && agg.count > 1)
+                            ? static_cast<double>(agg.count - 1) / duration_sec
+                            : 0.0;
       fmt::print(
-        stdout, "{:<{}} {:<{}} {:>{}} {:>{}.2f}\n", t.name, kNameWidth, t.type, kTypeWidth, count,
-        kCountWidth, freq, kFreqWidth);
+        stdout, "{:<{}} {:<{}} {:>{}} {:>{}.2f}\n", name, kNameWidth, agg.type, kTypeWidth,
+        agg.count, kCountWidth, freq, kFreqWidth);
     }
-    return 0;
+    return failures == 0 ? 0 : 1;
   }
 
-  std::filesystem::path input_path_;
+  std::vector<std::filesystem::path> input_paths_;
   Op selected_op_ = Op::None;
 };
 

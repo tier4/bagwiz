@@ -78,43 +78,59 @@ std::string format_time(int64_t ns)
 
 }  // namespace
 
-// `bagcli info <input>` prints a human-readable summary of a rosbag,
-// similar to `ros2 bag info`. All numeric output goes to stdout so the
-// command is pipeable; diagnostics go to stderr via BAGCLI_LOG_*.
+// `bagcli info <input>...` prints a human-readable summary of each bag.
+// Multiple inputs are processed sequentially; output is separated by a
+// blank line so per-bag sections stay visually distinct.
 class InfoCommand : public Command
 {
 public:
   std::string_view name() const override { return "info"; }
-  std::string_view description() const override { return "Print summary information for a bag"; }
+  std::string_view description() const override { return "Print summary information for bags"; }
 
   void configure(CLI::App & app) override
   {
-    app.add_option("input", input_path_, "Input bag (file or directory)")
+    app.add_option("inputs", input_paths_, "One or more bag paths (file or directory)")
       ->required()
+      ->expected(-1)
       ->check(CLI::ExistingPath);
   }
 
   int run() override
   {
+    int failures = 0;
+    for (std::size_t i = 0; i < input_paths_.size(); ++i) {
+      if (i > 0) {
+        fmt::print(stdout, "\n");
+      }
+      if (!print_one(input_paths_[i])) {
+        ++failures;
+      }
+    }
+    return failures == 0 ? 0 : 1;
+  }
+
+private:
+  bool print_one(const std::filesystem::path & path)
+  {
     std::unique_ptr<io::BagReader> reader;
     try {
-      reader = io::open_read(input_path_);
+      reader = io::open_read(path);
     } catch (const std::exception & e) {
-      BAGCLI_LOG_ERROR(kLogger, "Failed to open %s: %s", input_path_.c_str(), e.what());
-      return 1;
+      BAGCLI_LOG_ERROR(kLogger, "Failed to open %s: %s", path.c_str(), e.what());
+      return false;
     }
 
     const auto stats = reader->compute_stats();
-    const auto size = bag_size_bytes(input_path_);
+    const auto size = bag_size_bytes(path);
     const double duration_sec = stats.total_messages > 0 && stats.end_ns >= stats.start_ns
                                   ? static_cast<double>(stats.end_ns - stats.start_ns) / 1e9
                                   : 0.0;
 
-    fmt::print(stdout, "Path:              {}\n", input_path_.string());
+    fmt::print(stdout, "Path:              {}\n", path.string());
     fmt::print(stdout, "Size:              {}\n", format_size(size));
     fmt::print(
       stdout, "Layout:            {}\n",
-      std::filesystem::is_directory(input_path_) ? "directory" : "file");
+      std::filesystem::is_directory(path) ? "directory" : "file");
     fmt::print(stdout, "Duration:          {:.3f} s\n", duration_sec);
     if (stats.total_messages > 0) {
       fmt::print(stdout, "Start:             {}\n", format_time(stats.start_ns));
@@ -138,11 +154,10 @@ public:
         stdout, "  {} | type: {} | count: {} | serialization: {} | freq: {:.2f} Hz\n", t.name,
         t.type, count, t.serialization_format, freq);
     }
-    return 0;
+    return true;
   }
 
-private:
-  std::filesystem::path input_path_;
+  std::vector<std::filesystem::path> input_paths_;
 };
 
 BAGCLI_REGISTER_COMMAND(InfoCommand)
