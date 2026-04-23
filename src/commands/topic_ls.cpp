@@ -32,10 +32,13 @@ namespace
 {
 constexpr const char * kLogger = "bagwiz.cmd.topic";
 
-constexpr int kNameWidth = 40;
-constexpr int kTypeWidth = 40;
-constexpr int kCountWidth = 10;
-constexpr int kFreqWidth = 10;
+// Minimum widths so the header never looks cramped for short topic lists.
+// Actual widths are computed from the data so long topic / type names do
+// not push later columns out of alignment.
+constexpr int kMinNameWidth = 4;   // "NAME"
+constexpr int kMinTypeWidth = 4;   // "TYPE"
+constexpr int kMinCountWidth = 5;  // "COUNT"
+constexpr int kMinFreqWidth = 8;   // "FREQ(Hz)"
 
 struct AggregatedTopic
 {
@@ -137,16 +140,32 @@ private:
     std::sort(
       rows.begin(), rows.end(), [](const auto & a, const auto & b) { return a.first < b.first; });
 
+    // Pre-compute column widths from the data so long topic / type names do
+    // not push later columns out of alignment.
+    int name_w = kMinNameWidth;
+    int type_w = kMinTypeWidth;
+    int count_w = kMinCountWidth;
+    int freq_w = kMinFreqWidth;
+    for (const auto & [name, agg] : rows) {
+      name_w = std::max(name_w, static_cast<int>(name.size()));
+      type_w = std::max(type_w, static_cast<int>(agg.type.size()));
+      count_w = std::max(count_w, static_cast<int>(fmt::format("{}", agg.count).size()));
+      const double freq = (duration_sec > 0.0 && agg.count > 1)
+                            ? static_cast<double>(agg.count - 1) / duration_sec
+                            : 0.0;
+      freq_w = std::max(freq_w, static_cast<int>(fmt::format("{:.2f}", freq).size()));
+    }
+
     fmt::print(
-      stdout, "{:<{}} {:<{}} {:>{}} {:>{}}\n", "NAME", kNameWidth, "TYPE", kTypeWidth, "COUNT",
-      kCountWidth, "FREQ(Hz)", kFreqWidth);
+      stdout, "{:<{}} {:<{}} {:>{}} {:>{}}\n", "NAME", name_w, "TYPE", type_w, "COUNT", count_w,
+      "FREQ(Hz)", freq_w);
     for (const auto & [name, agg] : rows) {
       const double freq = (duration_sec > 0.0 && agg.count > 1)
                             ? static_cast<double>(agg.count - 1) / duration_sec
                             : 0.0;
       fmt::print(
-        stdout, "{:<{}} {:<{}} {:>{}} {:>{}.2f}\n", name, kNameWidth, agg.type, kTypeWidth,
-        agg.count, kCountWidth, freq, kFreqWidth);
+        stdout, "{:<{}} {:<{}} {:>{}} {:>{}.2f}\n", name, name_w, agg.type, type_w, agg.count,
+        count_w, freq, freq_w);
     }
     return failures == 0 ? 0 : 1;
   }
