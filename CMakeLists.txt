@@ -51,6 +51,7 @@ FetchContent_MakeAvailable(cli11 fmt)
 # ---------------------------------------------------------------------------
 add_library(bagwiz_core
   src/core/logging.cpp
+  src/core/topic_pattern.cpp
   src/commands/registry.cpp
   src/io/bag_factory.cpp
   src/io/mcap_reader.cpp
@@ -94,6 +95,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_smoke_test test/smoke_test.cpp)
   target_link_libraries(bagwiz_smoke_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_topic_pattern_test test/core/topic_pattern_test.cpp)
+  target_link_libraries(bagwiz_topic_pattern_test bagwiz_core)
 
   ament_add_gtest(bagwiz_mcap_reader_test test/io/mcap_reader_test.cpp)
   target_link_libraries(bagwiz_mcap_reader_test bagwiz_core)

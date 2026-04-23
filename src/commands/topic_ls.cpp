@@ -9,6 +9,7 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/topic_pattern.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <fmt/core.h>
@@ -19,6 +20,7 @@
 #include <exception>
 #include <filesystem>
 #include <memory>
+#include <regex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -69,6 +71,11 @@ public:
       ->required()
       ->expected(-1)
       ->check(CLI::ExistingPath);
+    ls->add_option(
+        "-p,--pattern", pattern_,
+        "Keep only topics matching the pattern. '/prefix' is a prefix match, "
+        "'substring' is unanchored, and '*' matches any characters except '/' "
+        "within a single segment (e.g. '/*/nebula_packets').");
     ls->callback([this]() { selected_op_ = Op::Ls; });
   }
 
@@ -88,6 +95,14 @@ private:
 
   int run_ls()
   {
+    std::unique_ptr<core::TopicPattern> filter;
+    try {
+      filter = std::make_unique<core::TopicPattern>(pattern_);
+    } catch (const std::regex_error & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "Invalid --pattern %s: %s", pattern_.c_str(), e.what());
+      return 1;
+    }
+
     std::unordered_map<std::string, AggregatedTopic> aggregated;
     int64_t earliest_ns = 0;
     int64_t latest_ns = 0;
@@ -116,6 +131,9 @@ private:
       }
 
       for (const auto & t : reader->topics()) {
+        if (!filter->matches(t.name)) {
+          continue;
+        }
         auto & agg = aggregated[t.name];
         if (agg.type.empty()) {
           agg.type = t.type;
@@ -171,6 +189,7 @@ private:
   }
 
   std::vector<std::filesystem::path> input_paths_;
+  std::string pattern_;
   Op selected_op_ = Op::None;
 };
 
