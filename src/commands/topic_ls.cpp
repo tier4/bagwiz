@@ -7,9 +7,9 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 
 #include "CLI/CLI.hpp"
-#include "bagcli/commands/command.hpp"
-#include "bagcli/core/logging.hpp"
-#include "bagcli/io/bag_io.hpp"
+#include "bagwiz/commands/command.hpp"
+#include "bagwiz/core/logging.hpp"
+#include "bagwiz/io/bag_io.hpp"
 
 #include <fmt/core.h>
 
@@ -25,12 +25,12 @@
 #include <utility>
 #include <vector>
 
-namespace bagcli::commands
+namespace bagwiz::commands
 {
 
 namespace
 {
-constexpr const char * kLogger = "bagcli.cmd.topic";
+constexpr const char * kLogger = "bagwiz.cmd.topic";
 
 constexpr int kNameWidth = 40;
 constexpr int kTypeWidth = 40;
@@ -46,7 +46,7 @@ struct AggregatedTopic
 
 }  // namespace
 
-// `bagcli topic ls <input>...` accepts one or many bag paths. With multiple
+// `bagwiz topic ls <input>...` accepts one or many bag paths. With multiple
 // inputs the output is the union of all topics across every bag, with
 // counts summed and frequency computed against the total observed duration
 // (max-end minus min-start across all bags).
@@ -96,7 +96,7 @@ private:
       try {
         reader = io::open_read(path);
       } catch (const std::exception & e) {
-        BAGCLI_LOG_ERROR(kLogger, "Failed to open %s: %s", path.c_str(), e.what());
+        BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", path.c_str(), e.what());
         ++failures;
         continue;
       }
@@ -118,7 +118,7 @@ private:
           agg.type = t.type;
           agg.serialization_format = t.serialization_format;
         } else if (agg.type != t.type) {
-          BAGCLI_LOG_WARN(
+          BAGWIZ_LOG_WARN(
             kLogger, "topic %s has conflicting types across bags: %s vs %s", t.name.c_str(),
             agg.type.c_str(), t.type.c_str());
         }
@@ -155,6 +155,6 @@ private:
   Op selected_op_ = Op::None;
 };
 
-BAGCLI_REGISTER_COMMAND(TopicCommand)
+BAGWIZ_REGISTER_COMMAND(TopicCommand)
 
-}  // namespace bagcli::commands
+}  // namespace bagwiz::commands

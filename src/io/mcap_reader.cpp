@@ -6,11 +6,11 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagcli/io/mcap_reader.hpp"
+#include "bagwiz/io/mcap_reader.hpp"
 
-#include "bagcli/core/logging.hpp"
-#include "bagcli/io/bag_io.hpp"
-#include "bagcli/io/metadata_yaml.hpp"
+#include "bagwiz/core/logging.hpp"
+#include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/metadata_yaml.hpp"
 
 // mcap_vendor ships MCAP as a pre-compiled library, so MCAP_IMPLEMENTATION
 // must NOT be defined here — the symbols are provided via linkage against
@@ -31,12 +31,12 @@
 #include <utility>
 #include <vector>
 
-namespace bagcli::io::detail
+namespace bagwiz::io::detail
 {
 
 namespace
 {
-constexpr const char * kLogger = "bagcli.io.mcap";
+constexpr const char * kLogger = "bagwiz.io.mcap";
 
 // ---------------------------------------------------------------------------
 // Single .mcap file reader.
@@ -56,7 +56,7 @@ public:
     // cost of a one-time linear scan in that failure mode.
     auto summary_status = reader_.readSummary(mcap::ReadSummaryMethod::AllowFallbackScan);
     if (!summary_status.ok()) {
-      BAGCLI_LOG_WARN(
+      BAGWIZ_LOG_WARN(
         kLogger, "readSummary failed for %s: %s; continuing", path.c_str(),
         summary_status.message.c_str());
     }
@@ -117,7 +117,7 @@ public:
         }
       }
     } else {
-      BAGCLI_LOG_WARN(kLogger, "Statistics unavailable for %s; stats will be zero", path_.c_str());
+      BAGWIZ_LOG_WARN(kLogger, "Statistics unavailable for %s; stats will be zero", path_.c_str());
     }
     return stats;
   }
@@ -170,7 +170,7 @@ private:
     // mcap requires a problem callback alongside options; surface problems
     // as warnings and continue.
     auto problem_cb = [](const mcap::Status & s) {
-      BAGCLI_LOG_WARN(kLogger, "mcap read problem: %s", s.message.c_str());
+      BAGWIZ_LOG_WARN(kLogger, "mcap read problem: %s", s.message.c_str());
     };
 
     view_ = std::make_unique<mcap::LinearMessageView>(reader_.readMessages(problem_cb, opts));
@@ -288,4 +288,4 @@ std::unique_ptr<BagReader> open_mcap_directory(const std::filesystem::path & dir
   return std::make_unique<McapShardReader>(std::move(shards), std::move(topics));
 }
 
-}  // namespace bagcli::io::detail
+}  // namespace bagwiz::io::detail

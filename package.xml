@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>bagcli</name>
+  <name>bagwiz</name>
   <version>0.1.0</version>
   <description>Fast CLI for analyzing, processing, and extracting data from ROS 2 rosbags.</description>
   <maintainer email="mineto.tsukada@tier4.jp">Mineto Tsukada</maintainer>

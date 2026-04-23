@@ -6,11 +6,11 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagcli/core/logging.hpp"
+#include "bagwiz/core/logging.hpp"
 
 #include <rcutils/logging.h>
 
-namespace bagcli::core
+namespace bagwiz::core
 {
 
 void init_logging()
@@ -23,4 +23,4 @@ void init_logging()
   [[maybe_unused]] const auto ret = rcutils_logging_initialize();
 }
 
-}  // namespace bagcli::core
+}  // namespace bagwiz::core

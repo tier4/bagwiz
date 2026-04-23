@@ -7,9 +7,9 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 
 #include "CLI/CLI.hpp"
-#include "bagcli/commands/command.hpp"
-#include "bagcli/core/logging.hpp"
-#include "bagcli/io/bag_io.hpp"
+#include "bagwiz/commands/command.hpp"
+#include "bagwiz/core/logging.hpp"
+#include "bagwiz/io/bag_io.hpp"
 
 #include <cinttypes>
 #include <cstdint>
@@ -21,17 +21,17 @@
 #include <string_view>
 #include <system_error>
 
-namespace bagcli::commands
+namespace bagwiz::commands
 {
 
 namespace
 {
-constexpr const char * kLogger = "bagcli.cmd.comp";
+constexpr const char * kLogger = "bagwiz.cmd.comp";
 
 constexpr uint32_t kDefaultChunkSize = 4 * 1024 * 1024;
 }  // namespace
 
-// `bagcli comp <input> <output>` re-encodes a rosbag with the chosen
+// `bagwiz comp <input> <output>` re-encodes a rosbag with the chosen
 // compression (zstd by default). With `--inplace` the rewrite is atomic: a
 // sibling temp file is written first and rename(2)'d over the input on
 // success. Directory bags are not supported for --inplace in the first cut
@@ -68,7 +68,7 @@ public:
   int run() override
   {
     if (!inplace_ && output_path_.empty()) {
-      BAGCLI_LOG_ERROR(kLogger, "either <output> or --inplace must be specified");
+      BAGWIZ_LOG_ERROR(kLogger, "either <output> or --inplace must be specified");
       return 1;
     }
 
@@ -77,11 +77,11 @@ public:
     if (inplace_) {
       std::error_code ec;
       if (std::filesystem::is_directory(input_path_, ec)) {
-        BAGCLI_LOG_ERROR(kLogger, "--inplace is not supported for directory bags yet");
+        BAGWIZ_LOG_ERROR(kLogger, "--inplace is not supported for directory bags yet");
         return 1;
       }
       tmp_path = input_path_.parent_path() /
-                 (input_path_.stem().string() + ".bagcli-tmp" + input_path_.extension().string());
+                 (input_path_.stem().string() + ".bagwiz-tmp" + input_path_.extension().string());
       write_path = tmp_path;
     } else {
       write_path = output_path_;
@@ -97,7 +97,7 @@ public:
       reader = io::open_read(input_path_);
       writer = io::open_write(write_path, options);
     } catch (const std::exception & e) {
-      BAGCLI_LOG_ERROR(kLogger, "Failed to open bags: %s", e.what());
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to open bags: %s", e.what());
       remove_tmp_if_any(tmp_path);
       return 1;
     }
@@ -115,7 +115,7 @@ public:
       }
       writer->close();
     } catch (const std::exception & e) {
-      BAGCLI_LOG_ERROR(
+      BAGWIZ_LOG_ERROR(
         kLogger, "Compression failed after %" PRId64 " messages: %s", count, e.what());
       remove_tmp_if_any(tmp_path);
       return 1;
@@ -125,7 +125,7 @@ public:
       std::error_code ec;
       std::filesystem::rename(tmp_path, input_path_, ec);
       if (ec) {
-        BAGCLI_LOG_ERROR(
+        BAGWIZ_LOG_ERROR(
           kLogger, "rename %s -> %s failed: %s", tmp_path.c_str(), input_path_.c_str(),
           ec.message().c_str());
         remove_tmp_if_any(tmp_path);
@@ -133,7 +133,7 @@ public:
       }
     }
 
-    BAGCLI_LOG_INFO(
+    BAGWIZ_LOG_INFO(
       kLogger, "Compressed %" PRId64 " messages with %s into %s", count, compression_.c_str(),
       inplace_ ? input_path_.c_str() : output_path_.c_str());
     return 0;
@@ -156,6 +156,6 @@ private:
   uint32_t chunk_size_ = kDefaultChunkSize;
 };
 
-BAGCLI_REGISTER_COMMAND(CompCommand)
+BAGWIZ_REGISTER_COMMAND(CompCommand)
 
-}  // namespace bagcli::commands
+}  // namespace bagwiz::commands

@@ -6,15 +6,15 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#ifndef BAGCLI__IO__MCAP_WRITER_HPP_
-#define BAGCLI__IO__MCAP_WRITER_HPP_
+#ifndef BAGWIZ__IO__MCAP_WRITER_HPP_
+#define BAGWIZ__IO__MCAP_WRITER_HPP_
 
-#include "bagcli/io/bag_io.hpp"
+#include "bagwiz/io/bag_io.hpp"
 
 #include <filesystem>
 #include <memory>
 
-namespace bagcli::io::detail
+namespace bagwiz::io::detail
 {
 
 // Create a writer for a single .mcap file (no metadata.yaml).
@@ -26,6 +26,6 @@ std::unique_ptr<BagWriter> create_mcap_file(
 std::unique_ptr<BagWriter> create_mcap_directory(
   const std::filesystem::path & dir, const CreateOptions & options);
 
-}  // namespace bagcli::io::detail
+}  // namespace bagwiz::io::detail
 
-#endif  // BAGCLI__IO__MCAP_WRITER_HPP_
+#endif  // BAGWIZ__IO__MCAP_WRITER_HPP_

@@ -6,10 +6,10 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagcli/io/mcap_writer.hpp"
+#include "bagwiz/io/mcap_writer.hpp"
 
-#include "bagcli/core/logging.hpp"
-#include "bagcli/io/bag_io.hpp"
+#include "bagwiz/core/logging.hpp"
+#include "bagwiz/io/bag_io.hpp"
 
 #include <mcap/writer.hpp>
 
@@ -29,12 +29,12 @@
 #include <utility>
 #include <vector>
 
-namespace bagcli::io::detail
+namespace bagwiz::io::detail
 {
 
 namespace
 {
-constexpr const char * kLogger = "bagcli.io.mcap";
+constexpr const char * kLogger = "bagwiz.io.mcap";
 
 mcap::Compression parse_compression(std::string_view name)
 {
@@ -169,7 +169,7 @@ public:
       try {
         close();
       } catch (const std::exception & e) {
-        BAGCLI_LOG_WARN(kLogger, "McapDirectoryWriter close failed: %s", e.what());
+        BAGWIZ_LOG_WARN(kLogger, "McapDirectoryWriter close failed: %s", e.what());
       } catch (...) {
         // Never throw from destructor.
       }
@@ -292,4 +292,4 @@ std::unique_ptr<BagWriter> create_mcap_directory(
   return std::make_unique<McapDirectoryWriter>(dir, options);
 }
 
-}  // namespace bagcli::io::detail
+}  // namespace bagwiz::io::detail

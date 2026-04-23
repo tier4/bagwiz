@@ -6,8 +6,8 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#ifndef BAGCLI__IO__BAG_IO_HPP_
-#define BAGCLI__IO__BAG_IO_HPP_
+#ifndef BAGWIZ__IO__BAG_IO_HPP_
+#define BAGWIZ__IO__BAG_IO_HPP_
 
 #include <cstddef>
 #include <cstdint>
@@ -20,7 +20,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace bagcli::io
+namespace bagwiz::io
 {
 
 // Per-topic metadata. Populated lazily by BagReader::topics(); never triggers
@@ -128,6 +128,6 @@ std::unique_ptr<BagReader> open_read(const std::filesystem::path & path, OpenOpt
 std::unique_ptr<BagWriter> open_write(
   const std::filesystem::path & path, CreateOptions options = {});
 
-}  // namespace bagcli::io
+}  // namespace bagwiz::io
 
-#endif  // BAGCLI__IO__BAG_IO_HPP_
+#endif  // BAGWIZ__IO__BAG_IO_HPP_

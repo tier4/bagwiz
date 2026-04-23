@@ -7,8 +7,8 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 
 #include "CLI/CLI.hpp"
-#include "bagcli/commands/command.hpp"
-#include "bagcli/core/logging.hpp"
+#include "bagwiz/commands/command.hpp"
+#include "bagwiz/core/logging.hpp"
 
 #include <exception>
 #include <string>
@@ -16,23 +16,23 @@
 namespace
 {
 constexpr const char * kVersion = "0.1.0";
-constexpr const char * kMainLogger = "bagcli.main";
+constexpr const char * kMainLogger = "bagwiz.main";
 }  // namespace
 
 int main(int argc, char ** argv)
 {
-  bagcli::core::init_logging();
+  bagwiz::core::init_logging();
 
-  CLI::App app{"bagcli - Fast CLI for analyzing and processing ROS 2 rosbags"};
+  CLI::App app{"bagwiz - Fast CLI for analyzing and processing ROS 2 rosbags"};
   app.set_version_flag("--version", kVersion);
   app.require_subcommand(1);
 
-  auto & registry = bagcli::commands::Registry::instance();
+  auto & registry = bagwiz::commands::Registry::instance();
   // Selected is set by the top-level subcommand callback; nested subcommands
   // store their own state on the Command instance. run() fires once after
   // parsing completes so parent and child callbacks can both observe args
   // before the command executes.
-  bagcli::commands::Command * selected = nullptr;
+  bagwiz::commands::Command * selected = nullptr;
   for (const auto & cmd : registry.all()) {
     auto * sub = app.add_subcommand(std::string(cmd->name()), std::string(cmd->description()));
     cmd->configure(*sub);
@@ -42,7 +42,7 @@ int main(int argc, char ** argv)
   try {
     CLI11_PARSE(app, argc, argv);
   } catch (const std::exception & e) {
-    BAGCLI_LOG_FATAL(kMainLogger, "Unhandled exception during argument parsing: %s", e.what());
+    BAGWIZ_LOG_FATAL(kMainLogger, "Unhandled exception during argument parsing: %s", e.what());
     return 1;
   }
 
@@ -55,7 +55,7 @@ int main(int argc, char ** argv)
   try {
     return selected->run();
   } catch (const std::exception & e) {
-    BAGCLI_LOG_FATAL(kMainLogger, "Command failed: %s", e.what());
+    BAGWIZ_LOG_FATAL(kMainLogger, "Command failed: %s", e.what());
     return 1;
   }
 }

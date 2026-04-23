@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagcli/io/bag_io.hpp"
+#include "bagwiz/io/bag_io.hpp"
 
 #include <gtest/gtest.h>
 
@@ -22,13 +22,13 @@ namespace
 {
 
 // Deterministic 4-byte payload. The CDR envelope would be larger in real
-// ROS 2 messages, but bagcli writers do not interpret the payload so any
+// ROS 2 messages, but bagwiz writers do not interpret the payload so any
 // byte sequence is valid for round-trip testing.
 constexpr std::array<std::uint8_t, 4> kPayload{0xDE, 0xAD, 0xBE, 0xEF};
 
-bagcli::io::TopicInfo make_topic(std::string name, std::string type)
+bagwiz::io::TopicInfo make_topic(std::string name, std::string type)
 {
-  bagcli::io::TopicInfo t;
+  bagwiz::io::TopicInfo t;
   t.name = std::move(name);
   t.type = std::move(type);
   t.serialization_format = "cdr";
@@ -36,11 +36,11 @@ bagcli::io::TopicInfo make_topic(std::string name, std::string type)
 }
 
 void write_fixture(
-  const std::filesystem::path & path, bagcli::io::CreateOptions options,
-  const std::vector<bagcli::io::TopicInfo> & topics,
+  const std::filesystem::path & path, bagwiz::io::CreateOptions options,
+  const std::vector<bagwiz::io::TopicInfo> & topics,
   const std::vector<std::pair<std::string, int64_t>> & messages)
 {
-  auto writer = bagcli::io::open_write(path, options);
+  auto writer = bagwiz::io::open_write(path, options);
   for (const auto & t : topics) {
     writer->declare_topic(t);
   }
@@ -55,7 +55,7 @@ void write_fixture(
 
 void verify_round_trip(const std::filesystem::path & path)
 {
-  auto reader = bagcli::io::open_read(path);
+  auto reader = bagwiz::io::open_read(path);
 
   const auto topics = reader->topics();
   ASSERT_EQ(topics.size(), 2U);
@@ -76,7 +76,7 @@ void verify_round_trip(const std::filesystem::path & path)
 
   int foo_count = 0;
   int bar_count = 0;
-  bagcli::io::RawMessage msg;
+  bagwiz::io::RawMessage msg;
   int64_t last_ts = -1;
   while (reader->next(msg)) {
     EXPECT_GE(msg.timestamp_ns, last_ts);
@@ -104,7 +104,7 @@ protected:
   {
     tmp_dir_ =
       std::filesystem::temp_directory_path() /
-      ("bagcli_writer_test_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
+      ("bagwiz_writer_test_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
     std::filesystem::create_directories(tmp_dir_);
   }
 
@@ -114,7 +114,7 @@ protected:
     std::filesystem::remove_all(tmp_dir_, ec);
   }
 
-  std::vector<bagcli::io::TopicInfo> topics_ = {
+  std::vector<bagwiz::io::TopicInfo> topics_ = {
     make_topic("/foo", "std_msgs/msg/String"), make_topic("/bar", "std_msgs/msg/Int32")};
 
   std::vector<std::pair<std::string, int64_t>> messages_ = {
@@ -132,9 +132,9 @@ protected:
 TEST_F(WriterRoundTripTest, McapSingleFile)
 {
   const auto path = tmp_dir_ / "out.mcap";
-  bagcli::io::CreateOptions options;
-  options.format = bagcli::io::Format::Mcap;
-  options.layout = bagcli::io::Layout::SingleFile;
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Mcap;
+  options.layout = bagwiz::io::Layout::SingleFile;
   options.mcap_compression = "none";  // keep test predictable & fast
   write_fixture(path, options, topics_, messages_);
   verify_round_trip(path);
@@ -143,9 +143,9 @@ TEST_F(WriterRoundTripTest, McapSingleFile)
 TEST_F(WriterRoundTripTest, McapDirectory)
 {
   const auto dir = tmp_dir_ / "mcap_dir";
-  bagcli::io::CreateOptions options;
-  options.format = bagcli::io::Format::Mcap;
-  options.layout = bagcli::io::Layout::Directory;
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Mcap;
+  options.layout = bagwiz::io::Layout::Directory;
   options.mcap_compression = "none";
   write_fixture(dir, options, topics_, messages_);
 
@@ -157,9 +157,9 @@ TEST_F(WriterRoundTripTest, McapDirectory)
 TEST_F(WriterRoundTripTest, McapZstdCompression)
 {
   const auto path = tmp_dir_ / "zstd.mcap";
-  bagcli::io::CreateOptions options;
-  options.format = bagcli::io::Format::Mcap;
-  options.layout = bagcli::io::Layout::SingleFile;
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Mcap;
+  options.layout = bagwiz::io::Layout::SingleFile;
   options.mcap_compression = "zstd";
   write_fixture(path, options, topics_, messages_);
   verify_round_trip(path);
@@ -168,9 +168,9 @@ TEST_F(WriterRoundTripTest, McapZstdCompression)
 TEST_F(WriterRoundTripTest, Sqlite3SingleFile)
 {
   const auto path = tmp_dir_ / "out.db3";
-  bagcli::io::CreateOptions options;
-  options.format = bagcli::io::Format::Sqlite3;
-  options.layout = bagcli::io::Layout::SingleFile;
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Sqlite3;
+  options.layout = bagwiz::io::Layout::SingleFile;
   write_fixture(path, options, topics_, messages_);
   verify_round_trip(path);
 }
@@ -178,9 +178,9 @@ TEST_F(WriterRoundTripTest, Sqlite3SingleFile)
 TEST_F(WriterRoundTripTest, Sqlite3Directory)
 {
   const auto dir = tmp_dir_ / "sqlite_dir";
-  bagcli::io::CreateOptions options;
-  options.format = bagcli::io::Format::Sqlite3;
-  options.layout = bagcli::io::Layout::Directory;
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Sqlite3;
+  options.layout = bagwiz::io::Layout::Directory;
   write_fixture(dir, options, topics_, messages_);
 
   EXPECT_TRUE(std::filesystem::exists(dir / "metadata.yaml"));

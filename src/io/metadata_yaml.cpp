@@ -6,9 +6,9 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagcli/io/metadata_yaml.hpp"
+#include "bagwiz/io/metadata_yaml.hpp"
 
-#include "bagcli/core/logging.hpp"
+#include "bagwiz/core/logging.hpp"
 
 #include <yaml-cpp/yaml.h>
 
@@ -16,12 +16,12 @@
 #include <string>
 #include <utility>
 
-namespace bagcli::io
+namespace bagwiz::io
 {
 
 namespace
 {
-constexpr const char * kLogger = "bagcli.io.metadata";
+constexpr const char * kLogger = "bagwiz.io.metadata";
 }
 
 BagMetadata load_metadata_yaml(const std::filesystem::path & yaml_path)
@@ -30,7 +30,7 @@ BagMetadata load_metadata_yaml(const std::filesystem::path & yaml_path)
   try {
     root = YAML::LoadFile(yaml_path.string());
   } catch (const YAML::Exception & e) {
-    BAGCLI_LOG_ERROR(kLogger, "Failed to parse %s: %s", yaml_path.c_str(), e.what());
+    BAGWIZ_LOG_ERROR(kLogger, "Failed to parse %s: %s", yaml_path.c_str(), e.what());
     throw std::runtime_error("failed to parse metadata.yaml: " + std::string(e.what()));
   }
 
@@ -87,4 +87,4 @@ BagMetadata load_metadata_yaml(const std::filesystem::path & yaml_path)
   return md;
 }
 
-}  // namespace bagcli::io
+}  // namespace bagwiz::io

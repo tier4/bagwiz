@@ -6,20 +6,20 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#ifndef BAGCLI__IO__METADATA_YAML_HPP_
-#define BAGCLI__IO__METADATA_YAML_HPP_
+#ifndef BAGWIZ__IO__METADATA_YAML_HPP_
+#define BAGWIZ__IO__METADATA_YAML_HPP_
 
-#include "bagcli/io/bag_io.hpp"
+#include "bagwiz/io/bag_io.hpp"
 
 #include <filesystem>
 #include <string>
 #include <vector>
 
-namespace bagcli::io
+namespace bagwiz::io
 {
 
 // Minimal view of a rosbag2 metadata.yaml file, carrying just the fields
-// bagcli needs to open a directory bag without re-scanning.
+// bagwiz needs to open a directory bag without re-scanning.
 struct BagMetadata
 {
   std::string storage_identifier;                          // "mcap" or "sqlite3"
@@ -30,6 +30,6 @@ struct BagMetadata
 // Parse `<dir>/metadata.yaml`. Throws on IO or schema errors.
 BagMetadata load_metadata_yaml(const std::filesystem::path & yaml_path);
 
-}  // namespace bagcli::io
+}  // namespace bagwiz::io
 
-#endif  // BAGCLI__IO__METADATA_YAML_HPP_
+#endif  // BAGWIZ__IO__METADATA_YAML_HPP_

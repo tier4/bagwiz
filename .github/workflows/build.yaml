@@ -19,7 +19,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          path: src/bagcli
+          path: src/bagwiz
 
       - name: Install rosdep dependencies
         shell: bash

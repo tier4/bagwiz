@@ -7,9 +7,9 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 
 #include "CLI/CLI.hpp"
-#include "bagcli/commands/command.hpp"
-#include "bagcli/core/logging.hpp"
-#include "bagcli/io/bag_io.hpp"
+#include "bagwiz/commands/command.hpp"
+#include "bagwiz/core/logging.hpp"
+#include "bagwiz/io/bag_io.hpp"
 
 #include <fmt/chrono.h>
 #include <fmt/core.h>
@@ -25,12 +25,12 @@
 #include <string_view>
 #include <vector>
 
-namespace bagcli::commands
+namespace bagwiz::commands
 {
 
 namespace
 {
-constexpr const char * kLogger = "bagcli.cmd.info";
+constexpr const char * kLogger = "bagwiz.cmd.info";
 
 std::uintmax_t bag_size_bytes(const std::filesystem::path & path)
 {
@@ -78,7 +78,7 @@ std::string format_time(int64_t ns)
 
 }  // namespace
 
-// `bagcli info <input>...` prints a human-readable summary of each bag.
+// `bagwiz info <input>...` prints a human-readable summary of each bag.
 // Multiple inputs are processed sequentially; output is separated by a
 // blank line so per-bag sections stay visually distinct.
 class InfoCommand : public Command
@@ -116,7 +116,7 @@ private:
     try {
       reader = io::open_read(path);
     } catch (const std::exception & e) {
-      BAGCLI_LOG_ERROR(kLogger, "Failed to open %s: %s", path.c_str(), e.what());
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", path.c_str(), e.what());
       return false;
     }
 
@@ -160,6 +160,6 @@ private:
   std::vector<std::filesystem::path> input_paths_;
 };
 
-BAGCLI_REGISTER_COMMAND(InfoCommand)
+BAGWIZ_REGISTER_COMMAND(InfoCommand)
 
-}  // namespace bagcli::commands
+}  // namespace bagwiz::commands

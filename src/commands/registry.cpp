@@ -6,11 +6,11 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagcli/commands/command.hpp"
+#include "bagwiz/commands/command.hpp"
 
 #include <utility>
 
-namespace bagcli::commands
+namespace bagwiz::commands
 {
 
 Registry & Registry::instance()
@@ -24,4 +24,4 @@ void Registry::add(std::unique_ptr<Command> cmd)
   commands_.push_back(std::move(cmd));
 }
 
-}  // namespace bagcli::commands
+}  // namespace bagwiz::commands

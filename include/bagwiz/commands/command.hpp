@@ -6,8 +6,8 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#ifndef BAGCLI__COMMANDS__COMMAND_HPP_
-#define BAGCLI__COMMANDS__COMMAND_HPP_
+#ifndef BAGWIZ__COMMANDS__COMMAND_HPP_
+#define BAGWIZ__COMMANDS__COMMAND_HPP_
 
 #include <memory>
 #include <string_view>
@@ -18,12 +18,12 @@ namespace CLI
 class App;
 }  // namespace CLI
 
-namespace bagcli::commands
+namespace bagwiz::commands
 {
 
 // Base class for CLI subcommands. Each command is a plugin: it declares its
 // arguments via configure() at startup, and run() is invoked after parsing.
-// Concrete implementations register themselves with BAGCLI_REGISTER_COMMAND.
+// Concrete implementations register themselves with BAGWIZ_REGISTER_COMMAND.
 class Command
 {
 public:
@@ -43,7 +43,7 @@ public:
 };
 
 // Process-wide registry of command plugins. Commands insert themselves at
-// static-init time via BAGCLI_REGISTER_COMMAND; main() walks the list and
+// static-init time via BAGWIZ_REGISTER_COMMAND; main() walks the list and
 // wires each into the top-level CLI::App.
 class Registry
 {
@@ -61,19 +61,19 @@ private:
 // Register a Command subclass. Place this macro at namespace scope in the
 // command's .cpp file. The command .cpp must be part of the executable
 // target (not a library) so the registrar is not stripped by the linker.
-#define BAGCLI_REGISTER_COMMAND(CommandType)                                            \
+#define BAGWIZ_REGISTER_COMMAND(CommandType)                                            \
   namespace                                                                             \
   {                                                                                     \
   struct CommandType##_Registrar                                                        \
   {                                                                                     \
     CommandType##_Registrar()                                                           \
     {                                                                                   \
-      ::bagcli::commands::Registry::instance().add(std::make_unique<CommandType>());    \
+      ::bagwiz::commands::Registry::instance().add(std::make_unique<CommandType>());    \
     }                                                                                   \
   };                                                                                    \
   [[maybe_unused]] static const CommandType##_Registrar kBagcliRegistrar_##CommandType; \
   }
 
-}  // namespace bagcli::commands
+}  // namespace bagwiz::commands
 
-#endif  // BAGCLI__COMMANDS__COMMAND_HPP_
+#endif  // BAGWIZ__COMMANDS__COMMAND_HPP_

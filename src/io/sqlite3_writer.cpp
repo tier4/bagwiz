@@ -6,10 +6,10 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagcli/io/sqlite3_writer.hpp"
+#include "bagwiz/io/sqlite3_writer.hpp"
 
-#include "bagcli/core/logging.hpp"
-#include "bagcli/io/bag_io.hpp"
+#include "bagwiz/core/logging.hpp"
+#include "bagwiz/io/bag_io.hpp"
 
 #include <sqlite3.h>
 #include <yaml-cpp/yaml.h>
@@ -28,12 +28,12 @@
 #include <utility>
 #include <vector>
 
-namespace bagcli::io::detail
+namespace bagwiz::io::detail
 {
 
 namespace
 {
-constexpr const char * kLogger = "bagcli.io.sqlite3";
+constexpr const char * kLogger = "bagwiz.io.sqlite3";
 // Conservative batch size: keep transactions small enough that a crash loses
 // at most a bounded number of messages but large enough to amortize commit
 // overhead.
@@ -78,7 +78,7 @@ public:
 
     // Write-side tuning. journal_mode=MEMORY keeps crash-consistency at the
     // cost of some durability; OFF would be faster but leaves a corrupt bag
-    // on crash. bagcli writes new bags so losing one on crash is acceptable,
+    // on crash. bagwiz writes new bags so losing one on crash is acceptable,
     // but MEMORY is the better default.
     exec_or_throw(db_, "PRAGMA journal_mode = MEMORY;");
     exec_or_throw(db_, "PRAGMA synchronous = OFF;");
@@ -96,7 +96,7 @@ public:
       try {
         close();
       } catch (const std::exception & e) {
-        BAGCLI_LOG_WARN(kLogger, "SqliteFileWriter close failed: %s", e.what());
+        BAGWIZ_LOG_WARN(kLogger, "SqliteFileWriter close failed: %s", e.what());
       } catch (...) {
         // Never throw from destructor.
       }
@@ -252,7 +252,7 @@ public:
       try {
         close();
       } catch (const std::exception & e) {
-        BAGCLI_LOG_WARN(kLogger, "SqliteDirectoryWriter close failed: %s", e.what());
+        BAGWIZ_LOG_WARN(kLogger, "SqliteDirectoryWriter close failed: %s", e.what());
       } catch (...) {
       }
     }
@@ -375,4 +375,4 @@ std::unique_ptr<BagWriter> create_sqlite3_directory(
   return std::make_unique<SqliteDirectoryWriter>(dir, options);
 }
 
-}  // namespace bagcli::io::detail
+}  // namespace bagwiz::io::detail

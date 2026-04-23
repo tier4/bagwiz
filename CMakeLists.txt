@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(bagcli CXX)
+project(bagwiz CXX)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 20)
@@ -45,11 +45,11 @@ set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(cli11 fmt)
 
 # ---------------------------------------------------------------------------
-# bagcli_core: shared library with logging, command registry, and IO
+# bagwiz_core: shared library with logging, command registry, and IO
 # interfaces. Command implementations live in the executable target so their
 # static registrars pull into the final binary.
 # ---------------------------------------------------------------------------
-add_library(bagcli_core
+add_library(bagwiz_core
   src/core/logging.cpp
   src/commands/registry.cpp
   src/io/bag_factory.cpp
@@ -59,29 +59,29 @@ add_library(bagcli_core
   src/io/sqlite3_reader.cpp
   src/io/sqlite3_writer.cpp
 )
-target_include_directories(bagcli_core
+target_include_directories(bagwiz_core
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-ament_target_dependencies(bagcli_core PUBLIC rcutils mcap_vendor yaml_cpp_vendor)
-target_link_libraries(bagcli_core PUBLIC yaml-cpp SQLite::SQLite3)
+ament_target_dependencies(bagwiz_core PUBLIC rcutils mcap_vendor yaml_cpp_vendor)
+target_link_libraries(bagwiz_core PUBLIC yaml-cpp SQLite::SQLite3)
 
 # ---------------------------------------------------------------------------
-# bagcli: CLI executable. Installs to bin/ so users run it directly after
+# bagwiz: CLI executable. Installs to bin/ so users run it directly after
 # sourcing the ROS setup.
 # ---------------------------------------------------------------------------
-add_executable(bagcli
+add_executable(bagwiz
   src/main.cpp
   src/commands/comp.cpp
   src/commands/filter.cpp
   src/commands/info.cpp
   src/commands/topic_ls.cpp
 )
-target_link_libraries(bagcli PRIVATE bagcli_core CLI11::CLI11 fmt::fmt)
+target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt)
 
-install(TARGETS bagcli RUNTIME DESTINATION bin)
-install(TARGETS bagcli_core
+install(TARGETS bagwiz RUNTIME DESTINATION bin)
+install(TARGETS bagwiz_core
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
@@ -94,17 +94,17 @@ ament_export_dependencies(rcutils mcap_vendor yaml_cpp_vendor SQLite3)
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
 
-  ament_add_gtest(bagcli_smoke_test test/smoke_test.cpp)
-  target_link_libraries(bagcli_smoke_test bagcli_core)
+  ament_add_gtest(bagwiz_smoke_test test/smoke_test.cpp)
+  target_link_libraries(bagwiz_smoke_test bagwiz_core)
 
-  ament_add_gtest(bagcli_mcap_reader_test test/io/mcap_reader_test.cpp)
-  target_link_libraries(bagcli_mcap_reader_test bagcli_core)
+  ament_add_gtest(bagwiz_mcap_reader_test test/io/mcap_reader_test.cpp)
+  target_link_libraries(bagwiz_mcap_reader_test bagwiz_core)
 
-  ament_add_gtest(bagcli_sqlite3_reader_test test/io/sqlite3_reader_test.cpp)
-  target_link_libraries(bagcli_sqlite3_reader_test bagcli_core)
+  ament_add_gtest(bagwiz_sqlite3_reader_test test/io/sqlite3_reader_test.cpp)
+  target_link_libraries(bagwiz_sqlite3_reader_test bagwiz_core)
 
-  ament_add_gtest(bagcli_writer_roundtrip_test test/io/writer_roundtrip_test.cpp)
-  target_link_libraries(bagcli_writer_roundtrip_test bagcli_core)
+  ament_add_gtest(bagwiz_writer_roundtrip_test test/io/writer_roundtrip_test.cpp)
+  target_link_libraries(bagwiz_writer_roundtrip_test bagwiz_core)
 endif()
 
 ament_package()

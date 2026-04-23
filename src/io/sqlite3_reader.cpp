@@ -6,11 +6,11 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagcli/io/sqlite3_reader.hpp"
+#include "bagwiz/io/sqlite3_reader.hpp"
 
-#include "bagcli/core/logging.hpp"
-#include "bagcli/io/bag_io.hpp"
-#include "bagcli/io/metadata_yaml.hpp"
+#include "bagwiz/core/logging.hpp"
+#include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/metadata_yaml.hpp"
 
 #include <sqlite3.h>
 
@@ -26,12 +26,12 @@
 #include <utility>
 #include <vector>
 
-namespace bagcli::io::detail
+namespace bagwiz::io::detail
 {
 
 namespace
 {
-constexpr const char * kLogger = "bagcli.io.sqlite3";
+constexpr const char * kLogger = "bagwiz.io.sqlite3";
 
 std::string sqlite_errmsg(sqlite3 * db)
 {
@@ -266,7 +266,7 @@ private:
         }
       }
       if (ids.empty()) {
-        BAGCLI_LOG_WARN(
+        BAGWIZ_LOG_WARN(
           kLogger, "no topic IDs matched the filter for %s; iteration will be empty",
           path_.c_str());
         return;
@@ -404,4 +404,4 @@ std::unique_ptr<BagReader> open_sqlite3_directory(const std::filesystem::path & 
   return std::make_unique<SqliteShardReader>(std::move(shards), std::move(topics));
 }
 
-}  // namespace bagcli::io::detail
+}  // namespace bagwiz::io::detail

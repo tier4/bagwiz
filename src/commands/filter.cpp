@@ -7,9 +7,9 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 
 #include "CLI/CLI.hpp"
-#include "bagcli/commands/command.hpp"
-#include "bagcli/core/logging.hpp"
-#include "bagcli/io/bag_io.hpp"
+#include "bagwiz/commands/command.hpp"
+#include "bagwiz/core/logging.hpp"
+#include "bagwiz/io/bag_io.hpp"
 
 #include <algorithm>
 #include <cinttypes>
@@ -22,16 +22,16 @@
 #include <unordered_set>
 #include <vector>
 
-namespace bagcli::commands
+namespace bagwiz::commands
 {
 
 namespace
 {
-constexpr const char * kLogger = "bagcli.cmd.filter";
+constexpr const char * kLogger = "bagwiz.cmd.filter";
 constexpr uint32_t kDefaultChunkSize = 4 * 1024 * 1024;
 }  // namespace
 
-// `bagcli filter <input> <output> [--topics ...] [--start ...] [--end ...]`
+// `bagwiz filter <input> <output> [--topics ...] [--start ...] [--end ...]`
 // writes a subset of `input` into `output`. Both filters are pushed into
 // the BagReader so the underlying storage layer can skip data it doesn't
 // need to decode (chunk index for MCAP, WHERE clauses for SQLite3).
@@ -75,7 +75,7 @@ public:
       reader = io::open_read(input_path_);
       writer = io::open_write(output_path_, options);
     } catch (const std::exception & e) {
-      BAGCLI_LOG_ERROR(kLogger, "Failed to open bags: %s", e.what());
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to open bags: %s", e.what());
       return 1;
     }
 
@@ -107,11 +107,11 @@ public:
       }
       writer->close();
     } catch (const std::exception & e) {
-      BAGCLI_LOG_ERROR(kLogger, "Filter failed after %" PRId64 " messages: %s", kept, e.what());
+      BAGWIZ_LOG_ERROR(kLogger, "Filter failed after %" PRId64 " messages: %s", kept, e.what());
       return 1;
     }
 
-    BAGCLI_LOG_INFO(kLogger, "Wrote %" PRId64 " messages to %s", kept, output_path_.c_str());
+    BAGWIZ_LOG_INFO(kLogger, "Wrote %" PRId64 " messages to %s", kept, output_path_.c_str());
     return 0;
   }
 
@@ -125,6 +125,6 @@ private:
   uint32_t chunk_size_ = kDefaultChunkSize;
 };
 
-BAGCLI_REGISTER_COMMAND(FilterCommand)
+BAGWIZ_REGISTER_COMMAND(FilterCommand)
 
-}  // namespace bagcli::commands
+}  // namespace bagwiz::commands

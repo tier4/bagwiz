@@ -6,21 +6,21 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagcli/commands/command.hpp"
-#include "bagcli/core/logging.hpp"
+#include "bagwiz/commands/command.hpp"
+#include "bagwiz/core/logging.hpp"
 
 #include <gtest/gtest.h>
 
 TEST(Smoke, LoggingInitIsIdempotent)
 {
-  bagcli::core::init_logging();
-  bagcli::core::init_logging();
+  bagwiz::core::init_logging();
+  bagwiz::core::init_logging();
   SUCCEED();
 }
 
 TEST(Smoke, RegistryIsAccessible)
 {
-  auto & registry = bagcli::commands::Registry::instance();
+  auto & registry = bagwiz::commands::Registry::instance();
   // Skeleton has no commands registered.
   EXPECT_EQ(registry.all().size(), 0U);
 }

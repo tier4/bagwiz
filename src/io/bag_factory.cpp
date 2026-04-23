@@ -6,13 +6,13 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagcli/core/logging.hpp"
-#include "bagcli/io/bag_io.hpp"
-#include "bagcli/io/mcap_reader.hpp"
-#include "bagcli/io/mcap_writer.hpp"
-#include "bagcli/io/metadata_yaml.hpp"
-#include "bagcli/io/sqlite3_reader.hpp"
-#include "bagcli/io/sqlite3_writer.hpp"
+#include "bagwiz/core/logging.hpp"
+#include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/mcap_reader.hpp"
+#include "bagwiz/io/mcap_writer.hpp"
+#include "bagwiz/io/metadata_yaml.hpp"
+#include "bagwiz/io/sqlite3_reader.hpp"
+#include "bagwiz/io/sqlite3_writer.hpp"
 
 #include <array>
 #include <cstring>
@@ -22,12 +22,12 @@
 #include <stdexcept>
 #include <string>
 
-namespace bagcli::io
+namespace bagwiz::io
 {
 
 namespace
 {
-constexpr const char * kLogger = "bagcli.io";
+constexpr const char * kLogger = "bagwiz.io";
 
 // MCAP magic prefix: 0x89, 'M', 'C', 'A', 'P', 0x30
 constexpr std::array<unsigned char, 6> kMcapMagic = {0x89, 'M', 'C', 'A', 'P', '0'};
@@ -159,4 +159,4 @@ std::unique_ptr<BagWriter> open_write(const std::filesystem::path & path, Create
   throw std::runtime_error("unsupported format for single-file writer");
 }
 
-}  // namespace bagcli::io
+}  // namespace bagwiz::io

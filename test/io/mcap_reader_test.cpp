@@ -6,11 +6,11 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagcli/io/bag_io.hpp"
+#include "bagwiz/io/bag_io.hpp"
 
 #include <gtest/gtest.h>
 
-// MCAP_IMPLEMENTATION lives in src/io/mcap_reader.cpp (bagcli_core). Tests
+// MCAP_IMPLEMENTATION lives in src/io/mcap_reader.cpp (bagwiz_core). Tests
 // only need the declarations here.
 #include <mcap/writer.hpp>
 
@@ -117,7 +117,7 @@ protected:
   {
     tmp_dir_ =
       std::filesystem::temp_directory_path() /
-      ("bagcli_mcap_test_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
+      ("bagwiz_mcap_test_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
     std::filesystem::create_directories(tmp_dir_);
   }
 
@@ -136,7 +136,7 @@ TEST_F(McapReaderTest, OpensSingleFileAndListsTopics)
 {
   const auto path = write_fixture_mcap(tmp_dir_ / "single");
 
-  auto reader = bagcli::io::open_read(path);
+  auto reader = bagwiz::io::open_read(path);
   const auto topics = reader->topics();
   ASSERT_EQ(topics.size(), 2U);
 
@@ -160,10 +160,10 @@ TEST_F(McapReaderTest, IteratesMessagesInTimeOrder)
 {
   const auto path = write_fixture_mcap(tmp_dir_ / "iter");
 
-  auto reader = bagcli::io::open_read(path);
+  auto reader = bagwiz::io::open_read(path);
 
   std::vector<std::pair<std::string, int64_t>> seen;
-  bagcli::io::RawMessage msg;
+  bagwiz::io::RawMessage msg;
   while (reader->next(msg)) {
     seen.emplace_back(std::string(msg.topic->name), msg.timestamp_ns);
     EXPECT_EQ(msg.payload.size(), 4U);
@@ -179,13 +179,13 @@ TEST_F(McapReaderTest, FilterByTopic)
 {
   const auto path = write_fixture_mcap(tmp_dir_ / "filter");
 
-  auto reader = bagcli::io::open_read(path);
-  bagcli::io::ReadFilter f;
+  auto reader = bagwiz::io::open_read(path);
+  bagwiz::io::ReadFilter f;
   f.topics = {"/bar"};
   reader->set_filter(f);
 
   int count = 0;
-  bagcli::io::RawMessage msg;
+  bagwiz::io::RawMessage msg;
   while (reader->next(msg)) {
     EXPECT_EQ(std::string(msg.topic->name), "/bar");
     ++count;
@@ -197,7 +197,7 @@ TEST_F(McapReaderTest, StatsFromSummary)
 {
   const auto path = write_fixture_mcap(tmp_dir_ / "stats");
 
-  auto reader = bagcli::io::open_read(path);
+  auto reader = bagwiz::io::open_read(path);
   const auto stats = reader->compute_stats();
 
   EXPECT_TRUE(stats.from_summary);
@@ -210,11 +210,11 @@ TEST_F(McapReaderTest, OpensDirectoryWithMetadata)
 {
   const auto dir = write_fixture_directory(tmp_dir_ / "dir");
 
-  auto reader = bagcli::io::open_read(dir);
+  auto reader = bagwiz::io::open_read(dir);
   EXPECT_EQ(reader->topics().size(), 2U);
 
   int count = 0;
-  bagcli::io::RawMessage msg;
+  bagwiz::io::RawMessage msg;
   while (reader->next(msg)) {
     ++count;
   }
@@ -225,10 +225,10 @@ TEST_F(McapReaderTest, RejectsDirectoryWithoutMetadata)
 {
   const auto dir = tmp_dir_ / "no_meta";
   std::filesystem::create_directories(dir);
-  EXPECT_THROW(bagcli::io::open_read(dir), std::exception);
+  EXPECT_THROW(bagwiz::io::open_read(dir), std::exception);
 }
 
 TEST_F(McapReaderTest, RejectsMissingPath)
 {
-  EXPECT_THROW(bagcli::io::open_read(tmp_dir_ / "does_not_exist.mcap"), std::exception);
+  EXPECT_THROW(bagwiz::io::open_read(tmp_dir_ / "does_not_exist.mcap"), std::exception);
 }
