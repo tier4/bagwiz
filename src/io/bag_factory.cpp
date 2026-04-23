@@ -9,8 +9,10 @@
 #include "bagcli/core/logging.hpp"
 #include "bagcli/io/bag_io.hpp"
 #include "bagcli/io/mcap_reader.hpp"
+#include "bagcli/io/mcap_writer.hpp"
 #include "bagcli/io/metadata_yaml.hpp"
 #include "bagcli/io/sqlite3_reader.hpp"
+#include "bagcli/io/sqlite3_writer.hpp"
 
 #include <array>
 #include <cstring>
@@ -111,10 +113,50 @@ std::unique_ptr<BagReader> open_read(const std::filesystem::path & path, OpenOpt
   throw std::runtime_error("unreachable: unhandled Format");
 }
 
-std::unique_ptr<BagWriter> open_write(const std::filesystem::path & path, CreateOptions /*options*/)
+std::unique_ptr<BagWriter> open_write(const std::filesystem::path & path, CreateOptions options)
 {
-  BAGCLI_LOG_ERROR(kLogger, "open_write not yet implemented for %s", path.c_str());
-  throw std::runtime_error("bagcli::io::open_write is not yet implemented");
+  // Layout selection: if caller asked Auto, pick by whether the path looks
+  // like a single .mcap/.db3 file (use SingleFile + matching format) or
+  // anything else (use Directory).
+  Layout layout = options.layout;
+  Format format = options.format;
+  if (layout == Layout::Auto) {
+    const auto ext = path.extension().string();
+    if (ext == ".mcap") {
+      layout = Layout::SingleFile;
+      if (format == Format::Auto) {
+        format = Format::Mcap;
+      }
+    } else if (ext == ".db3") {
+      layout = Layout::SingleFile;
+      if (format == Format::Auto) {
+        format = Format::Sqlite3;
+      }
+    } else {
+      layout = Layout::Directory;
+    }
+  }
+  if (format == Format::Auto) {
+    format = Format::Mcap;
+  }
+
+  if (layout == Layout::Directory) {
+    if (format == Format::Mcap) {
+      return detail::create_mcap_directory(path, options);
+    }
+    if (format == Format::Sqlite3) {
+      return detail::create_sqlite3_directory(path, options);
+    }
+    throw std::runtime_error("unsupported format for directory writer");
+  }
+
+  if (format == Format::Mcap) {
+    return detail::create_mcap_file(path, options);
+  }
+  if (format == Format::Sqlite3) {
+    return detail::create_sqlite3_file(path, options);
+  }
+  throw std::runtime_error("unsupported format for single-file writer");
 }
 
 }  // namespace bagcli::io

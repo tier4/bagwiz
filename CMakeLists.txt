@@ -54,8 +54,10 @@ add_library(bagcli_core
   src/commands/registry.cpp
   src/io/bag_factory.cpp
   src/io/mcap_reader.cpp
+  src/io/mcap_writer.cpp
   src/io/metadata_yaml.cpp
   src/io/sqlite3_reader.cpp
+  src/io/sqlite3_writer.cpp
 )
 target_include_directories(bagcli_core
   PUBLIC
@@ -97,6 +99,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagcli_sqlite3_reader_test test/io/sqlite3_reader_test.cpp)
   target_link_libraries(bagcli_sqlite3_reader_test bagcli_core)
+
+  ament_add_gtest(bagcli_writer_roundtrip_test test/io/writer_roundtrip_test.cpp)
+  target_link_libraries(bagcli_writer_roundtrip_test bagcli_core)
 endif()
 
 ament_package()
