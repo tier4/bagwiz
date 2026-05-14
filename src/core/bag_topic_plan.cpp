@@ -18,24 +18,6 @@
 namespace bagwiz::core
 {
 
-namespace
-{
-
-const io::TopicInfo * find_topic(
-  std::span<const io::TopicInfo> topics,
-  // cppcheck-suppress passedByValue
-  std::string_view target_topic)
-{
-  for (const auto & t : topics) {
-    if (t.name == target_topic) {
-      return &t;
-    }
-  }
-  return nullptr;
-}
-
-}  // namespace
-
 TopicWriteDecision decide_topic_write(
   std::span<const io::TopicInfo> existing_topics, std::string_view target_topic,
   std::string_view expected_type, std::int64_t existing_count, bool force)
@@ -47,7 +29,19 @@ TopicWriteDecision decide_topic_write(
   // unit compiles cleanly under both header-only fmt (clang-tidy's view
   // of bagwiz_core) and the regular linked fmt mode.
   const std::string target_str(target_topic);
-  const auto * existing = find_topic(existing_topics, target_topic);
+
+  // The helper used to live in an anon namespace as `find_topic` returning
+  // `const TopicInfo *`, but cppcheck (jazzy) misreads `std::span` as
+  // owning its data and flags returning `&t` as `returnDanglingLifetime`.
+  // Inlining the search here keeps the analysis local and avoids the
+  // false positive without needing a suppression.
+  const io::TopicInfo * existing = nullptr;
+  for (const auto & t : existing_topics) {
+    if (t.name == target_topic) {
+      existing = &t;
+      break;
+    }
+  }
   if (existing == nullptr) {
     out.action = TopicWriteAction::kDeclareNew;
     out.reason = "Topic '" + target_str + "' is absent from the destination; declaring it new.";
