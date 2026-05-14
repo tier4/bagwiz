@@ -338,9 +338,8 @@ private:
   {
     auto * sub = app.add_subcommand(
       "dump",
-      "Dump a trajectory in the format specified by --format (inferred from the output file "
-      "extension when omitted): TF topics require --from/--to; pose topics use optional frames "
-      "(see --help).");
+      "Dump a topic's trajectory to a file. The accepted message types and the meaning "
+      "of --from / --to per type are listed in the SUPPORTED TOPIC TYPES section below.");
     sub->add_option("input", dump_args_.input_path, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
@@ -348,8 +347,7 @@ private:
     sub
       ->add_option(
         "topic", dump_args_.topic,
-        "Topic to sample (e.g. /tf, /localization/pose). Type selects processing; "
-        "TF message topics pick up *tf_static from the bag automatically.")
+        "Topic to sample (e.g. /tf, /localization/pose). See SUPPORTED TOPIC TYPES below.")
       ->required();
     sub
       ->add_option(
@@ -358,15 +356,32 @@ private:
       ->check(CLI::IsMember({kFormatTum}));
     sub->add_option(
       "--from", dump_args_.from_frame,
-      "Reference frame for output poses. Required for tf2_msgs/msg/TFMessage. For "
-      "geometry_msgs PoseStamped/PoseWithCovarianceStamped or nav_msgs Odometry: optional; "
-      "when omitted, each row uses that message's header.frame_id (no TF remap). When set, "
-      "poses are transformed from header.frame_id into this frame using TF from the bag.");
+      "Parent / reference frame id. Required or optional depending on the topic's "
+      "message type — see SUPPORTED TOPIC TYPES below.");
     sub->add_option(
       "--to", dump_args_.to_frame,
-      "Tracked frame: required for tf2_msgs/msg/TFMessage. For nav_msgs/msg/Odometry, "
-      "optional filter: only messages whose child_frame_id equals this value are written. "
-      "Ignored for PoseStamped / PoseWithCovarianceStamped.");
+      "Child / filter frame id. Required, optional, or ignored depending on the topic's "
+      "message type — see SUPPORTED TOPIC TYPES below.");
+    sub->footer(
+      "SUPPORTED TOPIC TYPES:\n"
+      "  All TF lookups below are resolved automatically from the bag's static and\n"
+      "  dynamic TFs (/tf and *tf_static are picked up from the bag) — any multi-hop\n"
+      "  path through the TF tree is OK; --from / --to do not need to be directly\n"
+      "  connected.\n"
+      "\n"
+      "  tf2_msgs/msg/TFMessage  (e.g. /tf)\n"
+      "    --from  REQUIRED  parent frame of the trajectory\n"
+      "    --to    REQUIRED  child frame (the tracked frame)\n"
+      "\n"
+      "  geometry_msgs/msg/PoseStamped\n"
+      "  geometry_msgs/msg/PoseWithCovarianceStamped\n"
+      "    --from  optional  re-express each pose into this frame via TF;\n"
+      "                      when omitted, the pose's header.frame_id is kept as-is\n"
+      "    --to    ignored\n"
+      "\n"
+      "  nav_msgs/msg/Odometry\n"
+      "    --from  optional  same as PoseStamped above\n"
+      "    --to    optional  filter — keep only rows whose child_frame_id == <to>");
     sub->callback([this]() { selected_ = Subcommand::kDump; });
   }
 

@@ -53,6 +53,22 @@ The flags are not interchangeable across topic types. See the **Options cheat
 sheet** at the end of this block for a short summary, then the subsections and
 diagrams for each message kind.
 
+#### TF auto-resolution (applies to every topic type below)
+
+All TF lookups in this command — both the `--from` → `--to` chain for TF
+topics and the `header.frame_id` → `--from` remap for pose / odometry
+topics — are resolved against a single TF buffer built from **every**
+`tf2_msgs/msg/TFMessage` topic in the bag (dynamic `/tf` and any topic
+whose name ends with `tf_static` are merged automatically; static topics
+are inserted as static transforms, the rest as dynamic).
+
+Multi-hop paths through the TF tree are fine: `--from` and `--to` (or
+`header.frame_id` and `--from`) do **not** need to be directly connected
+by a single TF edge. The only requirement is that some TF path linking
+them exists in the bag at the relevant time. For example, a chain like
+`map → odom → base_link → sensor` is resolved transparently when you ask
+for `--from map --to sensor`.
+
 #### Quick mental model
 
 - **`--from`**: For TF topics, the **reference frame** used in
