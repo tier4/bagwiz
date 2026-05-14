@@ -73,6 +73,8 @@ public:
 
   MessageInitGuard(const MessageInitGuard &) = delete;
   MessageInitGuard & operator=(const MessageInitGuard &) = delete;
+  MessageInitGuard(MessageInitGuard &&) = delete;
+  MessageInitGuard & operator=(MessageInitGuard &&) = delete;
   void release() noexcept { members_ = nullptr; }
 
 private:
@@ -91,6 +93,11 @@ public:
     }
   }
   ~SerializedMessageRmw() { rmw_serialized_message_fini(&msg_); }
+
+  SerializedMessageRmw(const SerializedMessageRmw &) = delete;
+  SerializedMessageRmw & operator=(const SerializedMessageRmw &) = delete;
+  SerializedMessageRmw(SerializedMessageRmw &&) = delete;
+  SerializedMessageRmw & operator=(SerializedMessageRmw &&) = delete;
 
   rmw_serialized_message_t & get() noexcept { return msg_; }
 

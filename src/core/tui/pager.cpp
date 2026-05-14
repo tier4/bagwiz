@@ -29,6 +29,21 @@ namespace
 // run() invocation so with_line_input() can find it without growing
 // the public API surface. Only one pager runs at a time.
 TerminalRawMode * g_active_raw_mode = nullptr;
+
+// RAII guard: publishes a TerminalRawMode pointer to g_active_raw_mode
+// for the lifetime of the scope and clears it on destruction. Without
+// this, an exception escaping the pager loop would leave the global
+// pointing at a destroyed stack object.
+class ActiveRawModeScope
+{
+public:
+  explicit ActiveRawModeScope(TerminalRawMode * raw_mode) noexcept { g_active_raw_mode = raw_mode; }
+  ~ActiveRawModeScope() { g_active_raw_mode = nullptr; }
+  ActiveRawModeScope(const ActiveRawModeScope &) = delete;
+  ActiveRawModeScope & operator=(const ActiveRawModeScope &) = delete;
+  ActiveRawModeScope(ActiveRawModeScope &&) = delete;
+  ActiveRawModeScope & operator=(ActiveRawModeScope &&) = delete;
+};
 }  // namespace
 
 NavKey to_nav_key(KeyEvent ev) noexcept
@@ -120,7 +135,7 @@ int ScrollablePager::run(
   if (!raw_mode.active()) {
     return 1;
   }
-  g_active_raw_mode = &raw_mode;
+  ActiveRawModeScope active_raw_mode_scope(&raw_mode);
 
   ScreenScopeConfig sc{};
   sc.hide_cursor = cfg_.hide_cursor;
@@ -210,7 +225,6 @@ int ScrollablePager::run(
     }
   }
 
-  g_active_raw_mode = nullptr;
   return 0;
 }
 
