@@ -351,9 +351,11 @@ private:
         "Topic to sample (e.g. /tf, /localization/pose). Type selects processing; "
         "TF message topics pick up *tf_static from the bag automatically.")
       ->required();
-    sub->add_option(
-      "-f,--format", dump_args_.format,
-      "Output format (tum). When omitted, inferred from the output file extension (e.g. .tum).");
+    sub
+      ->add_option(
+        "-f,--format", dump_args_.format,
+        "Output format (tum). When omitted, inferred from the output file extension (e.g. .tum).")
+      ->check(CLI::IsMember({kFormatTum}));
     sub->add_option(
       "--from", dump_args_.from_frame,
       "Reference frame for output poses. Required for tf2_msgs/msg/TFMessage. For "
@@ -852,17 +854,18 @@ private:
     sub->add_option(
       "-o,--output", join_args_.output_path,
       "Output bag path. When omitted, <input> is replaced in place via a sibling tmp directory.");
-    sub->add_option(
-      "-f,--format", join_args_.format,
-      "Trajectory format id. When omitted, inferred from the trajectory file's extension.");
+    sub
+      ->add_option(
+        "-f,--format", join_args_.format,
+        "Trajectory format id. When omitted, inferred from the trajectory file's extension.")
+      ->check(CLI::IsMember({kFormatTum}));
     sub
       ->add_option(
         "-t,--msg-type", join_args_.msg_type,
         "ROS message type to publish under <topic>. Only 'tf' (tf2_msgs/msg/TFMessage) is "
         "supported today.")
       ->transform(
-        CLI::CheckedTransformer(
-          std::map<std::string, JoinMsgType>{{"tf", JoinMsgType::kTf}}, CLI::ignore_case));
+        CLI::CheckedTransformer(std::map<std::string, JoinMsgType>{{"tf", JoinMsgType::kTf}}));
     sub->add_option(
       "--from", join_args_.from_frame,
       "Parent frame id. Required for --msg-type tf; mapped to TransformStamped.header.frame_id.");
