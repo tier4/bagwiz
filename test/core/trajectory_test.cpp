@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -17,6 +18,8 @@
 namespace
 {
 
+using bagwiz::core::pose_to_transform_stamped;
+using bagwiz::core::read_tum;
 using bagwiz::core::TrajectoryPose;
 using bagwiz::core::write_tum;
 
@@ -97,6 +100,132 @@ TEST(WriteTum, RestoresStreamFormatting)
   os.clear();
   os << 0.1;
   EXPECT_EQ(os.str(), before);
+}
+
+TEST(ReadTum, ParsesEightFieldLines)
+{
+  std::istringstream is(
+    "1.500000000 1.0 2.0 3.0 0.0 0.0 0.0 1.0\n"
+    "2.750000000 0.0 0.0 0.0 0.0 0.0 0.707106781 0.707106781\n");
+  const auto r = read_tum(is);
+  ASSERT_EQ(r.poses.size(), 2U);
+  EXPECT_EQ(r.skipped_lines, 0);
+  EXPECT_EQ(r.poses[0].timestamp_ns, 1'500'000'000LL);
+  EXPECT_DOUBLE_EQ(r.poses[0].tx, 1.0);
+  EXPECT_DOUBLE_EQ(r.poses[0].ty, 2.0);
+  EXPECT_DOUBLE_EQ(r.poses[0].tz, 3.0);
+  EXPECT_DOUBLE_EQ(r.poses[0].qw, 1.0);
+  EXPECT_EQ(r.poses[1].timestamp_ns, 2'750'000'000LL);
+  EXPECT_DOUBLE_EQ(r.poses[1].qz, 0.707106781);
+  EXPECT_DOUBLE_EQ(r.poses[1].qw, 0.707106781);
+}
+
+TEST(ReadTum, RestoresNanosecondsBitExactAtModernEpochs)
+{
+  // Round-trip a year-2026-magnitude timestamp through write_tum -> read_tum
+  // and verify the integer nanoseconds survive without ULP drift.
+  const std::int64_t sec = 1773211197LL;
+  const std::int64_t nsec = 937418279LL;
+  const std::int64_t ts_ns = sec * 1'000'000'000LL + nsec;
+  const std::vector<TrajectoryPose> in = {{ts_ns, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0}};
+
+  std::ostringstream os;
+  write_tum(os, in);
+
+  std::istringstream is(os.str());
+  const auto r = read_tum(is);
+  ASSERT_EQ(r.poses.size(), 1U);
+  EXPECT_EQ(r.poses[0].timestamp_ns, ts_ns);
+}
+
+TEST(ReadTum, SkipsEmptyAndCommentAndMalformedLines)
+{
+  std::istringstream is(
+    "\n"
+    "   \n"
+    "# this is a comment\n"
+    "  # indented comment\n"
+    "1.0 only-one-field\n"
+    "2.0 1 2 3 0 0 0 1\n"           // good
+    "not-a-number 1 2 3 0 0 0 1\n"  // bad timestamp
+    "3.0 1 2 3 0 0 0 abc\n"         // bad qw
+    "4.0 1 2 3 0 0 0 1\n");         // good
+  const auto r = read_tum(is);
+  ASSERT_EQ(r.poses.size(), 2U);
+  EXPECT_EQ(r.skipped_lines, 3);
+  EXPECT_EQ(r.poses[0].timestamp_ns, 2'000'000'000LL);
+  EXPECT_EQ(r.poses[1].timestamp_ns, 4'000'000'000LL);
+}
+
+TEST(ReadTum, AcceptsTimestampWithoutFraction)
+{
+  std::istringstream is("42 1 2 3 0 0 0 1\n");
+  const auto r = read_tum(is);
+  ASSERT_EQ(r.poses.size(), 1U);
+  EXPECT_EQ(r.poses[0].timestamp_ns, 42LL * 1'000'000'000LL);
+}
+
+TEST(ReadTum, RightPadsShortFractionalPartTo9Digits)
+{
+  // "1.5" -> 1.500000000 s -> 1'500'000'000 ns.
+  std::istringstream is("1.5 0 0 0 0 0 0 1\n");
+  const auto r = read_tum(is);
+  ASSERT_EQ(r.poses.size(), 1U);
+  EXPECT_EQ(r.poses[0].timestamp_ns, 1'500'000'000LL);
+}
+
+TEST(ReadTum, RejectsScientificNotationAndOver9DigitFraction)
+{
+  std::istringstream is(
+    "1e9 0 0 0 0 0 0 1\n"
+    "1.1234567890 0 0 0 0 0 0 1\n");
+  const auto r = read_tum(is);
+  EXPECT_TRUE(r.poses.empty());
+  EXPECT_EQ(r.skipped_lines, 2);
+}
+
+TEST(ReadTum, EmitsEmptyResultOnEmptyStream)
+{
+  std::istringstream is("");
+  const auto r = read_tum(is);
+  EXPECT_TRUE(r.poses.empty());
+  EXPECT_EQ(r.skipped_lines, 0);
+}
+
+TEST(PoseToTransformStamped, CopiesAllFieldsAndAssignsFrames)
+{
+  TrajectoryPose p;
+  p.timestamp_ns = 1'500'000'250LL;  // 1.500000250 s
+  p.tx = 10.0;
+  p.ty = 20.0;
+  p.tz = 30.0;
+  p.qx = 0.1;
+  p.qy = 0.2;
+  p.qz = 0.3;
+  p.qw = 0.9273618495495704;  // unit quaternion when combined with (0.1, 0.2, 0.3)
+
+  const auto ts = pose_to_transform_stamped(p, "map", "base_link");
+  EXPECT_EQ(ts.header.stamp.sec, 1);
+  EXPECT_EQ(ts.header.stamp.nanosec, 500'000'250U);
+  EXPECT_EQ(ts.header.frame_id, "map");
+  EXPECT_EQ(ts.child_frame_id, "base_link");
+  EXPECT_DOUBLE_EQ(ts.transform.translation.x, 10.0);
+  EXPECT_DOUBLE_EQ(ts.transform.translation.y, 20.0);
+  EXPECT_DOUBLE_EQ(ts.transform.translation.z, 30.0);
+  EXPECT_DOUBLE_EQ(ts.transform.rotation.x, 0.1);
+  EXPECT_DOUBLE_EQ(ts.transform.rotation.y, 0.2);
+  EXPECT_DOUBLE_EQ(ts.transform.rotation.z, 0.3);
+  EXPECT_DOUBLE_EQ(ts.transform.rotation.w, 0.9273618495495704);
+}
+
+TEST(PoseToTransformStamped, HandlesYear2026EpochWithoutDrift)
+{
+  TrajectoryPose p;
+  p.timestamp_ns = 1773211197LL * 1'000'000'000LL + 937418279LL;
+  p.qw = 1.0;
+  const auto ts = pose_to_transform_stamped(p, "a", "b");
+  EXPECT_EQ(ts.header.stamp.sec, 1773211197);
+  EXPECT_EQ(ts.header.stamp.nanosec, 937418279U);
 }
 
 }  // namespace

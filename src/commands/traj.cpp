@@ -8,9 +8,14 @@
 
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
+#include "bagwiz/core/bag_copy.hpp"
+#include "bagwiz/core/bag_inplace.hpp"
+#include "bagwiz/core/bag_topic_plan.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/tf_chain.hpp"
+#include "bagwiz/core/tf_message_wire.hpp"
+#include "bagwiz/core/tf_static_injector.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/core/trajectory.hpp"
 #include "bagwiz/io/bag_io.hpp"
@@ -31,12 +36,17 @@
 #include <cctype>
 #include <chrono>
 #include <cinttypes>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <map>
 #include <memory>
 #include <optional>
+#include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -278,6 +288,7 @@ public:
   {
     app.require_subcommand(1);
     configure_dump(app);
+    configure_join(app);
   }
 
   int run() override
@@ -285,6 +296,8 @@ public:
     switch (selected_) {
       case Subcommand::kDump:
         return run_dump();
+      case Subcommand::kJoin:
+        return run_join();
       case Subcommand::kNone:
         BAGWIZ_LOG_ERROR(kLogger, "no subcommand selected");
         return 1;
@@ -293,8 +306,10 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kDump };
+  enum class Subcommand { kNone, kDump, kJoin };
   Subcommand selected_ = Subcommand::kNone;
+
+  enum class JoinMsgType { kTf };
 
   struct DumpArgs
   {
@@ -305,6 +320,19 @@ private:
     std::optional<std::string> from_frame;
     std::optional<std::string> to_frame;
   } dump_args_;
+
+  struct JoinArgs
+  {
+    std::filesystem::path input_path;
+    std::filesystem::path traj_path;
+    std::string topic;
+    std::optional<std::filesystem::path> output_path;
+    std::string format;
+    JoinMsgType msg_type = JoinMsgType::kTf;
+    std::optional<std::string> from_frame;
+    std::optional<std::string> to_frame;
+    bool force = false;
+  } join_args_;
 
   void configure_dump(CLI::App & app)
   {
@@ -757,6 +785,356 @@ private:
       "nav_msgs/msg/Odometry.",
       args.topic.c_str(), topic_info->type.c_str());
     return 1;
+  }
+
+  // Resolve the trajectory file's format. --format wins; otherwise pull
+  // it from the input file's extension. The function is structured so
+  // adding new formats does not require touching the caller.
+  static bool resolve_join_format(
+    const std::string & format_opt, const std::filesystem::path & traj_path, std::string & out)
+  {
+    if (!format_opt.empty()) {
+      if (format_opt != kFormatTum) {
+        BAGWIZ_LOG_ERROR(
+          kLogger, "Unsupported trajectory format '%s'. Supported: %s.", format_opt.c_str(),
+          kFormatTum);
+        return false;
+      }
+      out = format_opt;
+      return true;
+    }
+
+    const std::string ext = output_path_extension_lower(traj_path);
+    if (ext.empty()) {
+      BAGWIZ_LOG_ERROR(
+        kLogger,
+        "Trajectory format is not set (-f/--format) and the trajectory path '%s' has no usable "
+        "extension; use e.g. '*.tum' or pass --format %s.",
+        traj_path.c_str(), kFormatTum);
+      return false;
+    }
+    if (ext == kFormatTum) {
+      out = kFormatTum;
+      return true;
+    }
+
+    BAGWIZ_LOG_ERROR(
+      kLogger,
+      "Trajectory format is not set (-f/--format) and extension '.%s' is not recognized; "
+      "use '*.tum' or pass --format %s.",
+      ext.c_str(), kFormatTum);
+    return false;
+  }
+
+  void configure_join(CLI::App & app)
+  {
+    auto * sub = app.add_subcommand(
+      "join",
+      "Embed a trajectory file into a bag as a new topic. Each row in the trajectory becomes "
+      "one ROS message published on <topic>; both the message's receive time and the in-message "
+      "header.stamp are taken from the trajectory's per-row timestamp.");
+    sub->add_option("input", join_args_.input_path, "Bag path (file or directory)")
+      ->required()
+      ->check(CLI::ExistingPath);
+    sub
+      ->add_option(
+        "traj_file", join_args_.traj_path,
+        "Trajectory file. Format is selected by -f/--format, or inferred from the file extension "
+        "when -f is omitted.")
+      ->required()
+      ->check(CLI::ExistingFile);
+    sub
+      ->add_option(
+        "topic", join_args_.topic,
+        "Topic name to embed the trajectory under. When the topic already exists in <input>, "
+        "pass --force to drop its existing messages and replace them.")
+      ->required();
+    sub->add_option(
+      "-o,--output", join_args_.output_path,
+      "Output bag path. When omitted, <input> is replaced in place via a sibling tmp directory.");
+    sub->add_option(
+      "-f,--format", join_args_.format,
+      "Trajectory format id. When omitted, inferred from the trajectory file's extension.");
+    sub
+      ->add_option(
+        "-t,--msg-type", join_args_.msg_type,
+        "ROS message type to publish under <topic>. Only 'tf' (tf2_msgs/msg/TFMessage) is "
+        "supported today.")
+      ->transform(
+        CLI::CheckedTransformer(
+          std::map<std::string, JoinMsgType>{{"tf", JoinMsgType::kTf}}, CLI::ignore_case));
+    sub->add_option(
+      "--from", join_args_.from_frame,
+      "Parent frame id. Required for --msg-type tf; mapped to TransformStamped.header.frame_id.");
+    sub->add_option(
+      "--to", join_args_.to_frame,
+      "Child frame id. Required for --msg-type tf; mapped to TransformStamped.child_frame_id.");
+    sub
+      ->add_flag(
+        "--force", join_args_.force,
+        "Overwrite when <topic> already carries messages in <input>; otherwise the command "
+        "aborts.")
+      ->default_val(false);
+    sub->callback([this]() { selected_ = Subcommand::kJoin; });
+  }
+
+  // Read the trajectory file into a vector of TransformStamped using
+  // the resolved format. Dispatch by `resolved_format`; new formats
+  // hook in here without changing the caller.
+  static bool load_trajectory_as_transforms(
+    const JoinArgs & args, const std::string & resolved_format,
+    std::vector<geometry_msgs::msg::TransformStamped> & out_transforms,
+    std::vector<std::int64_t> & out_stamps_ns)
+  {
+    if (resolved_format != kFormatTum) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "Internal: resolved trajectory format '%s' is not handled.",
+        resolved_format.c_str());
+      return false;
+    }
+
+    std::ifstream in(args.traj_path);
+    if (!in) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "Failed to open trajectory file '%s' for reading.", args.traj_path.c_str());
+      return false;
+    }
+    const auto parsed = core::read_tum(in);
+    if (parsed.poses.empty()) {
+      BAGWIZ_LOG_ERROR(
+        kLogger,
+        "Trajectory file '%s' contains no valid TUM rows (skipped %" PRId64 " malformed line(s)).",
+        args.traj_path.c_str(), parsed.skipped_lines);
+      return false;
+    }
+    if (parsed.skipped_lines > 0) {
+      BAGWIZ_LOG_WARN(
+        kLogger, "Trajectory file '%s': skipped %" PRId64 " malformed line(s).",
+        args.traj_path.c_str(), parsed.skipped_lines);
+    }
+
+    out_transforms.reserve(parsed.poses.size());
+    out_stamps_ns.reserve(parsed.poses.size());
+    for (const auto & p : parsed.poses) {
+      out_transforms.push_back(
+        core::pose_to_transform_stamped(p, *args.from_frame, *args.to_frame));
+      out_stamps_ns.push_back(p.timestamp_ns);
+    }
+    return true;
+  }
+
+  // Execute one full pass: open reader, plan the topic conflict,
+  // declare topics on the writer, stream-copy with suppression, append
+  // the injected payloads. Used for both in-place and explicit-output
+  // modes; the writer factory is parameterised so write_bag_inplace can
+  // hand in a tmp path.
+  static int execute_join_pass(
+    const JoinArgs & args, std::span<const geometry_msgs::msg::TransformStamped> transforms,
+    std::span<const std::int64_t> stamps_ns,
+    const std::function<std::unique_ptr<io::BagWriter>()> & open_writer)
+  {
+    constexpr const char * kExpectedType = "tf2_msgs/msg/TFMessage";
+
+    std::unique_ptr<io::BagReader> reader;
+    try {
+      reader = io::open_read(args.input_path);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+      return 1;
+    }
+    reader->populate_schemas();
+
+    io::BagReader::Stats stats;
+    try {
+      stats = reader->compute_stats();
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "Failed to compute stats on %s: %s", args.input_path.c_str(), e.what());
+      return 1;
+    }
+
+    // Snapshot the input's topic list; the reader's span is invalidated
+    // by subsequent operations.
+    const std::vector<io::TopicInfo> input_topics(reader->topics().begin(), reader->topics().end());
+
+    std::int64_t existing_count = 0;
+    if (auto it = stats.per_topic.find(args.topic); it != stats.per_topic.end()) {
+      existing_count = it->second;
+    }
+
+    const auto decision =
+      core::decide_topic_write(input_topics, args.topic, kExpectedType, existing_count, args.force);
+    switch (decision.action) {
+      case core::TopicWriteAction::kConflictAbort:
+      case core::TopicWriteAction::kTypeMismatch:
+        BAGWIZ_LOG_ERROR(kLogger, "%s", decision.reason.c_str());
+        return 1;
+      case core::TopicWriteAction::kDeclareAndSuppress:
+        BAGWIZ_LOG_WARN(kLogger, "%s", decision.reason.c_str());
+        break;
+      case core::TopicWriteAction::kDeclareNew:
+      case core::TopicWriteAction::kDeclareKeep:
+        // Quiet — these are the expected paths.
+        break;
+    }
+
+    std::unique_ptr<io::BagWriter> writer;
+    try {
+      writer = open_writer();
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to open output writer: %s", e.what());
+      return 1;
+    }
+
+    // Declare every existing topic from the input. When the action is
+    // kDeclareNew, also declare a freshly-synthesised TopicInfo for
+    // <topic>. When kDeclareKeep / kDeclareAndSuppress, the matching
+    // input topic is already in the declare loop.
+    for (const auto & t : input_topics) {
+      try {
+        writer->declare_topic(t);
+      } catch (const std::exception & e) {
+        BAGWIZ_LOG_ERROR(kLogger, "declare_topic failed for '%s': %s", t.name.c_str(), e.what());
+        return 1;
+      }
+    }
+    if (decision.action == core::TopicWriteAction::kDeclareNew) {
+      try {
+        writer->declare_topic(core::make_tf_message_topic_info(args.topic));
+      } catch (const std::exception & e) {
+        BAGWIZ_LOG_ERROR(
+          kLogger, "declare_topic failed for new topic '%s': %s", args.topic.c_str(), e.what());
+        return 1;
+      }
+    }
+
+    std::unordered_set<std::string> suppress;
+    if (decision.action == core::TopicWriteAction::kDeclareAndSuppress) {
+      suppress.insert(args.topic);
+    }
+
+    core::BagCopyCounts counts;
+    try {
+      counts = core::bag_copy_filtered(*reader, *writer, suppress);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "Stream copy from %s failed: %s", args.input_path.c_str(), e.what());
+      return 1;
+    }
+
+    std::uint64_t injected = 0;
+    for (std::size_t i = 0; i < transforms.size(); ++i) {
+      std::vector<std::byte> payload;
+      try {
+        payload = core::serialize_tf_message(
+          std::span<const geometry_msgs::msg::TransformStamped>(transforms.data() + i, 1));
+      } catch (const std::exception & e) {
+        BAGWIZ_LOG_ERROR(kLogger, "Failed to serialize TFMessage for sample #%zu: %s", i, e.what());
+        return 1;
+      }
+      try {
+        writer->write(
+          args.topic, stamps_ns[i], std::span<const std::byte>(payload.data(), payload.size()));
+      } catch (const std::exception & e) {
+        BAGWIZ_LOG_ERROR(
+          kLogger, "Failed to write TFMessage on '%s' at stamp %" PRId64 ": %s", args.topic.c_str(),
+          stamps_ns[i], e.what());
+        return 1;
+      }
+      ++injected;
+    }
+
+    try {
+      writer->close();
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "Writer close() failed: %s", e.what());
+      return 1;
+    }
+
+    BAGWIZ_LOG_INFO(
+      kLogger,
+      "traj join: copied %" PRIu64 " message(s), suppressed %" PRIu64 ", injected %" PRIu64
+      " TFMessage(s) on '%s'.",
+      counts.copied, counts.suppressed, injected, args.topic.c_str());
+    return 0;
+  }
+
+  int run_join()
+  {
+    const auto & args = join_args_;
+
+    // 1. Validate type-specific arg constraints. Today only --msg-type tf
+    //    is supported, and it requires --from / --to as distinct non-empty
+    //    frame ids.
+    if (args.msg_type == JoinMsgType::kTf) {
+      if (
+        !args.from_frame.has_value() || !args.to_frame.has_value() || args.from_frame->empty() ||
+        args.to_frame->empty()) {
+        BAGWIZ_LOG_ERROR(
+          kLogger,
+          "--msg-type tf requires both --from (parent frame_id) and --to (child_frame_id).");
+        return 1;
+      }
+      if (*args.from_frame == *args.to_frame) {
+        BAGWIZ_LOG_ERROR(
+          kLogger, "--from and --to must be distinct frames; both were '%s'.",
+          args.from_frame->c_str());
+        return 1;
+      }
+    }
+
+    // 2. Resolve the trajectory format.
+    std::string resolved_format;
+    if (!resolve_join_format(args.format, args.traj_path, resolved_format)) {
+      return 1;
+    }
+
+    // 3. Read the trajectory into TransformStamped[] + stamp[].
+    std::vector<geometry_msgs::msg::TransformStamped> transforms;
+    std::vector<std::int64_t> stamps_ns;
+    if (!load_trajectory_as_transforms(args, resolved_format, transforms, stamps_ns)) {
+      return 1;
+    }
+
+    // 4. Pick the writer factory based on -o presence.
+    auto make_writer = [](const std::filesystem::path & out_path) {
+      io::CreateOptions copts;
+      copts.format = io::Format::Auto;
+      copts.layout = io::Layout::Auto;
+      copts.mcap_compression = "none";
+      return io::open_write(out_path, copts);
+    };
+
+    if (args.output_path.has_value()) {
+      return execute_join_pass(
+        args, transforms, stamps_ns, [&]() { return make_writer(*args.output_path); });
+    }
+
+    // In-place mode: hand off to write_bag_inplace, which produces the
+    // tmp path. The closure runs execute_join_pass against the tmp;
+    // because execute_join_pass returns int rather than throwing on
+    // command-level errors, we surface non-zero exits via a captured
+    // status and translate them into a runtime_error so the in-place
+    // helper aborts the swap.
+    int pass_status = 0;
+    try {
+      core::write_bag_inplace(args.input_path, [&](const std::filesystem::path & tmp) {
+        pass_status =
+          execute_join_pass(args, transforms, stamps_ns, [&]() { return make_writer(tmp); });
+        if (pass_status != 0) {
+          throw std::runtime_error("traj join: pass failed; aborting in-place swap");
+        }
+      });
+    } catch (const std::exception & e) {
+      // cppcheck-suppress knownConditionTrueFalse  // assigned inside the lambda above
+      if (pass_status != 0) {
+        // The pass already logged the specific error.
+        return pass_status;
+      }
+      BAGWIZ_LOG_ERROR(kLogger, "In-place swap failed: %s", e.what());
+      return 1;
+    }
+    return 0;
   }
 };
 

@@ -103,7 +103,11 @@ add_library(bagwiz_core
   src/core/yaml_msg_stamp_sync.cpp
   src/core/yaml_msg_validate.cpp
   src/core/terminal_input.cpp
+  src/core/bag_copy.cpp
+  src/core/bag_inplace.cpp
+  src/core/bag_topic_plan.cpp
   src/core/tf_chain.cpp
+  src/core/tf_message_wire.cpp
   src/core/tf_static_injector.cpp
   src/core/tf_value_extract.cpp
   src/core/topic_pattern.cpp
@@ -256,6 +260,18 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_tf_static_injector_test test/core/tf_static_injector_test.cpp)
   target_link_libraries(bagwiz_tf_static_injector_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_tf_message_wire_test test/core/tf_message_wire_test.cpp)
+  target_link_libraries(bagwiz_tf_message_wire_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_bag_topic_plan_test test/core/bag_topic_plan_test.cpp)
+  target_link_libraries(bagwiz_bag_topic_plan_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_bag_copy_test test/core/bag_copy_test.cpp)
+  target_link_libraries(bagwiz_bag_copy_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_bag_inplace_test test/core/bag_inplace_test.cpp)
+  target_link_libraries(bagwiz_bag_inplace_test bagwiz_core)
 
   ament_add_gtest(bagwiz_tf_rotation_test test/core/tf_rotation_test.cpp)
   target_link_libraries(bagwiz_tf_rotation_test bagwiz_core)

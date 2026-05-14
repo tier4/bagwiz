@@ -1,11 +1,11 @@
 # `bagwiz traj`
 
-Trajectory-shaped operations on a ROS 2 rosbag. Currently ships a single
-subcommand:
+Trajectory-shaped operations on a ROS 2 rosbag. Subcommands:
 
 | Subcommand                  | Purpose                                                         |
 | --------------------------- | --------------------------------------------------------------- |
 | [`dump`](#bagwiz-traj-dump) | Dump a sampled trajectory to a TUM file from a supported topic. |
+| [`join`](#bagwiz-traj-join) | Embed a trajectory file into a bag as a new TF message topic.   |
 
 ROS 1 `*.bag` inputs are not supported — convert them first with
 [`bagwiz convert 1to2`](convert.md#bagwiz-convert-1to2).
@@ -232,3 +232,106 @@ bagwiz traj dump capture.mcap odom.tum /odom --from map --to base_link
 | ---- | ----------------------------------------------------- |
 | `0`  | At least one pose was written to the output file.     |
 | `1`  | Any of the error conditions above, or an I/O failure. |
+
+---
+
+## `bagwiz traj join`
+
+Embed an external trajectory file into a rosbag as a new topic. The
+trajectory format is selected via `-f/--format` (or inferred from the
+file extension), and the destination message type is selected via
+`-t/--msg-type` (currently `tf2_msgs/msg/TFMessage`). Each row in the
+trajectory becomes one message, with the row's timestamp used for both
+the message's receive time and the in-message `header.stamp`.
+
+### Usage
+
+```text
+bagwiz traj join [OPTIONS] <input> <traj_file> <topic>
+```
+
+### Positional arguments
+
+| Name        | Description                                                                                 |
+| ----------- | ------------------------------------------------------------------------------------------- |
+| `input`     | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`).                                   |
+| `traj_file` | Trajectory file. Format is selected by `-f/--format`, or inferred from the file extension.  |
+| `topic`     | Topic name to publish the trajectory under. May already exist in `<input>` (see `--force`). |
+
+### Options
+
+| Flag                   | Default      | Description                                                                                                                                 |
+| ---------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-o`, `--output <OUT>` | _(unset)_    | Write the result to a new bag at `<OUT>`. When omitted, `<input>` is replaced in place via a sibling tmp directory.                         |
+| `-f`, `--format <F>`   | _(empty)_    | Trajectory format id. When omitted, inferred from the trajectory file extension. `-f` always wins over the extension when both are present. |
+| `-t`, `--msg-type <T>` | `tf`         | ROS message type to publish under `<topic>`. Currently only `tf` (= `tf2_msgs/msg/TFMessage`) is accepted.                                  |
+| `--from <FRAME>`       | _(required)_ | For `--msg-type tf`: parent frame id, written to `TransformStamped.header.frame_id`.                                                        |
+| `--to <FRAME>`         | _(required)_ | For `--msg-type tf`: child frame id, written to `TransformStamped.child_frame_id`.                                                          |
+| `--force`              | `false`      | Allow overwriting an existing `<topic>` in `<input>`: existing messages are dropped from the output and replaced with the trajectory.       |
+
+### Behavior
+
+1. The trajectory is read into memory using the resolved format's
+   parser. Parsers preserve the original nanosecond timestamps without
+   going through a `double` where possible, so year-2026-magnitude
+   stamps round-trip bit-exactly.
+2. Each row becomes a `TransformStamped` with `header.stamp` set from
+   the row's timestamp, `header.frame_id = --from`, and
+   `child_frame_id = --to`.
+3. The destination bag's topic list and per-topic message counts are
+   inspected. The result is one of:
+   - `<topic>` is absent → declared new with a freshly-built schema for
+     `tf2_msgs/msg/TFMessage`.
+   - `<topic>` exists and has zero messages → its declaration is kept
+     and the trajectory is appended.
+   - `<topic>` exists with messages and `--force` is **unset** → the
+     command aborts with a message asking for `--force`.
+   - `<topic>` exists with messages and `--force` is **set** → existing
+     payloads are dropped during stream-copy and replaced with the
+     trajectory.
+   - `<topic>` exists with a different message type → error (cannot be
+     overridden with `--force`).
+4. The output bag is written through the same writer used by
+   `bagwiz convert`. Every other topic from `<input>` is copied
+   through unchanged (timestamp and payload preserved).
+5. With `-o`, the output lands at the explicit path. Without `-o`,
+   a sibling tmp path is built, populated, and then atomically swapped
+   into the input's location (`remove_all` + `rename`). A process
+   crash between the two filesystem operations would leave the input
+   missing — use `-o` when that is not acceptable.
+
+### Examples
+
+```bash
+# Replace input.mcap in place: embed traj.tum on /trajectory/tf
+# (map → base_link).
+bagwiz traj join input.mcap traj.tum /trajectory/tf \
+  --from map --to base_link
+
+# Same content, but write to a new bag instead of replacing the input.
+bagwiz traj join input.mcap traj.tum /trajectory/tf \
+  --from map --to base_link -o output.mcap
+
+# Force overwrite when /trajectory/tf already carries messages.
+bagwiz traj join input.mcap traj.tum /trajectory/tf \
+  --from map --to base_link --force
+```
+
+### Errors
+
+| Situation                                                      | Result                                |
+| -------------------------------------------------------------- | ------------------------------------- |
+| `--msg-type tf` but `--from` or `--to` missing / empty / equal | Error.                                |
+| `-f` set to an unsupported format id                           | Error.                                |
+| No `-f` and the trajectory file has no recognised extension    | Error.                                |
+| Trajectory file has no valid rows for the resolved format      | Error.                                |
+| `<topic>` exists in `<input>` with another type                | Error (not relaxable with `--force`). |
+| `<topic>` exists with messages and `--force` is unset          | Error.                                |
+| Writer / serializer / filesystem failure                       | Error.                                |
+
+### Exit status
+
+| Code | Meaning                                                         |
+| ---- | --------------------------------------------------------------- |
+| `0`  | Output bag written with the trajectory injected on `<topic>`.   |
+| `1`  | Any of the error conditions above, or an I/O failure mid-write. |

@@ -19,6 +19,7 @@
 #include "bagwiz/core/tf_static_injector.hpp"
 
 #include "bagwiz/core/decoder/decoder.hpp"
+#include "bagwiz/core/tf_message_wire.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
@@ -36,35 +37,6 @@ namespace
 {
 
 constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
-
-// Concatenated ros2msg schema for tf2_msgs/msg/TFMessage. Mirrors the
-// fixture used in test/core/cdr_walker/walker_test.cpp.
-constexpr const char * kTfMessageSchema =
-  "geometry_msgs/TransformStamped[] transforms\n"
-  "================================================================================\n"
-  "MSG: geometry_msgs/TransformStamped\n"
-  "std_msgs/Header header\n"
-  "string child_frame_id\n"
-  "Transform transform\n"
-  "================================================================================\n"
-  "MSG: std_msgs/Header\n"
-  "builtin_interfaces/Time stamp\n"
-  "string frame_id\n"
-  "================================================================================\n"
-  "MSG: geometry_msgs/Transform\n"
-  "Vector3 translation\n"
-  "Quaternion rotation\n"
-  "================================================================================\n"
-  "MSG: geometry_msgs/Vector3\n"
-  "float64 x\n"
-  "float64 y\n"
-  "float64 z\n"
-  "================================================================================\n"
-  "MSG: geometry_msgs/Quaternion\n"
-  "float64 x\n"
-  "float64 y\n"
-  "float64 z\n"
-  "float64 w\n";
 
 geometry_msgs::msg::TransformStamped make_edge(
   const std::string & parent, const std::string & child, double tx, std::int32_t sec = 0,
@@ -114,7 +86,7 @@ std::vector<geometry_msgs::msg::TransformStamped> decode_tf_payload(
   info.type = kTfMessageType;
   info.serialization_format = "cdr";
   info.schema_encoding = "ros2msg";
-  info.schema_text = kTfMessageSchema;
+  info.schema_text = bagwiz::core::kTfMessageWireSchema;
   auto open = bagwiz::core::decoder::open_decoder(info);
   if (!open.ok()) {
     return {};
@@ -171,7 +143,7 @@ TEST_F(TfStaticInjectorTest, CollectFromBagDedupesLastWriterWins)
   topic.type = kTfMessageType;
   topic.serialization_format = "cdr";
   topic.schema_encoding = "ros2msg";
-  topic.schema_text = kTfMessageSchema;
+  topic.schema_text = bagwiz::core::kTfMessageWireSchema;
 
   std::vector<geometry_msgs::msg::TransformStamped> first;
   first.push_back(make_edge("map", "odom", 1.0));
@@ -228,7 +200,7 @@ TEST_F(TfStaticInjectorTest, CollectFromBagSkipsMalformedEdges)
   topic.type = kTfMessageType;
   topic.serialization_format = "cdr";
   topic.schema_encoding = "ros2msg";
-  topic.schema_text = kTfMessageSchema;
+  topic.schema_text = bagwiz::core::kTfMessageWireSchema;
 
   std::vector<geometry_msgs::msg::TransformStamped> msg;
   msg.push_back(make_edge("map", "odom", 1.0));
@@ -265,7 +237,7 @@ TEST_F(TfStaticInjectorTest, CollectFromBagReturnsEmptyWhenNoStaticTopic)
   non_static.type = kTfMessageType;
   non_static.serialization_format = "cdr";
   non_static.schema_encoding = "ros2msg";
-  non_static.schema_text = kTfMessageSchema;
+  non_static.schema_text = bagwiz::core::kTfMessageWireSchema;
 
   std::vector<geometry_msgs::msg::TransformStamped> msg;
   msg.push_back(make_edge("map", "odom", 1.0));
