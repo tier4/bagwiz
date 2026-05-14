@@ -62,6 +62,7 @@ namespace
 
 constexpr const char * kLogger = "bagwiz.cmd.traj";
 constexpr const char * kFormatTum = "tum";
+constexpr const char * kJoinMsgTypeTf = "tf";
 constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
 constexpr const char * kPoseStampedType = "geometry_msgs/msg/PoseStamped";
 constexpr const char * kPoseWithCovarianceStampedType =
@@ -309,8 +310,6 @@ private:
   enum class Subcommand { kNone, kDump, kJoin };
   Subcommand selected_ = Subcommand::kNone;
 
-  enum class JoinMsgType { kTf };
-
   struct DumpArgs
   {
     std::filesystem::path input_path;
@@ -328,7 +327,7 @@ private:
     std::string topic;
     std::optional<std::filesystem::path> output_path;
     std::string format;
-    JoinMsgType msg_type = JoinMsgType::kTf;
+    std::string msg_type = kJoinMsgTypeTf;
     std::optional<std::string> from_frame;
     std::optional<std::string> to_frame;
     bool force = false;
@@ -879,8 +878,7 @@ private:
         "-t,--msg-type", join_args_.msg_type,
         "ROS message type to publish under <topic>. Only 'tf' (tf2_msgs/msg/TFMessage) is "
         "supported today.")
-      ->transform(
-        CLI::CheckedTransformer(std::map<std::string, JoinMsgType>{{"tf", JoinMsgType::kTf}}));
+      ->check(CLI::IsMember({kJoinMsgTypeTf}));
     sub->add_option(
       "--from", join_args_.from_frame,
       "Parent frame id. Required for --msg-type tf; mapped to TransformStamped.header.frame_id.");
@@ -1084,7 +1082,7 @@ private:
     // 1. Validate type-specific arg constraints. Today only --msg-type tf
     //    is supported, and it requires --from / --to as distinct non-empty
     //    frame ids.
-    if (args.msg_type == JoinMsgType::kTf) {
+    if (args.msg_type == kJoinMsgTypeTf) {
       if (
         !args.from_frame.has_value() || !args.to_frame.has_value() || args.from_frame->empty() ||
         args.to_frame->empty()) {
