@@ -399,11 +399,8 @@ std::unique_ptr<BagReader> open_mcap_file(const std::filesystem::path & path)
   return std::make_unique<McapFileReader>(path);
 }
 
-std::unique_ptr<BagReader> open_mcap_directory(const std::filesystem::path & dir)
+std::unique_ptr<BagReader> open_mcap_directory(const std::filesystem::path & dir, BagMetadata md)
 {
-  const auto metadata_path = dir / "metadata.yaml";
-  auto md = load_metadata_yaml(metadata_path);
-
   std::vector<TopicInfo> topics = md.topics;  // copied; metadata_ retains its own
   std::vector<std::filesystem::path> rel_paths = md.relative_file_paths;
   return std::make_unique<McapShardReader>(

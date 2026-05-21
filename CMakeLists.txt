@@ -121,6 +121,7 @@ add_library(bagwiz_core
   src/io/bag_factory.cpp
   src/io/mcap_reader.cpp
   src/io/mcap_writer.cpp
+  src/io/metadata_computer.cpp
   src/io/metadata_yaml.cpp
   src/io/rosbag1_reader.cpp
   src/io/rosbag1_writer.cpp
@@ -277,6 +278,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_sqlite3_reader_test test/io/sqlite3_reader_test.cpp)
   target_link_libraries(bagwiz_sqlite3_reader_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_metadata_computer_test test/io/metadata_computer_test.cpp)
+  target_link_libraries(bagwiz_metadata_computer_test bagwiz_core)
 
   ament_add_gtest(bagwiz_writer_roundtrip_test test/io/writer_roundtrip_test.cpp)
   target_link_libraries(bagwiz_writer_roundtrip_test bagwiz_core)

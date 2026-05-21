@@ -10,6 +10,7 @@
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/mcap_reader.hpp"
 #include "bagwiz/io/mcap_writer.hpp"
+#include "bagwiz/io/metadata_computer.hpp"
 #include "bagwiz/io/metadata_yaml.hpp"
 #include "bagwiz/io/sqlite3_reader.hpp"
 #include "bagwiz/io/sqlite3_writer.hpp"
@@ -21,6 +22,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace bagwiz::io
 {
@@ -125,17 +127,18 @@ std::unique_ptr<BagReader> open_read(const std::filesystem::path & path, OpenOpt
   const bool is_dir = std::filesystem::is_directory(path, ec);
 
   if (is_dir) {
+    // Prefer metadata.yaml when present; fall back to MetadataComputer
+    // (directory listing + magic-byte sniff) when it's absent. The
+    // fallback does not scan message records, so reconstruction stays
+    // cheap even for multi-shard bags.
     const auto metadata_path = path / "metadata.yaml";
-    if (!std::filesystem::exists(metadata_path)) {
-      throw std::runtime_error(
-        "directory is not a rosbag2 bag (missing metadata.yaml): " + path.string());
-    }
-    const auto md = load_metadata_yaml(metadata_path);
+    auto md = std::filesystem::exists(metadata_path) ? load_metadata_yaml(metadata_path)
+                                                     : MetadataComputer::compute(path);
     if (md.storage_identifier == "mcap") {
-      return detail::open_mcap_directory(path);
+      return detail::open_mcap_directory(path, std::move(md));
     }
     if (md.storage_identifier == "sqlite3") {
-      return detail::open_sqlite3_directory(path);
+      return detail::open_sqlite3_directory(path, std::move(md));
     }
     throw std::runtime_error("unknown storage_identifier: " + md.storage_identifier);
   }
