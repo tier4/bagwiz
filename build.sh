@@ -28,6 +28,14 @@ Options:
                            exits with a message asking you to install it.
   -j, --parallel <N>       Number of parallel colcon workers (positive integer).
                            Default: half of the CPU count from nproc(1) (minimum 1).
+      --native             Append -march=native to release compile flags.
+                           Produces a non-portable binary tied to this host's
+                           CPU in exchange for letting hot paths use the full
+                           instruction set (AVX2/AVX-512/BMI2/...).
+                           Ignored on debug.
+      --unroll             Append -funroll-loops to release compile flags.
+                           Helps tight inner loops but increases code size.
+                           Ignored on debug.
   -h, --help               Show this help message and exit.
 
 With no options, performs an incremental colcon build with build type release
@@ -47,6 +55,8 @@ clean=0
 build_type="release"
 builder="make"
 parallel_workers=""
+native=0
+unroll=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -99,6 +109,14 @@ while [[ $# -gt 0 ]]; do
             echo "[build.sh] -j requires a positive integer (e.g. -j 8)." >&2
             exit 1
         fi
+        shift
+        ;;
+    --native)
+        native=1
+        shift
+        ;;
+    --unroll)
+        unroll=1
         shift
         ;;
     --help | -h)
@@ -204,6 +222,29 @@ echo "[build.sh] CMAKE_BUILD_TYPE=${cmake_build_type}"
 echo "[build.sh] CMake generator=${cmake_generator}"
 echo "[build.sh] parallel workers=${parallel_workers}"
 
+# --native and --unroll each contribute one flag to the release
+# CMAKE_CXX_FLAGS variants. Debug intentionally skips them.
+extra_release_flag_args=()
+extra_release_flags=""
+if [[ ${native} -eq 1 ]]; then
+    extra_release_flags+=" -march=native"
+fi
+if [[ ${unroll} -eq 1 ]]; then
+    extra_release_flags+=" -funroll-loops"
+fi
+if [[ -n ${extra_release_flags} ]]; then
+    case "${cmake_build_type}" in
+    Release | RelWithDebInfo)
+        echo "[build.sh] appending release flags:${extra_release_flags}"
+        extra_release_flag_args+=("-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG${extra_release_flags}")
+        extra_release_flag_args+=("-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O2 -g -DNDEBUG${extra_release_flags}")
+        ;;
+    Debug)
+        echo "[build.sh] --native/--unroll: ignored for Debug build"
+        ;;
+    esac
+fi
+
 # bagwiz keeps its package.xml at the workspace root rather than under
 # src/. colcon stops recursing once it identifies a package, so
 # --base-paths is limited to this directory.
@@ -212,4 +253,4 @@ colcon build \
     --parallel-workers "${parallel_workers}" \
     --base-paths "${SCRIPT_DIR}" \
     --packages-up-to bagwiz \
-    --cmake-args -G "${cmake_generator}" "-DCMAKE_BUILD_TYPE=${cmake_build_type}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    --cmake-args -G "${cmake_generator}" "-DCMAKE_BUILD_TYPE=${cmake_build_type}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "${extra_release_flag_args[@]}"
