@@ -13,6 +13,7 @@
 #include "bagwiz/core/bag_topic_plan.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/output_path.hpp"
 #include "bagwiz/core/tf_chain.hpp"
 #include "bagwiz/core/tf_message_wire.hpp"
 #include "bagwiz/core/tf_static_injector.hpp"
@@ -318,6 +319,7 @@ private:
     std::string format;
     std::optional<std::string> from_frame;
     std::optional<std::string> to_frame;
+    bool overwrite = false;  // replace any pre-existing output_path
   } dump_args_;
 
   struct JoinArgs
@@ -331,6 +333,9 @@ private:
     std::optional<std::string> from_frame;
     std::optional<std::string> to_frame;
     bool force = false;
+    bool overwrite = false;  // replace any pre-existing -o/--output path
+                             // (no effect in in-place mode, where <input> is
+                             // already the target by definition)
   } join_args_;
 
   void configure_dump(CLI::App & app)
@@ -361,6 +366,10 @@ private:
       "--to", dump_args_.to_frame,
       "Child / filter frame id. Required, optional, or ignored depending on the topic's "
       "message type — see SUPPORTED TOPIC TYPES below.");
+    sub->add_flag(
+      "--overwrite", dump_args_.overwrite,
+      "Replace <output> if it already exists. Without this flag, an "
+      "existing output path stops the run.");
     sub->footer(
       "SUPPORTED TOPIC TYPES:\n"
       "  All TF lookups below are resolved automatically from the bag's static and\n"
@@ -758,6 +767,12 @@ private:
     }
     dump_args_.format = std::move(resolved_format);
 
+    if (const auto r = core::prepare_output_path(dump_args_.output_path, dump_args_.overwrite);
+        !r.ok) {
+      BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
+      return 1;
+    }
+
     const auto & args = dump_args_;
 
     std::unique_ptr<io::BagReader> reader;
@@ -891,6 +906,10 @@ private:
         "Overwrite when <topic> already carries messages in <input>; otherwise the command "
         "aborts.")
       ->default_val(false);
+    sub->add_flag(
+      "--overwrite", join_args_.overwrite,
+      "Replace -o/--output if it already exists. Has no effect in in-place "
+      "mode (when -o is omitted, <input> is replaced atomically by design).");
     sub->callback([this]() { selected_ = Subcommand::kJoin; });
   }
 
@@ -1122,6 +1141,10 @@ private:
     };
 
     if (args.output_path.has_value()) {
+      if (const auto r = core::prepare_output_path(*args.output_path, args.overwrite); !r.ok) {
+        BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
+        return 1;
+      }
       return execute_join_pass(
         args, transforms, stamps_ns, [&]() { return make_writer(*args.output_path); });
     }

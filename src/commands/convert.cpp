@@ -11,6 +11,7 @@
 #include "bagwiz/core/cdr_to_ros1.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/msg_definition_resolver.hpp"
+#include "bagwiz/core/output_path.hpp"
 #include "bagwiz/core/ros1_message_definitions.hpp"
 #include "bagwiz/core/ros1_meta_synthesizer.hpp"
 #include "bagwiz/core/ros1_to_cdr.hpp"
@@ -225,20 +226,23 @@ private:
     // exit 2 if anything was skipped".
     bool strict = false;              // any topic-level error → abort
     bool allow_md5_mismatch = false;  // Md5Mismatch downgraded to warn-only
+    bool overwrite = false;           // replace any pre-existing output_path
   } r1_to_r2_args_;
 
   struct TwoToOneArgs
   {
     std::filesystem::path input_path;
     std::filesystem::path output_path;
-    bool strict = false;  // any topic-level error → abort
+    bool strict = false;     // any topic-level error → abort
+    bool overwrite = false;  // replace any pre-existing output_path
   } r2_to_r1_args_;
 
   struct StorageArgs
   {
     std::filesystem::path input_path;
     std::filesystem::path output_path;
-    std::string storage;  // empty when --storage not passed; resolved at run time
+    std::string storage;     // empty when --storage not passed; resolved at run time
+    bool overwrite = false;  // replace any pre-existing output_path
   } storage_args_;
 
   void configure_1to2(CLI::App & app)
@@ -269,6 +273,10 @@ private:
       "sensor_msgs/CameraInfo's D/K/R/P → d/k/r/p across the version "
       "boundary).");
     strict_flag->excludes(allow_flag);
+    sub->add_flag(
+      "--overwrite", r1_to_r2_args_.overwrite,
+      "Replace <output> if it already exists. Without this flag, an "
+      "existing output path stops the run.");
     sub->footer(
       "Each topic's ROS 2 schema is resolved from $AMENT_PREFIX_PATH (or the\n"
       "introspection typesupport library when no .msg is on disk); a ROS 1\n"
@@ -289,6 +297,11 @@ private:
     const io::Format target_format = resolve_target_storage(args.storage, args.output_path, err);
     if (target_format == io::Format::Auto) {
       BAGWIZ_LOG_ERROR(kLogger, "%s", err.c_str());
+      return 1;
+    }
+
+    if (const auto r = core::prepare_output_path(args.output_path, args.overwrite); !r.ok) {
+      BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
       return 1;
     }
 
@@ -617,6 +630,10 @@ private:
       "Abort on the first topic-level error (schema unresolvable, "
       "refused canonicalisation, writer reject) instead of skipping "
       "the topic and continuing.");
+    sub->add_flag(
+      "--overwrite", r2_to_r1_args_.overwrite,
+      "Replace <output> if it already exists. Without this flag, an "
+      "existing output path stops the run.");
     sub->footer(
       "Each topic's ROS 2 schema is taken from the bag's self-describing\n"
       "record when present, or resolved from $AMENT_PREFIX_PATH /\n"
@@ -670,6 +687,11 @@ private:
 
     if (const int rc = check_input_compression(args.input_path); rc != 0) {
       return rc;
+    }
+
+    if (const auto r = core::prepare_output_path(args.output_path, args.overwrite); !r.ok) {
+      BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
+      return 1;
     }
 
     std::unique_ptr<io::BagReader> reader;
@@ -955,6 +977,10 @@ private:
         "-s,--storage", storage_args_.storage,
         "Target storage backend (default: inferred from output extension)")
       ->check(CLI::IsMember({"mcap", "sqlite3"}));
+    sub->add_flag(
+      "--overwrite", storage_args_.overwrite,
+      "Replace <output> if it already exists. Without this flag, an "
+      "existing output path stops the run.");
     sub->footer(
       "Messages are copied verbatim — only the storage backend changes; no\n"
       "deserialization or type conversion is performed.\n"
@@ -977,6 +1003,11 @@ private:
     const io::Format target_format = resolve_target_storage(args.storage, args.output_path, err);
     if (target_format == io::Format::Auto) {
       BAGWIZ_LOG_ERROR(kLogger, "%s", err.c_str());
+      return 1;
+    }
+
+    if (const auto r = core::prepare_output_path(args.output_path, args.overwrite); !r.ok) {
+      BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
       return 1;
     }
 

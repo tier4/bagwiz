@@ -161,11 +161,11 @@ bagwiz traj dump [OPTIONS] <input> <output> <topic>
 
 ### Positional arguments
 
-| Name     | Description                                                                                                                           |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `input`  | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`).                                                                             |
-| `output` | Output file path. Will be truncated if it already exists. With no `-f/--format`, the extension must be recognized (currently `.tum`). |
-| `topic`  | Topic whose type selects processing (`TFMessage`, `PoseStamped`, `PoseWithCovarianceStamped`, or `Odometry`).                         |
+| Name     | Description                                                                                                                                                   |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input`  | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`).                                                                                                     |
+| `output` | Output file path. Pre-existing files stop the run unless `--overwrite` is passed. With no `-f/--format`, the extension must be recognized (currently `.tum`). |
+| `topic`  | Topic whose type selects processing (`TFMessage`, `PoseStamped`, `PoseWithCovarianceStamped`, or `Odometry`).                                                 |
 
 ### Options
 
@@ -174,6 +174,7 @@ bagwiz traj dump [OPTIONS] <input> <output> <topic>
 | `--from <FRAME>`     | _(optional)_ | TF topics: required reference frame. Pose and Odometry topics: optional; omit to keep each sample in `header.frame_id`, or set to remap into this frame via TF.            |
 | `--to <FRAME>`       | _(optional)_ | TF topics: required tracked frame. Odometry: optional `child_frame_id` filter. PoseStamped / PoseWithCovarianceStamped: ignored (warning if set).                          |
 | `-f`, `--format <F>` | _(empty)_    | Output format id (`tum`). When omitted, the format is inferred from the output path extension (for example `*.tum` → `tum`). If you pass `-f`, it overrides the extension. |
+| `--overwrite`        | `false`      | Replace `<output>` if it already exists. Without this flag, an existing output path stops the run.                                                                         |
 
 ### TF topic: how sampling works
 
@@ -276,14 +277,15 @@ bagwiz traj join [OPTIONS] <input> <traj_file> <topic>
 
 ### Options
 
-| Flag                   | Default      | Description                                                                                                                                 |
-| ---------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-o`, `--output <OUT>` | _(unset)_    | Write the result to a new bag at `<OUT>`. When omitted, `<input>` is replaced in place via a sibling tmp directory.                         |
-| `-f`, `--format <F>`   | _(empty)_    | Trajectory format id. When omitted, inferred from the trajectory file extension. `-f` always wins over the extension when both are present. |
-| `-t`, `--msg-type <T>` | `tf`         | ROS message type to publish under `<topic>`. Currently only `tf` (= `tf2_msgs/msg/TFMessage`) is accepted.                                  |
-| `--from <FRAME>`       | _(required)_ | For `--msg-type tf`: parent frame id, written to `TransformStamped.header.frame_id`.                                                        |
-| `--to <FRAME>`         | _(required)_ | For `--msg-type tf`: child frame id, written to `TransformStamped.child_frame_id`.                                                          |
-| `--force`              | `false`      | Allow overwriting an existing `<topic>` in `<input>`: existing messages are dropped from the output and replaced with the trajectory.       |
+| Flag                   | Default      | Description                                                                                                                                    |
+| ---------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-o`, `--output <OUT>` | _(unset)_    | Write the result to a new bag at `<OUT>`. When omitted, `<input>` is replaced in place via a sibling tmp directory.                            |
+| `-f`, `--format <F>`   | _(empty)_    | Trajectory format id. When omitted, inferred from the trajectory file extension. `-f` always wins over the extension when both are present.    |
+| `-t`, `--msg-type <T>` | `tf`         | ROS message type to publish under `<topic>`. Currently only `tf` (= `tf2_msgs/msg/TFMessage`) is accepted.                                     |
+| `--from <FRAME>`       | _(required)_ | For `--msg-type tf`: parent frame id, written to `TransformStamped.header.frame_id`.                                                           |
+| `--to <FRAME>`         | _(required)_ | For `--msg-type tf`: child frame id, written to `TransformStamped.child_frame_id`.                                                             |
+| `--force`              | `false`      | Allow overwriting an existing `<topic>` in `<input>`: existing messages are dropped from the output and replaced with the trajectory.          |
+| `--overwrite`          | `false`      | Replace `-o/--output` if it already exists. Has no effect in in-place mode (when `-o` is omitted, `<input>` is replaced atomically by design). |
 
 ### Behavior
 

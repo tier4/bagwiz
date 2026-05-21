@@ -91,6 +91,7 @@ add_library(bagwiz_core
   src/core/introspection_loader.cpp
   src/core/logging.cpp
   src/core/message_deserializer.cpp
+  src/core/output_path.cpp
   src/core/message_formatter.cpp
   src/core/msg_definition_resolver.cpp
   src/core/msg_schema/parser.cpp
@@ -269,6 +270,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_bag_inplace_test test/core/bag_inplace_test.cpp)
   target_link_libraries(bagwiz_bag_inplace_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_output_path_test test/core/output_path_test.cpp)
+  target_link_libraries(bagwiz_output_path_test bagwiz_core)
 
   ament_add_gtest(bagwiz_tf_rotation_test test/core/tf_rotation_test.cpp)
   target_link_libraries(bagwiz_tf_rotation_test bagwiz_core)

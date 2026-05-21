@@ -10,6 +10,7 @@
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/output_path.hpp"
 #include "bagwiz/core/terminal_input.hpp"
 #include "bagwiz/core/tf_chain.hpp"
 #include "bagwiz/core/tf_rotation.hpp"
@@ -627,6 +628,7 @@ private:
     std::filesystem::path to_path;
     std::filesystem::path output_path;
     bool force = false;
+    bool overwrite = false;  // replace any pre-existing output_path
   } inject_static_args_;
 
   void configure_tree(CLI::App & app)
@@ -694,6 +696,10 @@ private:
         "--force", inject_static_args_.force,
         "Overwrite per-topic when <to> already has messages on a *tf_static topic.")
       ->default_val(false);
+    sub->add_flag(
+      "--overwrite", inject_static_args_.overwrite,
+      "Replace -o/--output if it already exists. Without this flag, an "
+      "existing output path stops the run.");
     sub->callback([this]() { selected_ = Subcommand::kInjectStatic; });
   }
 
@@ -1109,6 +1115,11 @@ private:
   int run_inject_static()
   {
     const auto & args = inject_static_args_;
+
+    if (const auto r = core::prepare_output_path(args.output_path, args.overwrite); !r.ok) {
+      BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
+      return 1;
+    }
 
     // Step 1: Scan <from> and collect deduped TransformStamped[] per
     // *tf_static topic.

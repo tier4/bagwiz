@@ -22,6 +22,11 @@ Cross-format bag conversion. Three subcommands:
   backend is inferred from the output path's extension (`.mcap` →
   MCAP, `.db3` → SQLite3). Output paths that do not carry one of those
   extensions (e.g. a directory) require an explicit `--storage`.
+- Any pre-existing entry at `<output>` (file or directory) stops the
+  run with a clear log line. Pass `--overwrite` to replace it instead.
+  The flag is supported by every `bagwiz` subcommand that writes a
+  file or directory output (`convert 1to2`, `convert 2to1`,
+  `convert storage`, `traj dump`, `traj join -o`, `tf inject-static -o`).
 - `mcap` outputs are written without chunk compression. Re-compress
   afterwards with `ros2 bag convert` if needed.
 - Per-message conversion / write failures are reported as warnings
@@ -59,6 +64,7 @@ bagwiz convert 1to2 [OPTIONS] <input> <output>
 | `-s`, `--storage <S>`  | Output storage backend. One of `mcap`, `sqlite3`. Default: inferred from the output extension.                                                                                                         |
 | `--strict`             | Abort on the first topic-level error (md5 mismatch, schema unresolvable, refused canonicalisation, writer reject) instead of skipping the topic and continuing. Mutually exclusive with the next flag. |
 | `--allow-md5-mismatch` | Treat md5 mismatch between the bag's ROS 1 connection record and the synthesised ROS 2 schema as a warning rather than a topic skip. Mutually exclusive with `--strict`.                               |
+| `--overwrite`          | Replace `<output>` if it already exists. Without this flag, an existing output path stops the run.                                                                                                     |
 
 ### Behavior
 
@@ -129,9 +135,10 @@ bagwiz convert 2to1 [OPTIONS] <input> <output>
 
 ### Options
 
-| Flag       | Description                                                                                                                                       |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--strict` | Abort on the first topic-level error (schema unresolvable, refused canonicalisation, writer reject) instead of skipping the topic and continuing. |
+| Flag          | Description                                                                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--strict`    | Abort on the first topic-level error (schema unresolvable, refused canonicalisation, writer reject) instead of skipping the topic and continuing. |
+| `--overwrite` | Replace `<output>` if it already exists. Without this flag, an existing output path stops the run.                                                |
 
 ### Behavior
 
@@ -189,9 +196,10 @@ bagwiz convert storage [OPTIONS] <input> <output>
 
 ### Options
 
-| Flag                  | Description                                                                                    |
-| --------------------- | ---------------------------------------------------------------------------------------------- |
-| `-s`, `--storage <S>` | Target storage backend. One of `mcap`, `sqlite3`. Default: inferred from the output extension. |
+| Flag                  | Description                                                                                        |
+| --------------------- | -------------------------------------------------------------------------------------------------- |
+| `-s`, `--storage <S>` | Target storage backend. One of `mcap`, `sqlite3`. Default: inferred from the output extension.     |
+| `--overwrite`         | Replace `<output>` if it already exists. Without this flag, an existing output path stops the run. |
 
 ### Behavior
 
