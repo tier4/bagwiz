@@ -15,6 +15,9 @@
 #include "bagwiz/core/tf_rotation.hpp"
 #include "bagwiz/core/tf_static_injector.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
+#include "bagwiz/core/tui/layout.hpp"
+#include "bagwiz/core/tui/pager.hpp"
+#include "bagwiz/core/tui/width.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <rang.hpp>
@@ -903,61 +906,54 @@ private:
       return 1;
     }
 
-    core::TerminalRawMode raw_mode;
-    if (!raw_mode.active()) {
-      BAGWIZ_LOG_ERROR(kLogger, "failed to enter raw terminal mode");
-      return 1;
-    }
-
     std::size_t index = 0;
     std::string status;
 
-    auto render = [&]() {
-      fmt::print(stdout, "\x1b[2J\x1b[H");
-      const std::int64_t ts = timeline[index];
-      const std::size_t last_timeline_index = timeline.size() - 1;
-      if (static_only) {
-        // Align with `bagwiz walk`: `[index / last]` is zero-based; static bags use one slot.
-        fmt::print(stdout, "[{} / {}]\n", index, last_timeline_index);
-        fmt::print(stdout, "[STATIC TF]  (no dynamic /tf in bag)\n");
-      } else {
-        fmt::print(stdout, "[{} / {}]  {}\n", index, last_timeline_index, format_timestamp(ts));
-      }
-      fmt::print(stdout, "TF: {}  ->  {}\n", args.from_frame, args.to_frame);
+    core::tui::PagerConfig pager_cfg;
+    core::tui::ScrollablePager pager(pager_cfg);
 
-      // Show the resolved chain so the user can see *how* the composed
-      // transform was computed. resolve_chain walks parent links via
-      // _getParent so it works uniformly for static and dynamic data;
-      // tf2::_chainAsVector returned empty for static-only buffers in
-      // our testing.
+    auto append_wrapped = [](std::vector<std::string> & out, std::string_view line, int cols) {
+      auto wrapped = core::tui::wrap_to_width(line, cols);
+      for (auto & w : wrapped) {
+        out.push_back(std::move(w));
+      }
+    };
+
+    // Build the body's logical lines for the current timeline index:
+    // the resolved chain, a blank separator, then the translation +
+    // rotation block (or a single ⚠ line when the lookup throws).
+    auto build_body_lines = [&]() {
+      std::vector<std::string> lines;
+      const std::int64_t ts = timeline[index];
       const auto query_tp = tf2::TimePoint(std::chrono::nanoseconds(ts));
+
       const auto chain = core::resolve_chain(tf_buffer, args.from_frame, args.to_frame, query_tp);
       if (!chain.empty()) {
-        fmt::print(stdout, "chain: ");
+        std::string chain_line = "chain: ";
         for (std::size_t i = 0; i < chain.size(); ++i) {
           if (i > 0) {
-            fmt::print(stdout, " -> ");
+            chain_line += " -> ";
           }
-          fmt::print(stdout, "{}", chain[i]);
+          chain_line += chain[i];
         }
-        fmt::print(stdout, "\n");
+        lines.push_back(std::move(chain_line));
       } else {
-        fmt::print(stdout, "chain: <unresolved (no common ancestor in buffer)>\n");
+        lines.emplace_back("chain: <unresolved (no common ancestor in buffer)>");
       }
-      fmt::print(stdout, "\n");
+      lines.emplace_back();
 
       try {
         const auto tf = tf_buffer.lookupTransform(args.from_frame, args.to_frame, query_tp);
-        fmt::print(stdout, "translation:\n");
-        fmt::print(stdout, "  x: {:.15g}\n", tf.transform.translation.x);
-        fmt::print(stdout, "  y: {:.15g}\n", tf.transform.translation.y);
-        fmt::print(stdout, "  z: {:.15g}\n", tf.transform.translation.z);
+        lines.emplace_back("translation:");
+        lines.push_back(fmt::format("  x: {:.15g}", tf.transform.translation.x));
+        lines.push_back(fmt::format("  y: {:.15g}", tf.transform.translation.y));
+        lines.push_back(fmt::format("  z: {:.15g}", tf.transform.translation.z));
         if (args.rot == RotationFormat::kQuaternion) {
-          fmt::print(stdout, "rotation (quaternion):\n");
-          fmt::print(stdout, "  x: {:.15g}\n", tf.transform.rotation.x);
-          fmt::print(stdout, "  y: {:.15g}\n", tf.transform.rotation.y);
-          fmt::print(stdout, "  z: {:.15g}\n", tf.transform.rotation.z);
-          fmt::print(stdout, "  w: {:.15g}\n", tf.transform.rotation.w);
+          lines.emplace_back("rotation (quaternion):");
+          lines.push_back(fmt::format("  x: {:.15g}", tf.transform.rotation.x));
+          lines.push_back(fmt::format("  y: {:.15g}", tf.transform.rotation.y));
+          lines.push_back(fmt::format("  z: {:.15g}", tf.transform.rotation.z));
+          lines.push_back(fmt::format("  w: {:.15g}", tf.transform.rotation.w));
         } else {
           auto rpy = core::quat_to_euler_rad(
             tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z,
@@ -966,10 +962,10 @@ private:
           if (deg) {
             rpy = core::euler_rad_to_euler_deg(rpy);
           }
-          fmt::print(stdout, "rotation (euler, {}):\n", deg ? "deg" : "rad");
-          fmt::print(stdout, "  roll:  {:.15g}\n", rpy.roll);
-          fmt::print(stdout, "  pitch: {:.15g}\n", rpy.pitch);
-          fmt::print(stdout, "  yaw:   {:.15g}\n", rpy.yaw);
+          lines.push_back(fmt::format("rotation (euler, {}):", deg ? "deg" : "rad"));
+          lines.push_back(fmt::format("  roll:  {:.15g}", rpy.roll));
+          lines.push_back(fmt::format("  pitch: {:.15g}", rpy.pitch));
+          lines.push_back(fmt::format("  yaw:   {:.15g}", rpy.yaw));
         }
       } catch (const tf2::TransformException & e) {
         // Past extrapolation has been cropped at init, so the only
@@ -977,67 +973,137 @@ private:
         // ceasing to publish before the bag ends. Surface tf2's
         // text directly; rare enough that we do not need
         // hand-formatted versions.
-        fmt::print(stdout, "⚠  Lookup failed at this index: {}\n", e.what());
+        lines.push_back(fmt::format("⚠  Lookup failed at this index: {}", e.what()));
       }
-
-      fmt::print(
-        stdout, "\n  [{} / {}]  {} -> {}\n", index, last_timeline_index, args.from_frame,
-        args.to_frame);
-      fmt::print(stdout, "  [→/Space] next   [←/b] prev   [g] first   [G] last   [q] quit\n");
-      if (!status.empty()) {
-        fmt::print(stdout, "  {}\n", status);
-      }
-      std::fflush(stdout);
+      return lines;
     };
 
-    render();
+    auto build_frame = [&](std::size_t scroll, core::tui::Size term) -> core::tui::Frame {
+      core::tui::Frame frame;
 
-    while (true) {
-      const core::KeyEvent ev = core::read_key_event();
+      const std::int64_t ts = timeline[index];
+      const std::size_t last_timeline_index = timeline.size() - 1;
+      const int cols = std::max(1, term.cols);
+
+      // Header: timestamp (or STATIC marker) + TF arrow + blank.
+      if (static_only) {
+        append_wrapped(frame.header, "[STATIC TF]  (no dynamic /tf in bag)", cols);
+      } else {
+        append_wrapped(frame.header, fmt::format("timestamp: {}", format_timestamp(ts)), cols);
+      }
+      append_wrapped(
+        frame.header, fmt::format("TF: {}  ->  {}", args.from_frame, args.to_frame), cols);
+      frame.header.emplace_back();  // blank separator
+
+      // Body: wrap each logical line built above.
+      const auto body_logical = build_body_lines();
+      frame.body.reserve(body_logical.size());
+      for (const auto & line : body_logical) {
+        append_wrapped(frame.body, line, cols);
+      }
+
+      // Footer: same layout as `bagwiz walk`. The index row's scroll
+      // hint depends on body height, which depends on wrapped footer
+      // height; resolve iteratively (one re-wrap is enough since only
+      // the hint can change the index row's wrapped count).
+      std::vector<std::string> footer_logical;
+      footer_logical.reserve(4);
+      footer_logical.emplace_back();  // blank separator
+      footer_logical.emplace_back();  // index row, patched below
+      footer_logical.emplace_back(
+        "  [→/Space] next   [←/b] prev   [↑/k] up   [↓/j] down   "
+        "[Home/H] head   [End/T] tail   [g] first   [G] last   [q] quit");
+      footer_logical.push_back(status.empty() ? std::string{} : fmt::format("  {}", status));
+
+      std::vector<std::string> footer_wrapped;
+      auto wrap_footer = [&](const std::vector<std::string> & src) {
+        footer_wrapped.clear();
+        for (const auto & line : src) {
+          append_wrapped(footer_wrapped, line, cols);
+        }
+      };
+
+      auto recompute_footer = [&](const std::string & index_line) {
+        footer_logical[1] = index_line;
+        wrap_footer(footer_logical);
+      };
+
+      const std::string index_no_hint = fmt::format(
+        "  [{} / {}]  {} -> {}", index, last_timeline_index, args.from_frame, args.to_frame);
+
+      recompute_footer(index_no_hint);
+      auto body_rows_for = [&](const std::vector<std::string> & footer) {
+        return std::max(
+          0, term.rows - static_cast<int>(frame.header.size()) - static_cast<int>(footer.size()));
+      };
+
+      int body_rows = body_rows_for(footer_wrapped);
+      const std::size_t total_body = frame.body.size();
+      std::string scroll_hint;
+      if (body_rows > 0 && total_body > static_cast<std::size_t>(body_rows)) {
+        const std::size_t end = std::min(scroll + static_cast<std::size_t>(body_rows), total_body);
+        scroll_hint = fmt::format("    lines {}-{} of {}", scroll + 1, end, total_body);
+      }
+      if (!scroll_hint.empty()) {
+        recompute_footer(index_no_hint + scroll_hint);
+        body_rows = body_rows_for(footer_wrapped);
+        if (total_body > static_cast<std::size_t>(std::max(body_rows, 0))) {
+          const std::size_t end =
+            std::min(scroll + static_cast<std::size_t>(body_rows), total_body);
+          const std::string new_hint =
+            fmt::format("    lines {}-{} of {}", scroll + 1, end, total_body);
+          if (new_hint != scroll_hint) {
+            scroll_hint = new_hint;
+            recompute_footer(index_no_hint + scroll_hint);
+          }
+        }
+      }
+
+      frame.footer = std::move(footer_wrapped);
+      return frame;
+    };
+
+    auto on_nav = [&](core::tui::NavKey nav) -> core::tui::AppKeyResult {
       status.clear();
-      switch (ev) {
-        case core::KeyEvent::kNext:
+      switch (nav) {
+        case core::tui::NavKey::kNext:
           if (index + 1 < timeline.size()) {
             ++index;
           } else {
             index = 0;
             status = "(wrapped to first)";
           }
-          break;
-        case core::KeyEvent::kPrev:
+          pager.set_scroll_offset(0);
+          return core::tui::AppKeyResult::kHandled;
+        case core::tui::NavKey::kPrev:
           if (index > 0) {
             --index;
+            pager.set_scroll_offset(0);
           } else {
             status = "(at first message)";
           }
-          break;
-        case core::KeyEvent::kFirst:
+          return core::tui::AppKeyResult::kHandled;
+        case core::tui::NavKey::kFirst:
           index = 0;
-          break;
-        case core::KeyEvent::kLast:
+          pager.set_scroll_offset(0);
+          return core::tui::AppKeyResult::kHandled;
+        case core::tui::NavKey::kLast:
           index = timeline.size() - 1;
-          break;
-        case core::KeyEvent::kScrollUp:
-        case core::KeyEvent::kScrollDown:
-        case core::KeyEvent::kScrollHead:
-        case core::KeyEvent::kScrollTail:
-        case core::KeyEvent::kSaveYaml:
-        case core::KeyEvent::kToggleArrayExpand:
-          // Body fits on a normal terminal; ignore scroll keys and walk-only
-          // bindings (save, expand-arrays).
-          continue;
-        case core::KeyEvent::kResize:
-          // Terminal resize is handled by the TUI SDK; tf renders inline
-          // without a pinned viewport, so a redraw is sufficient.
-          break;
-        case core::KeyEvent::kQuit:
-          fmt::print(stdout, "\n");
-          return 0;
-        case core::KeyEvent::kUnknown:
-          continue;
+          pager.set_scroll_offset(0);
+          return core::tui::AppKeyResult::kHandled;
+        case core::tui::NavKey::kResize:
+          return core::tui::AppKeyResult::kHandled;
+        default:
+          return core::tui::AppKeyResult::kIgnored;
       }
-      render();
-    }
+    };
+
+    auto on_app_key = [](core::KeyEvent) -> core::tui::AppKeyResult {
+      // No app-specific keys for tf walk (no save / no array expansion).
+      return core::tui::AppKeyResult::kIgnored;
+    };
+
+    return pager.run(build_frame, on_nav, on_app_key);
   }
 
   int run_inject_static()

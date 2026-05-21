@@ -116,7 +116,11 @@ bagwiz tf tree capture.mcap
 Advance one-at-a-time through the TF chain between `<from>` and `<to>` at
 every dynamic `/tf` update in the bag. Each timeline index renders the lookup
 result at that exact stamp, so you can scrub a recorded TF tree the same way
-you would scrub a YAML message stream with `bagwiz walk`.
+you would scrub a YAML message stream with `bagwiz walk`. The view uses the
+same TUI pager as `bagwiz walk`: the header (timestamp and TF arrow) and the
+footer (index row, key legend, status row) are pinned, the body region
+scrolls, and any line that does not fit the terminal width is wrapped onto
+continuation lines that inherit the original line's leading whitespace.
 
 ### Usage
 
@@ -163,23 +167,32 @@ bagwiz tf walk [OPTIONS] <input> <from> <to>
   If `<from>`→`<to>` requires a dynamic segment that never appears in the bag,
   lookup fails with an error (same idea as a broken chain).
 
-### Header
+### Layout
 
-The bracket line matches `bagwiz walk`: `<index>` is zero-based and `<last>`
-is the highest timeline index (count of stamps minus one). Dynamic bags show
-the query timestamp on that same line after the brackets.
+The viewport is split into three regions, identical in spirit to
+`bagwiz walk`:
 
 ```text
-[<index> / <last>]  YYYY-MM-DD HH:MM:SS.nnnnnnnnn UTC (<seconds>.<nanos> s)
-TF: <from>  ->  <to>
-
-translation:
-  x: ...
-  y: ...
-  z: ...
-rotation (...):
-  ...
+┌─────────────────────────────────────────────────┐
+│ timestamp: YYYY-MM-DD HH:MM:SS.nnnnnnnnn UTC …  │ ← header (≥ 3 rows)
+│ TF: <from>  ->  <to>                            │
+│                                                 │
+│ chain: <from> -> ... -> <to>                    │ ← body (scrolls)
+│                                                 │
+│ translation:                                    │
+│   x: …                                          │
+│   …                                             │
+│   [<index> / <last>]  <from> -> <to>    …       │ ← footer (≥ 4 rows)
+│   [keys legend …]                               │
+│   <status hint or blank>                        │
+└─────────────────────────────────────────────────┘
 ```
+
+Header / footer row counts grow when content wraps. The bracket line
+matches `bagwiz walk`: `<index>` is zero-based and `<last>` is the
+highest timeline index (count of stamps minus one). For static-only
+bags the header's first row becomes `[STATIC TF]  (no dynamic /tf in
+bag)` instead of a timestamp.
 
 The body shows the lookup result at the current index. If a mid-bag gap
 or a chain that ceases to publish before the bag ends causes a lookup to
@@ -200,12 +213,17 @@ index: …`) instead of crashing the walk.
 | -------------- | ---------------------------------------------------- |
 | `→` / `Space`  | Next timeline index (wraps from last back to first). |
 | `←` / `b`      | Previous timeline index.                             |
+| `↑` / `k`      | Scroll body up one line.                             |
+| `↓` / `j`      | Scroll body down one line.                           |
+| `Home` / `H`   | Jump body scroll to the head.                        |
+| `End` / `T`    | Jump body scroll to the tail.                        |
 | `g`            | Jump to the first timeline index.                    |
 | `G`            | Jump to the last timeline index.                     |
 | `q` / `Ctrl-C` | Quit.                                                |
 
-Scroll keys (`↑`/`↓`/`Home`/`End`) are accepted but ignored — the body
-fits in a normal-sized terminal.
+When the body is taller than the visible window (typically because the
+`chain:` line wrapped, or the terminal is short), a `lines X-Y of N`
+indicator is shown after the index row in the footer.
 
 ### Requirements
 
