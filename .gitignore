@@ -94,3 +94,5 @@ CLAUDE.local.md
 
 # YAML files (bag dumps, local configs, metadata, etc.)
 *.yaml
+# …but CI workflow YAMLs are always tracked.
+!/.github/workflows/*.yaml
