@@ -7,7 +7,7 @@ convert them first with [`bagwiz convert 1to2`](convert.md#bagwiz-convert-1to2).
 ## Usage
 
 ```text
-bagwiz ls [OPTIONS] <input>
+bagwiz ls <input>
 ```
 
 ## Positional arguments
@@ -15,13 +15,6 @@ bagwiz ls [OPTIONS] <input>
 | Name    | Description                                                                 |
 | ------- | --------------------------------------------------------------------------- |
 | `input` | ROS 2 rosbag path: a rosbag2 directory or a single-file `*.mcap` / `*.db3`. |
-
-## Options
-
-| Flag                  | Default  | Description                                                                                                                                                                                                                                  |
-| --------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-p`, `--pattern <P>` | _(none)_ | Keep only rows whose key field matches `<P>`. Plain text is matched as a substring. If the pattern contains `*` or `?` it is matched as a shell-style glob anchored at both ends (`*` spans any characters, `?` matches a single character). |
-| `-k`, `--key <FIELD>` | `topic`  | Field the pattern matches against. One of `topic` or `type`.                                                                                                                                                                                 |
 
 ## Output
 
@@ -48,14 +41,10 @@ bagwiz ls path/to/rosbag2_2025_01_01-12_00_00/
 # Single-file MCAP.
 bagwiz ls capture.mcap
 
-# Only sensor topics.
-bagwiz ls capture.mcap -p '/sensors/*'
-
-# Only PointCloud2 streams, anywhere.
-bagwiz ls capture.mcap -k type -p 'sensor_msgs/msg/PointCloud2'
-
-# Substring match (no glob characters).
-bagwiz ls capture.mcap -p lidar
+# Filter with grep — column-oriented output makes this trivial.
+bagwiz ls capture.mcap | grep /sensors/
+bagwiz ls capture.mcap | grep sensor_msgs/msg/PointCloud2
+bagwiz ls capture.mcap | grep lidar
 ```
 
 ## Exit status

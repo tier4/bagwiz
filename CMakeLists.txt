@@ -110,7 +110,6 @@ add_library(bagwiz_core
   src/core/tf_message_wire.cpp
   src/core/tf_static_injector.cpp
   src/core/tf_value_extract.cpp
-  src/core/topic_pattern.cpp
   src/core/trajectory.cpp
   src/core/tui/layout.cpp
   src/core/tui/pager.cpp
@@ -248,9 +247,6 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_tui_pager_test test/core/tui/pager_test.cpp)
   target_link_libraries(bagwiz_tui_pager_test bagwiz_core)
-
-  ament_add_gtest(bagwiz_topic_pattern_test test/core/topic_pattern_test.cpp)
-  target_link_libraries(bagwiz_topic_pattern_test bagwiz_core)
 
   ament_add_gtest(bagwiz_trajectory_test test/core/trajectory_test.cpp)
   target_link_libraries(bagwiz_trajectory_test bagwiz_core)

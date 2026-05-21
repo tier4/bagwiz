@@ -9,7 +9,6 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/core/logging.hpp"
-#include "bagwiz/core/topic_pattern.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <fmt/core.h>
@@ -40,9 +39,6 @@ constexpr int kMinTypeWidth = 4;   // "TYPE"
 constexpr int kMinCountWidth = 5;  // "COUNT"
 constexpr int kMinFreqWidth = 2;   // "HZ"
 
-constexpr const char * kKeyTopic = "topic";
-constexpr const char * kKeyType = "type";
-
 struct Row
 {
   std::string topic;
@@ -52,10 +48,9 @@ struct Row
 
 }  // namespace
 
-// `bagwiz ls <input> [-p <pattern>] [-k topic|type]` lists the topics
-// contained in a single rosbag. `--pattern` narrows the listing and `--key`
-// chooses whether the pattern is matched against the topic name (default) or
-// the message type.
+// `bagwiz ls <input>` lists every topic in a single rosbag. Filtering is
+// intentionally left to downstream tools (grep, awk, …) on the tabular
+// output rather than being baked into the command itself.
 class LsCommand : public Command
 {
 public:
@@ -67,22 +62,10 @@ public:
     app.add_option("input", input_path_, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
-    app.add_option(
-      "-p,--pattern", pattern_,
-      "Keep only rows matching the pattern. Plain text is matched as a "
-      "substring; if the pattern contains '*' or '?' it is matched as a "
-      "shell-style glob anchored at both ends ('*' spans any characters, "
-      "'?' matches a single character).");
-    app.add_option("-k,--key", key_, "Field the pattern matches against: topic | type")
-      ->default_val(kKeyTopic)
-      ->check(CLI::IsMember({kKeyTopic, kKeyType}));
   }
 
   int run() override
   {
-    const core::TopicPattern filter(pattern_);
-    const bool match_type = (key_ == kKeyType);
-
     std::unique_ptr<io::BagReader> reader;
     try {
       reader = io::open_read(input_path_);
@@ -98,10 +81,6 @@ public:
 
     std::vector<Row> rows;
     for (const auto & t : reader->topics()) {
-      const std::string & target = match_type ? t.type : t.name;
-      if (!filter.matches(target)) {
-        continue;
-      }
       int64_t count = 0;
       if (auto it = stats.per_topic.find(t.name); it != stats.per_topic.end()) {
         count = it->second;
@@ -145,8 +124,6 @@ public:
 
 private:
   std::filesystem::path input_path_;
-  std::string pattern_;
-  std::string key_;
 };
 
 BAGWIZ_REGISTER_COMMAND(LsCommand)
