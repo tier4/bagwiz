@@ -82,23 +82,21 @@ ScrollablePager::ScrollablePager(PagerConfig cfg)
 {
 }
 
-void ScrollablePager::set_layout(int header_rows, int footer_rows) noexcept
-{
-  header_rows_ = std::max(0, header_rows);
-  footer_rows_ = std::max(0, footer_rows);
-}
-
 void ScrollablePager::render_frame(const Frame & frame)
 {
   const Size sz = query_terminal_size();
-  const FixedLayout lay{sz, header_rows_, footer_rows_};
 
-  // Header rows 1..header_rows_. Pad missing lines with blanks so the
-  // region is always fully cleared.
-  for (int i = 0; i < header_rows_; ++i) {
-    const std::string & line =
-      (static_cast<std::size_t>(i) < frame.header.size()) ? frame.header[i] : std::string{};
-    draw_line(*out_, lay.header_start_row() + i, line, sz.cols);
+  // Take the header / footer row counts directly from the frame so the
+  // caller can pre-wrap to terminal width. Clamp the footer if the
+  // header alone already covers the whole screen.
+  const int header_rows = std::min(static_cast<int>(frame.header.size()), std::max(0, sz.rows));
+  const int footer_rows =
+    std::min(static_cast<int>(frame.footer.size()), std::max(0, sz.rows - header_rows));
+
+  const FixedLayout lay{sz, header_rows, footer_rows};
+
+  for (int i = 0; i < header_rows; ++i) {
+    draw_line(*out_, lay.header_start_row() + i, frame.header[i], sz.cols);
   }
 
   // Body: clamp the scroll offset and emit body_rows() lines, padding
@@ -118,12 +116,17 @@ void ScrollablePager::render_frame(const Frame & frame)
     draw_line(*out_, lay.body_start_row() + i, line, sz.cols);
   }
 
-  // Footer rows.
-  for (int i = 0; i < footer_rows_; ++i) {
-    const std::string & line =
-      (static_cast<std::size_t>(i) < frame.footer.size()) ? frame.footer[i] : std::string{};
-    draw_line(*out_, lay.footer_start_row() + i, line, sz.cols);
+  for (int i = 0; i < footer_rows; ++i) {
+    draw_line(*out_, lay.footer_start_row() + i, frame.footer[i], sz.cols);
   }
+
+  // Erase any rows still showing content from a taller previous frame
+  // (terminal shrank, or header / footer wrapped to fewer lines).
+  const int drawn_rows = header_rows + body_rows + footer_rows;
+  for (int row = drawn_rows + 1; row <= last_drawn_rows_; ++row) {
+    draw_line(*out_, row, std::string{}, sz.cols);
+  }
+  last_drawn_rows_ = drawn_rows;
 
   out_->flush();
 }
@@ -146,12 +149,12 @@ int ScrollablePager::run(
   internal::SigwinchScope sigwinch;
 
   needs_redraw_ = true;
+  last_drawn_rows_ = 0;
 
   while (true) {
     if (needs_redraw_) {
       const Size sz = query_terminal_size();
-      const FixedLayout lay{sz, header_rows_, footer_rows_};
-      Frame frame = build_frame(scroll_, lay.body_rows());
+      Frame frame = build_frame(scroll_, sz);
       render_frame(frame);
       needs_redraw_ = false;
     }

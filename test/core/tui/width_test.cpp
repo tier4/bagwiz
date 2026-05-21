@@ -15,6 +15,7 @@ namespace
 
 using bagwiz::core::tui::display_width;
 using bagwiz::core::tui::truncate_to_width;
+using bagwiz::core::tui::wrap_to_width;
 
 TEST(DisplayWidth, EmptyIsZero)
 {
@@ -174,6 +175,84 @@ TEST(TruncateToWidth, IncludesCompleteCsiThenStops)
       2),
     "\x1B[31m\x1B[1m"
     "ab");
+}
+
+TEST(WrapToWidth, EmptyReturnsSingleBlankLine)
+{
+  const auto wrapped = wrap_to_width("", 10);
+  ASSERT_EQ(wrapped.size(), 1U);
+  EXPECT_EQ(wrapped[0], "");
+}
+
+TEST(WrapToWidth, NegativeMaxColsReturnsInputUnchanged)
+{
+  const auto wrapped = wrap_to_width("abcdef", -1);
+  ASSERT_EQ(wrapped.size(), 1U);
+  EXPECT_EQ(wrapped[0], "abcdef");
+}
+
+TEST(WrapToWidth, FitsInOneLine)
+{
+  const auto wrapped = wrap_to_width("hello", 10);
+  ASSERT_EQ(wrapped.size(), 1U);
+  EXPECT_EQ(wrapped[0], "hello");
+}
+
+TEST(WrapToWidth, HardWrapAsciiNoIndent)
+{
+  const auto wrapped = wrap_to_width("abcdefgh", 3);
+  ASSERT_EQ(wrapped.size(), 3U);
+  EXPECT_EQ(wrapped[0], "abc");
+  EXPECT_EQ(wrapped[1], "def");
+  EXPECT_EQ(wrapped[2], "gh");
+}
+
+TEST(WrapToWidth, ContinuationInheritsLeadingSpaces)
+{
+  // 4-space indent + 6 content chars at max_cols=8 -> first line fits
+  // "    abcd" (8 cols), continuation line carries the same indent.
+  const auto wrapped = wrap_to_width("    abcdef", 8);
+  ASSERT_EQ(wrapped.size(), 2U);
+  EXPECT_EQ(wrapped[0], "    abcd");
+  EXPECT_EQ(wrapped[1], "    ef");
+}
+
+TEST(WrapToWidth, IndentDroppedWhenItFillsTheLine)
+{
+  // Indent (4 spaces) == max_cols=4 -> a continuation indented to that
+  // width would have no room for content, so drop it on continuations.
+  const auto wrapped = wrap_to_width("    abcdef", 4);
+  // First segment may briefly tolerate the indent because it is the
+  // original prefix, but continuation lines must not carry it.
+  ASSERT_GE(wrapped.size(), 2U);
+  EXPECT_EQ(wrapped.back().find_first_not_of(' '), 0U);
+}
+
+TEST(WrapToWidth, CjkWideCodepointNeverSplit)
+{
+  // "ab日本" widths 1+1+2+2 = 6. max_cols=4 must keep "日" intact:
+  // first line "ab日" (width 4), continuation "本" (width 2).
+  const auto wrapped = wrap_to_width("ab\xE6\x97\xA5\xE6\x9C\xAC", 4);
+  ASSERT_EQ(wrapped.size(), 2U);
+  EXPECT_EQ(wrapped[0], "ab\xE6\x97\xA5");
+  EXPECT_EQ(wrapped[1], "\xE6\x9C\xAC");
+}
+
+TEST(WrapToWidth, CsiEscapesAttachWithoutAffectingWrap)
+{
+  // CSI sequences are zero-width and atomic.
+  const auto wrapped = wrap_to_width("\x1B[31mabcdef\x1B[0m", 3);
+  ASSERT_EQ(wrapped.size(), 2U);
+  EXPECT_EQ(wrapped[0], "\x1B[31mabc");
+  EXPECT_EQ(wrapped[1], "def\x1B[0m");
+}
+
+TEST(WrapToWidth, BlankWhitespaceOnlyLineIsPreserved)
+{
+  // A whitespace-only line is shorter than max_cols and round-trips as-is.
+  const auto wrapped = wrap_to_width("   ", 10);
+  ASSERT_EQ(wrapped.size(), 1U);
+  EXPECT_EQ(wrapped[0], "   ");
 }
 
 }  // namespace

@@ -10,6 +10,7 @@
 #define BAGWIZ__CORE__TUI__PAGER_HPP_
 
 #include "bagwiz/core/terminal_input.hpp"
+#include "bagwiz/core/tui/layout.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -69,7 +70,11 @@ enum class AppKeyResult {
 // ScrollablePager orchestrates the render+input loop. Apps provide
 // three callbacks:
 //   * BuildFrame: produce the next Frame given the current scroll
-//     offset and the body height to fill.
+//     offset and the terminal size. The number of header / footer
+//     rows drawn is taken from `frame.header.size()` and
+//     `frame.footer.size()`, so the app can pre-wrap content to the
+//     terminal width and the pager will adapt the body region around
+//     whatever the frame reports.
 //   * OnNav: react to navigation NavKeys (next/prev/first/last). The
 //     pager handles kScroll* and kQuit itself but reports kResize via
 //     this callback for visibility / state-bookkeeping.
@@ -82,7 +87,7 @@ enum class AppKeyResult {
 class ScrollablePager
 {
 public:
-  using BuildFrame = std::function<Frame(std::size_t scroll_offset, int body_rows)>;
+  using BuildFrame = std::function<Frame(std::size_t scroll_offset, Size term_size)>;
   using OnNav = std::function<AppKeyResult(NavKey nav)>;
   using OnAppKey = std::function<AppKeyResult(KeyEvent ev)>;
 
@@ -105,13 +110,6 @@ public:
   // returning kHandled from a callback.
   void request_redraw() noexcept { needs_redraw_ = true; }
 
-  // Header / footer row counts; the app uses these to know how many
-  // lines to populate in Frame. Derived from the most recent terminal
-  // query. Defaults assume the walk layout (header=4, footer=4).
-  void set_layout(int header_rows, int footer_rows) noexcept;
-  [[nodiscard]] int header_rows() const noexcept { return header_rows_; }
-  [[nodiscard]] int footer_rows() const noexcept { return footer_rows_; }
-
 private:
   void render_frame(const Frame & frame);
 
@@ -119,8 +117,10 @@ private:
   std::ostream * out_;
   std::size_t scroll_ = 0;
   bool needs_redraw_ = true;
-  int header_rows_ = 4;
-  int footer_rows_ = 4;
+  // Total rows occupied by the most recently rendered frame; used to
+  // erase orphan rows when the layout shrinks (e.g. terminal resize or
+  // header/footer wraps to fewer lines than the previous frame).
+  int last_drawn_rows_ = 0;
 };
 
 }  // namespace bagwiz::core::tui

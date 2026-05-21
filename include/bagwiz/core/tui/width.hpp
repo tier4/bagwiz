@@ -11,6 +11,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace bagwiz::core::tui
 {
@@ -47,6 +48,21 @@ int display_width(std::string_view s) noexcept;
 //     fully excluded. An incomplete trailing CSI sequence is dropped.
 //   * `max_cols <= 0` returns "".
 std::string truncate_to_width(std::string_view s, int max_cols);
+
+// Wrap `s` into one or more lines whose `display_width` is <= max_cols.
+// Continuation lines (every line after the first) are prefixed with the
+// leading ASCII whitespace (spaces/tabs) of `s` so wrapped YAML preserves
+// its visual nesting. CSI sequences are treated atomically and attach to
+// the segment currently accumulating; UTF-8 codepoints never split.
+//
+// Special cases:
+//   * `max_cols <= 0` returns {string(s)} unchanged (no wrap).
+//   * An empty input returns {""} (one empty line) so blank YAML
+//     separators survive a round-trip.
+//   * If the leading indent is >= `max_cols` (so a continuation line
+//     would have no room for content), the indent is dropped on
+//     continuation lines.
+std::vector<std::string> wrap_to_width(std::string_view s, int max_cols);
 
 }  // namespace bagwiz::core::tui
 

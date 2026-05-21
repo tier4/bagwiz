@@ -12,7 +12,9 @@
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/message_formatter.hpp"
 #include "bagwiz/core/terminal_input.hpp"
+#include "bagwiz/core/tui/layout.hpp"
 #include "bagwiz/core/tui/pager.hpp"
+#include "bagwiz/core/tui/width.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <fmt/core.h>
@@ -33,6 +35,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace bagwiz::commands
@@ -42,12 +45,6 @@ namespace
 {
 
 constexpr const char * kLogger = "bagwiz.cmd.walk";
-
-// header: 2 content lines (timestamp, size) + 1 blank separator.
-constexpr int kHeaderRows = 3;
-// footer: 1 blank separator above + (index/scroll-hint, key legend,
-// status row reserved even when empty).
-constexpr int kFooterRows = 4;
 
 // Cached owning copy of a single bag message. RawMessage's span is
 // invalidated by the next BagReader::next() call, so walk must take a
@@ -253,24 +250,30 @@ public:
 
     core::tui::PagerConfig pager_cfg;
     core::tui::ScrollablePager pager(pager_cfg);
-    pager.set_layout(kHeaderRows, kFooterRows);
 
-    // Cache the most recently rendered body so the scroll-hint in the
-    // footer can reflect the visible lines without re-running the
-    // formatter for every footer redraw.
-    std::size_t last_body_size = 0;
-    int last_body_rows = 0;
+    // Append each wrapped fragment of `line` (wrapped at `cols`) onto
+    // `out`. Continuation lines inherit the original's leading
+    // whitespace via wrap_to_width.
+    auto append_wrapped = [](std::vector<std::string> & out, std::string_view line, int cols) {
+      auto wrapped = core::tui::wrap_to_width(line, cols);
+      for (auto & w : wrapped) {
+        out.push_back(std::move(w));
+      }
+    };
 
-    auto build_frame = [&](std::size_t scroll, int body_rows) -> core::tui::Frame {
+    auto build_frame = [&](std::size_t scroll, core::tui::Size term) -> core::tui::Frame {
       core::tui::Frame frame;
-      frame.header.reserve(kHeaderRows);
-      frame.footer.reserve(kFooterRows);
 
       const auto & msg = cache[index];
       const char * total_suffix = exhausted ? "" : "+";
       const std::size_t last_loaded_index = cache.size() - 1;
-      frame.header.push_back(fmt::format("timestamp: {}", format_timestamp(msg.timestamp_ns)));
-      frame.header.push_back(fmt::format("size:      {} bytes", msg.payload.size()));
+
+      // Header: build the two information rows, then wrap each one and
+      // append a blank separator on its own logical line.
+      const int cols = std::max(1, term.cols);
+      append_wrapped(
+        frame.header, fmt::format("timestamp: {}", format_timestamp(msg.timestamp_ns)), cols);
+      append_wrapped(frame.header, fmt::format("size:      {} bytes", msg.payload.size()), cols);
       frame.header.emplace_back();  // blank separator
 
       core::FormatOptions fmt_opts;
@@ -278,31 +281,87 @@ public:
       const auto decoded = decoder.decode(msg.payload);
       const auto formatted = decoded.ok() ? core::format_message(*decoded.value, fmt_opts)
                                           : core::FormatResult{"", decoded.error};
+      std::vector<std::string> body_logical;
       if (formatted.ok()) {
-        frame.body = split_lines(formatted.text);
+        body_logical = split_lines(formatted.text);
       } else {
-        frame.body.push_back(fmt::format("⚠  Could not decode this message: {}", formatted.error));
+        body_logical.push_back(
+          fmt::format("⚠  Could not decode this message: {}", formatted.error));
       }
-      last_body_size = frame.body.size();
-      last_body_rows = body_rows;
-
-      std::string scroll_hint;
-      if (last_body_size > static_cast<std::size_t>(body_rows)) {
-        const std::size_t end =
-          std::min(scroll + static_cast<std::size_t>(body_rows), last_body_size);
-        scroll_hint = fmt::format("    lines {}-{} of {}", scroll + 1, end, last_body_size);
+      frame.body.reserve(body_logical.size());
+      for (const auto & line : body_logical) {
+        append_wrapped(frame.body, line, cols);
       }
 
-      frame.footer.emplace_back();  // blank separator
-      frame.footer.push_back(
-        fmt::format(
-          "  [{} / {}{}]  {}  {}{}", index, last_loaded_index, total_suffix, topic_name, type_name,
-          scroll_hint));
-      frame.footer.emplace_back(
+      // Footer: build logical lines first (blank separator, index row,
+      // key legend, status row) so we know the wrapped footer height
+      // before computing the scroll hint.
+      std::vector<std::string> footer_logical;
+      footer_logical.reserve(4);
+      footer_logical.emplace_back();  // blank separator
+      // The scroll hint depends on body_rows, which itself depends on
+      // wrapped footer height. Resolve it iteratively below; emit a
+      // placeholder index row for now and patch it once we know the
+      // visible body window.
+      footer_logical.emplace_back();
+      footer_logical.emplace_back(
         "  [→/Space] next   [←/b] prev   [↑/k] up   [↓/j] down   "
         "[Home/H] head   [End/T] tail   [g] first   [G] last   [s] save as yaml   "
         "[a] expand arrays   [q] quit");
-      frame.footer.push_back(status.empty() ? std::string{} : fmt::format("  {}", status));
+      footer_logical.push_back(status.empty() ? std::string{} : fmt::format("  {}", status));
+
+      // Wrap everything except the index row first to learn the
+      // footer's height; we know the index row will not change height
+      // since it differs only in the trailing scroll hint, which we
+      // append before re-wrapping.
+      std::vector<std::string> footer_wrapped;
+      auto wrap_footer = [&](const std::vector<std::string> & src) {
+        footer_wrapped.clear();
+        for (const auto & line : src) {
+          append_wrapped(footer_wrapped, line, cols);
+        }
+      };
+
+      auto recompute_footer = [&](const std::string & index_line) {
+        footer_logical[1] = index_line;
+        wrap_footer(footer_logical);
+      };
+
+      const std::string index_no_hint = fmt::format(
+        "  [{} / {}{}]  {}  {}", index, last_loaded_index, total_suffix, topic_name, type_name);
+
+      recompute_footer(index_no_hint);
+      // Body rows available after the (current) footer wrap.
+      auto body_rows_for = [&](const std::vector<std::string> & footer) {
+        return std::max(
+          0, term.rows - static_cast<int>(frame.header.size()) - static_cast<int>(footer.size()));
+      };
+
+      int body_rows = body_rows_for(footer_wrapped);
+      const std::size_t total_body = frame.body.size();
+      std::string scroll_hint;
+      if (body_rows > 0 && total_body > static_cast<std::size_t>(body_rows)) {
+        const std::size_t end = std::min(scroll + static_cast<std::size_t>(body_rows), total_body);
+        scroll_hint = fmt::format("    lines {}-{} of {}", scroll + 1, end, total_body);
+      }
+      if (!scroll_hint.empty()) {
+        recompute_footer(index_no_hint + scroll_hint);
+        // Recomputing the footer can change its wrapped height (the
+        // index row may now wrap), so re-derive body_rows once.
+        body_rows = body_rows_for(footer_wrapped);
+        if (total_body > static_cast<std::size_t>(std::max(body_rows, 0))) {
+          const std::size_t end =
+            std::min(scroll + static_cast<std::size_t>(body_rows), total_body);
+          const std::string new_hint =
+            fmt::format("    lines {}-{} of {}", scroll + 1, end, total_body);
+          if (new_hint != scroll_hint) {
+            scroll_hint = new_hint;
+            recompute_footer(index_no_hint + scroll_hint);
+          }
+        }
+      }
+
+      frame.footer = std::move(footer_wrapped);
       return frame;
     };
 

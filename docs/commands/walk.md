@@ -4,10 +4,12 @@ Walk the messages of a single topic in a ROS 2 rosbag one at a time and
 render each payload as YAML, mirroring `ros2 topic echo`. Designed for
 interactive inspection: the view is a pager with vim-style scroll keys,
 backed by the reusable TUI SDK (`bagwiz::core::tui`). The header and
-footer are pinned in place — only the body region scrolls — and each
-line is truncated to the terminal width so long values never push the
-header off-screen. The view also redraws cleanly on terminal resize.
-ROS 1 `*.bag` inputs are not supported — convert them first with
+footer are pinned in place — only the body region scrolls — and any
+line that does not fit the terminal width is wrapped onto continuation
+lines. Wrapped continuation lines inherit the original line's leading
+whitespace so YAML nesting stays visually intact. The view also redraws
+cleanly on terminal resize. ROS 1 `*.bag` inputs are not supported —
+convert them first with
 [`bagwiz convert 1to2`](convert.md#bagwiz-convert-1to2).
 
 ## Usage
@@ -63,21 +65,24 @@ The visible viewport is split into three pinned regions:
 
 ```text
 ┌─────────────────────────────────────────────────┐
-│ timestamp: ...                                  │ ← header (pinned, 3 rows)
+│ timestamp: ...                                  │ ← header (≥ 3 rows)
 │ size:      N bytes                              │
 │                                                 │
 │ <decoded YAML body — scrolls>                   │ ← body
 │ ...                                             │
 │                                                 │
-│   [i / n+]  /topic  Type    lines X-Y of M      │ ← footer (pinned, 4 rows)
+│   [i / n+]  /topic  Type    lines X-Y of M      │ ← footer (≥ 4 rows)
 │   [keys legend ...]                             │
 │   <status hint or blank>                        │
 └─────────────────────────────────────────────────┘
 ```
 
-The status row is always reserved (blank when there is no message) so
-the body never grows or shrinks underfoot when transient messages like
-`(saved /tmp/x.yaml)` or `(wrapped to first)` appear.
+Header and footer rows are sized to the wrapped content, so on narrow
+terminals the key legend or other long lines occupy multiple rows and
+the body region shrinks accordingly. The status row is always reserved
+(blank when there is no message) so the body never grows or shrinks
+underfoot when transient messages like `(saved /tmp/x.yaml)` or
+`(wrapped to first)` appear.
 
 ## Header
 

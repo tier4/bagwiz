@@ -8,9 +8,12 @@
 
 #include "bagwiz/core/tui/width.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace bagwiz::core::tui
 {
@@ -194,6 +197,68 @@ std::string truncate_to_width(std::string_view s, int max_cols)
     used += tok.width;
     i += tok.byte_len;
   }
+  return out;
+}
+
+std::vector<std::string> wrap_to_width(std::string_view s, int max_cols)
+{
+  std::vector<std::string> out;
+  if (max_cols <= 0) {
+    out.emplace_back(s);
+    return out;
+  }
+  if (s.empty()) {
+    out.emplace_back();
+    return out;
+  }
+
+  // Leading ASCII whitespace is reused as the continuation prefix so
+  // wrapped YAML keeps its visual nesting. Drop it only when it would
+  // leave zero columns for content; otherwise narrow but non-empty
+  // continuations are preferred to losing indent.
+  std::size_t indent_end = 0;
+  while (indent_end < s.size() && (s[indent_end] == ' ' || s[indent_end] == '\t')) {
+    ++indent_end;
+  }
+  std::string indent(s.substr(0, indent_end));
+  int indent_w = display_width(indent);
+  if (indent_w >= max_cols) {
+    indent.clear();
+    indent_w = 0;
+  }
+
+  std::string current;
+  current.reserve(s.size());
+  int used = 0;
+
+  std::size_t i = 0;
+  while (i < s.size()) {
+    const Token tok = next_token(s, i);
+    if (tok.byte_len == 0 || tok.kind == Token::Kind::kIncomplete) {
+      // Drop incomplete trailing CSI / UTF-8 sequences silently.
+      break;
+    }
+    if (tok.kind != Token::Kind::kCodepoint) {
+      // CSI / control bytes are zero-width and attach without changing
+      // the wrap accounting.
+      current.append(s.data() + i, tok.byte_len);
+      i += tok.byte_len;
+      continue;
+    }
+    // Only flush when the current segment already has non-indent
+    // content; otherwise an over-long codepoint that cannot fit after
+    // the indent would loop forever.
+    if (used + tok.width > max_cols && used > indent_w) {
+      out.push_back(std::move(current));
+      current.clear();
+      current.append(indent);
+      used = indent_w;
+    }
+    current.append(s.data() + i, tok.byte_len);
+    used += tok.width;
+    i += tok.byte_len;
+  }
+  out.push_back(std::move(current));
   return out;
 }
 
