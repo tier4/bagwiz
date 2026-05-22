@@ -1,5 +1,15 @@
 {
   "ignorePaths": [".cppcheck_suppressions"],
   "ignoreRegExpList": [],
-  "words": ["bagwiz", "dndebug", "funroll", "libmcap", "libsqlite", "relwithdebinfo"]
+  "words": [
+    "bagwiz",
+    "BWCOMP",
+    "compgen",
+    "dlopens",
+    "dndebug",
+    "funroll",
+    "libmcap",
+    "libsqlite",
+    "relwithdebinfo"
+  ]
 }
