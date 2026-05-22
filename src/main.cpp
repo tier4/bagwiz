@@ -8,6 +8,7 @@
 
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
+#include "bagwiz/commands/completion.hpp"
 #include "bagwiz/core/logging.hpp"
 
 #include <exception>
@@ -23,11 +24,20 @@ int main(int argc, char ** argv)
 {
   bagwiz::core::init_logging();
 
+  try {
+    if (bagwiz::commands::is_completion_request(argc, argv)) {
+      return bagwiz::commands::run_completion_request(argc, argv);
+    }
+  } catch (const std::exception & e) {
+    BAGWIZ_LOG_FATAL(kMainLogger, "Unhandled exception during completion: %s", e.what());
+    return 1;
+  }
+
   CLI::App app{"bagwiz - Fast CLI for analyzing and processing ROS 2 rosbags"};
   app.set_version_flag("--version", kVersion);
   app.require_subcommand(1);
 
-  auto & registry = bagwiz::commands::Registry::instance();
+  const auto & registry = bagwiz::commands::Registry::instance();
   // Selected is set by the top-level subcommand callback; nested subcommands
   // store their own state on the Command instance. run() fires once after
   // parsing completes so parent and child callbacks can both observe args

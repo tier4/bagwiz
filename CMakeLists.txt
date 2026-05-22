@@ -163,6 +163,7 @@ target_include_directories(bagwiz_core PRIVATE $<TARGET_PROPERTY:fmt::fmt,INTERF
 # ---------------------------------------------------------------------------
 add_executable(bagwiz
   src/main.cpp
+  src/commands/completion.cpp
   src/commands/convert.cpp
   src/commands/ls.cpp
   src/commands/walk.cpp
