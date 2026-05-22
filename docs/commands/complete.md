@@ -47,6 +47,7 @@ source ~/.local/share/bash-completion/completions/bagwiz
   `--storage <mcap|sqlite3>` and `tf walk --rot <quat|euler|euler_rad|euler_deg>`.
 - `bagwiz walk <input> <topic>` completes `<topic>` by opening `<input>` as a
   ROS 2 rosbag and listing topics with names that start with the current
-  prefix.
+  prefix. Paths beginning with `~/` are expanded against the current user's
+  home directory before opening the bag.
 - Path completion is delegated to bash's default file completion when bagwiz
   does not provide command-specific candidates.

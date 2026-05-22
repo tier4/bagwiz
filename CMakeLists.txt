@@ -212,6 +212,11 @@ if(BUILD_TESTING)
   find_package(diagnostic_msgs REQUIRED)
   find_package(builtin_interfaces REQUIRED)
 
+  ament_add_gtest(bagwiz_completion_test
+    test/commands/completion_test.cpp
+    src/commands/completion.cpp)
+  target_link_libraries(bagwiz_completion_test bagwiz_core CLI11::CLI11 fmt::fmt)
+
   ament_add_gtest(bagwiz_smoke_test test/smoke_test.cpp)
   ament_add_gtest(bagwiz_yaml_msg_validate_test test/core/yaml_msg_validate_test.cpp)
   target_link_libraries(bagwiz_yaml_msg_validate_test bagwiz_core)

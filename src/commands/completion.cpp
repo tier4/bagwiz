@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <iostream>
@@ -114,6 +115,24 @@ std::optional<std::size_t> parse_size(std::string_view text)
   }
 }
 
+std::filesystem::path expand_current_user_home(const std::filesystem::path & path)
+{
+  const std::string text = path.string();
+  if (text != "~" && !starts_with(text, "~/")) {
+    return path;
+  }
+
+  const char * const home = std::getenv("HOME");
+  if (home == nullptr || std::string_view{home}.empty()) {
+    return path;
+  }
+
+  if (text == "~") {
+    return std::filesystem::path{home};
+  }
+  return std::filesystem::path{home} / text.substr(2);
+}
+
 CompletionRequest parse_request(int argc, char * const * argv)
 {
   CompletionRequest request;
@@ -184,7 +203,7 @@ std::vector<std::string> complete_topics(
 {
   std::vector<std::string> result;
   try {
-    const auto reader = io::open_read(input_path);
+    const auto reader = io::open_read(expand_current_user_home(input_path));
     for (const auto & topic : reader->topics()) {
       if (starts_with(topic.name, prefix)) {
         result.push_back(topic.name);

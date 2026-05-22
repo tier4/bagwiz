@@ -73,9 +73,9 @@ bagwiz complete bash > ~/.local/share/bash-completion/completions/bagwiz
 Open a new shell, or source the generated file in the current shell. The
 completion hook suggests command names, nested subcommands, selected option
 values, and topics for `bagwiz walk <input> <topic>` once `<input>` points to
-a readable ROS 2 rosbag. The shared completion engine is independent of the
-shell script format, so future `zsh` and `fish` support can reuse the same
-candidate generation path.
+a readable ROS 2 rosbag, including paths written with `~/`. The shared
+completion engine is independent of the shell script format, so future `zsh`
+and `fish` support can reuse the same candidate generation path.
 
 ## Contributing
 
