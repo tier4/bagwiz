@@ -10,8 +10,8 @@ bagwiz complete <shell>
 
 ## Positional arguments
 
-| Name    | Description                                              |
-| ------- | -------------------------------------------------------- |
+| Name    | Description                                                |
+| ------- | ---------------------------------------------------------- |
 | `shell` | Shell completion format to emit. Only `bash` is supported. |
 
 ## Supported shells

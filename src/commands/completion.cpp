@@ -6,9 +6,10 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
+#include "bagwiz/commands/completion.hpp"
+
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
-#include "bagwiz/commands/completion.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <algorithm>
@@ -75,7 +76,7 @@ std::vector<std::string> supported_shell_name_strings()
   return names;
 }
 
-std::optional<CompletionShell> parse_shell(std::string_view name)
+std::optional<CompletionShell> parse_shell(const std::string_view & name)
 {
   for (const auto & definition : shell_definitions()) {
     if (definition.name == name) {
@@ -201,8 +202,7 @@ std::vector<std::string> complete_walk(const CompletionRequest & request)
 {
   const auto current = current_word(request);
   if (
-    request.cursor_word == kSecondCommandArgWord &&
-    request.words.size() >= kSecondCommandArgWord) {
+    request.cursor_word == kSecondCommandArgWord && request.words.size() >= kSecondCommandArgWord) {
     return complete_topics(request.words[kFirstCommandArgWord], current);
   }
   return {};
@@ -238,9 +238,8 @@ std::vector<std::string> complete_convert(const CompletionRequest & request)
   }
 
   if (
-    request.cursor_word > 0 &&
-    (request.words[request.cursor_word - 1] == "--storage" ||
-     request.words[request.cursor_word - 1] == "-s")) {
+    request.cursor_word > 0 && (request.words[request.cursor_word - 1] == "--storage" ||
+                                request.words[request.cursor_word - 1] == "-s")) {
     return matching({"mcap", "sqlite3"}, current);
   }
   return {};
