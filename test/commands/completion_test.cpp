@@ -7,6 +7,7 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 
 #include "bagwiz/commands/completion.hpp"
+
 #include "bagwiz/io/bag_io.hpp"
 
 #include <gtest/gtest.h>
@@ -102,9 +103,9 @@ class CompletionTest : public ::testing::Test
 protected:
   void SetUp() override
   {
-    tmp_dir_ =
-      std::filesystem::temp_directory_path() /
-      ("bagwiz_completion_test_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
+    tmp_dir_ = std::filesystem::temp_directory_path() /
+               ("bagwiz_completion_test_" +
+                std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
     std::filesystem::create_directories(tmp_dir_);
   }
 
