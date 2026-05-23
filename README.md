@@ -56,26 +56,38 @@ invocation. Click through for full usage, options, and examples:
 | [`bagwiz convert`](docs/commands/convert.md)   | Convert between ROS 1 and ROS 2, or repack ROS 2 between MCAP / SQLite3.          |
 | [`bagwiz traj`](docs/commands/traj.md)         | Dump a topic's pose trajectory to TUM, or join a trajectory file back into a bag. |
 | [`bagwiz tf`](docs/commands/tf.md)             | Inspect TF in a ROS 2 rosbag (frame tree or interactive walk).                    |
-| [`bagwiz complete`](docs/commands/complete.md) | Generate a bash completion script.                                                |
+| [`bagwiz complete`](docs/commands/complete.md) | Generate a shell completion script (`bash`, `zsh`, `fish`).                       |
 
 `bagwiz <subcommand> --help` is always available and reflects the same
 options documented in the per-command pages.
 
 ## Shell completion
 
-Generate and install the bash completion script after building `bagwiz`:
+`bagwiz complete <shell>` emits an install-ready script for `bash`, `zsh`, or
+`fish`. Pick the section for your shell:
 
 ```bash
+# bash
 mkdir -p ~/.local/share/bash-completion/completions
 bagwiz complete bash > ~/.local/share/bash-completion/completions/bagwiz
+
+# zsh (ensure ~/.zsh/completions is on $fpath before `compinit`)
+mkdir -p ~/.zsh/completions
+bagwiz complete zsh > ~/.zsh/completions/_bagwiz
+
+# fish (autoloaded)
+mkdir -p ~/.config/fish/completions
+bagwiz complete fish > ~/.config/fish/completions/bagwiz.fish
 ```
 
 Open a new shell, or source the generated file in the current shell. The
 completion hook suggests command names, nested subcommands, selected option
 values, and topics for `bagwiz walk <input> <topic>` once `<input>` points to
 a readable ROS 2 rosbag, including paths written with `~/`. The shared
-completion engine is independent of the shell script format, so future `zsh`
-and `fish` support can reuse the same candidate generation path.
+completion engine is independent of the shell script format — all shells
+delegate to the same hidden candidate-generation protocol. See
+[`docs/commands/complete.md`](docs/commands/complete.md) for per-shell
+install instructions and troubleshooting.
 
 ## Contributing
 

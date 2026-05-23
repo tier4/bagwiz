@@ -39,7 +39,7 @@ constexpr std::size_t kTopLevelCommandWord = 0;
 constexpr std::size_t kFirstCommandArgWord = 1;
 constexpr std::size_t kSecondCommandArgWord = 2;
 
-enum class CompletionShell { Bash };
+enum class CompletionShell { Bash, Zsh, Fish };
 
 struct CompletionRequest
 {
@@ -55,7 +55,11 @@ struct ShellDefinition
 
 const std::vector<ShellDefinition> & shell_definitions()
 {
-  static const std::vector<ShellDefinition> kDefinitions{{CompletionShell::Bash, "bash"}};
+  static const std::vector<ShellDefinition> kDefinitions{
+    {CompletionShell::Bash, "bash"},
+    {CompletionShell::Zsh, "zsh"},
+    {CompletionShell::Fish, "fish"},
+  };
   return kDefinitions;
 }
 
@@ -382,11 +386,87 @@ complete -o default -F _bagwiz_completion bagwiz
 )BWCOMP";
 }
 
+const char * zsh_completion_script()
+{
+  return R"BWCOMP(#compdef bagwiz
+# zsh completion for bagwiz.
+# Install with:
+#   mkdir -p ~/.zsh/completions
+#   bagwiz complete zsh > ~/.zsh/completions/_bagwiz
+# Then ensure ~/.zsh/completions is in $fpath before `compinit` in ~/.zshrc:
+#   fpath=(~/.zsh/completions $fpath)
+#   autoload -Uz compinit && compinit
+
+_bagwiz()
+{
+  local -a candidates
+  local out
+
+  if ! out="$(bagwiz __complete $((CURRENT - 1)) "${words[@]}" 2>/dev/null)"; then
+    _files
+    return 0
+  fi
+
+  if [[ -z "${out}" ]]; then
+    _files
+    return 0
+  fi
+
+  local IFS=$'\n'
+  candidates=(${(f)out})
+
+  if (( ${#candidates} == 0 )); then
+    _files
+    return 0
+  fi
+
+  _describe -t bagwiz 'bagwiz' candidates && return 0
+  _files
+}
+
+compdef _bagwiz bagwiz
+
+if [ "${funcstack[1]}" = "_bagwiz" ]; then
+  _bagwiz "$@"
+fi
+)BWCOMP";
+}
+
+const char * fish_completion_script()
+{
+  return R"BWCOMP(# fish completion for bagwiz.
+# Install with:
+#   bagwiz complete fish > ~/.config/fish/completions/bagwiz.fish
+
+function __bagwiz_complete
+    set -l tokens (commandline -opc)
+    set -l current (commandline -ct)
+    set -l cursor (count $tokens)
+    bagwiz __complete $cursor $tokens $current 2>/dev/null
+end
+
+function __bagwiz_no_candidates
+    set -l result (__bagwiz_complete)
+    test -z "$result"
+end
+
+# Show bagwiz-supplied candidates when the helper returns any; otherwise fall
+# back to the shell's default file completion (matches bash's `complete -o
+# default` behavior).
+complete -c bagwiz -f -a '(__bagwiz_complete)'
+complete -c bagwiz -F -n __bagwiz_no_candidates
+)BWCOMP";
+}
+
 const char * completion_script(CompletionShell shell)
 {
   switch (shell) {
     case CompletionShell::Bash:
       return bash_completion_script();
+    case CompletionShell::Zsh:
+      return zsh_completion_script();
+    case CompletionShell::Fish:
+      return fish_completion_script();
   }
   return "";
 }
@@ -420,6 +500,20 @@ private:
 };
 
 }  // namespace
+
+std::vector<std::string> supported_shells()
+{
+  return supported_shell_name_strings();
+}
+
+std::optional<std::string> completion_script_for(const std::string_view & shell)
+{
+  const auto parsed = parse_shell(shell);
+  if (!parsed) {
+    return std::nullopt;
+  }
+  return std::string{completion_script(*parsed)};
+}
 
 bool is_completion_request(int argc, char * const * argv)
 {

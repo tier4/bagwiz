@@ -130,3 +130,57 @@ TEST_F(CompletionTest, WalkTopicCompletionExpandsCurrentUserHome)
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "walk", "~/fixture.mcap"}),
     "/bar\n/foo\n");
 }
+
+TEST(SupportedShellsTest, ListsBashZshAndFish)
+{
+  const auto shells = bagwiz::commands::supported_shells();
+  EXPECT_NE(std::find(shells.begin(), shells.end(), "bash"), shells.end());
+  EXPECT_NE(std::find(shells.begin(), shells.end(), "zsh"), shells.end());
+  EXPECT_NE(std::find(shells.begin(), shells.end(), "fish"), shells.end());
+}
+
+TEST(CompletionScriptTest, UnsupportedShellReturnsNullopt)
+{
+  EXPECT_FALSE(bagwiz::commands::completion_script_for("powershell").has_value());
+  EXPECT_FALSE(bagwiz::commands::completion_script_for("").has_value());
+}
+
+TEST(CompletionScriptTest, BashScriptContainsExpectedMarkers)
+{
+  const auto script = bagwiz::commands::completion_script_for("bash");
+  ASSERT_TRUE(script.has_value());
+  EXPECT_NE(script->find("_bagwiz_completion"), std::string::npos);
+  EXPECT_NE(script->find("complete -o default -F _bagwiz_completion bagwiz"), std::string::npos);
+  EXPECT_NE(script->find("bagwiz __complete"), std::string::npos);
+}
+
+TEST(CompletionScriptTest, ZshScriptContainsExpectedMarkers)
+{
+  const auto script = bagwiz::commands::completion_script_for("zsh");
+  ASSERT_TRUE(script.has_value());
+  EXPECT_NE(script->find("#compdef bagwiz"), std::string::npos);
+  EXPECT_NE(script->find("_bagwiz"), std::string::npos);
+  EXPECT_NE(script->find("bagwiz __complete"), std::string::npos);
+  EXPECT_NE(script->find("_describe"), std::string::npos);
+  EXPECT_NE(script->find("_files"), std::string::npos);
+}
+
+TEST(CompletionScriptTest, FishScriptContainsExpectedMarkers)
+{
+  const auto script = bagwiz::commands::completion_script_for("fish");
+  ASSERT_TRUE(script.has_value());
+  EXPECT_NE(script->find("__bagwiz_complete"), std::string::npos);
+  EXPECT_NE(script->find("complete -c bagwiz"), std::string::npos);
+  EXPECT_NE(script->find("commandline -opc"), std::string::npos);
+  EXPECT_NE(script->find("commandline -ct"), std::string::npos);
+  EXPECT_NE(script->find("bagwiz __complete"), std::string::npos);
+}
+
+TEST(CompletionScriptTest, FishScriptFallsBackToFileCompletion)
+{
+  const auto script = bagwiz::commands::completion_script_for("fish");
+  ASSERT_TRUE(script.has_value());
+  // -F (force file completion) gated by a "no candidates" condition is the
+  // canonical fish equivalent of bash's `complete -o default` fallback.
+  EXPECT_NE(script->find("-F"), std::string::npos);
+}
