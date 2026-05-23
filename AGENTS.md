@@ -11,12 +11,14 @@ Guidelines for AI agents contributing to this repository.
   code so that the description does not drift from the actual
   behavior. Verify claims against the implementation rather than
   relying on memory or assumptions.
-- Use bold (`**...**`) sparingly in Markdown (documentation, PR
-  descriptions, commit message bodies). Reserve it for genuinely
-  critical warnings or terms that must stand out from surrounding
-  prose; do not bold ordinary keywords, type names, or section
-  labels — over-use dilutes the signal and makes documents feel
-  shouty.
+- Use bold (`**...**`) and emoji sparingly in Markdown
+  (documentation, PR descriptions, commit message bodies). Reserve
+  bold for genuinely critical warnings or terms that must stand out
+  from surrounding prose; do not bold ordinary keywords, type names,
+  or section labels. Use emoji only when it adds clear meaning or
+  improves readability, and avoid decorative emoji in source comments,
+  generated documentation, commit messages, and pull request
+  descriptions.
 - Never write phrases that only make sense within the context of an
   AI–developer conversation. A future contributor or user reading the
   source must be able to understand the reasoning from the code and
@@ -50,6 +52,12 @@ Guidelines for AI agents contributing to this repository.
 
 ## 4. Pre-commit Hooks
 
+- Before committing, inspect staged and unstaged changes and ensure the
+  commit does not include secrets, credentials, private keys, tokens,
+  `.env` files, large generated or binary artifacts, personal
+  information, or other files that should not be published to GitHub. If
+  any such file is present or ambiguous, stop and warn the developer
+  instead of adding it to the commit.
 - Do not bypass pre-commit hooks (e.g. `--no-verify`). When a hook
   reports an error, fix the underlying issue and re-commit — never
   skip or disable the hook to push work through.
