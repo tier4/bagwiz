@@ -58,15 +58,13 @@ Guidelines for AI agents contributing to this repository.
   information, or other files that should not be published to GitHub. If
   any such file is present or ambiguous, stop and warn the developer
   instead of adding it to the commit.
-- Do not bypass pre-commit hooks (e.g. `--no-verify`). When a hook
-  reports an error, fix the underlying issue and re-commit — never
-  skip or disable the hook to push work through.
-- Before committing, fix every pre-commit error that is not a false
-  positive. If an error is a genuine false positive, suppress it
-  narrowly at the offending site (e.g. an inline `// NOLINT(...)`,
-  `// cppcheck-suppress`, or equivalent hook-specific directive
-  scoped to the smallest unit possible) rather than disabling the
-  check globally.
+- Do not bypass pre-commit hooks (e.g. `--no-verify`) and do not
+  disable a check globally. When a hook reports an error, fix the
+  underlying issue and re-commit rather than skipping the hook to
+  push work through. The only exception is a genuine false positive:
+  suppress it narrowly at the offending site (e.g. an inline
+  `// NOLINT(...)`, `// cppcheck-suppress`, or equivalent
+  hook-specific directive scoped to the smallest unit possible).
 
 ## 5. Local builds
 
@@ -93,8 +91,15 @@ Guidelines for AI agents contributing to this repository.
 - Always obtain explicit developer approval before making any changes
   to the remote repository — pushing commits, creating/closing pull
   requests or issues, commenting on PRs, and so on.
-- Do not push directly to the `main` branch. Always open a pull request
-  first.
+- Every modification to the existing codebase, no matter how trivial,
+  must go through a pull request. Do not push directly to `main` or
+  any other shared branch — open a PR first, even for small fixes
+  such as typo corrections, formatting, or one-line changes.
+- Never merge a pull request unless every required CI check has
+  completed successfully. If any CI job is failing, pending, or
+  skipped in a way that bypasses required checks, investigate and fix
+  the underlying issue before merging — do not merge to "unblock" the
+  branch or rely on follow-up PRs to clean up red CI.
 - Write PR descriptions that are comprehensive and detailed, yet
   concise: cover the problem, the solution, and the test plan without
   unnecessary verbosity.
@@ -110,3 +115,24 @@ Guidelines for AI agents contributing to this repository.
   guard type over manual `new` / `delete`, paired `open` / `close`
   calls scattered through the body, or `try` / `catch` blocks whose
   only job is cleanup.
+
+## 9. Maintaining These Guidelines
+
+- Keep the rules in this file free of duplication. Each topic should
+  have a single source of truth: if two or more bullets or sections
+  cover the same ground, consolidate them into one authoritative rule
+  rather than restating the same guidance in multiple places.
+- Before adding a new rule, scan the existing sections first. If the
+  new guidance fits an existing rule, extend that rule in place;
+  otherwise, place it under the section whose scope it most clearly
+  belongs to instead of creating a parallel rule elsewhere.
+- When editing this file, also check whether the change makes any
+  pre-existing rule redundant. If it does, update or remove the
+  now-overlapping text in the same change so the ruleset stays
+  minimal and non-redundant.
+- Keep the rules in this file mutually consistent. Before adding or
+  modifying a rule, read the surrounding sections to make sure the
+  new wording does not contradict any existing rule. If a genuine
+  conflict is unavoidable (for example, the new rule is meant to
+  supersede an older one), resolve it in the same change by updating
+  or removing the conflicting rule rather than leaving both in place.
