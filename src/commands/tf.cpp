@@ -576,8 +576,8 @@ std::string format_merged_union_forest(
 class TfCommand : public Command
 {
 public:
-  std::string_view name() const override { return "tf"; }
-  std::string_view description() const override { return "TF inspection"; }
+  [[nodiscard]] std::string_view name() const override { return "tf"; }
+  [[nodiscard]] std::string_view description() const override { return "TF inspection"; }
 
   void configure(CLI::App & app) override
   {

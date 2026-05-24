@@ -132,7 +132,7 @@ struct SkippedTopic
   std::string topic;
   std::string ros1_type;
   std::string ros2_type;
-  TopicSkipReason reason;
+  TopicSkipReason reason{};
   std::string detail;
 };
 
@@ -185,8 +185,11 @@ void log_overflow_events_rate_limited(
 class ConvertCommand : public Command
 {
 public:
-  std::string_view name() const override { return "convert"; }
-  std::string_view description() const override { return "Convert between bag formats"; }
+  [[nodiscard]] std::string_view name() const override { return "convert"; }
+  [[nodiscard]] std::string_view description() const override
+  {
+    return "Convert between bag formats";
+  }
 
   void configure(CLI::App & app) override
   {

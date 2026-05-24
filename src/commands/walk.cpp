@@ -160,8 +160,8 @@ std::filesystem::path resolve_yaml_save_path(
 class WalkCommand : public Command
 {
 public:
-  std::string_view name() const override { return "walk"; }
-  std::string_view description() const override
+  [[nodiscard]] std::string_view name() const override { return "walk"; }
+  [[nodiscard]] std::string_view description() const override
   {
     return "Walk messages of a topic as decoded YAML";
   }

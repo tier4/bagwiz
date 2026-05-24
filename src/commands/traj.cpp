@@ -283,8 +283,8 @@ void load_tf_buffer_and_input_edges(
 class TrajCommand : public Command
 {
 public:
-  std::string_view name() const override { return "traj"; }
-  std::string_view description() const override { return "Trajectory operations"; }
+  [[nodiscard]] std::string_view name() const override { return "traj"; }
+  [[nodiscard]] std::string_view description() const override { return "Trajectory operations"; }
 
   void configure(CLI::App & app) override
   {

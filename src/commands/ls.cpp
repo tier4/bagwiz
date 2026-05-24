@@ -54,8 +54,8 @@ struct Row
 class LsCommand : public Command
 {
 public:
-  std::string_view name() const override { return "ls"; }
-  std::string_view description() const override { return "List topics in a rosbag"; }
+  [[nodiscard]] std::string_view name() const override { return "ls"; }
+  [[nodiscard]] std::string_view description() const override { return "List topics in a rosbag"; }
 
   void configure(CLI::App & app) override
   {

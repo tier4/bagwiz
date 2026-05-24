@@ -27,13 +27,20 @@ namespace bagwiz::commands
 class Command
 {
 public:
+  Command() = default;
   virtual ~Command() = default;
 
+  // Polymorphic base: forbid slicing via copy/move (C.67, C.21 / Rule of Five).
+  Command(const Command &) = delete;
+  Command & operator=(const Command &) = delete;
+  Command(Command &&) = delete;
+  Command & operator=(Command &&) = delete;
+
   // Subcommand name as typed on the CLI, e.g. "topic", "comp".
-  virtual std::string_view name() const = 0;
+  [[nodiscard]] virtual std::string_view name() const = 0;
 
   // One-line description shown in --help.
-  virtual std::string_view description() const = 0;
+  [[nodiscard]] virtual std::string_view description() const = 0;
 
   // Declare arguments/options/flags on `app`. Called once at startup.
   virtual void configure(CLI::App & app) = 0;
@@ -48,13 +55,19 @@ public:
 class Registry
 {
 public:
-  static Registry & instance();
+  [[nodiscard]] static Registry & instance();
 
   void add(std::unique_ptr<Command> cmd);
-  const std::vector<std::unique_ptr<Command>> & all() const { return commands_; }
+  [[nodiscard]] const std::vector<std::unique_ptr<Command>> & all() const { return commands_; }
+
+  Registry(const Registry &) = delete;
+  Registry & operator=(const Registry &) = delete;
+  Registry(Registry &&) = delete;
+  Registry & operator=(Registry &&) = delete;
 
 private:
   Registry() = default;
+  ~Registry() = default;
   std::vector<std::unique_ptr<Command>> commands_;
 };
 

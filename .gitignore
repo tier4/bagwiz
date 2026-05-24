@@ -79,6 +79,9 @@ desktop.ini
 .claude/
 CLAUDE.local.md
 
+# Antigravity
+.antigravitycli/
+
 # Trajectory outputs (produced by bagwiz traj dump)
 *.tum
 
