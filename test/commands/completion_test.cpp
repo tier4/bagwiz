@@ -277,11 +277,11 @@ TEST_F(InstallPathTest, ZshUsesHomeZshCompletions)
 TEST_F(InstallPathTest, FishUsesXdgConfigHomeWhenSet)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
-  const EnvVarGuard xdg_guard("XDG_CONFIG_HOME", std::string{tmp_dir_ / "xdgconf"});
+  const EnvVarGuard xdg_guard("XDG_CONFIG_HOME", std::string{tmp_dir_ / "xdg-conf"});
 
   const auto path = bagwiz::commands::default_install_path_for("fish");
   ASSERT_TRUE(path.has_value());
-  EXPECT_EQ(*path, tmp_dir_ / "xdgconf" / "fish" / "completions" / "bagwiz.fish");
+  EXPECT_EQ(*path, tmp_dir_ / "xdg-conf" / "fish" / "completions" / "bagwiz.fish");
 }
 
 TEST_F(InstallPathTest, FishFallsBackToHomeConfigWhenXdgUnset)
