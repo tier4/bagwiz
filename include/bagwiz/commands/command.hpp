@@ -84,7 +84,7 @@ private:
       ::bagwiz::commands::Registry::instance().add(std::make_unique<CommandType>());    \
     }                                                                                   \
   };                                                                                    \
-  [[maybe_unused]] static const CommandType##_Registrar kBagcliRegistrar_##CommandType; \
+  [[maybe_unused]] static const CommandType##_Registrar kBagwizRegistrar_##CommandType; \
   }
 
 }  // namespace bagwiz::commands
