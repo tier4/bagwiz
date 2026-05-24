@@ -16,7 +16,10 @@
 #include <cstddef>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <optional>
 #include <span>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -51,6 +54,43 @@ public:
 private:
   std::string old_home_;
   bool had_home_ = false;
+};
+
+class EnvVarGuard
+{
+public:
+  EnvVarGuard(std::string name, const std::optional<std::string> & value) : name_(std::move(name))
+  {
+    const char * const previous = std::getenv(name_.c_str());
+    had_previous_ = previous != nullptr;
+    if (had_previous_) {
+      previous_value_ = previous;
+    }
+    if (value.has_value()) {
+      setenv(name_.c_str(), value->c_str(), 1);
+    } else {
+      unsetenv(name_.c_str());
+    }
+  }
+
+  EnvVarGuard(const EnvVarGuard &) = delete;
+  EnvVarGuard & operator=(const EnvVarGuard &) = delete;
+  EnvVarGuard(EnvVarGuard &&) = delete;
+  EnvVarGuard & operator=(EnvVarGuard &&) = delete;
+
+  ~EnvVarGuard()
+  {
+    if (had_previous_) {
+      setenv(name_.c_str(), previous_value_.c_str(), 1);
+    } else {
+      unsetenv(name_.c_str());
+    }
+  }
+
+private:
+  std::string name_;
+  std::string previous_value_;
+  bool had_previous_ = false;
 };
 
 bagwiz::io::TopicInfo make_topic(std::string name, std::string type)
@@ -183,4 +223,158 @@ TEST(CompletionScriptTest, FishScriptFallsBackToFileCompletion)
   // -F (force file completion) gated by a "no candidates" condition is the
   // canonical fish equivalent of bash's `complete -o default` fallback.
   EXPECT_NE(script->find("-F"), std::string::npos);
+}
+
+class InstallPathTest : public ::testing::Test
+{
+protected:
+  void SetUp() override
+  {
+    tmp_dir_ = std::filesystem::temp_directory_path() /
+               ("bagwiz_install_path_test_" +
+                std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
+    std::filesystem::create_directories(tmp_dir_);
+  }
+
+  void TearDown() override
+  {
+    std::error_code ec;
+    std::filesystem::remove_all(tmp_dir_, ec);
+  }
+
+  std::filesystem::path tmp_dir_;
+};
+
+TEST_F(InstallPathTest, BashUsesXdgDataHomeWhenSet)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  const EnvVarGuard xdg_guard("XDG_DATA_HOME", std::string{tmp_dir_ / "xdg"});
+
+  const auto path = bagwiz::commands::default_install_path_for("bash");
+  ASSERT_TRUE(path.has_value());
+  EXPECT_EQ(*path, tmp_dir_ / "xdg" / "bash-completion" / "completions" / "bagwiz");
+}
+
+TEST_F(InstallPathTest, BashFallsBackToHomeLocalShareWhenXdgUnset)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  const EnvVarGuard xdg_guard("XDG_DATA_HOME", std::nullopt);
+
+  const auto path = bagwiz::commands::default_install_path_for("bash");
+  ASSERT_TRUE(path.has_value());
+  EXPECT_EQ(*path, tmp_dir_ / ".local" / "share" / "bash-completion" / "completions" / "bagwiz");
+}
+
+TEST_F(InstallPathTest, ZshUsesHomeZshCompletions)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  const auto path = bagwiz::commands::default_install_path_for("zsh");
+  ASSERT_TRUE(path.has_value());
+  EXPECT_EQ(*path, tmp_dir_ / ".zsh" / "completions" / "_bagwiz");
+}
+
+TEST_F(InstallPathTest, FishUsesXdgConfigHomeWhenSet)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  const EnvVarGuard xdg_guard("XDG_CONFIG_HOME", std::string{tmp_dir_ / "xdgconf"});
+
+  const auto path = bagwiz::commands::default_install_path_for("fish");
+  ASSERT_TRUE(path.has_value());
+  EXPECT_EQ(*path, tmp_dir_ / "xdgconf" / "fish" / "completions" / "bagwiz.fish");
+}
+
+TEST_F(InstallPathTest, FishFallsBackToHomeConfigWhenXdgUnset)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  const EnvVarGuard xdg_guard("XDG_CONFIG_HOME", std::nullopt);
+
+  const auto path = bagwiz::commands::default_install_path_for("fish");
+  ASSERT_TRUE(path.has_value());
+  EXPECT_EQ(*path, tmp_dir_ / ".config" / "fish" / "completions" / "bagwiz.fish");
+}
+
+TEST(InstallPathStandaloneTest, UnknownShellReturnsNullopt)
+{
+  EXPECT_FALSE(bagwiz::commands::default_install_path_for("powershell").has_value());
+  EXPECT_FALSE(bagwiz::commands::default_install_path_for("").has_value());
+}
+
+namespace
+{
+
+std::string read_text_file(const std::filesystem::path & path)
+{
+  std::ifstream stream(path);
+  std::stringstream buffer;
+  buffer << stream.rdbuf();
+  return buffer.str();
+}
+
+}  // namespace
+
+class InstallScriptTest : public ::testing::Test
+{
+protected:
+  void SetUp() override
+  {
+    tmp_dir_ = std::filesystem::temp_directory_path() /
+               ("bagwiz_install_script_test_" +
+                std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
+    std::filesystem::create_directories(tmp_dir_);
+  }
+
+  void TearDown() override
+  {
+    std::error_code ec;
+    std::filesystem::remove_all(tmp_dir_, ec);
+  }
+
+  std::filesystem::path tmp_dir_;
+};
+
+TEST_F(InstallScriptTest, WritesScriptAndCreatesParentDirectories)
+{
+  const auto target = tmp_dir_ / "deep" / "nested" / "path" / "bagwiz";
+
+  ASSERT_TRUE(bagwiz::commands::install_completion_script("bash", target, false));
+
+  ASSERT_TRUE(std::filesystem::exists(target));
+  const auto expected = bagwiz::commands::completion_script_for("bash");
+  ASSERT_TRUE(expected.has_value());
+  EXPECT_EQ(read_text_file(target), *expected);
+}
+
+TEST_F(InstallScriptTest, RefusesToOverwriteExistingFileWithoutForce)
+{
+  const auto target = tmp_dir_ / "bagwiz";
+  {
+    std::ofstream stream(target);
+    stream << "previous";
+  }
+
+  EXPECT_FALSE(bagwiz::commands::install_completion_script("bash", target, false));
+  EXPECT_EQ(read_text_file(target), "previous");
+}
+
+TEST_F(InstallScriptTest, OverwritesExistingFileWhenForceIsTrue)
+{
+  const auto target = tmp_dir_ / "bagwiz";
+  {
+    std::ofstream stream(target);
+    stream << "previous";
+  }
+
+  ASSERT_TRUE(bagwiz::commands::install_completion_script("zsh", target, true));
+
+  const auto expected = bagwiz::commands::completion_script_for("zsh");
+  ASSERT_TRUE(expected.has_value());
+  EXPECT_EQ(read_text_file(target), *expected);
+}
+
+TEST_F(InstallScriptTest, UnknownShellFails)
+{
+  const auto target = tmp_dir_ / "bagwiz";
+  EXPECT_FALSE(bagwiz::commands::install_completion_script("powershell", target, false));
+  EXPECT_FALSE(std::filesystem::exists(target));
 }

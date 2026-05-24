@@ -63,21 +63,21 @@ options documented in the per-command pages.
 
 ## Shell completion
 
-`bagwiz complete <shell>` emits an install-ready script for `bash`, `zsh`, or
-`fish`. Pick the section for your shell:
+`bagwiz complete <shell>` generates a completion script for `bash`, `zsh`, or
+`fish`. Pass `--install` to write it to the shell's standard location
+automatically (parent directories are created):
 
 ```bash
-# bash
-mkdir -p ~/.local/share/bash-completion/completions
+bagwiz complete bash --install
+bagwiz complete zsh  --install   # remember to put ~/.zsh/completions on $fpath
+bagwiz complete fish --install
+```
+
+Without `--install` the script is printed to stdout, so you can pipe it
+anywhere:
+
+```bash
 bagwiz complete bash > ~/.local/share/bash-completion/completions/bagwiz
-
-# zsh (ensure ~/.zsh/completions is on $fpath before `compinit`)
-mkdir -p ~/.zsh/completions
-bagwiz complete zsh > ~/.zsh/completions/_bagwiz
-
-# fish (autoloaded)
-mkdir -p ~/.config/fish/completions
-bagwiz complete fish > ~/.config/fish/completions/bagwiz.fish
 ```
 
 Open a new shell, or source the generated file in the current shell. The

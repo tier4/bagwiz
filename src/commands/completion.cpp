@@ -17,10 +17,12 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace bagwiz::commands
@@ -135,6 +137,78 @@ std::filesystem::path expand_current_user_home(const std::filesystem::path & pat
     return std::filesystem::path{home};
   }
   return std::filesystem::path{home} / text.substr(2);
+}
+
+std::optional<std::string> env_var(const char * name)
+{
+  const char * const value = std::getenv(name);
+  if (value == nullptr || std::string_view{value}.empty()) {
+    return std::nullopt;
+  }
+  return std::string{value};
+}
+
+std::optional<std::filesystem::path> home_directory()
+{
+  const auto home = env_var("HOME");
+  if (!home) {
+    return std::nullopt;
+  }
+  return std::filesystem::path{*home};
+}
+
+std::optional<std::filesystem::path> install_path_for(CompletionShell shell)
+{
+  const auto home = home_directory();
+  if (!home) {
+    return std::nullopt;
+  }
+
+  switch (shell) {
+    case CompletionShell::Bash: {
+      const auto base = env_var("XDG_DATA_HOME").value_or((*home / ".local" / "share").string());
+      return std::filesystem::path{base} / "bash-completion" / "completions" / "bagwiz";
+    }
+    case CompletionShell::Zsh:
+      return *home / ".zsh" / "completions" / "_bagwiz";
+    case CompletionShell::Fish: {
+      const auto base = env_var("XDG_CONFIG_HOME").value_or((*home / ".config").string());
+      return std::filesystem::path{base} / "fish" / "completions" / "bagwiz.fish";
+    }
+  }
+  return std::nullopt;
+}
+
+bool write_script_to(
+  const std::filesystem::path & target, const std::string_view & contents, bool force)
+{
+  std::error_code ec;
+  if (std::filesystem::exists(target, ec) && !force) {
+    std::cerr << "refusing to overwrite existing file: " << target
+              << " (pass --force to overwrite)\n";
+    return false;
+  }
+
+  const auto parent = target.parent_path();
+  if (!parent.empty()) {
+    std::filesystem::create_directories(parent, ec);
+    if (ec) {
+      std::cerr << "failed to create directory " << parent << ": " << ec.message() << '\n';
+      return false;
+    }
+  }
+
+  std::ofstream stream(target, std::ios::trunc);
+  if (!stream) {
+    std::cerr << "failed to open " << target << " for writing\n";
+    return false;
+  }
+  stream << contents;
+  if (!stream) {
+    std::cerr << "failed to write completion script to " << target << '\n';
+    return false;
+  }
+  return true;
 }
 
 CompletionRequest parse_request(int argc, char * const * argv)
@@ -482,6 +556,10 @@ public:
     app.add_option("shell", shell_, "Shell to generate completions for")
       ->required()
       ->check(CLI::IsMember(supported_shell_name_strings()));
+    app.add_flag(
+      "--install", install_,
+      "Write the script to the shell's standard completion directory instead of stdout");
+    app.add_flag("--force", force_, "Overwrite an existing file when used with --install");
   }
 
   int run() override
@@ -491,12 +569,29 @@ public:
       std::cerr << "unsupported shell: " << shell_ << '\n';
       return 1;
     }
-    std::cout << completion_script(*shell);
+
+    if (!install_) {
+      std::cout << completion_script(*shell);
+      return 0;
+    }
+
+    const auto target = install_path_for(*shell);
+    if (!target) {
+      std::cerr << "cannot determine install path: HOME is not set\n";
+      return 1;
+    }
+
+    if (!write_script_to(*target, completion_script(*shell), force_)) {
+      return 1;
+    }
+    std::cout << "installed: " << target->string() << '\n';
     return 0;
   }
 
 private:
   std::string shell_;
+  bool install_ = false;
+  bool force_ = false;
 };
 
 }  // namespace
@@ -513,6 +608,26 @@ std::optional<std::string> completion_script_for(const std::string_view & shell)
     return std::nullopt;
   }
   return std::string{completion_script(*parsed)};
+}
+
+std::optional<std::filesystem::path> default_install_path_for(const std::string_view & shell)
+{
+  const auto parsed = parse_shell(shell);
+  if (!parsed) {
+    return std::nullopt;
+  }
+  return install_path_for(*parsed);
+}
+
+bool install_completion_script(
+  const std::string_view & shell, const std::filesystem::path & target, bool force)
+{
+  const auto parsed = parse_shell(shell);
+  if (!parsed) {
+    std::cerr << "unsupported shell: " << shell << '\n';
+    return false;
+  }
+  return write_script_to(target, completion_script(*parsed), force);
 }
 
 bool is_completion_request(int argc, char * const * argv)

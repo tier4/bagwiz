@@ -5,7 +5,7 @@ Generate a shell completion script for `bagwiz`.
 ## Usage
 
 ```text
-bagwiz complete <shell>
+bagwiz complete <shell> [--install] [--force]
 ```
 
 ## Positional arguments
@@ -13,6 +13,13 @@ bagwiz complete <shell>
 | Name    | Description                                              |
 | ------- | -------------------------------------------------------- |
 | `shell` | Shell completion format to emit (`bash`, `zsh`, `fish`). |
+
+## Options
+
+| Flag        | Description                                                                               |
+| ----------- | ----------------------------------------------------------------------------------------- |
+| `--install` | Write the script to the shell's standard completion directory instead of stdout.          |
+| `--force`   | Overwrite an existing file when used with `--install`. Has no effect without `--install`. |
 
 ## Supported shells
 
@@ -26,7 +33,29 @@ The completion candidate engine is shell-independent. All shells call the
 hidden `bagwiz __complete` protocol to enumerate candidates, so adding more
 shells only requires a new script renderer.
 
-## Installing bash completion
+## Quick install
+
+`--install` writes the script to the shell's standard location, creating any
+missing parent directories:
+
+```bash
+bagwiz complete bash --install
+bagwiz complete zsh  --install
+bagwiz complete fish --install
+```
+
+Default targets (XDG variables are honored when set):
+
+| Shell  | Path                                                                  |
+| ------ | --------------------------------------------------------------------- |
+| `bash` | `${XDG_DATA_HOME:-~/.local/share}/bash-completion/completions/bagwiz` |
+| `zsh`  | `~/.zsh/completions/_bagwiz`                                          |
+| `fish` | `${XDG_CONFIG_HOME:-~/.config}/fish/completions/bagwiz.fish`          |
+
+Re-running `--install` against an existing file fails unless `--force` is
+passed.
+
+## Installing bash completion manually
 
 Generate the script into bash's per-user completion directory:
 
