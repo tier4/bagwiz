@@ -13,6 +13,7 @@
 #include "bagwiz/io/bag_io.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdlib>
 #include <exception>
@@ -23,6 +24,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace bagwiz::commands
@@ -40,6 +42,26 @@ constexpr int kCompletionWordsBeginArg = 3;
 constexpr std::size_t kTopLevelCommandWord = 0;
 constexpr std::size_t kFirstCommandArgWord = 1;
 constexpr std::size_t kSecondCommandArgWord = 2;
+constexpr std::size_t kFourthCommandArgWord = 4;
+
+// Declarative table of commands that take a positional <topic> argument.
+// `subcommand` is empty when the command has no subcommand level (e.g.
+// `bagwiz walk <input> <topic>`). `input_word` and `topic_word` are
+// indices into CompletionRequest::words AFTER the leading "bagwiz" has
+// been stripped, so position 0 is the top-level command.
+struct TopicArgBinding
+{
+  std::string_view command{};
+  std::string_view subcommand{};
+  std::size_t input_word{0};
+  std::size_t topic_word{0};
+};
+
+constexpr std::array<TopicArgBinding, 3> kTopicBindings{{
+  {"walk", "", kFirstCommandArgWord, kSecondCommandArgWord},
+  {"traj", "dump", kSecondCommandArgWord, kFourthCommandArgWord},
+  {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord},
+}};
 
 enum class CompletionShell { Bash, Zsh, Fish };
 
@@ -51,8 +73,8 @@ struct CompletionRequest
 
 struct ShellDefinition
 {
-  CompletionShell shell;
-  std::string_view name;
+  CompletionShell shell{};
+  std::string_view name{};
 };
 
 const std::vector<ShellDefinition> & shell_definitions()
@@ -295,14 +317,56 @@ std::vector<std::string> complete_topics(
   return result;
 }
 
-std::vector<std::string> complete_walk(const CompletionRequest & request)
+// Looks up the cursor position in kTopicBindings and, if a binding matches
+// and every positional slot before the topic is non-flag, dispatches to
+// complete_topics. Returns std::nullopt when no binding applies so the
+// caller can fall through to per-command completion. Returning an empty
+// vector means "binding matched, no candidates" (e.g. bad bag path) — the
+// shell's default file completion then takes over.
+std::optional<std::vector<std::string>> try_topic_completion(const CompletionRequest & request)
 {
-  const auto current = current_word(request);
-  if (
-    request.cursor_word == kSecondCommandArgWord && request.words.size() >= kSecondCommandArgWord) {
-    return complete_topics(request.words[kFirstCommandArgWord], current);
+  if (request.words.empty()) {
+    return std::nullopt;
   }
-  return {};
+
+  const auto current = current_word(request);
+  if (current.starts_with("-")) {
+    return std::nullopt;
+  }
+
+  const auto & top_level = request.words[kTopLevelCommandWord];
+
+  for (const auto & binding : kTopicBindings) {
+    if (binding.command != top_level) {
+      continue;
+    }
+    if (!binding.subcommand.empty()) {
+      if (request.words.size() <= kFirstCommandArgWord) {
+        continue;
+      }
+      if (request.words[kFirstCommandArgWord] != binding.subcommand) {
+        continue;
+      }
+    }
+    if (request.cursor_word != binding.topic_word) {
+      continue;
+    }
+
+    bool earlier_slot_is_flag = false;
+    for (std::size_t i = kFirstCommandArgWord; i < binding.topic_word; ++i) {
+      if (request.words[i].starts_with("-")) {
+        earlier_slot_is_flag = true;
+        break;
+      }
+    }
+    if (earlier_slot_is_flag) {
+      continue;
+    }
+
+    return complete_topics(request.words[binding.input_word], current);
+  }
+
+  return std::nullopt;
 }
 
 std::vector<std::string> complete_complete_command(const CompletionRequest & request)
@@ -407,6 +471,10 @@ std::vector<std::string> complete_request(const CompletionRequest & request)
     return top_level_candidates(current);
   }
 
+  if (auto topic_candidates = try_topic_completion(request)) {
+    return std::move(*topic_candidates);
+  }
+
   const auto & command = request.words.front();
   if (command == "complete") {
     return complete_complete_command(request);
@@ -419,9 +487,6 @@ std::vector<std::string> complete_request(const CompletionRequest & request)
   }
   if (command == "tf") {
     return complete_tf(request);
-  }
-  if (command == "walk") {
-    return complete_walk(request);
   }
   return {};
 }
@@ -548,8 +613,11 @@ const char * completion_script(CompletionShell shell)
 class CompleteCommand : public Command
 {
 public:
-  std::string_view name() const override { return "complete"; }
-  std::string_view description() const override { return "Generate shell completion scripts"; }
+  [[nodiscard]] std::string_view name() const override { return "complete"; }
+  [[nodiscard]] std::string_view description() const override
+  {
+    return "Generate shell completion scripts";
+  }
 
   void configure(CLI::App & app) override
   {

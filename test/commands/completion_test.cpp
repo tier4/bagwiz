@@ -171,6 +171,75 @@ TEST_F(CompletionTest, WalkTopicCompletionExpandsCurrentUserHome)
     "/bar\n/foo\n");
 }
 
+TEST_F(CompletionTest, TrajDumpTopicCompletionListsBagTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+  const auto output_arg = (tmp_dir_ / "out.tum").string();
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "traj", "dump", "~/fixture.mcap", output_arg}),
+    "/bar\n/foo\n");
+}
+
+TEST_F(CompletionTest, TrajDumpTopicCompletionRespectsPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+  const auto output_arg = (tmp_dir_ / "out.tum").string();
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "traj", "dump", "~/fixture.mcap", output_arg, "/f"}),
+    "/foo\n");
+}
+
+TEST_F(CompletionTest, TrajJoinTopicCompletionListsBagTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+  const auto traj_arg = (tmp_dir_ / "in.tum").string();
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "traj", "join", "~/fixture.mcap", traj_arg}),
+    "/bar\n/foo\n");
+}
+
+// The topic-binding table guards against flag interleave in any positional
+// slot before the topic. Pre-refactor walk would have blindly called the
+// reader on whatever sat at words[1]; post-refactor the binding rejects it
+// before the io call. End-user output stays empty either way, but this
+// test pins the new gate so a regression cannot silently re-enable a
+// reader call on a flag-shaped path.
+TEST_F(CompletionTest, WalkTopicCompletionSuppressedWhenInputSlotIsFlag)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "3", "bagwiz", "walk", "--unknown-flag"}), "");
+}
+
+TEST_F(CompletionTest, TrajDumpTopicCompletionSuppressedWhenOutputSlotIsFlag)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+
+  // `--format` at the output slot means the user is mid-flag, not at the
+  // topic positional — binding bails out so the existing
+  // value-after-flag branch can return "tum".
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "traj", "dump", "~/fixture.mcap", "--format"}),
+    "tum\n");
+}
+
 TEST(SupportedShellsTest, ListsBashZshAndFish)
 {
   const auto shells = bagwiz::commands::supported_shells();

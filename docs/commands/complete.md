@@ -122,10 +122,18 @@ source ~/.config/fish/completions/bagwiz.fish
 - Top-level commands and known nested subcommands are completed statically.
 - Selected option values are completed where bagwiz has a closed set, such as
   `--storage <mcap|sqlite3>` and `tf walk --rot <quat|euler|euler_rad|euler_deg>`.
-- `bagwiz walk <input> <topic>` completes `<topic>` by opening `<input>` as a
-  ROS 2 rosbag and listing topics with names that start with the current
-  prefix. Paths beginning with `~/` are expanded against the current user's
-  home directory before opening the bag.
+- Commands that take a `<topic>` positional argument complete it by opening
+  `<input>` as a ROS 2 rosbag and listing topics with names that start with
+  the current prefix. The currently-covered positions are:
+  - `bagwiz walk <input> <topic>`
+  - `bagwiz traj dump <input> <output> <topic>`
+  - `bagwiz traj join <input> <traj_file> <topic>`
+
+  Paths beginning with `~/` are expanded against the current user's home
+  directory before opening the bag. Topic completion is suppressed when the
+  earlier positional slots have been replaced by flags so flag-value
+  completion takes over.
+
 - Path completion is delegated to the shell's default file completion when
   bagwiz does not provide command-specific candidates. The bash script uses
   `complete -o default`; the zsh script falls back to `_files`; the fish
