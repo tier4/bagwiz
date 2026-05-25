@@ -1132,15 +1132,16 @@ private:
     }
 
     // 4. Pick the writer factory based on -o presence.
-    auto make_writer = [](const std::filesystem::path & out_path) {
-      io::CreateOptions copts;
-      copts.format = io::Format::Auto;
-      copts.layout = io::Layout::Auto;
-      copts.mcap_compression = "none";
-      return io::open_write(out_path, copts);
-    };
-
     if (args.output_path.has_value()) {
+      // Explicit -o: let the factory pick from the user-provided path's
+      // extension (e.g. .mcap / .db3 / directory).
+      auto make_writer = [](const std::filesystem::path & out_path) {
+        io::CreateOptions copts;
+        copts.format = io::Format::Auto;
+        copts.layout = io::Layout::Auto;
+        copts.mcap_compression = "none";
+        return io::open_write(out_path, copts);
+      };
       if (const auto r = core::prepare_output_path(*args.output_path, args.overwrite); !r.ok) {
         BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
         return 1;
@@ -1149,17 +1150,41 @@ private:
         args, transforms, stamps_ns, [&]() { return make_writer(*args.output_path); });
     }
 
-    // In-place mode: hand off to write_bag_inplace, which produces the
-    // tmp path. The closure runs execute_join_pass against the tmp;
-    // because execute_join_pass returns int rather than throwing on
-    // command-level errors, we surface non-zero exits via a captured
-    // status and translate them into a runtime_error so the in-place
-    // helper aborts the swap.
+    // In-place mode: pin format and layout to the input's identity. The
+    // tmp path used by write_bag_inplace carries a synthetic suffix
+    // (".bagwiz-inplace-tmp-..."), so Format::Auto / Layout::Auto would
+    // misread it as a directory MCAP target and silently convert db3
+    // inputs to mcap on swap.
+    const io::Format inplace_format = io::detect_format(args.input_path);
+    if (inplace_format == io::Format::Auto) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "traj join: could not detect storage format of input bag '%s'.",
+        args.input_path.string().c_str());
+      return 1;
+    }
+    const io::Layout inplace_layout = std::filesystem::is_directory(args.input_path)
+                                        ? io::Layout::Directory
+                                        : io::Layout::SingleFile;
+    auto make_inplace_writer = [inplace_format,
+                                inplace_layout](const std::filesystem::path & out_path) {
+      io::CreateOptions copts;
+      copts.format = inplace_format;
+      copts.layout = inplace_layout;
+      copts.mcap_compression = "none";
+      return io::open_write(out_path, copts);
+    };
+
+    // Hand off to write_bag_inplace, which produces the tmp path. The
+    // closure runs execute_join_pass against the tmp; because
+    // execute_join_pass returns int rather than throwing on command-level
+    // errors, we surface non-zero exits via a captured status and
+    // translate them into a runtime_error so the in-place helper aborts
+    // the swap.
     int pass_status = 0;
     try {
       core::write_bag_inplace(args.input_path, [&](const std::filesystem::path & tmp) {
-        pass_status =
-          execute_join_pass(args, transforms, stamps_ns, [&]() { return make_writer(tmp); });
+        pass_status = execute_join_pass(
+          args, transforms, stamps_ns, [&]() { return make_inplace_writer(tmp); });
         if (pass_status != 0) {
           throw std::runtime_error("traj join: pass failed; aborting in-place swap");
         }
