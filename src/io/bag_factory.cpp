@@ -232,4 +232,29 @@ CreateOptions create_options_inheriting_format(
   return opts;
 }
 
+CreateOptions create_options_preserving_storage(
+  const std::filesystem::path & reference_path) noexcept
+{
+  CreateOptions opts;
+  opts.format = Format::Auto;
+  opts.layout = Layout::Auto;
+
+  const auto detected = detect_format(reference_path);
+  if (detected == Format::Auto) {
+    return opts;
+  }
+
+  std::error_code ec;
+  const bool is_dir = std::filesystem::is_directory(reference_path, ec);
+  if (ec) {
+    // Surface stat failure as detection failure so the caller errors
+    // out rather than silently mis-pinning the layout.
+    return opts;
+  }
+
+  opts.format = detected;
+  opts.layout = is_dir ? Layout::Directory : Layout::SingleFile;
+  return opts;
+}
+
 }  // namespace bagwiz::io

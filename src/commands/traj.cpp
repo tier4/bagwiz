@@ -1155,21 +1155,15 @@ private:
     // (".bagwiz-inplace-tmp-..."), so Format::Auto / Layout::Auto would
     // misread it as a directory MCAP target and silently convert db3
     // inputs to mcap on swap.
-    const io::Format inplace_format = io::detect_format(args.input_path);
-    if (inplace_format == io::Format::Auto) {
+    const auto inplace_copts = io::create_options_preserving_storage(args.input_path);
+    if (inplace_copts.format == io::Format::Auto) {
       BAGWIZ_LOG_ERROR(
         kLogger, "traj join: could not detect storage format of input bag '%s'.",
         args.input_path.string().c_str());
       return 1;
     }
-    const io::Layout inplace_layout = std::filesystem::is_directory(args.input_path)
-                                        ? io::Layout::Directory
-                                        : io::Layout::SingleFile;
-    auto make_inplace_writer = [inplace_format,
-                                inplace_layout](const std::filesystem::path & out_path) {
-      io::CreateOptions copts;
-      copts.format = inplace_format;
-      copts.layout = inplace_layout;
+    auto make_inplace_writer = [inplace_copts](const std::filesystem::path & out_path) {
+      auto copts = inplace_copts;
       copts.mcap_compression = "none";
       return io::open_write(out_path, copts);
     };

@@ -294,6 +294,11 @@ if(BUILD_TESTING)
   target_link_libraries(bagwiz_create_options_inheriting_test bagwiz_core)
 
   ament_add_gtest(
+    bagwiz_create_options_preserving_storage_test
+    test/io/create_options_preserving_storage_test.cpp)
+  target_link_libraries(bagwiz_create_options_preserving_storage_test bagwiz_core)
+
+  ament_add_gtest(
     bagwiz_msg_definition_resolver_test test/core/msg_definition_resolver_test.cpp)
   target_link_libraries(bagwiz_msg_definition_resolver_test bagwiz_core)
 endif()

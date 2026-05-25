@@ -206,6 +206,27 @@ Format infer_format_from_extension(const std::filesystem::path & path) noexcept;
 CreateOptions create_options_inheriting_format(
   const std::filesystem::path & reference_path, const std::filesystem::path & output_path) noexcept;
 
+// Compose CreateOptions that preserve BOTH the format and the layout of
+// an existing bag. Used by in-place rewrites (e.g. `bagwiz traj join`
+// without `-o`) where the output path is a synthetic tmp suffix that
+// the factory's extension-based Auto resolution cannot interpret. A
+// sibling to `create_options_inheriting_format`, with a stricter layout
+// policy: single-file references stay single-file (not converted to a
+// directory).
+//
+// Behavior:
+//   - if `reference_path`'s format can be detected via `detect_format`:
+//     returns Format::<detected> + Layout::<SingleFile|Directory>
+//     depending on whether the reference path is a directory.
+//   - otherwise: returns Format::Auto + Layout::Auto. The caller is
+//     expected to detect this and surface a user-facing error rather
+//     than open a writer with unresolved Auto/Auto.
+//
+// Never throws and never touches the filesystem beyond `detect_format`
+// and `is_directory`.
+CreateOptions create_options_preserving_storage(
+  const std::filesystem::path & reference_path) noexcept;
+
 }  // namespace bagwiz::io
 
 #endif  // BAGWIZ__IO__BAG_IO_HPP_
