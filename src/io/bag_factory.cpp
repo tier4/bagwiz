@@ -205,4 +205,30 @@ std::unique_ptr<BagWriter> open_write(const std::filesystem::path & path, Create
   throw std::runtime_error("unsupported format for single-file writer");
 }
 
+CreateOptions create_options_inheriting_directory(
+  const std::filesystem::path & reference_path, const std::filesystem::path & output_path) noexcept
+{
+  CreateOptions opts;
+  opts.format = Format::Auto;
+  opts.layout = Layout::Auto;
+
+  // The user named a single-file output: defer to factory-level
+  // extension resolution so their choice wins.
+  if (infer_format_from_extension(output_path) != Format::Auto) {
+    return opts;
+  }
+
+  std::error_code ec;
+  if (!std::filesystem::is_directory(reference_path, ec) || ec) {
+    return opts;
+  }
+  const auto detected = detect_format(reference_path);
+  if (detected == Format::Auto) {
+    return opts;
+  }
+  opts.format = detected;
+  opts.layout = Layout::Directory;
+  return opts;
+}
+
 }  // namespace bagwiz::io

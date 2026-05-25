@@ -180,6 +180,28 @@ Format detect_format(const std::filesystem::path & path) noexcept;
 // Format::Auto so callers can fall back to an explicit `--storage` flag.
 Format infer_format_from_extension(const std::filesystem::path & path) noexcept;
 
+// Compose CreateOptions for an output path that should inherit the
+// storage of a reference directory bag when the user did not pick a
+// single-file format via the output extension. Used by rewrite-style
+// commands (e.g. `bagwiz tf inject-static`) where the user's mental
+// model is "the output should look like the input unless I named a
+// `.mcap` / `.db3` file".
+//
+// Behavior:
+//   - `output_path` ends in `.mcap` or `.db3`: returns
+//     Format::Auto + Layout::Auto so factory-level extension resolution
+//     honours the user's choice.
+//   - else if `reference_path` is an existing directory whose format
+//     can be detected via `detect_format`: returns
+//     Format::<detected> + Layout::Directory.
+//   - otherwise: returns Format::Auto + Layout::Auto and callers fall
+//     back to the factory's default (Directory + Mcap).
+//
+// Never throws and never touches the filesystem beyond `is_directory`
+// and `detect_format`.
+CreateOptions create_options_inheriting_directory(
+  const std::filesystem::path & reference_path, const std::filesystem::path & output_path) noexcept;
+
 }  // namespace bagwiz::io
 
 #endif  // BAGWIZ__IO__BAG_IO_HPP_
