@@ -255,10 +255,9 @@ TEST_F(WriterRoundTripTest, McapSchemaRoundTrips)
 
 TEST_F(WriterRoundTripTest, McapEmptySchemaStillSucceeds)
 {
-  // Legacy callers that don't fill TopicInfo::schema_text (today: every
-  // 1to2 / 2to1 / storage path that hasn't been ported yet) must keep
-  // working — the writer emits an empty Schema record, and the reader
-  // surfaces empty schema_text without erroring.
+  // Callers that don't fill TopicInfo::schema_text must keep working —
+  // the writer emits an empty Schema record, and the reader surfaces
+  // empty schema_text without erroring.
   const auto path = tmp_dir_ / "no_schemas.mcap";
   bagwiz::io::CreateOptions options;
   options.format = bagwiz::io::Format::Mcap;

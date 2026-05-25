@@ -23,9 +23,7 @@ find_package(SQLite3 REQUIRED)
 # typesupport `.so`s loaded at runtime via dlopen. Still required
 # alongside the schema-driven decoder because SQLite3 inputs and
 # legacy MCAPs without embedded schemas have no schema text for the
-# decoder factory to use, and bag-less callers (the 1to2 / 2to1
-# converters) walk the destination type's MessageMembers tree
-# directly.
+# decoder factory to use.
 find_package(rmw REQUIRED)
 find_package(rmw_implementation REQUIRED)
 find_package(rosidl_runtime_c REQUIRED)
@@ -81,7 +79,6 @@ FetchContent_MakeAvailable(cli11 fmt rang)
 # static registrars pull into the final binary.
 # ---------------------------------------------------------------------------
 add_library(bagwiz_core
-  src/core/cdr_to_ros1.cpp
   src/core/cdr_walker/cdr_reader.cpp
   src/core/cdr_walker/walker.cpp
   src/core/decoder/decoder_factory.cpp
@@ -96,10 +93,6 @@ add_library(bagwiz_core
   src/core/msg_definition_resolver.cpp
   src/core/msg_schema/parser.cpp
   src/core/msg_schema/schema_model.cpp
-  src/core/ros1_message_definitions.cpp
-  src/core/ros1_meta_synthesizer.cpp
-  src/core/ros1_to_cdr.cpp
-  src/core/schema_resolver.cpp
   src/core/ros2_yaml_to_cdr.cpp
   src/core/yaml_msg_stamp_sync.cpp
   src/core/yaml_msg_validate.cpp
@@ -124,8 +117,6 @@ add_library(bagwiz_core
   src/io/mcap_writer.cpp
   src/io/metadata_computer.cpp
   src/io/metadata_yaml.cpp
-  src/io/rosbag1_reader.cpp
-  src/io/rosbag1_writer.cpp
   src/io/sqlite3_reader.cpp
   src/io/sqlite3_writer.cpp
 )
@@ -202,10 +193,10 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
 
   # Standard message packages used by the introspection-path tests
-  # (decoder_test, ros1_to_cdr_test, message_formatter regression).
-  # These are not runtime deps of bagwiz_core — the introspection
-  # backend dlopens the matching `.so` files at runtime — so they
-  # only need to be on AMENT_PREFIX_PATH at test time.
+  # (decoder_test, message_formatter regression, msg_definition_resolver
+  # tests). These are not runtime deps of bagwiz_core — the introspection
+  # backend dlopens the matching `.so` files at runtime — so they only
+  # need to be on AMENT_PREFIX_PATH at test time.
   find_package(std_msgs REQUIRED)
   find_package(sensor_msgs REQUIRED)
   find_package(nav_msgs REQUIRED)
@@ -298,37 +289,9 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_detect_format_test test/io/detect_format_test.cpp)
   target_link_libraries(bagwiz_detect_format_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_ros1_to_cdr_test test/core/ros1_to_cdr_test.cpp)
-  target_link_libraries(bagwiz_ros1_to_cdr_test bagwiz_core)
-
-  ament_add_gtest(bagwiz_cdr_to_ros1_test test/core/cdr_to_ros1_test.cpp)
-  target_link_libraries(bagwiz_cdr_to_ros1_test bagwiz_core)
-
-  ament_add_gtest(
-    bagwiz_ros1_message_definitions_test test/core/ros1_message_definitions_test.cpp)
-  target_link_libraries(bagwiz_ros1_message_definitions_test bagwiz_core)
-
-  ament_add_gtest(
-    bagwiz_ros1_meta_synthesizer_test test/core/ros1_meta_synthesizer_test.cpp)
-  target_link_libraries(bagwiz_ros1_meta_synthesizer_test bagwiz_core)
-
   ament_add_gtest(
     bagwiz_msg_definition_resolver_test test/core/msg_definition_resolver_test.cpp)
   target_link_libraries(bagwiz_msg_definition_resolver_test bagwiz_core)
-
-  ament_add_gtest(
-    bagwiz_schema_resolver_test test/core/schema_resolver_test.cpp)
-  target_link_libraries(bagwiz_schema_resolver_test bagwiz_core)
-
-  ament_add_gtest(
-    bagwiz_schema_pipeline_test test/core/schema_pipeline_test.cpp)
-  target_link_libraries(bagwiz_schema_pipeline_test bagwiz_core)
-
-  ament_add_gtest(bagwiz_rosbag1_reader_test test/io/rosbag1_reader_test.cpp)
-  target_link_libraries(bagwiz_rosbag1_reader_test bagwiz_core)
-
-  ament_add_gtest(bagwiz_rosbag1_writer_test test/io/rosbag1_writer_test.cpp)
-  target_link_libraries(bagwiz_rosbag1_writer_test bagwiz_core)
 endif()
 
 ament_package()

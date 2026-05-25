@@ -381,18 +381,11 @@ std::vector<std::string> complete_convert(const CompletionRequest & request)
 {
   const auto current = current_word(request);
   if (request.cursor_word == kFirstCommandArgWord) {
-    return matching({"1to2", "2to1", "storage"}, current);
+    return matching({"storage"}, current);
   }
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & mode = request.words[kFirstCommandArgWord];
-    if (mode == "1to2") {
-      return matching(
-        {"--allow-md5-mismatch", "--overwrite", "--storage", "--strict", "-s"}, current);
-    }
-    if (mode == "2to1") {
-      return matching({"--overwrite", "--strict"}, current);
-    }
     if (mode == "storage") {
       return matching({"--overwrite", "--storage", "-s"}, current);
     }

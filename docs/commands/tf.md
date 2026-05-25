@@ -5,8 +5,7 @@ TF inspection on a ROS 2 rosbag.
 - [`tree`](#bagwiz-tf-tree) — merged static∪dynamic forest; edge tags `[S]`/`[D]`/`[B]` and optional TTY colors.
 - [`walk`](#bagwiz-tf-walk) — interactive chain between `<from>` and `<to>` at each dynamic `/tf` update.
 
-ROS 1 `*.bag` inputs are not supported — convert them first with
-[`bagwiz convert 1to2`](convert.md#bagwiz-convert-1to2).
+ROS 1 `*.bag` inputs are not supported.
 
 ---
 

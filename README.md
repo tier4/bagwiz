@@ -3,9 +3,9 @@
 Fast CLI for analyzing, processing, and extracting data from ROS 2
 rosbags. The inspection and export subcommands (`ls`, `walk`, `tf`,
 `traj`) read rosbag2 inputs — directory layouts and single-file `*.mcap`
-/ `*.db3` — through a unified backend. The `convert` subcommand
-additionally bridges to and from ROS 1 `*.bag` for cross-format work.
-All of this happens without spinning up a ROS graph.
+/ `*.db3` — through a unified backend. The `convert` subcommand repacks
+rosbag2 between MCAP and SQLite3 storage. All of this happens without
+spinning up a ROS graph.
 
 ## Installation
 
@@ -53,7 +53,7 @@ invocation. Click through for full usage, options, and examples:
 | ---------------------------------------------- | --------------------------------------------------------------------------------- |
 | [`bagwiz ls`](docs/commands/ls.md)             | List topics in a ROS 2 rosbag with counts and average frequencies.                |
 | [`bagwiz walk`](docs/commands/walk.md)         | Interactively walk a ROS 2 topic's messages as decoded YAML.                      |
-| [`bagwiz convert`](docs/commands/convert.md)   | Convert between ROS 1 and ROS 2, or repack ROS 2 between MCAP / SQLite3.          |
+| [`bagwiz convert`](docs/commands/convert.md)   | Repack a ROS 2 rosbag between MCAP and SQLite3 storage backends.                  |
 | [`bagwiz traj`](docs/commands/traj.md)         | Dump a topic's pose trajectory to TUM, or join a trajectory file back into a bag. |
 | [`bagwiz tf`](docs/commands/tf.md)             | Inspect TF in a ROS 2 rosbag (frame tree or interactive walk).                    |
 | [`bagwiz complete`](docs/commands/complete.md) | Generate a shell completion script (`bash`, `zsh`, `fish`).                       |

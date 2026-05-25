@@ -8,9 +8,7 @@ footer are pinned in place — only the body region scrolls — and any
 line that does not fit the terminal width is wrapped onto continuation
 lines. Wrapped continuation lines inherit the original line's leading
 whitespace so YAML nesting stays visually intact. The view also redraws
-cleanly on terminal resize. ROS 1 `*.bag` inputs are not supported —
-convert them first with
-[`bagwiz convert 1to2`](convert.md#bagwiz-convert-1to2).
+cleanly on terminal resize. ROS 1 `*.bag` inputs are not supported.
 
 ## Usage
 

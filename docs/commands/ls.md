@@ -1,8 +1,7 @@
 # `bagwiz ls`
 
 List the topics contained in a single ROS 2 rosbag, with per-topic message
-counts and average frequencies. ROS 1 `*.bag` inputs are not supported —
-convert them first with [`bagwiz convert 1to2`](convert.md#bagwiz-convert-1to2).
+counts and average frequencies. ROS 1 `*.bag` inputs are not supported.
 
 ## Usage
 
