@@ -205,7 +205,7 @@ std::unique_ptr<BagWriter> open_write(const std::filesystem::path & path, Create
   throw std::runtime_error("unsupported format for single-file writer");
 }
 
-CreateOptions create_options_inheriting_directory(
+CreateOptions create_options_inheriting_format(
   const std::filesystem::path & reference_path, const std::filesystem::path & output_path) noexcept
 {
   CreateOptions opts;
@@ -213,15 +213,16 @@ CreateOptions create_options_inheriting_directory(
   opts.layout = Layout::Auto;
 
   // The user named a single-file output: defer to factory-level
-  // extension resolution so their choice wins.
+  // extension resolution so their choice wins (including any explicit
+  // cross-format conversion such as a sqlite3 reference + .mcap output).
   if (infer_format_from_extension(output_path) != Format::Auto) {
     return opts;
   }
 
-  std::error_code ec;
-  if (!std::filesystem::is_directory(reference_path, ec) || ec) {
-    return opts;
-  }
+  // The reference may be a directory bag OR a single-file bag —
+  // detect_format works on both. The output is always a directory in
+  // this branch because the user's extension-less -o is what signalled
+  // their directory intent.
   const auto detected = detect_format(reference_path);
   if (detected == Format::Auto) {
     return opts;

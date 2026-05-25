@@ -73,7 +73,7 @@ TEST_F(CreateOptionsInheritingTest, InheritsSqlite3WhenReferenceIsSqlite3Directo
   seed_bag(reference, bagwiz::io::Format::Sqlite3, bagwiz::io::Layout::Directory);
   const auto output = tmp_dir_ / "out_no_ext";
 
-  const auto opts = bagwiz::io::create_options_inheriting_directory(reference, output);
+  const auto opts = bagwiz::io::create_options_inheriting_format(reference, output);
 
   EXPECT_EQ(opts.format, bagwiz::io::Format::Sqlite3);
   EXPECT_EQ(opts.layout, bagwiz::io::Layout::Directory);
@@ -85,7 +85,7 @@ TEST_F(CreateOptionsInheritingTest, InheritsMcapWhenReferenceIsMcapDirectoryAndO
   seed_bag(reference, bagwiz::io::Format::Mcap, bagwiz::io::Layout::Directory);
   const auto output = tmp_dir_ / "out_no_ext";
 
-  const auto opts = bagwiz::io::create_options_inheriting_directory(reference, output);
+  const auto opts = bagwiz::io::create_options_inheriting_format(reference, output);
 
   EXPECT_EQ(opts.format, bagwiz::io::Format::Mcap);
   EXPECT_EQ(opts.layout, bagwiz::io::Layout::Directory);
@@ -102,7 +102,7 @@ TEST_F(CreateOptionsInheritingTest, InheritsWhenOutputIsExistingDirectory)
   const auto output = tmp_dir_ / "out_existing_dir";
   std::filesystem::create_directory(output);
 
-  const auto opts = bagwiz::io::create_options_inheriting_directory(reference, output);
+  const auto opts = bagwiz::io::create_options_inheriting_format(reference, output);
 
   EXPECT_EQ(opts.format, bagwiz::io::Format::Sqlite3);
   EXPECT_EQ(opts.layout, bagwiz::io::Layout::Directory);
@@ -116,7 +116,7 @@ TEST_F(CreateOptionsInheritingTest, DefersToFactoryWhenOutputHasMcapExtension)
   seed_bag(reference, bagwiz::io::Format::Sqlite3, bagwiz::io::Layout::Directory);
   const auto output = tmp_dir_ / "out.mcap";
 
-  const auto opts = bagwiz::io::create_options_inheriting_directory(reference, output);
+  const auto opts = bagwiz::io::create_options_inheriting_format(reference, output);
 
   EXPECT_EQ(opts.format, bagwiz::io::Format::Auto);
   EXPECT_EQ(opts.layout, bagwiz::io::Layout::Auto);
@@ -130,24 +130,49 @@ TEST_F(CreateOptionsInheritingTest, DefersToFactoryWhenOutputHasDb3Extension)
   seed_bag(reference, bagwiz::io::Format::Mcap, bagwiz::io::Layout::Directory);
   const auto output = tmp_dir_ / "out.db3";
 
-  const auto opts = bagwiz::io::create_options_inheriting_directory(reference, output);
+  const auto opts = bagwiz::io::create_options_inheriting_format(reference, output);
 
   EXPECT_EQ(opts.format, bagwiz::io::Format::Auto);
   EXPECT_EQ(opts.layout, bagwiz::io::Layout::Auto);
 }
 
-TEST_F(CreateOptionsInheritingTest, DefersToFactoryWhenReferenceIsSingleFile)
+TEST_F(CreateOptionsInheritingTest, InheritsSqlite3WhenReferenceIsSqlite3SingleFile)
 {
-  // The contract is "inherit when reference is a *directory* bag".
-  // Single-file references intentionally fall through to factory
-  // defaults — the user's spec did not request inheritance for that
-  // case and silently directory-ising a single-file <to> would be
-  // surprising.
+  // The contract inherits from both directory and single-file
+  // references — only the *format* is borrowed. The output is always
+  // Layout::Directory because the user's extension-less -o is what
+  // signalled their directory intent.
   const auto reference = tmp_dir_ / "ref.db3";
   seed_bag(reference, bagwiz::io::Format::Sqlite3, bagwiz::io::Layout::SingleFile);
   const auto output = tmp_dir_ / "out_no_ext";
 
-  const auto opts = bagwiz::io::create_options_inheriting_directory(reference, output);
+  const auto opts = bagwiz::io::create_options_inheriting_format(reference, output);
+
+  EXPECT_EQ(opts.format, bagwiz::io::Format::Sqlite3);
+  EXPECT_EQ(opts.layout, bagwiz::io::Layout::Directory);
+}
+
+TEST_F(CreateOptionsInheritingTest, InheritsMcapWhenReferenceIsMcapSingleFile)
+{
+  const auto reference = tmp_dir_ / "ref.mcap";
+  seed_bag(reference, bagwiz::io::Format::Mcap, bagwiz::io::Layout::SingleFile);
+  const auto output = tmp_dir_ / "out_no_ext";
+
+  const auto opts = bagwiz::io::create_options_inheriting_format(reference, output);
+
+  EXPECT_EQ(opts.format, bagwiz::io::Format::Mcap);
+  EXPECT_EQ(opts.layout, bagwiz::io::Layout::Directory);
+}
+
+TEST_F(CreateOptionsInheritingTest, DefersToFactoryEvenForSingleFileReferenceWithMcapExtension)
+{
+  // User explicitly named a .mcap output: their choice wins even when
+  // the reference is sqlite3.
+  const auto reference = tmp_dir_ / "ref.db3";
+  seed_bag(reference, bagwiz::io::Format::Sqlite3, bagwiz::io::Layout::SingleFile);
+  const auto output = tmp_dir_ / "out.mcap";
+
+  const auto opts = bagwiz::io::create_options_inheriting_format(reference, output);
 
   EXPECT_EQ(opts.format, bagwiz::io::Format::Auto);
   EXPECT_EQ(opts.layout, bagwiz::io::Layout::Auto);
@@ -160,7 +185,7 @@ TEST_F(CreateOptionsInheritingTest, DefersToFactoryWhenReferenceDoesNotExist)
   const auto reference = tmp_dir_ / "does_not_exist";
   const auto output = tmp_dir_ / "out_no_ext";
 
-  const auto opts = bagwiz::io::create_options_inheriting_directory(reference, output);
+  const auto opts = bagwiz::io::create_options_inheriting_format(reference, output);
 
   EXPECT_EQ(opts.format, bagwiz::io::Format::Auto);
   EXPECT_EQ(opts.layout, bagwiz::io::Layout::Auto);
