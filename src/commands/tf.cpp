@@ -624,8 +624,8 @@ private:
 
   struct InjectStaticArgs
   {
-    std::filesystem::path from_path;
-    std::filesystem::path to_path;
+    std::filesystem::path src_path;
+    std::filesystem::path dst_path;
     std::filesystem::path output_path;
     bool force = false;
     bool overwrite = false;  // replace any pre-existing output_path
@@ -676,14 +676,14 @@ private:
   {
     auto * sub = app.add_subcommand(
       "inject-static",
-      "Copy <to> to <output> with /tf_static from <from> injected as a single message "
-      "at <to>'s start time. Source header.stamp values are rewritten to that same time.");
-    sub->add_option("from", inject_static_args_.from_path, "Source bag (provides /tf_static)")
+      "Copy <dst> to <output> with /tf_static from <src> injected as a single message "
+      "at <dst>'s start time. Source header.stamp values are rewritten to that same time.");
+    sub->add_option("src", inject_static_args_.src_path, "Source bag (provides /tf_static)")
       ->required()
       ->check(CLI::ExistingPath);
     sub
       ->add_option(
-        "to", inject_static_args_.to_path,
+        "dst", inject_static_args_.dst_path,
         "Destination bag (copied unchanged except for static TF)")
       ->required()
       ->check(CLI::ExistingPath);
@@ -694,7 +694,7 @@ private:
     sub
       ->add_flag(
         "--force", inject_static_args_.force,
-        "Overwrite per-topic when <to> already has messages on a *tf_static topic.")
+        "Overwrite per-topic when <dst> already has messages on a *tf_static topic.")
       ->default_val(false);
     sub->add_flag(
       "--overwrite", inject_static_args_.overwrite,
@@ -1121,62 +1121,62 @@ private:
       return 1;
     }
 
-    // Step 1: Scan <from> and collect deduped TransformStamped[] per
+    // Step 1: Scan <src> and collect deduped TransformStamped[] per
     // *tf_static topic.
     core::CollectedTfStatic collected;
     try {
-      collected = core::collect_tf_static_from_bag(args.from_path);
+      collected = core::collect_tf_static_from_bag(args.src_path);
     } catch (const std::exception & e) {
       BAGWIZ_LOG_ERROR(
-        kLogger, "Failed to collect /tf_static from %s: %s", args.from_path.c_str(), e.what());
+        kLogger, "Failed to collect /tf_static from %s: %s", args.src_path.c_str(), e.what());
       return 1;
     }
     if (collected.by_topic.empty()) {
       BAGWIZ_LOG_ERROR(
         kLogger, "Source bag %s has no tf2_msgs/msg/TFMessage *tf_static topic; nothing to inject.",
-        args.from_path.c_str());
+        args.src_path.c_str());
       return 1;
     }
 
-    // Step 2: Open <to>, learn its topic list, schemas, start_ns, and
+    // Step 2: Open <dst>, learn its topic list, schemas, start_ns, and
     // per-topic counts.
-    std::unique_ptr<io::BagReader> to_reader;
+    std::unique_ptr<io::BagReader> dst_reader;
     try {
-      to_reader = io::open_read(args.to_path);
+      dst_reader = io::open_read(args.dst_path);
     } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.to_path.c_str(), e.what());
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.dst_path.c_str(), e.what());
       return 1;
     }
-    to_reader->populate_schemas();
+    dst_reader->populate_schemas();
 
-    io::BagReader::Stats to_stats;
+    io::BagReader::Stats dst_stats;
     try {
-      to_stats = to_reader->compute_stats();
+      dst_stats = dst_reader->compute_stats();
     } catch (const std::exception & e) {
       BAGWIZ_LOG_ERROR(
-        kLogger, "Failed to compute stats on %s: %s", args.to_path.c_str(), e.what());
+        kLogger, "Failed to compute stats on %s: %s", args.dst_path.c_str(), e.what());
       return 1;
     }
-    if (to_stats.start_ns <= 0) {
+    if (dst_stats.start_ns <= 0) {
       BAGWIZ_LOG_ERROR(
         kLogger,
         "Destination bag %s has non-positive start time (%" PRId64
         " ns); cannot derive an injection timestamp.",
-        args.to_path.c_str(), static_cast<std::int64_t>(to_stats.start_ns));
+        args.dst_path.c_str(), static_cast<std::int64_t>(dst_stats.start_ns));
       return 1;
     }
-    const std::int64_t start_ns = to_stats.start_ns;
+    const std::int64_t start_ns = dst_stats.start_ns;
 
-    // Snapshot <to>'s topic list. The reader's span is invalidated by
+    // Snapshot <dst>'s topic list. The reader's span is invalidated by
     // close/reopen, and we will close this reader before opening the
     // copy pass — so make owning copies up-front.
-    std::vector<io::TopicInfo> to_topics(to_reader->topics().begin(), to_reader->topics().end());
-    const auto to_count_for = [&](const std::string & name) -> std::int64_t {
-      auto it = to_stats.per_topic.find(name);
-      return it == to_stats.per_topic.end() ? 0 : it->second;
+    std::vector<io::TopicInfo> dst_topics(dst_reader->topics().begin(), dst_reader->topics().end());
+    const auto dst_count_for = [&](const std::string & name) -> std::int64_t {
+      auto it = dst_stats.per_topic.find(name);
+      return it == dst_stats.per_topic.end() ? 0 : it->second;
     };
-    const auto find_to_topic = [&](const std::string & name) -> const io::TopicInfo * {
-      for (const auto & t : to_topics) {
+    const auto find_dst_topic = [&](const std::string & name) -> const io::TopicInfo * {
+      for (const auto & t : dst_topics) {
         if (t.name == name) {
           return &t;
         }
@@ -1185,18 +1185,18 @@ private:
     };
 
     // Step 3: Enforce the conflict policy *before* opening the writer.
-    // The decision per <from> static topic:
-    //   * not present in <to>            -> declare-new (schema from <from>)
-    //   * present, count == 0           -> declare-keep (schema from <to>)
+    // The decision per <src> static topic:
+    //   * not present in <dst>           -> declare-new (schema from <src>)
+    //   * present, count == 0           -> declare-keep (schema from <dst>)
     //   * present, count > 0, !force    -> conflict; report and abort
-    //   * present, count > 0, force     -> drop-and-replace (suppress <to>'s
+    //   * present, count > 0, force     -> drop-and-replace (suppress <dst>'s
     //                                       messages on this topic during copy)
     std::unordered_map<std::string, bool> suppress_topic_on_copy;  // topic -> drop existing
     std::unordered_map<std::string, io::TopicInfo>
-      declare_for_new;  // topic -> TopicInfo to declare (only when missing from <to>)
+      declare_for_new;  // topic -> TopicInfo to declare (only when missing from <dst>)
     bool had_conflict = false;
     for (const auto & [topic, _transforms] : collected.by_topic) {
-      const auto * existing = find_to_topic(topic);
+      const auto * existing = find_dst_topic(topic);
       if (existing == nullptr) {
         // New topic in output; carry over the source's schema info.
         declare_for_new.emplace(topic, collected.source_topic_info.at(topic));
@@ -1205,12 +1205,12 @@ private:
       if (existing->type != kTfMessageType) {
         BAGWIZ_LOG_ERROR(
           kLogger,
-          "Topic '%s' exists in <to> with type '%s', but <from> declares it as %s; refusing to "
+          "Topic '%s' exists in <dst> with type '%s', but <src> declares it as %s; refusing to "
           "inject incompatible payloads.",
           topic.c_str(), existing->type.c_str(), kTfMessageType);
         return 1;
       }
-      const std::int64_t cnt = to_count_for(topic);
+      const std::int64_t cnt = dst_count_for(topic);
       if (cnt == 0) {
         continue;
       }
@@ -1232,7 +1232,7 @@ private:
     }
 
     // Step 4: Build the injected payload per topic. Rewrite every
-    // TransformStamped.header.stamp to <to>.start_ns so the static
+    // TransformStamped.header.stamp to <dst>.start_ns so the static
     // transforms appear consistent with the destination's timeline.
     builtin_interfaces::msg::Time stamp;
     stamp.sec = static_cast<std::int32_t>(start_ns / 1'000'000'000LL);
@@ -1263,16 +1263,16 @@ private:
       return 1;
     }
 
-    // Step 5: Open the writer, declare topics, stream-copy <to>, then
+    // Step 5: Open the writer, declare topics, stream-copy <dst>, then
     // emit the injected payloads.
     //
-    // Storage choice: inherit <to>'s format whenever the user's -o
+    // Storage choice: inherit <dst>'s format whenever the user's -o
     // doesn't name a single-file format via its extension. Without
-    // this, a sqlite3 <to> (single-file or directory) with a -o like
+    // this, a sqlite3 <dst> (single-file or directory) with a -o like
     // "out_dir" or "out" would silently produce an mcap directory
     // because io::open_write's Auto resolution falls through to
     // Directory + Mcap when the extension isn't .mcap / .db3.
-    io::CreateOptions copts = io::create_options_inheriting_format(args.to_path, args.output_path);
+    io::CreateOptions copts = io::create_options_inheriting_format(args.dst_path, args.output_path);
     copts.mcap_compression = "none";
 
     std::unique_ptr<io::BagWriter> writer;
@@ -1283,7 +1283,7 @@ private:
       return 1;
     }
 
-    for (const auto & t : to_topics) {
+    for (const auto & t : dst_topics) {
       try {
         writer->declare_topic(t);
       } catch (const std::exception & e) {
@@ -1307,7 +1307,7 @@ private:
     std::uint64_t copied = 0;
     std::uint64_t suppressed = 0;
     try {
-      while (to_reader->next(raw)) {
+      while (dst_reader->next(raw)) {
         if (suppress_topic_on_copy.count(raw.topic->name) != 0) {
           ++suppressed;
           continue;
@@ -1316,11 +1316,11 @@ private:
         ++copied;
       }
     } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Copy from <to> failed: %s", e.what());
+      BAGWIZ_LOG_ERROR(kLogger, "Copy from <dst> failed: %s", e.what());
       return 1;
     }
 
-    // Step 6: Inject one merged TFMessage per topic at <to>.start_ns.
+    // Step 6: Inject one merged TFMessage per topic at <dst>.start_ns.
     std::uint64_t injected = 0;
     for (const auto & [topic, payload] : payload_by_topic) {
       try {
