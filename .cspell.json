@@ -6,12 +6,16 @@
     "BWCOMP",
     "compgen",
     "compinit",
+    "dedup",
+    "Dedups",
     "dlopens",
     "dndebug",
     "fpath",
     "funroll",
     "libmcap",
     "libsqlite",
-    "relwithdebinfo"
+    "relaxable",
+    "relwithdebinfo",
+    "RIHS"
   ]
 }
