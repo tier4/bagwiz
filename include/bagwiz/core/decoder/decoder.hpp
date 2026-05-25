@@ -49,7 +49,17 @@ struct DecodeResult
 class Decoder
 {
 public:
+  Decoder() = default;
   virtual ~Decoder() = default;
+
+  // Rule of Five (C.21) on a polymorphic interface: explicit defaults so
+  // clang-tidy can see them. Concrete derived implementations decide
+  // whether copy/move is supported; the abstract base has no state.
+  Decoder(const Decoder &) = default;
+  Decoder & operator=(const Decoder &) = default;
+  Decoder(Decoder &&) noexcept = default;
+  Decoder & operator=(Decoder &&) noexcept = default;
+
   virtual DecodeResult decode(std::span<const std::byte> payload) const = 0;
 
   // Identifies which backend served this decoder: "schema" when the

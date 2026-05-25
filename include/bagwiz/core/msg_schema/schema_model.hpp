@@ -121,7 +121,7 @@ struct FieldDef
 struct ConstantDef
 {
   std::string name;
-  PrimitiveKind type;
+  PrimitiveKind type = PrimitiveKind::Bool;
   std::string raw_value;
 };
 

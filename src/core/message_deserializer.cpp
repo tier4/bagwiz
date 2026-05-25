@@ -62,7 +62,9 @@ namespace
 // throw paths.
 struct PosixFree
 {
-  void operator()(void * p) const noexcept { std::free(p); }
+  // posix_memalign requires std::free for release; this is the RAII deleter
+  // paired with it via std::unique_ptr below.
+  void operator()(void * p) const noexcept { std::free(p); }  // NOLINT(cppcoreguidelines-no-malloc)
 };
 using AlignedBuffer = std::unique_ptr<void, PosixFree>;
 
@@ -179,7 +181,9 @@ DeserializedMessage::~DeserializedMessage()
   if (initialized_ && members_ != nullptr && buffer_ != nullptr) {
     members_->fini_function(buffer_);
   }
-  std::free(buffer_);
+  // Pairs with posix_memalign in aligned_alloc_or_throw above; std::free is
+  // the required release call per POSIX.
+  std::free(buffer_);  // NOLINT(cppcoreguidelines-no-malloc)
 }
 
 }  // namespace bagwiz::core

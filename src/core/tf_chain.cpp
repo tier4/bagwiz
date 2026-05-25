@@ -45,9 +45,10 @@ std::vector<std::string> resolve_chain(
   const auto path_to = walk_to_root(to_frame);
 
   // Fast path: from_frame is on path_to (i.e. from is an ancestor of to).
+  using DiffT = std::vector<std::string>::difference_type;
   for (std::size_t i = 0; i < path_to.size(); ++i) {
     if (path_to[i] == from_frame) {
-      std::vector<std::string> chain(path_to.begin(), path_to.begin() + i + 1);
+      std::vector<std::string> chain(path_to.begin(), path_to.begin() + static_cast<DiffT>(i + 1));
       std::reverse(chain.begin(), chain.end());
       return chain;
     }
@@ -68,7 +69,8 @@ std::vector<std::string> resolve_chain(
   }
   const std::string & lca = path_from[lca_in_from];
 
-  std::vector<std::string> chain(path_from.begin(), path_from.begin() + lca_in_from + 1);
+  std::vector<std::string> chain(
+    path_from.begin(), path_from.begin() + static_cast<DiffT>(lca_in_from + 1));
   std::size_t lca_in_to = 0;
   for (; lca_in_to < path_to.size(); ++lca_in_to) {
     if (path_to[lca_in_to] == lca) {

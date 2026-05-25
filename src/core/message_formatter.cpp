@@ -78,19 +78,17 @@ std::string primitive_to_string(const cdr::Value & v)
   return std::visit(
     [](const auto & x) -> std::string {
       using T = std::decay_t<decltype(x)>;
+      constexpr bool kIsWideInt =
+        std::is_same_v<T, std::uint16_t> || std::is_same_v<T, std::uint32_t> ||
+        std::is_same_v<T, std::int16_t> || std::is_same_v<T, std::int32_t> ||
+        std::is_same_v<T, std::uint64_t> || std::is_same_v<T, std::int64_t>;
       if constexpr (std::is_same_v<T, bool>) {
         return x ? "true" : "false";
       } else if constexpr (std::is_same_v<T, std::uint8_t>) {
         return std::to_string(static_cast<unsigned>(x));
       } else if constexpr (std::is_same_v<T, std::int8_t>) {
         return std::to_string(static_cast<int>(x));
-      } else if constexpr (std::is_same_v<T, std::uint16_t> || std::is_same_v<T, std::uint32_t>) {
-        return std::to_string(x);
-      } else if constexpr (std::is_same_v<T, std::int16_t> || std::is_same_v<T, std::int32_t>) {
-        return std::to_string(x);
-      } else if constexpr (std::is_same_v<T, std::uint64_t>) {
-        return std::to_string(x);
-      } else if constexpr (std::is_same_v<T, std::int64_t>) {
+      } else if constexpr (kIsWideInt) {
         return std::to_string(x);
       } else if constexpr (std::is_same_v<T, float>) {
         return float_to_string(x);

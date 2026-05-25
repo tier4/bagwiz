@@ -20,52 +20,60 @@ constexpr const char * kVersion = "0.1.0";
 constexpr const char * kMainLogger = "bagwiz.main";
 }  // namespace
 
-int main(int argc, char ** argv)
+int main(int argc, char ** argv) noexcept
 {
-  bagwiz::core::init_logging();
-
   try {
-    if (bagwiz::commands::is_completion_request(argc, argv)) {
-      return bagwiz::commands::run_completion_request(argc, argv);
+    try {
+      bagwiz::core::init_logging();
+      if (bagwiz::commands::is_completion_request(argc, argv)) {
+        return bagwiz::commands::run_completion_request(argc, argv);
+      }
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_FATAL(kMainLogger, "Unhandled exception during startup: %s", e.what());
+      return 1;
     }
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_FATAL(kMainLogger, "Unhandled exception during completion: %s", e.what());
-    return 1;
-  }
 
-  CLI::App app{"bagwiz - Fast CLI for analyzing and processing ROS 2 rosbags"};
-  app.set_version_flag("--version", kVersion);
-  app.require_subcommand(1);
+    CLI::App app{"bagwiz - Fast CLI for analyzing and processing ROS 2 rosbags"};
+    app.set_version_flag("--version", kVersion);
+    app.require_subcommand(1);
 
-  const auto & registry = bagwiz::commands::Registry::instance();
-  // Selected is set by the top-level subcommand callback; nested subcommands
-  // store their own state on the Command instance. run() fires once after
-  // parsing completes so parent and child callbacks can both observe args
-  // before the command executes.
-  bagwiz::commands::Command * selected = nullptr;
-  for (const auto & cmd : registry.all()) {
-    auto * sub = app.add_subcommand(std::string(cmd->name()), std::string(cmd->description()));
-    cmd->configure(*sub);
-    sub->callback([&selected, raw = cmd.get()]() { selected = raw; });
-  }
+    const auto & registry = bagwiz::commands::Registry::instance();
+    // Selected is set by the top-level subcommand callback; nested subcommands
+    // store their own state on the Command instance. run() fires once after
+    // parsing completes so parent and child callbacks can both observe args
+    // before the command executes.
+    bagwiz::commands::Command * selected = nullptr;
+    for (const auto & cmd : registry.all()) {
+      auto * sub = app.add_subcommand(std::string(cmd->name()), std::string(cmd->description()));
+      cmd->configure(*sub);
+      sub->callback([&selected, raw = cmd.get()]() { selected = raw; });
+    }
 
-  try {
-    CLI11_PARSE(app, argc, argv);
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_FATAL(kMainLogger, "Unhandled exception during argument parsing: %s", e.what());
-    return 1;
-  }
+    try {
+      CLI11_PARSE(app, argc, argv);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_FATAL(kMainLogger, "Unhandled exception during argument parsing: %s", e.what());
+      return 1;
+    }
 
-  if (!selected) {
-    // CLI11 handled --help/--version or required_subcommand already printed
-    // an error; nothing further to do.
-    return 0;
-  }
+    if (!selected) {
+      // CLI11 handled --help/--version or required_subcommand already printed
+      // an error; nothing further to do.
+      return 0;
+    }
 
-  try {
-    return selected->run();
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_FATAL(kMainLogger, "Command failed: %s", e.what());
+    try {
+      return selected->run();
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_FATAL(kMainLogger, "Command failed: %s", e.what());
+      return 1;
+    }
+  } catch (...) {
+    // Last-resort barrier so exceptions never escape main() (E.6 / E.12).
+    // The inner try/catch blocks above provide stage-specific diagnostics;
+    // this only fires for non-std::exception throws (rare) or for failures
+    // in code outside the inner blocks (CLI::App construction, registry
+    // iteration). Logging may itself throw here, so this catch must not.
     return 1;
   }
 }

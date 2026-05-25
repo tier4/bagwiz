@@ -78,7 +78,16 @@ struct ReadFilter
 class BagReader
 {
 public:
+  BagReader() = default;
   virtual ~BagReader() = default;
+
+  // Rule of Five (C.21) on a polymorphic interface: explicit defaults so
+  // clang-tidy can see them. Concrete derived implementations decide
+  // whether copy/move is supported; the abstract base has no state.
+  BagReader(const BagReader &) = default;
+  BagReader & operator=(const BagReader &) = default;
+  BagReader(BagReader &&) noexcept = default;
+  BagReader & operator=(BagReader &&) noexcept = default;
 
   // Cheap: returns the topic list without scanning messages.
   virtual std::span<const TopicInfo> topics() const = 0;
@@ -125,7 +134,16 @@ public:
 class BagWriter
 {
 public:
+  BagWriter() = default;
   virtual ~BagWriter() = default;
+
+  // Rule of Five (C.21) on a polymorphic interface: explicit defaults so
+  // clang-tidy can see them. Concrete derived implementations decide
+  // whether copy/move is supported; the abstract base has no state.
+  BagWriter(const BagWriter &) = default;
+  BagWriter & operator=(const BagWriter &) = default;
+  BagWriter(BagWriter &&) noexcept = default;
+  BagWriter & operator=(BagWriter &&) noexcept = default;
 
   virtual void declare_topic(const TopicInfo & topic) = 0;
   virtual void write(

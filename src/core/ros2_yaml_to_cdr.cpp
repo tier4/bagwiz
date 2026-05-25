@@ -41,7 +41,13 @@ namespace ts_types = rosidl_typesupport_introspection_cpp;
 
 struct AlignedAllocFreer
 {
-  void operator()(unsigned char * p) const noexcept { std::free(p); }
+  // Paired with posix_memalign below; std::free is the POSIX-required release
+  // call. The unique_ptr alias `AlignedBuffer` enforces RAII.
+  void operator()(unsigned char * p) const noexcept
+  {
+    // NOLINTNEXTLINE(cppcoreguidelines-no-malloc)
+    std::free(p);
+  }
 };
 
 using AlignedBuffer = std::unique_ptr<unsigned char, AlignedAllocFreer>;

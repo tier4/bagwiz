@@ -88,7 +88,7 @@ public:
 
   void declare_topic(const TopicInfo & topic) override
   {
-    mcap::SchemaId schema_id;
+    mcap::SchemaId schema_id{};
     if (auto it = type_to_schema_.find(topic.type); it != type_to_schema_.end()) {
       schema_id = it->second;
     } else {
