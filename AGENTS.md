@@ -2,7 +2,21 @@
 
 Guidelines for AI agents contributing to this repository.
 
-## 1. Code & Documentation
+The rules below are split into two top-level groups:
+
+- **General Rules** apply to any contribution and are not specific
+  to bagwiz's domain or codebase. Most would carry over unchanged
+  to another repository.
+- **Project-Specific Rules** apply only to this repository —
+  bagwiz's build workflow, its CLI surface, and similar choices
+  that would not generalize.
+
+The final section ("Maintaining These Guidelines") describes how
+to keep this file itself consistent over time.
+
+## General Rules
+
+### 1. Code & Documentation
 
 - Always write source code and documentation in English.
 - When modifying source code, update the corresponding documentation
@@ -33,13 +47,13 @@ Guidelines for AI agents contributing to this repository.
   to a tracked, in-repo document (e.g. an ADR file under `docs/`),
   not to a private conversation.
 
-## 2. Attribution
+### 2. Attribution
 
 - Do NOT include AI agent signatures (e.g. `Co-Authored-By: <agent name> ...`)
   in any generated code, commit messages, pull request descriptions,
   documentation, or other output.
 
-## 3. Commit Messages & Branch Names
+### 3. Commit Messages & Branch Names
 
 - Follow the [Conventional Commits](https://www.conventionalcommits.org/)
   specification for every commit message. Use one of the standard types
@@ -50,7 +64,7 @@ Guidelines for AI agents contributing to this repository.
   pull request (e.g. `feat/multi-topic-inspect`, `fix/hesai-sop-order`).
   Do not use tool- or author-specific prefixes such as `claude/*`.
 
-## 4. Pre-commit Hooks
+### 4. Pre-commit Hooks
 
 - Before committing, inspect staged and unstaged changes and ensure the
   commit does not include secrets, credentials, private keys, tokens,
@@ -66,18 +80,7 @@ Guidelines for AI agents contributing to this repository.
   `// NOLINT(...)`, `// cppcheck-suppress`, or equivalent
   hook-specific directive scoped to the smallest unit possible).
 
-## 5. Local builds
-
-- Build this package with `./build.sh` from the repository root, after
-  sourcing the ROS 2 underlay (same prerequisite as in `README.md`
-  Installation). The script wraps `colcon` with the expected workspace
-  layout and flags; use `./build.sh --help` for clean rebuilds, build type,
-  and parallelism.
-- Prefer `./build.sh` over ad-hoc `colcon build` invocations when
-  verifying changes, unless you are reproducing a CI or tooling issue that
-  requires a different command line.
-
-## 6. GitHub Actions / CI
+### 5. GitHub Actions / CI
 
 - Be mindful of the GitHub Actions workflows configured in this
   repository; ensure changes do not cause them to fail.
@@ -86,7 +89,7 @@ Guidelines for AI agents contributing to this repository.
   the actual logs. Base bug fixes on evidence from those logs, not on
   assumptions.
 
-## 7. Remote Repository Operations
+### 6. Remote Repository Operations
 
 - Always obtain explicit developer approval before making any changes
   to the remote repository — pushing commits, creating/closing pull
@@ -104,7 +107,7 @@ Guidelines for AI agents contributing to this repository.
   concise: cover the problem, the solution, and the test plan without
   unnecessary verbosity.
 
-## 8. Resource Management
+### 7. Resource Management
 
 - When writing code that acquires or releases a resource (memory, file
   handles, sockets, mutex locks, terminal modes, ROS handles, etc.),
@@ -116,7 +119,56 @@ Guidelines for AI agents contributing to this repository.
   calls scattered through the body, or `try` / `catch` blocks whose
   only job is cleanup.
 
-## 9. Maintaining These Guidelines
+## Project-Specific Rules
+
+Each subsection below scopes its rules to a specific surface of
+the repository. A rule applies only to the surface named by its
+subsection — for example, the conventions under "bagwiz CLI"
+govern only the CLI surface and do not extend to internal C++
+APIs, build scripts, or any other code that is not part of the
+CLI.
+
+### 1. Build Workflow
+
+Applies when building bagwiz from this repository. Does not
+govern source code or CLI behavior.
+
+- Build this package with `./build.sh` from the repository root, after
+  sourcing the ROS 2 underlay (same prerequisite as in `README.md`
+  Installation). The script wraps `colcon` with the expected workspace
+  layout and flags; use `./build.sh --help` for clean rebuilds, build type,
+  and parallelism.
+- Prefer `./build.sh` over ad-hoc `colcon build` invocations when
+  verifying changes, unless you are reproducing a CI or tooling issue that
+  requires a different command line.
+
+### 2. bagwiz CLI
+
+Applies only to the `bagwiz` executable and the subcommands defined
+under `src/commands/`. The rules below govern the user-facing CLI
+surface — argument naming, ordering, help text, and similar concerns
+— and do not apply to internal C++ APIs, library headers under
+`include/`, build scripts, tests, or any other code that is not
+part of the CLI itself.
+
+- Order positional arguments on every `bagwiz` subcommand to follow
+  common Unix utility conventions: read-side / source operands come
+  first and the write-side / destination operand comes last,
+  mirroring `cp src dst`, `mv src dst`, and `ln target name`.
+  POSIX.1-2017 Base Definitions, Chapter 12 ("Utility Conventions",
+  XBD §12) defines the surrounding option/operand syntax (option
+  placement, the `--` separator, and so on); the
+  source-before-destination ordering itself is not a separately
+  published standard but the de facto convention codified by the
+  POSIX utility specifications (`cp`, `mv`, `ln`, `install`, ...)
+  and reinforced by the GNU Coding Standards. When a bagwiz
+  subcommand must deviate — for example, when a single operand
+  acts as both source and destination, or when the read-side
+  selector is more naturally placed last — state the reasoning in
+  that subcommand's help text so users do not have to infer it
+  from the signature.
+
+## Maintaining These Guidelines
 
 - Keep the rules in this file free of duplication. Each topic should
   have a single source of truth: if two or more bullets or sections
@@ -125,7 +177,10 @@ Guidelines for AI agents contributing to this repository.
 - Before adding a new rule, scan the existing sections first. If the
   new guidance fits an existing rule, extend that rule in place;
   otherwise, place it under the section whose scope it most clearly
-  belongs to instead of creating a parallel rule elsewhere.
+  belongs to instead of creating a parallel rule elsewhere. When the
+  new rule does not yet fit any section, decide first whether it is
+  general or bagwiz-specific and add it under the matching top-level
+  group.
 - When editing this file, also check whether the change makes any
   pre-existing rule redundant. If it does, update or remove the
   now-overlapping text in the same change so the ruleset stays
