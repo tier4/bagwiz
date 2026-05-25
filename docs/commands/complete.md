@@ -126,7 +126,7 @@ source ~/.config/fish/completions/bagwiz.fish
   `<input>` as a ROS 2 rosbag and listing topics with names that start with
   the current prefix. The currently-covered positions are:
   - `bagwiz walk <input> <topic>`
-  - `bagwiz traj dump <input> <output> <topic>`
+  - `bagwiz traj dump <input> <topic> <output>`
   - `bagwiz traj join <input> <traj_file> <topic>`
 
   Paths beginning with `~/` are expanded against the current user's home

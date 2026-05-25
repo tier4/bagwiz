@@ -42,6 +42,7 @@ constexpr int kCompletionWordsBeginArg = 3;
 constexpr std::size_t kTopLevelCommandWord = 0;
 constexpr std::size_t kFirstCommandArgWord = 1;
 constexpr std::size_t kSecondCommandArgWord = 2;
+constexpr std::size_t kThirdCommandArgWord = 3;
 constexpr std::size_t kFourthCommandArgWord = 4;
 
 // Declarative table of commands that take a positional <topic> argument.
@@ -59,7 +60,7 @@ struct TopicArgBinding
 
 constexpr std::array<TopicArgBinding, 3> kTopicBindings{{
   {"walk", "", kFirstCommandArgWord, kSecondCommandArgWord},
-  {"traj", "dump", kSecondCommandArgWord, kFourthCommandArgWord},
+  {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord},
   {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord},
 }};
 

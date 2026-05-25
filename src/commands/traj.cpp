@@ -347,12 +347,12 @@ private:
     sub->add_option("input", dump_args_.input_path, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
-    sub->add_option("output", dump_args_.output_path, "Output file path")->required();
     sub
       ->add_option(
         "topic", dump_args_.topic,
         "Topic to sample (e.g. /tf, /localization/pose). See SUPPORTED TOPIC TYPES below.")
       ->required();
+    sub->add_option("output", dump_args_.output_path, "Output file path")->required();
     sub
       ->add_option(
         "-f,--format", dump_args_.format,

@@ -155,7 +155,7 @@ Optional remap:    --from map      →   rewrite pose into map using TF from the
 ### Usage
 
 ```text
-bagwiz traj dump [OPTIONS] <input> <output> <topic>
+bagwiz traj dump [OPTIONS] <input> <topic> <output>
 ```
 
 ### Positional arguments
@@ -163,8 +163,8 @@ bagwiz traj dump [OPTIONS] <input> <output> <topic>
 | Name     | Description                                                                                                                                                   |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `input`  | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`).                                                                                                     |
-| `output` | Output file path. Pre-existing files stop the run unless `--overwrite` is passed. With no `-f/--format`, the extension must be recognized (currently `.tum`). |
 | `topic`  | Topic whose type selects processing (`TFMessage`, `PoseStamped`, `PoseWithCovarianceStamped`, or `Odometry`).                                                 |
+| `output` | Output file path. Pre-existing files stop the run unless `--overwrite` is passed. With no `-f/--format`, the extension must be recognized (currently `.tum`). |
 
 ### Options
 
@@ -214,16 +214,16 @@ message order.
 
 ```bash
 # TF: trajectory of base_link in map, using /tf as the dynamic source.
-bagwiz traj dump capture.mcap traj.tum /tf --from map --to base_link
+bagwiz traj dump capture.mcap /tf traj.tum --from map --to base_link
 
 # Pose topic: use poses as stored (reference frame is each header.frame_id).
-bagwiz traj dump capture.mcap pose.tum /localization/pose
+bagwiz traj dump capture.mcap /localization/pose pose.tum
 
 # Pose topic: express poses in map using TF from the bag.
-bagwiz traj dump capture.mcap pose_map.tum /localization/pose --from map
+bagwiz traj dump capture.mcap /localization/pose pose_map.tum --from map
 
 # Odometry: only base_link messages, expressed in map via TF.
-bagwiz traj dump capture.mcap odom.tum /odom --from map --to base_link
+bagwiz traj dump capture.mcap /odom odom.tum --from map --to base_link
 ```
 
 ### Errors

@@ -176,11 +176,9 @@ TEST_F(CompletionTest, TrajDumpTopicCompletionListsBagTopics)
   const HomeEnvGuard home_guard(tmp_dir_);
 
   write_mcap_fixture(tmp_dir_ / "fixture.mcap");
-  const auto output_arg = (tmp_dir_ / "out.tum").string();
 
   EXPECT_EQ(
-    run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "traj", "dump", "~/fixture.mcap", output_arg}),
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "~/fixture.mcap"}),
     "/bar\n/foo\n");
 }
 
@@ -189,11 +187,9 @@ TEST_F(CompletionTest, TrajDumpTopicCompletionRespectsPrefix)
   const HomeEnvGuard home_guard(tmp_dir_);
 
   write_mcap_fixture(tmp_dir_ / "fixture.mcap");
-  const auto output_arg = (tmp_dir_ / "out.tum").string();
 
   EXPECT_EQ(
-    run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "traj", "dump", "~/fixture.mcap", output_arg, "/f"}),
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "~/fixture.mcap", "/f"}),
     "/foo\n");
 }
 
@@ -225,15 +221,28 @@ TEST_F(CompletionTest, WalkTopicCompletionSuppressedWhenInputSlotIsFlag)
   EXPECT_EQ(run_completion({"bagwiz", "__complete", "3", "bagwiz", "walk", "--unknown-flag"}), "");
 }
 
-TEST_F(CompletionTest, TrajDumpTopicCompletionSuppressedWhenOutputSlotIsFlag)
+TEST_F(CompletionTest, TrajDumpTopicCompletionSuppressedWhenInputSlotIsFlag)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
   write_mcap_fixture(tmp_dir_ / "fixture.mcap");
 
-  // `--format` at the output slot means the user is mid-flag, not at the
-  // topic positional — binding bails out so the existing
-  // value-after-flag branch can return "tum".
+  // A flag in the input slot must not cause the topic binding to call the
+  // bag reader on a flag-shaped path; the binding's earlier-slot guard
+  // bails out and produces no topic candidates.
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "--unknown-flag"}), "");
+}
+
+TEST_F(CompletionTest, TrajDumpFormatFlagValueCompletes)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+
+  // The user is mid-flag for `--format`; topic completion should not
+  // trigger, and the value-after-flag branch should return the sole
+  // supported format.
   EXPECT_EQ(
     run_completion(
       {"bagwiz", "__complete", "5", "bagwiz", "traj", "dump", "~/fixture.mcap", "--format"}),
