@@ -10,12 +10,14 @@
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/mcap_reader.hpp"
 #include "bagwiz/io/mcap_writer.hpp"
+#include "bagwiz/io/message_decompressor.hpp"
 #include "bagwiz/io/metadata_computer.hpp"
 #include "bagwiz/io/metadata_yaml.hpp"
 #include "bagwiz/io/sqlite3_reader.hpp"
 #include "bagwiz/io/sqlite3_writer.hpp"
 
 #include <array>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -36,6 +38,64 @@ constexpr std::array<unsigned char, 6> kMcapMagic = {0x89, 'M', 'C', 'A', 'P', '
 
 // SQLite3 header prefix (first 16 bytes are "SQLite format 3\0").
 constexpr const char * kSqliteMagic = "SQLite format 3";
+
+std::string to_lower_copy(std::string s)
+{
+  for (auto & c : s) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return s;
+}
+
+// Decide what (if any) decompressor a directory bag needs based on its
+// metadata. Returns nullptr for uncompressed / chunk-compressed-MCAP bags
+// and a shared MessageDecompressor for MESSAGE+zstd bags. Throws on
+// unsupported combinations (SQLite FILE-mode envelopes, non-zstd
+// MESSAGE-mode, unknown modes). Extracted from `open_read` so the
+// dispatcher stays readable.
+std::shared_ptr<MessageDecompressor> select_decompressor(
+  const BagMetadata & md, const std::filesystem::path & path)
+{
+  // rosbag2 emits the mode in lowercase ("none" / "file" / "message") and
+  // bagwiz's own writer matches that. Compare case-insensitively so both
+  // conventions work in case some legacy bag emits "FILE" etc.
+  const std::string mode = to_lower_copy(md.compression_mode);
+  const std::string fmt = to_lower_copy(md.compression_format);
+
+  if (mode.empty() || mode == "none") {
+    return nullptr;
+  }
+
+  if (mode == "message") {
+    if (fmt != "zstd") {
+      throw std::runtime_error(
+        "compression_format '" + md.compression_format +
+        "' not supported (only 'zstd' is implemented for MESSAGE-mode bags); "
+        "re-encode with `ros2 bag convert --compression-format zstd`");
+    }
+    BAGWIZ_LOG_INFO(
+      kLogger, "%s: decompressing MESSAGE-mode (zstd) payloads on read", path.c_str());
+    return std::make_shared<MessageDecompressor>(fmt);
+  }
+
+  if (mode == "file") {
+    // MCAP FILE-mode = storage-internal chunk compression. libmcap
+    // decompresses chunks transparently, so bagwiz needs no extra work.
+    // SQLite FILE-mode = whole-database `.zstd` envelope outside the .db3,
+    // which is out of scope for this PR.
+    if (md.storage_identifier == "sqlite3") {
+      throw std::runtime_error(
+        "FILE-level compression on sqlite3 storage is not supported by bagwiz "
+        "(the entire .db3 is wrapped in a .zstd envelope); "
+        "decompress first with `ros2 bag convert --compression-mode none` "
+        "(input: " +
+        path.string() + ")");
+    }
+    return nullptr;
+  }
+
+  throw std::runtime_error("unknown compression_mode '" + mode + "' in " + path.string());
+}
 
 // Magic-byte sniff: opens `path`, reads up to 16 bytes, and matches the
 // MCAP / SQLite3 prefix. Returns Format::Auto on any failure (open error,
@@ -134,11 +194,14 @@ std::unique_ptr<BagReader> open_read(const std::filesystem::path & path, OpenOpt
     const auto metadata_path = path / "metadata.yaml";
     auto md = std::filesystem::exists(metadata_path) ? load_metadata_yaml(metadata_path)
                                                      : MetadataComputer::compute(path);
+
+    auto decompressor = select_decompressor(md, path);
+
     if (md.storage_identifier == "mcap") {
-      return detail::open_mcap_directory(path, std::move(md));
+      return detail::open_mcap_directory(path, std::move(md), std::move(decompressor));
     }
     if (md.storage_identifier == "sqlite3") {
-      return detail::open_sqlite3_directory(path, std::move(md));
+      return detail::open_sqlite3_directory(path, std::move(md), std::move(decompressor));
     }
     throw std::runtime_error("unknown storage_identifier: " + md.storage_identifier);
   }

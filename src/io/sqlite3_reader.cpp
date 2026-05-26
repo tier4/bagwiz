@@ -10,6 +10,7 @@
 
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/message_decompressor.hpp"
 #include "bagwiz/io/metadata_yaml.hpp"
 #include "bagwiz/io/sqlite3_helpers.hpp"
 
@@ -39,10 +40,16 @@ constexpr const char * kLogger = "bagwiz.io.sqlite3";
 class SqliteFileReader : public BagReader
 {
 public:
-  explicit SqliteFileReader(const std::filesystem::path & path)
+  // `decompressor` is null for an uncompressed bag and non-null when the
+  // bag's metadata declares `compression_mode: MESSAGE`. When set, every
+  // `messages.data` blob is routed through it before being exposed via
+  // `next()`.
+  SqliteFileReader(
+    const std::filesystem::path & path, std::shared_ptr<MessageDecompressor> decompressor)
   : path_(path),
     db_(sqlite_open_or_throw(
-      path.string(), SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, "sqlite3 open"))
+      path.string(), SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, "sqlite3 open")),
+    decompressor_(std::move(decompressor))
   {
     // Read-only streaming tuning. Failures are non-fatal (best-effort).
     sqlite3_exec(db_.get(), "PRAGMA query_only = 1;", nullptr, nullptr, nullptr);
@@ -98,8 +105,15 @@ public:
 
       out.topic = &topics_[idx_it->second];
       out.timestamp_ns = timestamp;
-      out.payload = std::span<const std::byte>(
+      const auto src = std::span<const std::byte>(
         reinterpret_cast<const std::byte *>(data), static_cast<std::size_t>(data_size));
+      // For uncompressed bags `data` points into SQLite's row buffer, which
+      // stays valid until the next sqlite3_step / reset / finalize — that
+      // matches the documented `next()` contract. For MESSAGE-compressed
+      // bags the decompressor owns a reusable buffer with the same "valid
+      // until the next next() call" lifetime, so we can return its span
+      // directly without copying.
+      out.payload = decompressor_ ? decompressor_->decompress(src) : src;
       return true;
     }
   }
@@ -312,6 +326,7 @@ private:
   std::unordered_map<int64_t, std::size_t> topic_id_to_idx_;
   ReadFilter filter_;
   bool iteration_started_ = false;
+  std::shared_ptr<MessageDecompressor> decompressor_;
 };
 
 // ---------------------------------------------------------------------------
@@ -329,11 +344,13 @@ class SqliteShardReader : public BagReader
 public:
   SqliteShardReader(
     std::filesystem::path dir, std::vector<std::filesystem::path> shard_rel_paths,
-    std::vector<TopicInfo> topics, BagMetadata metadata)
+    std::vector<TopicInfo> topics, BagMetadata metadata,
+    std::shared_ptr<MessageDecompressor> decompressor)
   : dir_(std::move(dir)),
     shard_rel_paths_(std::move(shard_rel_paths)),
     topics_(std::move(topics)),
-    metadata_(std::move(metadata))
+    metadata_(std::move(metadata)),
+    decompressor_(std::move(decompressor))
   {
     shards_.resize(shard_rel_paths_.size());
   }
@@ -423,7 +440,10 @@ private:
   SqliteFileReader & ensure_shard(std::size_t i) const
   {
     if (!shards_[i]) {
-      shards_[i] = std::make_unique<SqliteFileReader>(dir_ / shard_rel_paths_[i]);
+      // Share the decompressor across shards so the ZSTD_DCtx is reused for
+      // the entire iteration (per-thread context reuse is the hot-path
+      // contract documented by rosbag2_compression_zstd).
+      shards_[i] = std::make_unique<SqliteFileReader>(dir_ / shard_rel_paths_[i], decompressor_);
     }
     return *shards_[i];
   }
@@ -438,21 +458,25 @@ private:
   std::vector<bool> shards_filter_applied_;
   std::size_t current_ = 0;
   bool iteration_started_ = false;
+  std::shared_ptr<MessageDecompressor> decompressor_;
 };
 
 }  // namespace
 
-std::unique_ptr<BagReader> open_sqlite3_file(const std::filesystem::path & path)
+std::unique_ptr<BagReader> open_sqlite3_file(
+  const std::filesystem::path & path, std::shared_ptr<MessageDecompressor> decompressor)
 {
-  return std::make_unique<SqliteFileReader>(path);
+  return std::make_unique<SqliteFileReader>(path, std::move(decompressor));
 }
 
-std::unique_ptr<BagReader> open_sqlite3_directory(const std::filesystem::path & dir, BagMetadata md)
+std::unique_ptr<BagReader> open_sqlite3_directory(
+  const std::filesystem::path & dir, BagMetadata md,
+  std::shared_ptr<MessageDecompressor> decompressor)
 {
   std::vector<TopicInfo> topics = md.topics;
   std::vector<std::filesystem::path> rel_paths = md.relative_file_paths;
   return std::make_unique<SqliteShardReader>(
-    dir, std::move(rel_paths), std::move(topics), std::move(md));
+    dir, std::move(rel_paths), std::move(topics), std::move(md), std::move(decompressor));
 }
 
 }  // namespace bagwiz::io::detail

@@ -12,7 +12,6 @@
 #include "bagwiz/core/msg_definition_resolver.hpp"
 #include "bagwiz/core/output_path.hpp"
 #include "bagwiz/io/bag_io.hpp"
-#include "bagwiz/io/metadata_yaml.hpp"
 
 #include <cinttypes>
 #include <cstddef>
@@ -110,42 +109,6 @@ private:
     bool overwrite = false;  // replace any pre-existing output_path
   } format_args_;
 
-  // Inspect metadata.yaml of a directory-layout input to detect rosbag2's
-  // generic compression layer (which we don't decompress). Single-file
-  // inputs have no metadata.yaml; mcap chunk-level compression there is
-  // handled transparently by libmcap.
-  static int check_input_compression(const std::filesystem::path & input)
-  {
-    std::error_code ec;
-    if (!std::filesystem::is_directory(input, ec)) {
-      return 0;
-    }
-    const auto metadata_path = input / "metadata.yaml";
-    if (!std::filesystem::exists(metadata_path)) {
-      return 0;
-    }
-    io::BagMetadata md;
-    try {
-      md = io::load_metadata_yaml(metadata_path);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_WARN(
-        kLogger, "Could not parse metadata.yaml (%s); proceeding without compression check",
-        e.what());
-      return 0;
-    }
-    // rosbag2 emits "NONE" or omits the field for non-compressed bags;
-    // anything else is a hard fail.
-    if (!md.compression_mode.empty() && md.compression_mode != "NONE") {
-      BAGWIZ_LOG_ERROR(
-        kLogger,
-        "input bag uses rosbag2-layer compression (compression_mode='%s', format='%s'); "
-        "decompress with `ros2 bag convert` first",
-        md.compression_mode.c_str(), md.compression_format.c_str());
-      return 1;
-    }
-    return 0;
-  }
-
   void configure_format(CLI::App & app)
   {
     auto * sub = app.add_subcommand(
@@ -176,18 +139,17 @@ private:
       "Target storage resolution order: --storage > output extension (.mcap or .db3)\n"
       "> input bag's detected storage. Directory-layout outputs without --storage\n"
       "therefore inherit the input's backend.\n"
-      "Inputs that use rosbag2-layer compression (compression_mode != NONE)\n"
-      "are rejected; decompress with `ros2 bag convert` first.");
+      "Compression: rosbag2 MESSAGE-mode (zstd) inputs are decompressed on read;\n"
+      "MCAP chunk compression is handled transparently by libmcap. The output bag\n"
+      "is always written uncompressed. SQLite3 FILE-mode bags (whole-database\n"
+      ".zstd envelopes) are rejected — run `ros2 bag convert --compression-mode\n"
+      "none` first.");
     sub->callback([this]() { selected_ = Subcommand::kFormat; });
   }
 
   int run_format()
   {
     const auto & args = format_args_;
-
-    if (const int rc = check_input_compression(args.input_path); rc != 0) {
-      return rc;
-    }
 
     // Detect the input's storage backend up-front so it can (a) feed
     // resolve_target_storage as the fallback for directory-layout outputs

@@ -19,6 +19,11 @@ find_package(mcap_vendor REQUIRED)
 find_package(yaml_cpp_vendor REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(SQLite3 REQUIRED)
+# zstd_vendor wires up CMAKE_MODULE_PATH so the inner find_package(zstd) can
+# locate the imported `zstd::zstd` target. Used by message_decompressor.cpp
+# to handle rosbag2 MESSAGE-mode (per-message zstd) bags transparently.
+find_package(zstd_vendor REQUIRED)
+find_package(zstd REQUIRED)
 # Introspection fallback path: rmw_deserialize plus the per-package
 # typesupport `.so`s loaded at runtime via dlopen. Still required
 # alongside the schema-driven decoder because SQLite3 inputs and
@@ -115,6 +120,7 @@ add_library(bagwiz_core
   src/io/bag_factory.cpp
   src/io/mcap_reader.cpp
   src/io/mcap_writer.cpp
+  src/io/message_decompressor.cpp
   src/io/metadata_computer.cpp
   src/io/metadata_yaml.cpp
   src/io/sqlite3_reader.cpp
@@ -141,7 +147,7 @@ ament_target_dependencies(bagwiz_core PUBLIC
   tf2
   tf2_msgs
 )
-target_link_libraries(bagwiz_core PUBLIC yaml-cpp SQLite::SQLite3 ${CMAKE_DL_LIBS})
+target_link_libraries(bagwiz_core PUBLIC yaml-cpp SQLite::SQLite3 zstd::zstd ${CMAKE_DL_LIBS})
 # fmt is used header-only inside bagwiz_core (renderer.cpp). Linking fmt::fmt
 # would force it into the bagwiz_core export set, which fails because fmt is
 # fetched via FetchContent and not installable.
@@ -282,6 +288,14 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_metadata_computer_test test/io/metadata_computer_test.cpp)
   target_link_libraries(bagwiz_metadata_computer_test bagwiz_core)
+
+  ament_add_gtest(
+    bagwiz_message_decompressor_test test/io/message_decompressor_test.cpp)
+  target_link_libraries(bagwiz_message_decompressor_test bagwiz_core)
+
+  ament_add_gtest(
+    bagwiz_message_compression_e2e_test test/io/message_compression_e2e_test.cpp)
+  target_link_libraries(bagwiz_message_compression_e2e_test bagwiz_core)
 
   ament_add_gtest(bagwiz_writer_roundtrip_test test/io/writer_roundtrip_test.cpp)
   target_link_libraries(bagwiz_writer_roundtrip_test bagwiz_core)

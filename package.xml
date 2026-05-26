@@ -34,6 +34,7 @@
   <depend>trajectory_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>yaml_cpp_vendor</depend>
+  <depend>zstd_vendor</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
 

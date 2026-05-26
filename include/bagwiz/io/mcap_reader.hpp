@@ -10,6 +10,7 @@
 #define BAGWIZ__IO__MCAP_READER_HPP_
 
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/message_decompressor.hpp"
 #include "bagwiz/io/metadata_yaml.hpp"
 
 #include <filesystem>
@@ -18,13 +19,22 @@
 namespace bagwiz::io::detail
 {
 
-// Open a single .mcap file as a BagReader.
-std::unique_ptr<BagReader> open_mcap_file(const std::filesystem::path & path);
+// Open a single .mcap file as a BagReader. `decompressor` is null for an
+// uncompressed bag; pass a non-null instance to transparently decompress
+// every message payload before it reaches the caller (used for rosbag2
+// `compression_mode: MESSAGE` bags).
+std::unique_ptr<BagReader> open_mcap_file(
+  const std::filesystem::path & path, std::shared_ptr<MessageDecompressor> decompressor = nullptr);
 
 // Open a directory of .mcap shards. `metadata` must describe the layout
 // (storage_identifier and relative_file_paths at minimum) — the caller is
 // responsible for sourcing it from metadata.yaml or MetadataComputer.
-std::unique_ptr<BagReader> open_mcap_directory(const std::filesystem::path & dir, BagMetadata md);
+// `decompressor` is null for uncompressed bags and non-null for MESSAGE-mode
+// bags; the same instance is shared across shards so the underlying
+// ZSTD_DCtx is reused for the entire iteration.
+std::unique_ptr<BagReader> open_mcap_directory(
+  const std::filesystem::path & dir, BagMetadata md,
+  std::shared_ptr<MessageDecompressor> decompressor = nullptr);
 
 }  // namespace bagwiz::io::detail
 

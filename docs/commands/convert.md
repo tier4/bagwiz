@@ -64,13 +64,22 @@ bagwiz convert format [OPTIONS] <input> <output>
   path ending in `.mcap` or `.db3` produces a single-file bag, any
   other path produces a directory-layout bag with the canonical
   `metadata.yaml`.
-- Inputs that use rosbag2-layer compression
-  (`compression_mode: FILE` / `MESSAGE` in `metadata.yaml`) are
-  rejected with a clear error. Decompress the input first with
-  `ros2 bag convert`.
-  - Note: MCAP chunk-level compression on a single-file MCAP input is
-    transparent to bagwiz (libmcap handles it), and is therefore
-    accepted.
+- rosbag2-layer compression handling on directory inputs (driven by
+  `compression_mode` / `compression_format` in `metadata.yaml`):
+  - `MESSAGE` + `zstd`: payloads are transparently decompressed on
+    read; an `[INFO]` line announces the path. The output bag is
+    always written uncompressed.
+  - `MESSAGE` + non-zstd: rejected with a clear error (only `zstd`
+    is implemented today).
+  - `FILE` on MCAP: this is rosbag2's label for storage-internal
+    chunk compression, which libmcap decompresses transparently.
+    Accepted; no extra work needed.
+  - `FILE` on SQLite3: this is a whole-database `.zstd` envelope
+    outside the `.db3` and is out of scope for bagwiz. Run
+    `ros2 bag convert --compression-mode none` first.
+  - `NONE` / empty / single-file MCAP inputs: nothing to do; MCAP
+    chunk compression on a single-file MCAP is already transparent
+    via libmcap.
 - For multi-shard MCAP inputs, schemas are loaded eagerly before
   declaring topics so the output preserves self-description.
 - SQLite3 inputs from Humble and earlier carry no embedded message

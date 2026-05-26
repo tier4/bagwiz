@@ -10,6 +10,7 @@
 
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/message_decompressor.hpp"
 #include "bagwiz/io/metadata_yaml.hpp"
 
 // mcap_vendor ships MCAP as a pre-compiled library, so MCAP_IMPLEMENTATION
@@ -44,7 +45,13 @@ constexpr const char * kLogger = "bagwiz.io.mcap";
 class McapFileReader : public BagReader
 {
 public:
-  explicit McapFileReader(const std::filesystem::path & path) : path_(path)
+  // `decompressor` is null for an uncompressed bag and non-null when the
+  // bag's metadata declares `compression_mode: MESSAGE`. When set, every
+  // per-message payload is routed through it before being exposed via
+  // `next()`.
+  McapFileReader(
+    const std::filesystem::path & path, std::shared_ptr<MessageDecompressor> decompressor)
+  : path_(path), decompressor_(std::move(decompressor))
   {
     auto status = reader_.open(path.string());
     if (!status.ok()) {
@@ -92,15 +99,22 @@ public:
       }
       out.topic = &topics_[idx_it->second];
       out.timestamp_ns = static_cast<int64_t>(mv.message.logTime);
-      // Copy the payload into a stable member buffer BEFORE advancing the
-      // iterator. mcap::LinearMessageView::Iterator may release the
-      // current chunk when incremented, invalidating mv.message.data. The
-      // RawMessage contract says the span is valid until the next next()
-      // call, which matches: we overwrite payload_buf_ on each call.
+      // The payload must stay valid until the next next() call even though
+      // ++iter may release the current chunk and invalidate mv.message.data.
+      // Two stable backings cover both cases:
+      //   - uncompressed: copy into payload_buf_ before advancing.
+      //   - MESSAGE-compressed: decompress before advancing; the returned
+      //     span points into the decompressor's reusable buffer, whose
+      //     lifetime is "valid until the next decompress() call" — which
+      //     matches our public contract.
       const auto * src = reinterpret_cast<const std::byte *>(mv.message.data);
       const auto size = static_cast<std::size_t>(mv.message.dataSize);
-      payload_buf_.assign(src, src + size);
-      out.payload = std::span<const std::byte>(payload_buf_.data(), payload_buf_.size());
+      if (decompressor_) {
+        out.payload = decompressor_->decompress(std::span<const std::byte>(src, size));
+      } else {
+        payload_buf_.assign(src, src + size);
+        out.payload = std::span<const std::byte>(payload_buf_.data(), payload_buf_.size());
+      }
       ++iter;
       return true;
     }
@@ -214,9 +228,12 @@ private:
   bool iteration_started_ = false;
   std::unique_ptr<mcap::LinearMessageView> view_;
   std::optional<mcap::LinearMessageView::Iterator> it_;
-  // Stable backing store for the payload returned by next(). Lives as
-  // long as the reader; each next() overwrites it.
+  // Stable backing store for the payload returned by next() in the
+  // uncompressed path. Lives as long as the reader; each next() overwrites
+  // it. Unused when decompressor_ is non-null (the decompressor's own
+  // buffer plays the same role then).
   std::vector<std::byte> payload_buf_;
+  std::shared_ptr<MessageDecompressor> decompressor_;
 };
 
 // ---------------------------------------------------------------------------
@@ -236,11 +253,13 @@ class McapShardReader : public BagReader
 public:
   McapShardReader(
     std::filesystem::path dir, std::vector<std::filesystem::path> shard_rel_paths,
-    std::vector<TopicInfo> topics, BagMetadata metadata)
+    std::vector<TopicInfo> topics, BagMetadata metadata,
+    std::shared_ptr<MessageDecompressor> decompressor)
   : dir_(std::move(dir)),
     shard_rel_paths_(std::move(shard_rel_paths)),
     topics_(std::move(topics)),
-    metadata_(std::move(metadata))
+    metadata_(std::move(metadata)),
+    decompressor_(std::move(decompressor))
   {
     shards_.resize(shard_rel_paths_.size());
   }
@@ -372,7 +391,10 @@ private:
   McapFileReader & ensure_shard(std::size_t i) const
   {
     if (!shards_[i]) {
-      shards_[i] = std::make_unique<McapFileReader>(dir_ / shard_rel_paths_[i]);
+      // Share the decompressor across shards so the ZSTD_DCtx is reused for
+      // the entire iteration (per-thread context reuse is the hot-path
+      // contract documented by rosbag2_compression_zstd).
+      shards_[i] = std::make_unique<McapFileReader>(dir_ / shard_rel_paths_[i], decompressor_);
     }
     return *shards_[i];
   }
@@ -390,21 +412,25 @@ private:
   std::size_t current_ = 0;
   bool iteration_started_ = false;
   bool schemas_loaded_ = false;
+  std::shared_ptr<MessageDecompressor> decompressor_;
 };
 
 }  // namespace
 
-std::unique_ptr<BagReader> open_mcap_file(const std::filesystem::path & path)
+std::unique_ptr<BagReader> open_mcap_file(
+  const std::filesystem::path & path, std::shared_ptr<MessageDecompressor> decompressor)
 {
-  return std::make_unique<McapFileReader>(path);
+  return std::make_unique<McapFileReader>(path, std::move(decompressor));
 }
 
-std::unique_ptr<BagReader> open_mcap_directory(const std::filesystem::path & dir, BagMetadata md)
+std::unique_ptr<BagReader> open_mcap_directory(
+  const std::filesystem::path & dir, BagMetadata md,
+  std::shared_ptr<MessageDecompressor> decompressor)
 {
   std::vector<TopicInfo> topics = md.topics;  // copied; metadata_ retains its own
   std::vector<std::filesystem::path> rel_paths = md.relative_file_paths;
   return std::make_unique<McapShardReader>(
-    dir, std::move(rel_paths), std::move(topics), std::move(md));
+    dir, std::move(rel_paths), std::move(topics), std::move(md), std::move(decompressor));
 }
 
 }  // namespace bagwiz::io::detail
