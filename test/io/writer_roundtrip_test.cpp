@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 #include <sqlite3.h>
+#include <yaml-cpp/yaml.h>
 
 #include <array>
 #include <cstddef>
@@ -400,6 +401,82 @@ TEST_F(WriterRoundTripTest, Sqlite3WritesIronCompatibleV4Layout)
   sqlite3_finalize(stmt);
 
   sqlite3_close(db);
+}
+
+// rosbag2's metadata reader (rosbag2_storage humble 0.15.16
+// metadata_io.cpp::convert<BagMetadata>::decode) requires the `files:`
+// sequence whenever `version >= 5`, throwing
+//   Exception on parsing info file: invalid node; first invalid key: "files"
+// when it is missing. Pin the schema so `ros2 bag info <dir>` keeps working
+// across the supported ROS 2 distros (humble + jazzy).
+namespace
+{
+
+YAML::Node load_metadata_info(const std::filesystem::path & dir)
+{
+  const auto metadata_path = dir / "metadata.yaml";
+  EXPECT_TRUE(std::filesystem::exists(metadata_path)) << metadata_path;
+  const auto root = YAML::LoadFile(metadata_path.string());
+  return root["rosbag2_bagfile_information"];
+}
+
+void expect_files_section_matches_summary(
+  const YAML::Node & info, const std::string & expected_path, int64_t expected_start_ns,
+  int64_t expected_end_ns, int64_t expected_message_count)
+{
+  ASSERT_TRUE(info["version"]) << "metadata.yaml is missing the `version` key";
+  EXPECT_GE(info["version"].as<int>(), 5)
+    << "metadata version must be >= 5 to advertise the `files:` schema";
+
+  const auto files = info["files"];
+  ASSERT_TRUE(files) << "metadata.yaml is missing the `files:` sequence";
+  ASSERT_TRUE(files.IsSequence());
+  ASSERT_EQ(files.size(), 1U);
+
+  const auto file = files[0];
+  EXPECT_EQ(file["path"].as<std::string>(), expected_path);
+  EXPECT_EQ(file["starting_time"]["nanoseconds_since_epoch"].as<int64_t>(), expected_start_ns);
+  EXPECT_EQ(file["duration"]["nanoseconds"].as<int64_t>(), expected_end_ns - expected_start_ns);
+  EXPECT_EQ(file["message_count"].as<int64_t>(), expected_message_count);
+
+  // `relative_file_paths:` is still emitted for older readers; both must agree
+  // on the shard name so legacy and modern consumers see the same bag layout.
+  const auto rel_paths = info["relative_file_paths"];
+  ASSERT_TRUE(rel_paths) << "metadata.yaml is missing `relative_file_paths`";
+  ASSERT_TRUE(rel_paths.IsSequence());
+  ASSERT_EQ(rel_paths.size(), 1U);
+  EXPECT_EQ(rel_paths[0].as<std::string>(), expected_path);
+}
+
+}  // namespace
+
+TEST_F(WriterRoundTripTest, Sqlite3DirectoryMetadataDeclaresFilesSection)
+{
+  const auto dir = tmp_dir_ / "sqlite_metadata";
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Sqlite3;
+  options.layout = bagwiz::io::Layout::Directory;
+  write_fixture(dir, options, topics_, messages_);
+
+  const auto info = load_metadata_info(dir);
+  expect_files_section_matches_summary(
+    info, dir.filename().string() + "_0.db3", /*start=*/1'000'000'000LL,
+    /*end=*/2'000'000'001LL, /*messages=*/5);
+}
+
+TEST_F(WriterRoundTripTest, McapDirectoryMetadataDeclaresFilesSection)
+{
+  const auto dir = tmp_dir_ / "mcap_metadata";
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Mcap;
+  options.layout = bagwiz::io::Layout::Directory;
+  options.mcap_compression = "none";
+  write_fixture(dir, options, topics_, messages_);
+
+  const auto info = load_metadata_info(dir);
+  expect_files_section_matches_summary(
+    info, dir.filename().string() + "_0.mcap", /*start=*/1'000'000'000LL,
+    /*end=*/2'000'000'001LL, /*messages=*/5);
 }
 
 TEST_F(WriterRoundTripTest, Sqlite3DedupsMessageDefinitionsByType)

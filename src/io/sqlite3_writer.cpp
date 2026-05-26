@@ -320,7 +320,11 @@ private:
     out << YAML::Key << "rosbag2_bagfile_information";
     out << YAML::Value << YAML::BeginMap;
 
-    out << YAML::Key << "version" << YAML::Value << 6;
+    // rosbag2_storage::BagMetadata defaults `version` to 5 on humble, and 5 is
+    // the minimum version where rosbag2 considers `files:` part of the schema.
+    // Lower versions (1-4) still parse but lose per-file timing; humble's
+    // writer emits 5 by default so we match that.
+    out << YAML::Key << "version" << YAML::Value << 5;
     out << YAML::Key << "storage_identifier" << YAML::Value << "sqlite3";
     out << YAML::Key << "duration" << YAML::Value << YAML::BeginMap << YAML::Key << "nanoseconds"
         << YAML::Value << duration_ns << YAML::EndMap;
@@ -349,6 +353,20 @@ private:
     out << YAML::Key << "compression_mode" << YAML::Value << "";
     out << YAML::Key << "relative_file_paths" << YAML::Value << YAML::BeginSeq;
     out << shard_rel_;
+    out << YAML::EndSeq;
+
+    // `files:` is required for metadata version >= 5; rosbag2's reader throws
+    // "invalid node; first invalid key: \"files\"" without it. Single shard,
+    // so the per-file timing equals the bag-level summary.
+    out << YAML::Key << "files" << YAML::Value << YAML::BeginSeq;
+    out << YAML::BeginMap;
+    out << YAML::Key << "path" << YAML::Value << shard_rel_;
+    out << YAML::Key << "starting_time" << YAML::Value << YAML::BeginMap << YAML::Key
+        << "nanoseconds_since_epoch" << YAML::Value << starting_ns << YAML::EndMap;
+    out << YAML::Key << "duration" << YAML::Value << YAML::BeginMap << YAML::Key << "nanoseconds"
+        << YAML::Value << duration_ns << YAML::EndMap;
+    out << YAML::Key << "message_count" << YAML::Value << total_messages_;
+    out << YAML::EndMap;
     out << YAML::EndSeq;
 
     out << YAML::EndMap;
