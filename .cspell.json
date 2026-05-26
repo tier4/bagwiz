@@ -18,6 +18,7 @@
     "relwithdebinfo",
     "RIHS",
     "unparseable",
-    "wopts"
+    "wopts",
+    "XCDR"
   ]
 }
