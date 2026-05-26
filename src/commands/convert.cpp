@@ -32,17 +32,23 @@ namespace
 
 constexpr const char * kLogger = "bagwiz.cmd.convert";
 
-// Resolve the target storage backend for a write. The CLI takes `--storage`
-// optionally; when omitted, we fall back to inferring from the output path's
-// extension (`.mcap` / `.db3`). Any other path — a directory layout, or a
-// file with an unrecognized extension — has no extension signal, so we
-// surface a clear error instead of silently picking a default, since the
-// user has not actually chosen one. `storage_flag` is the CLI string value
-// (empty when the user did not pass `--storage`); the returned format is
-// never `Format::Auto`.
+// Resolve the target storage backend for a write. Precedence (first match
+// wins):
+//   1. Explicit `--storage <mcap|sqlite3>` from the CLI.
+//   2. Output path's extension (`.mcap` → mcap, `.db3` → sqlite3) — only
+//      applies to single-file outputs that carry one of those extensions.
+//   3. Input bag's detected storage backend. This is the fallback for
+//      directory-layout outputs (no extension to infer from) when the user
+//      did not pass `--storage`: a pure layout change should not require
+//      restating the storage backend.
+// If none of the three resolves, `error_out` is set and `Format::Auto` is
+// returned. `storage_flag` is the CLI string value (empty when the user did
+// not pass `--storage`); `input_format` is the input's detected storage
+// (`Format::Auto` when detection failed). The returned format is never
+// `Format::Auto` on success.
 io::Format resolve_target_storage(
   const std::string & storage_flag, const std::filesystem::path & output_path,
-  std::string & error_out)
+  io::Format input_format, std::string & error_out)
 {
   if (!storage_flag.empty()) {
     return (storage_flag == "sqlite3") ? io::Format::Sqlite3 : io::Format::Mcap;
@@ -51,9 +57,12 @@ io::Format resolve_target_storage(
   if (inferred != io::Format::Auto) {
     return inferred;
   }
-  error_out = "directory-layout output path '" + output_path.string() +
-              "' requires --storage <mcap|sqlite3>; only single-file outputs ending in "
-              ".mcap or .db3 can infer the backend from the extension";
+  if (input_format != io::Format::Auto) {
+    return input_format;
+  }
+  error_out = "cannot determine target storage for output '" + output_path.string() +
+              "': pass --storage <mcap|sqlite3>, use an output extension (.mcap or .db3), "
+              "or supply an input whose storage backend can be auto-detected";
   return io::Format::Auto;
 }
 
@@ -153,7 +162,8 @@ private:
     sub
       ->add_option(
         "-s,--storage", format_args_.storage,
-        "Target storage backend (default: inferred from output extension)")
+        "Target storage backend (default: inferred from the output extension when it "
+        "is .mcap or .db3; otherwise the input bag's storage backend is reused)")
       ->check(CLI::IsMember({"mcap", "sqlite3"}));
     sub->add_flag(
       "--overwrite", format_args_.overwrite,
@@ -163,8 +173,9 @@ private:
       "Messages are copied verbatim — only the storage backend and/or the\n"
       "file/directory layout change; no deserialization or type conversion\n"
       "is performed.\n"
-      "If --storage is omitted, the backend is inferred from the output path's\n"
-      "extension (.mcap or .db3); other paths (e.g. a directory) require --storage.\n"
+      "Target storage resolution order: --storage > output extension (.mcap or .db3)\n"
+      "> input bag's detected storage. Directory-layout outputs without --storage\n"
+      "therefore inherit the input's backend.\n"
       "Inputs that use rosbag2-layer compression (compression_mode != NONE)\n"
       "are rejected; decompress with `ros2 bag convert` first.");
     sub->callback([this]() { selected_ = Subcommand::kFormat; });
@@ -178,8 +189,16 @@ private:
       return rc;
     }
 
+    // Detect the input's storage backend up-front so it can (a) feed
+    // resolve_target_storage as the fallback for directory-layout outputs
+    // without --storage, and (b) anchor the same-storage repack check
+    // below. Magic-byte / metadata.yaml based — never extension based —
+    // so renamed inputs still classify correctly.
+    const auto source_format = io::detect_format(args.input_path);
+
     std::string err;
-    const io::Format target_format = resolve_target_storage(args.storage, args.output_path, err);
+    const io::Format target_format =
+      resolve_target_storage(args.storage, args.output_path, source_format, err);
     if (target_format == io::Format::Auto) {
       BAGWIZ_LOG_ERROR(kLogger, "%s", err.c_str());
       return 1;
@@ -198,15 +217,26 @@ private:
       return 1;
     }
 
-    // Reject same-storage repack: it's almost always a user mistake (and a
-    // plain copy is what they actually want). Detection is by magic bytes
-    // (single-file inputs) or metadata.yaml (directory layouts) — never
-    // by extension — so renamed files are still classified correctly.
-    const auto source_format = io::detect_format(args.input_path);
+    // Reject same-storage + same-layout repacks: a plain `cp` is what the
+    // user actually wants. When the layouts differ (e.g. file → directory
+    // on the same backend) the run is allowed since the output shape
+    // genuinely changes. Input layout is read from the filesystem (input
+    // is guaranteed to exist by CLI::ExistingPath); output layout is read
+    // from the path's extension (no `.mcap`/`.db3` → directory layout).
     if (source_format == target_format) {
-      const char * fmt_name = (target_format == io::Format::Sqlite3) ? "sqlite3" : "mcap";
-      BAGWIZ_LOG_ERROR(kLogger, "input is already in '%s' storage; nothing to convert", fmt_name);
-      return 1;
+      std::error_code ec;
+      const bool input_is_directory = std::filesystem::is_directory(args.input_path, ec);
+      const bool output_is_directory =
+        io::infer_format_from_extension(args.output_path) == io::Format::Auto;
+      if (input_is_directory == output_is_directory) {
+        const char * fmt_name = (target_format == io::Format::Sqlite3) ? "sqlite3" : "mcap";
+        BAGWIZ_LOG_ERROR(
+          kLogger,
+          "input is already in '%s' storage with the same layout; nothing to convert "
+          "(use `cp -r` for a verbatim copy)",
+          fmt_name);
+        return 1;
+      }
     }
 
     io::CreateOptions copts;

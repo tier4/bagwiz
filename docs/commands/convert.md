@@ -8,10 +8,12 @@ Cross-format bag conversion. One subcommand:
 
 ## Common notes
 
-- When `--storage` is omitted the storage backend is inferred from the
-  output path's extension (`.mcap` → MCAP, `.db3` → SQLite3). Output
-  paths that do not carry one of those extensions (e.g. a directory)
-  require an explicit `--storage`.
+- Target storage backend resolution order (first match wins):
+  1. `-s/--storage` if given.
+  2. Output path's extension (`.mcap` → MCAP, `.db3` → SQLite3).
+  3. Input bag's detected storage backend. Directory-layout outputs
+     without `--storage` therefore inherit the input's backend — handy
+     for a pure file ↔ directory layout change.
 - Any pre-existing entry at `<output>` (file or directory) stops the
   run with a clear log line. Pass `--overwrite` to replace it instead.
   The flag is supported by every `bagwiz` subcommand that writes a
@@ -45,10 +47,10 @@ bagwiz convert format [OPTIONS] <input> <output>
 
 ### Options
 
-| Flag                  | Description                                                                                        |
-| --------------------- | -------------------------------------------------------------------------------------------------- |
-| `-s`, `--storage <S>` | Target storage backend. One of `mcap`, `sqlite3`. Default: inferred from the output extension.     |
-| `--overwrite`         | Replace `<output>` if it already exists. Without this flag, an existing output path stops the run. |
+| Flag                  | Description                                                                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `-s`, `--storage <S>` | Target storage backend. One of `mcap`, `sqlite3`. Default: inferred from the output extension; otherwise inherited from the input bag's storage. |
+| `--overwrite`         | Replace `<output>` if it already exists. Without this flag, an existing output path stops the run.                                               |
 
 ### Behavior
 
@@ -88,7 +90,8 @@ bagwiz convert format drive.mcap drive.db3
 bagwiz convert format drive_dir/ drive_mcap_dir/ --storage mcap
 
 # Layout change without storage change: single-file MCAP -> directory MCAP.
-bagwiz convert format drive.mcap drive_dir/ --storage mcap
+# --storage is optional here — the directory output inherits MCAP from the input.
+bagwiz convert format drive.mcap drive_dir/
 ```
 
 ## Exit status
