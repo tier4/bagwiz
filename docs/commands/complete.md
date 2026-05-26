@@ -129,7 +129,7 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz <cmd> -<TAB>` for every registered command (including
     `complete`, `convert`, `ls`, `tf`, `traj`, `walk`)
   - `bagwiz <cmd> <subcommand> -<TAB>` for every nested subcommand
-    (`convert storage`, `tf tree`, `tf walk`, `tf inject-static`,
+    (`convert format`, `tf tree`, `tf walk`, `tf inject-static`,
     `traj dump`, `traj join`)
 - Selected option values are completed where bagwiz has a closed set, such as
   `--storage <mcap|sqlite3>` and `tf walk --rot <quat|euler|euler_rad|euler_deg>`.

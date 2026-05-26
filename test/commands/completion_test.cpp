@@ -281,7 +281,7 @@ TEST(FlagCompletionTest, CompleteDashListsCompleteFlags)
     "--force\n--help\n--install\n-h\n");
 }
 
-// `convert` has no parent-level flags; the storage subcommand owns
+// `convert` has no parent-level flags; the `format` subcommand owns
 // --overwrite/--storage/-s. Both contexts must respond to `-`.
 TEST(FlagCompletionTest, ConvertParentDashListsHelpFlags)
 {
@@ -289,10 +289,10 @@ TEST(FlagCompletionTest, ConvertParentDashListsHelpFlags)
     run_completion({"bagwiz", "__complete", "2", "bagwiz", "convert", "-"}), "--help\n-h\n");
 }
 
-TEST(FlagCompletionTest, ConvertStorageDashListsStorageFlags)
+TEST(FlagCompletionTest, ConvertFormatDashListsFormatFlags)
 {
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "3", "bagwiz", "convert", "storage", "-"}),
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "convert", "format", "-"}),
     "--help\n--overwrite\n--storage\n-h\n-s\n");
 }
 

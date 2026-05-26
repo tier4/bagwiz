@@ -60,7 +60,8 @@ io::Format resolve_target_storage(
 }  // namespace
 
 // `bagwiz convert` is a command group for cross-format bag conversion.
-// Ships `storage` (ROS 2 mcap <-> sqlite3 repack).
+// Ships `format` (ROS 2 mcap <-> sqlite3 repack, plus file <-> directory
+// layout transitions inferred from the output path).
 class ConvertCommand : public Command
 {
 public:
@@ -73,14 +74,14 @@ public:
   void configure(CLI::App & app) override
   {
     app.require_subcommand(1);
-    configure_storage(app);
+    configure_format(app);
   }
 
   int run() override
   {
     switch (selected_) {
-      case Subcommand::kStorage:
-        return run_storage();
+      case Subcommand::kFormat:
+        return run_format();
       case Subcommand::kNone:
         BAGWIZ_LOG_ERROR(kLogger, "no subcommand selected");
         return 1;
@@ -89,16 +90,16 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kStorage };
+  enum class Subcommand { kNone, kFormat };
   Subcommand selected_ = Subcommand::kNone;
 
-  struct StorageArgs
+  struct FormatArgs
   {
     std::filesystem::path input_path;
     std::filesystem::path output_path;
     std::string storage;     // empty when --storage not passed; resolved at run time
     bool overwrite = false;  // replace any pre-existing output_path
-  } storage_args_;
+  } format_args_;
 
   // Inspect metadata.yaml of a directory-layout input to detect rosbag2's
   // generic compression layer (which we don't decompress). Single-file
@@ -136,39 +137,42 @@ private:
     return 0;
   }
 
-  void configure_storage(CLI::App & app)
+  void configure_format(CLI::App & app)
   {
-    auto * sub =
-      app.add_subcommand("storage", "Repack a ROS 2 rosbag into a different storage backend");
-    sub->add_option("input", storage_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+    auto * sub = app.add_subcommand(
+      "format",
+      "Repack a ROS 2 rosbag, converting between storage backends and/or "
+      "file/directory layouts");
+    sub->add_option("input", format_args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     sub
       ->add_option(
-        "output", storage_args_.output_path, "Output rosbag2 directory (or .mcap/.db3 file)")
+        "output", format_args_.output_path, "Output rosbag2 directory (or .mcap/.db3 file)")
       ->required();
     sub
       ->add_option(
-        "-s,--storage", storage_args_.storage,
+        "-s,--storage", format_args_.storage,
         "Target storage backend (default: inferred from output extension)")
       ->check(CLI::IsMember({"mcap", "sqlite3"}));
     sub->add_flag(
-      "--overwrite", storage_args_.overwrite,
+      "--overwrite", format_args_.overwrite,
       "Replace <output> if it already exists. Without this flag, an "
       "existing output path stops the run.");
     sub->footer(
-      "Messages are copied verbatim — only the storage backend changes; no\n"
-      "deserialization or type conversion is performed.\n"
+      "Messages are copied verbatim — only the storage backend and/or the\n"
+      "file/directory layout change; no deserialization or type conversion\n"
+      "is performed.\n"
       "If --storage is omitted, the backend is inferred from the output path's\n"
       "extension (.mcap or .db3); other paths (e.g. a directory) require --storage.\n"
       "Inputs that use rosbag2-layer compression (compression_mode != NONE)\n"
       "are rejected; decompress with `ros2 bag convert` first.");
-    sub->callback([this]() { selected_ = Subcommand::kStorage; });
+    sub->callback([this]() { selected_ = Subcommand::kFormat; });
   }
 
-  int run_storage()
+  int run_format()
   {
-    const auto & args = storage_args_;
+    const auto & args = format_args_;
 
     if (const int rc = check_input_compression(args.input_path); rc != 0) {
       return rc;

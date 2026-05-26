@@ -436,12 +436,12 @@ std::vector<std::string> complete_convert(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"storage"}, current);
+    return matching({"format"}, current);
   }
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & mode = request.words[kFirstCommandArgWord];
-    if (mode == "storage") {
+    if (mode == "format") {
       return matching(with_help({"--overwrite", "--storage", "-s"}), current);
     }
   }

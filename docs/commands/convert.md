@@ -2,9 +2,9 @@
 
 Cross-format bag conversion. One subcommand:
 
-| Subcommand                           | Direction                                     |
-| ------------------------------------ | --------------------------------------------- |
-| [`storage`](#bagwiz-convert-storage) | ROS 2 rosbag2 repack between MCAP and SQLite3 |
+| Subcommand                         | Direction                                                                          |
+| ---------------------------------- | ---------------------------------------------------------------------------------- |
+| [`format`](#bagwiz-convert-format) | ROS 2 rosbag2 repack between MCAP and SQLite3 storage and/or file/directory layout |
 
 ## Common notes
 
@@ -15,22 +15,25 @@ Cross-format bag conversion. One subcommand:
 - Any pre-existing entry at `<output>` (file or directory) stops the
   run with a clear log line. Pass `--overwrite` to replace it instead.
   The flag is supported by every `bagwiz` subcommand that writes a
-  file or directory output (`convert storage`, `traj dump`, `traj join -o`,
+  file or directory output (`convert format`, `traj dump`, `traj join -o`,
   `tf inject-static -o`).
 - `mcap` outputs are written without chunk compression. Re-compress
   afterwards with `ros2 bag convert` if needed.
 
 ---
 
-## `bagwiz convert storage`
+## `bagwiz convert format`
 
-Repack a ROS 2 rosbag2 between MCAP and SQLite3 storage backends. Messages
-are copied verbatim — no deserialization or type conversion.
+Repack a ROS 2 rosbag2. The subcommand handles two independent
+conversions in one pass — choose the target storage backend (MCAP ↔
+SQLite3) via `-s/--storage`, and choose the on-disk layout
+(single-file ↔ directory) via the shape of `<output>`. Messages are
+copied verbatim; no deserialization or type conversion is performed.
 
 ### Usage
 
 ```text
-bagwiz convert storage [OPTIONS] <input> <output>
+bagwiz convert format [OPTIONS] <input> <output>
 ```
 
 ### Positional arguments
@@ -49,11 +52,16 @@ bagwiz convert storage [OPTIONS] <input> <output>
 
 ### Behavior
 
-- Same-storage repacks (e.g. MCAP → MCAP) are rejected; a plain `cp` is
-  what you actually want. Format detection uses magic bytes
-  (single-file inputs) or `metadata.yaml` (directory layouts), never
-  the file extension, so a renamed input is still classified
-  correctly.
+- Same-storage + same-layout repacks (e.g. MCAP file → MCAP file) are
+  rejected; a plain `cp` is what you actually want. Format detection
+  uses magic bytes (single-file inputs) or `metadata.yaml` (directory
+  layouts), never the file extension, so a renamed input is still
+  classified correctly.
+- Layout transitions (file ↔ directory) are supported on either
+  storage backend. The output layout is derived from `<output>`: a
+  path ending in `.mcap` or `.db3` produces a single-file bag, any
+  other path produces a directory-layout bag with the canonical
+  `metadata.yaml`.
 - Inputs that use rosbag2-layer compression
   (`compression_mode: FILE` / `MESSAGE` in `metadata.yaml`) are
   rejected with a clear error. Decompress the input first with
@@ -73,11 +81,14 @@ bagwiz convert storage [OPTIONS] <input> <output>
 ### Example
 
 ```bash
-# MCAP -> SQLite3 (extension picks the backend).
-bagwiz convert storage drive.mcap drive.db3
+# MCAP file -> SQLite3 file (extension picks the backend).
+bagwiz convert format drive.mcap drive.db3
 
-# SQLite3 -> directory-layout MCAP.
-bagwiz convert storage drive_dir/ drive_mcap_dir/ --storage mcap
+# SQLite3 directory -> directory-layout MCAP.
+bagwiz convert format drive_dir/ drive_mcap_dir/ --storage mcap
+
+# Layout change without storage change: single-file MCAP -> directory MCAP.
+bagwiz convert format drive.mcap drive_dir/ --storage mcap
 ```
 
 ## Exit status
