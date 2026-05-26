@@ -102,7 +102,7 @@ private:
   rmw_serialized_message_t msg_ = rmw_get_zero_initialized_serialized_message();
 };
 
-// Dismissable guard: pairs members.init_function() with fini_function() so a
+// Dismissible guard: pairs members.init_function() with fini_function() so a
 // throw between init and successful construction unwinds the partial init.
 // Call release() on the success path to hand ownership over to the
 // DeserializedMessage destructor.

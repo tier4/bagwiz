@@ -17,6 +17,7 @@
     "relaxable",
     "relwithdebinfo",
     "RIHS",
-    "unparseable"
+    "unparseable",
+    "wopts"
   ]
 }
