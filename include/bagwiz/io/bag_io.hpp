@@ -93,7 +93,7 @@ public:
   virtual std::span<const TopicInfo> topics() const = 0;
 
   // Must be called before the first next(). Calling after iteration has
-  // started is undefined behaviour.
+  // started throws std::runtime_error.
   virtual void set_filter(const ReadFilter & filter) = 0;
 
   // Stream the next message. Returns false at EOF; throws on IO error.

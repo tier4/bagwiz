@@ -34,12 +34,12 @@ constexpr const char * kLogger = "bagwiz.cmd.convert";
 
 // Resolve the target storage backend for a write. The CLI takes `--storage`
 // optionally; when omitted, we fall back to inferring from the output path's
-// extension (`.mcap` / `.db3`). Any other path — most commonly a
-// directory-layout output — has no extension signal, so we surface a clear
-// error instead of silently picking a default, since the user has not
-// actually chosen one. `storage_flag` is the CLI string value (empty when
-// the user did not pass `--storage`); the returned format is never
-// `Format::Auto`.
+// extension (`.mcap` / `.db3`). Any other path — a directory layout, or a
+// file with an unrecognized extension — has no extension signal, so we
+// surface a clear error instead of silently picking a default, since the
+// user has not actually chosen one. `storage_flag` is the CLI string value
+// (empty when the user did not pass `--storage`); the returned format is
+// never `Format::Auto`.
 io::Format resolve_target_storage(
   const std::string & storage_flag, const std::filesystem::path & output_path,
   std::string & error_out)

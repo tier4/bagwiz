@@ -39,8 +39,8 @@ T swap_bytes(T value)
   return out;
 }
 
-// Read a value of trivially-copyable type T from `src` at `offset`,
-// applying endian conversion when wire and host differ.
+// Read a value of trivially-copyable type T from `src`, applying
+// endian conversion when wire and host differ.
 template <typename T>
 T load_le(const std::byte * src, bool little_endian)
 {

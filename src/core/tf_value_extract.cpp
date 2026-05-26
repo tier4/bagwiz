@@ -81,9 +81,9 @@ bool read_xyzw(const cdr::Object & obj, double & x, double & y, double & z, doub
   return to_double(*fw, w);
 }
 
-// Convert a single TransformStamped Object into the C++ struct. Returns
-// false on any missing or wrong-shaped field; the caller skips the
-// element in that case.
+// Fill a std_msgs::msg::Header from a decoded Object. Returns false on
+// any missing or wrong-shaped field; the caller skips the element in
+// that case.
 bool fill_std_msgs_header(const cdr::Object & header_obj, std_msgs::msg::Header & out)
 {
   const auto * stamp_v = find_field(header_obj, "stamp");

@@ -9,8 +9,7 @@
 #ifndef BAGWIZ__CORE__DECODER__SCHEMA_DECODER_HPP_
 #define BAGWIZ__CORE__DECODER__SCHEMA_DECODER_HPP_
 
-// Internal header (not installed). Kept under src/ rather than include/
-// because the schema_decoder is an implementation detail of open_decoder()
+// Internal header (not installed). Implementation detail of open_decoder()
 // — clients should always go through the factory.
 
 #include "bagwiz/core/decoder/decoder.hpp"
