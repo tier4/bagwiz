@@ -120,6 +120,17 @@ source ~/.config/fish/completions/bagwiz.fish
 ## Behavior
 
 - Top-level commands and known nested subcommands are completed statically.
+- Typing `-` and pressing TAB lists the option flags available at the current
+  position. Every command and subcommand responds, including ones that take
+  only positional arguments — in that case the listing falls back to the
+  `-h` / `--help` flags that CLI11 auto-injects. At the bagwiz top level,
+  `-<TAB>` also surfaces `--version`. The covered positions are:
+  - `bagwiz -<TAB>` → `--help`, `--version`, `-h`
+  - `bagwiz <cmd> -<TAB>` for every registered command (including
+    `complete`, `convert`, `ls`, `tf`, `traj`, `walk`)
+  - `bagwiz <cmd> <subcommand> -<TAB>` for every nested subcommand
+    (`convert storage`, `tf tree`, `tf walk`, `tf inject-static`,
+    `traj dump`, `traj join`)
 - Selected option values are completed where bagwiz has a closed set, such as
   `--storage <mcap|sqlite3>` and `tf walk --rot <quat|euler|euler_rad|euler_deg>`.
 - Commands that take a `<topic>` positional argument complete it by opening

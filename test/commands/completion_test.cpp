@@ -249,6 +249,107 @@ TEST_F(CompletionTest, TrajDumpFormatFlagValueCompletes)
     "tum\n");
 }
 
+// Typing `-` at the bagwiz top-level should list the implicit CLI11 help
+// flags plus the `--version` flag wired up in main().
+TEST(FlagCompletionTest, TopLevelDashListsHelpAndVersion)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "1", "bagwiz", "-"}), "--help\n--version\n-h\n");
+}
+
+// `ls` defines no user-level options, so `-` should at minimum surface
+// the CLI11-injected help flags (previously: nothing).
+TEST(FlagCompletionTest, LsDashListsHelpFlags)
+{
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "ls", "-"}), "--help\n-h\n");
+}
+
+// `walk` has only positional args; its `-` candidates collapse to help.
+// Topic completion is gated off via the `-` prefix, so the binding does
+// not call into the bag reader here.
+TEST(FlagCompletionTest, WalkDashListsHelpFlags)
+{
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "walk", "-"}), "--help\n-h\n");
+}
+
+// The `complete` subcommand defines two flags of its own; with help merged
+// in they sort as: --force, --help, --install, -h.
+TEST(FlagCompletionTest, CompleteDashListsCompleteFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "complete", "-"}),
+    "--force\n--help\n--install\n-h\n");
+}
+
+// `convert` has no parent-level flags; the storage subcommand owns
+// --overwrite/--storage/-s. Both contexts must respond to `-`.
+TEST(FlagCompletionTest, ConvertParentDashListsHelpFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "convert", "-"}), "--help\n-h\n");
+}
+
+TEST(FlagCompletionTest, ConvertStorageDashListsStorageFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "convert", "storage", "-"}),
+    "--help\n--overwrite\n--storage\n-h\n-s\n");
+}
+
+// Parent-level flag completion at the subcommand slot.
+TEST(FlagCompletionTest, TrajParentDashListsHelpFlags)
+{
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "traj", "-"}), "--help\n-h\n");
+}
+
+TEST(FlagCompletionTest, TrajDumpDashListsDumpFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "traj", "dump", "-"}),
+    "--format\n--from\n--help\n--overwrite\n--to\n-f\n-h\n");
+}
+
+TEST(FlagCompletionTest, TrajJoinDashListsJoinFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "traj", "join", "-"}),
+    "--force\n--format\n--from\n--help\n--msg-type\n--output\n--overwrite\n--to\n-f\n-h\n-o\n-t\n");
+}
+
+TEST(FlagCompletionTest, TfParentDashListsHelpFlags)
+{
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "tf", "-"}), "--help\n-h\n");
+}
+
+// `tf tree` previously fell through to `return {}` — pin the new behavior.
+TEST(FlagCompletionTest, TfTreeDashListsHelpFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "tree", "-"}), "--help\n-h\n");
+}
+
+TEST(FlagCompletionTest, TfWalkDashListsWalkFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "walk", "-"}),
+    "--help\n--rot\n-h\n-r\n");
+}
+
+TEST(FlagCompletionTest, TfInjectStaticDashListsInjectFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "inject-static", "-"}),
+    "--force\n--help\n--output\n--overwrite\n-h\n-o\n");
+}
+
+// Prefix narrowing still works once the flag candidate set is widened.
+TEST(FlagCompletionTest, TrajDumpDoubleDashOPrefixSelectsOverwrite)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "traj", "dump", "--o"}),
+    "--overwrite\n");
+}
+
 TEST(SupportedShellsTest, ListsBashZshAndFish)
 {
   const auto shells = bagwiz::commands::supported_shells();

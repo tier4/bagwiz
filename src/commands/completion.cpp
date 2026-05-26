@@ -287,8 +287,42 @@ std::vector<std::string> matching(
   return result;
 }
 
+// Flags exposed by the top-level CLI::App. `--help` / `-h` are auto-added
+// by CLI11 for every App, and `--version` is wired in main().
+constexpr std::array<std::string_view, 3> kTopLevelFlags{
+  "--help",
+  "--version",
+  "-h",
+};
+
+// `--help` / `-h` are auto-added by CLI11 for every App and subcommand. Each
+// per-command flag table prepends these so the user always sees them on
+// `-<TAB>`, even when the command/subcommand defines no other flags of its
+// own.
+constexpr std::array<std::string_view, 2> kCommonHelpFlags{
+  "--help",
+  "-h",
+};
+
+std::vector<std::string_view> with_help(std::initializer_list<std::string_view> flags)
+{
+  std::vector<std::string_view> result;
+  result.reserve(flags.size() + kCommonHelpFlags.size());
+  for (const auto & flag : kCommonHelpFlags) {
+    result.push_back(flag);
+  }
+  for (const auto & flag : flags) {
+    result.push_back(flag);
+  }
+  return result;
+}
+
 std::vector<std::string> top_level_candidates(const std::string_view & prefix)
 {
+  if (starts_with(prefix, "-")) {
+    return matching({kTopLevelFlags.begin(), kTopLevelFlags.end()}, prefix);
+  }
+
   std::vector<std::string> result;
   for (const auto & cmd : Registry::instance().all()) {
     if (starts_with(cmd->name(), prefix)) {
@@ -372,8 +406,25 @@ std::optional<std::vector<std::string>> try_topic_completion(const CompletionReq
 
 std::vector<std::string> complete_complete_command(const CompletionRequest & request)
 {
+  const auto current = current_word(request);
+  if (current.starts_with("-")) {
+    return matching(with_help({"--force", "--install"}), current);
+  }
   if (request.cursor_word == kFirstCommandArgWord) {
-    return matching(supported_shell_names(), current_word(request));
+    return matching(supported_shell_names(), current);
+  }
+  return {};
+}
+
+// Commands whose only `-` candidates are the implicit CLI11 help flags.
+// `ls` and `walk` have no user-defined flags; the parent `tf`, `traj`, and
+// `convert` apps likewise expose only help when the cursor is in the
+// subcommand-name slot.
+std::vector<std::string> complete_help_only(const CompletionRequest & request)
+{
+  const auto current = current_word(request);
+  if (current.starts_with("-")) {
+    return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
   }
   return {};
 }
@@ -382,13 +433,16 @@ std::vector<std::string> complete_convert(const CompletionRequest & request)
 {
   const auto current = current_word(request);
   if (request.cursor_word == kFirstCommandArgWord) {
+    if (current.starts_with("-")) {
+      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
+    }
     return matching({"storage"}, current);
   }
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & mode = request.words[kFirstCommandArgWord];
     if (mode == "storage") {
-      return matching({"--overwrite", "--storage", "-s"}, current);
+      return matching(with_help({"--overwrite", "--storage", "-s"}), current);
     }
   }
 
@@ -404,18 +458,22 @@ std::vector<std::string> complete_traj(const CompletionRequest & request)
 {
   const auto current = current_word(request);
   if (request.cursor_word == kFirstCommandArgWord) {
+    if (current.starts_with("-")) {
+      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
+    }
     return matching({"dump", "join"}, current);
   }
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & mode = request.words[kFirstCommandArgWord];
     if (mode == "dump") {
-      return matching({"--format", "--from", "--overwrite", "--to", "-f"}, current);
+      return matching(with_help({"--format", "--from", "--overwrite", "--to", "-f"}), current);
     }
     if (mode == "join") {
       return matching(
-        {"--force", "--format", "--from", "--msg-type", "--output", "--overwrite", "--to", "-f",
-         "-o", "-t"},
+        with_help(
+          {"--force", "--format", "--from", "--msg-type", "--output", "--overwrite", "--to", "-f",
+           "-o", "-t"}),
         current);
     }
   }
@@ -436,16 +494,22 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
 {
   const auto current = current_word(request);
   if (request.cursor_word == kFirstCommandArgWord) {
+    if (current.starts_with("-")) {
+      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
+    }
     return matching({"inject-static", "tree", "walk"}, current);
   }
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & mode = request.words[kFirstCommandArgWord];
     if (mode == "walk") {
-      return matching({"--rot", "-r"}, current);
+      return matching(with_help({"--rot", "-r"}), current);
     }
     if (mode == "inject-static") {
-      return matching({"--force", "--output", "--overwrite", "-o"}, current);
+      return matching(with_help({"--force", "--output", "--overwrite", "-o"}), current);
+    }
+    if (mode == "tree") {
+      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
   }
 
@@ -481,6 +545,9 @@ std::vector<std::string> complete_request(const CompletionRequest & request)
   }
   if (command == "tf") {
     return complete_tf(request);
+  }
+  if (command == "ls" || command == "walk") {
+    return complete_help_only(request);
   }
   return {};
 }
