@@ -565,11 +565,10 @@ TEST(FlagCompletionTest, TfTreeDashListsHelpFlags)
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "tree", "-"}), "--help\n-h\n");
 }
 
-TEST(FlagCompletionTest, TfWalkDashListsWalkFlags)
+TEST(FlagCompletionTest, TfWalkDashListsHelpFlags)
 {
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "walk", "-"}),
-    "--help\n--rot\n-h\n-r\n");
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "walk", "-"}), "--help\n-h\n");
 }
 
 TEST(FlagCompletionTest, TfInjectStaticDashListsInjectFlags)

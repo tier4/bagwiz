@@ -95,8 +95,9 @@ TEST(TfRotation, QuatEulerQuatRoundtripPreservesQuaternion)
 
 TEST(TfRotation, QuatRadDegRadQuatRoundtrip)
 {
-  // Mirrors what `bagwiz tf walk --rot euler_deg` does internally:
-  // quaternion -> rad -> deg, then back via deg -> rad -> quat.
+  // Mirrors what `bagwiz tf walk` does internally when the interactive `r`
+  // key cycles to euler_deg: quaternion -> rad -> deg, then back via
+  // deg -> rad -> quat.
   const EulerAngles rpy{0.2, 0.5, -0.7};
   const auto q0 = euler_rad_to_quat(rpy);
   const auto rad = quat_to_euler_rad(q0[0], q0[1], q0[2], q0[3]);

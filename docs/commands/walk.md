@@ -132,6 +132,18 @@ indicator is shown above the key legend.
 - `walk` is interactive — both stdin and stdout must be a TTY. Piping the
   output (`bagwiz walk … | less`) exits with an error.
 
+## Environment
+
+These variables affect any bagwiz command that decodes messages (`walk`,
+`tf walk`, `tf tree`, `convert format`, `traj …`); they are documented here
+because `walk` is the most decoder-centric command.
+
+- `BAGWIZ_DECODER`: decoder backend override. When set to `introspection`,
+  forces the runtime introspection backend and skips the schema-driven path.
+  Any other value (and the default of unset) selects the schema-first
+  auto-policy, which falls back to introspection only when the schema
+  backend cannot decode a topic. See `src/core/decoder/decoder_factory.cpp`.
+
 ## Example
 
 ```bash

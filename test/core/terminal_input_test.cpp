@@ -71,6 +71,11 @@ TEST(ClassifyKey, ToggleArrayExpandBinding)
   EXPECT_EQ(classify_key("a"), KeyEvent::kToggleArrayExpand);
 }
 
+TEST(ClassifyKey, ToggleRotationBinding)
+{
+  EXPECT_EQ(classify_key("r"), KeyEvent::kToggleRotation);
+}
+
 TEST(ClassifyKey, ScrollBindings)
 {
   EXPECT_EQ(classify_key("k"), KeyEvent::kScrollUp);

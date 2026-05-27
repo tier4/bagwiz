@@ -609,6 +609,21 @@ private:
 
   enum class RotationFormat { kQuaternion, kEulerRad, kEulerDeg };
 
+  // Interactive `r` cycles quat -> euler_rad -> euler_deg -> quat. Defined
+  // here so the cycle order is colocated with the enum and stays in sync.
+  static constexpr RotationFormat next_rotation_format(RotationFormat current) noexcept
+  {
+    switch (current) {
+      case RotationFormat::kQuaternion:
+        return RotationFormat::kEulerRad;
+      case RotationFormat::kEulerRad:
+        return RotationFormat::kEulerDeg;
+      case RotationFormat::kEulerDeg:
+        return RotationFormat::kQuaternion;
+    }
+    return RotationFormat::kQuaternion;
+  }
+
   struct TreeArgs
   {
     std::filesystem::path input_path;
@@ -655,20 +670,6 @@ private:
         "Reference (fixed) frame -- the output expresses <to> in this frame's coordinates")
       ->required();
     sub->add_option("to", walk_args_.to_frame, "Tracked (moving) frame to sample")->required();
-    sub
-      ->add_option(
-        "-r,--rot", walk_args_.rot,
-        "Rotation format: quat (default) | euler | euler_rad | euler_deg "
-        "(euler is an alias for euler_rad)")
-      ->transform(
-        CLI::CheckedTransformer(
-          std::map<std::string, RotationFormat>{
-            {"quat", RotationFormat::kQuaternion},
-            {"euler", RotationFormat::kEulerRad},
-            {"euler_rad", RotationFormat::kEulerRad},
-            {"euler_deg", RotationFormat::kEulerDeg},
-          },
-          CLI::ignore_case));
     sub->callback([this]() { selected_ = Subcommand::kWalk; });
   }
 
@@ -1018,7 +1019,8 @@ private:
       footer_logical.emplace_back();  // index row, patched below
       footer_logical.emplace_back(
         "  [→/Space] next   [←/b] prev   [↑/k] up   [↓/j] down   "
-        "[Home/H] head   [End/T] tail   [g] first   [G] last   [q] quit");
+        "[Home/H] head   [End/T] tail   [g] first   [G] last   "
+        "[r] quat/rad/deg   [q] quit");
       footer_logical.push_back(status.empty() ? std::string{} : fmt::format("  {}", status));
 
       std::vector<std::string> footer_wrapped;
@@ -1104,9 +1106,19 @@ private:
       }
     };
 
-    auto on_app_key = [](core::KeyEvent) -> core::tui::AppKeyResult {
-      // No app-specific keys for tf walk (no save / no array expansion).
-      return core::tui::AppKeyResult::kIgnored;
+    // `r` cycles the rotation format in-place. The body lines are rebuilt
+    // every frame from walk_args_.rot (see build_body_lines), so flipping
+    // the field and asking for a redraw is enough. Body height may change
+    // (quat = 4 rotation rows, euler = 3) so reset scroll to keep the top
+    // of the new layout visible.
+    auto on_app_key = [&](core::KeyEvent ev) -> core::tui::AppKeyResult {
+      if (ev != core::KeyEvent::kToggleRotation) {
+        return core::tui::AppKeyResult::kIgnored;
+      }
+      walk_args_.rot = next_rotation_format(walk_args_.rot);
+      status.clear();
+      pager.set_scroll_offset(0);
+      return core::tui::AppKeyResult::kHandled;
     };
 
     return pager.run(build_frame, on_nav, on_app_key);

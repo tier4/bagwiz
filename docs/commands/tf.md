@@ -4,6 +4,7 @@ TF inspection on a ROS 2 rosbag.
 
 - [`tree`](#bagwiz-tf-tree) — merged static∪dynamic forest; edge tags `[S]`/`[D]`/`[B]` and optional TTY colors.
 - [`walk`](#bagwiz-tf-walk) — interactive chain between `<from>` and `<to>` at each dynamic `/tf` update.
+- [`inject-static`](#bagwiz-tf-inject-static) — copy a destination bag with `/tf_static` injected from a source bag at the destination's start time.
 
 ROS 1 `*.bag` inputs are not supported.
 
@@ -124,7 +125,7 @@ continuation lines that inherit the original line's leading whitespace.
 ### Usage
 
 ```text
-bagwiz tf walk [OPTIONS] <input> <from> <to>
+bagwiz tf walk <input> <from> <to>
 ```
 
 ### Positional arguments
@@ -137,9 +138,9 @@ bagwiz tf walk [OPTIONS] <input> <from> <to>
 
 ### Options
 
-| Flag                | Default | Description                                                                                             |
-| ------------------- | ------- | ------------------------------------------------------------------------------------------------------- |
-| `-r`, `--rot <FMT>` | `quat`  | Rotation format. One of `quat`, `euler`, `euler_rad`, `euler_deg`. `euler` is an alias for `euler_rad`. |
+`tf walk` takes no user-defined flags. The rotation format is switched
+interactively from inside the viewer — see [Keys](#keys) and
+[Rotation formats](#rotation-formats).
 
 ### Behavior
 
@@ -200,25 +201,33 @@ index: …`) instead of crashing the walk.
 
 ### Rotation formats
 
-| `--rot`               | Output                         |
-| --------------------- | ------------------------------ |
-| `quat`                | Quaternion `(x, y, z, w)`.     |
-| `euler` / `euler_rad` | Roll / pitch / yaw in radians. |
-| `euler_deg`           | Roll / pitch / yaw in degrees. |
+The viewer starts in `quat` and the interactive `r` key cycles between the
+three formats:
+
+| Format      | Output                         |
+| ----------- | ------------------------------ |
+| `quat`      | Quaternion `(x, y, z, w)`.     |
+| `euler_rad` | Roll / pitch / yaw in radians. |
+| `euler_deg` | Roll / pitch / yaw in degrees. |
+
+Pressing `r` advances `quat` → `euler_rad` → `euler_deg` → `quat`. The body
+header line (`rotation (quaternion):` / `rotation (euler, rad):` /
+`rotation (euler, deg):`) always reflects the active format.
 
 ### Keys
 
-| Key            | Action                                               |
-| -------------- | ---------------------------------------------------- |
-| `→` / `Space`  | Next timeline index (wraps from last back to first). |
-| `←` / `b`      | Previous timeline index.                             |
-| `↑` / `k`      | Scroll body up one line.                             |
-| `↓` / `j`      | Scroll body down one line.                           |
-| `Home` / `H`   | Jump body scroll to the head.                        |
-| `End` / `T`    | Jump body scroll to the tail.                        |
-| `g`            | Jump to the first timeline index.                    |
-| `G`            | Jump to the last timeline index.                     |
-| `q` / `Ctrl-C` | Quit.                                                |
+| Key            | Action                                                       |
+| -------------- | ------------------------------------------------------------ |
+| `→` / `Space`  | Next timeline index (wraps from last back to first).         |
+| `←` / `b`      | Previous timeline index.                                     |
+| `↑` / `k`      | Scroll body up one line.                                     |
+| `↓` / `j`      | Scroll body down one line.                                   |
+| `Home` / `H`   | Jump body scroll to the head.                                |
+| `End` / `T`    | Jump body scroll to the tail.                                |
+| `g`            | Jump to the first timeline index.                            |
+| `G`            | Jump to the last timeline index.                             |
+| `r`            | Cycle rotation format (quat → euler rad → euler deg → quat). |
+| `q` / `Ctrl-C` | Quit.                                                        |
 
 When the body is taller than the visible window (typically because the
 `chain:` line wrapped, or the terminal is short), a `lines X-Y of N`
@@ -232,11 +241,9 @@ indicator is shown after the index row in the footer.
 ### Examples
 
 ```bash
-# Track base_link in the map frame, default quaternion output.
+# Track base_link in the map frame. Starts in quaternion mode; press `r`
+# in the viewer to cycle to euler (rad), then again for euler (deg).
 bagwiz tf walk capture.mcap map base_link
-
-# Same chain, Euler in degrees.
-bagwiz tf walk capture.mcap map base_link --rot euler_deg
 ```
 
 ### Exit status
@@ -245,3 +252,60 @@ bagwiz tf walk capture.mcap map base_link --rot euler_deg
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | Quit cleanly via `q` / `Ctrl-C`.                                                                                                                                                                      |
 | `1`  | Bag could not be opened; no TFMessage topic; TF load or init-time lookup failure (broken chain, missing transforms, or empty timeline after cropping); decoder failure; or stdin/stdout is not a TTY. |
+
+---
+
+## `bagwiz tf inject-static`
+
+Copy `<dst>` to `<output>` with `/tf_static` from `<src>` injected as a single
+message at `<dst>`'s start time. Source `header.stamp` values are rewritten to
+that same time so the injected static transforms appear consistent with the
+destination's timeline.
+
+### Usage
+
+```text
+bagwiz tf inject-static <src> <dst> -o <output> [--force] [--overwrite]
+```
+
+### Positional arguments
+
+| Name  | Description                                              |
+| ----- | -------------------------------------------------------- |
+| `src` | Source bag (provides `/tf_static`).                      |
+| `dst` | Destination bag (copied unchanged except for static TF). |
+
+### Options
+
+| Flag                   | Default      | Description                                                                                           |
+| ---------------------- | ------------ | ----------------------------------------------------------------------------------------------------- |
+| `-o`, `--output <OUT>` | _(required)_ | Output bag path (file or directory).                                                                  |
+| `--force`              | `false`      | Overwrite per-topic when `<dst>` already has messages on a `*tf_static` topic.                        |
+| `--overwrite`          | `false`      | Replace `-o/--output` if it already exists. Without this flag, an existing output path stops the run. |
+
+### Behavior
+
+- Scans `<src>` for `tf2_msgs/msg/TFMessage` topics whose name ends in
+  `tf_static` and collects a deduplicated `TransformStamped[]` per topic.
+- Inherits `<output>`'s storage format from `<dst>` when `-o`'s extension
+  does not disambiguate a single-file format (e.g. `.mcap`, `.db3`).
+- For each `*tf_static` topic from `<src>`:
+  - **Not in `<dst>`**: declare the topic with `<src>`'s schema, then emit
+    the merged static payload.
+  - **Present in `<dst>` with no messages**: keep `<dst>`'s schema, emit the
+    merged static payload.
+  - **Present in `<dst>` with messages, `--force` not set**: abort with a
+    conflict error listing the affected topic and existing message count.
+  - **Present in `<dst>` with messages, `--force` set**: drop the existing
+    messages from the output stream and emit the merged static payload
+    instead.
+- Stream-copies every other message from `<dst>` to `<output>` unchanged.
+- Emits exactly one merged `TFMessage` per static topic at `<dst>`'s
+  `start_ns`, with every `header.stamp` rewritten to that timestamp.
+
+### Exit status
+
+| Code | Meaning                                                                                                                                                                                                                                            |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Output bag written successfully.                                                                                                                                                                                                                   |
+| `1`  | Failure to open `<src>` or `<dst>`; output path already exists without `--overwrite`; non-positive `<dst>` start time; existing `*tf_static` payload conflict without `--force`; topic-type mismatch; decoder/serializer error; or writer failure. |

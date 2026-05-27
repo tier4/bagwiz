@@ -276,15 +276,15 @@ bagwiz traj join [OPTIONS] <input> <traj_file> <topic>
 
 ### Options
 
-| Flag                   | Default      | Description                                                                                                                                    |
-| ---------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-o`, `--output <OUT>` | _(unset)_    | Write the result to a new bag at `<OUT>`. When omitted, `<input>` is replaced in place via a sibling tmp directory.                            |
-| `-f`, `--format <F>`   | _(empty)_    | Trajectory format id. When omitted, inferred from the trajectory file extension. `-f` always wins over the extension when both are present.    |
-| `-t`, `--msg-type <T>` | `tf`         | ROS message type to publish under `<topic>`. Currently only `tf` (= `tf2_msgs/msg/TFMessage`) is accepted.                                     |
-| `--from <FRAME>`       | _(required)_ | For `--msg-type tf`: parent frame id, written to `TransformStamped.header.frame_id`.                                                           |
-| `--to <FRAME>`         | _(required)_ | For `--msg-type tf`: child frame id, written to `TransformStamped.child_frame_id`.                                                             |
-| `--force`              | `false`      | Allow overwriting an existing `<topic>` in `<input>`: existing messages are dropped from the output and replaced with the trajectory.          |
-| `--overwrite`          | `false`      | Replace `-o/--output` if it already exists. Has no effect in in-place mode (when `-o` is omitted, `<input>` is replaced atomically by design). |
+| Flag                   | Default                          | Description                                                                                                                                    |
+| ---------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-o`, `--output <OUT>` | _(unset)_                        | Write the result to a new bag at `<OUT>`. When omitted, `<input>` is replaced in place via a sibling tmp directory.                            |
+| `-f`, `--format <F>`   | _(empty)_                        | Trajectory format id. When omitted, inferred from the trajectory file extension. `-f` always wins over the extension when both are present.    |
+| `-t`, `--msg-type <T>` | `tf`                             | ROS message type to publish under `<topic>`. Currently only `tf` (= `tf2_msgs/msg/TFMessage`) is accepted.                                     |
+| `--from <FRAME>`       | _(required for `--msg-type tf`)_ | For `--msg-type tf`: parent frame id, written to `TransformStamped.header.frame_id`.                                                           |
+| `--to <FRAME>`         | _(required for `--msg-type tf`)_ | For `--msg-type tf`: child frame id, written to `TransformStamped.child_frame_id`.                                                             |
+| `--force`              | `false`                          | Allow overwriting an existing `<topic>` in `<input>`: existing messages are dropped from the output and replaced with the trajectory.          |
+| `--overwrite`          | `false`                          | Replace `-o/--output` if it already exists. Has no effect in in-place mode (when `-o` is omitted, `<input>` is replaced atomically by design). |
 
 ### Behavior
 

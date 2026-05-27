@@ -132,7 +132,7 @@ source ~/.config/fish/completions/bagwiz.fish
     (`convert format`, `tf tree`, `tf walk`, `tf inject-static`,
     `traj dump`, `traj join`)
 - Selected option values are completed where bagwiz has a closed set, such as
-  `--storage <mcap|sqlite3>` and `tf walk --rot <quat|euler|euler_rad|euler_deg>`.
+  `--storage <mcap|sqlite3>`.
 - Commands that take a `<topic>` positional argument complete it by opening
   `<input>` as a ROS 2 rosbag and listing topics with names that start with
   the current prefix. The currently-covered positions are:

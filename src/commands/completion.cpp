@@ -661,21 +661,11 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & mode = request.words[kFirstCommandArgWord];
-    if (mode == "walk") {
-      return matching(with_help({"--rot", "-r"}), current);
-    }
     if (mode == "inject-static") {
       return matching(with_help({"--force", "--output", "--overwrite", "-o"}), current);
     }
-    if (mode == "tree") {
+    if (mode == "tree" || mode == "walk") {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
-    }
-  }
-
-  if (request.cursor_word > 0) {
-    const auto & previous = request.words[request.cursor_word - 1];
-    if (previous == "--rot" || previous == "-r") {
-      return matching({"euler", "euler_deg", "euler_rad", "quat"}, current);
     }
   }
 
