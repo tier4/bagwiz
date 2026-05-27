@@ -378,7 +378,7 @@ TEST_F(CompletionTest, TrajDumpFromFlagShowsSentinelWhenBagHasNoTf)
     "NO-TF-FRAMES-FOUND-IN-BAG\n");
 }
 
-// An unopenable input path must not surface the sentinel — that would
+// An input path that fails to open must not surface the sentinel — that would
 // mislead the user into believing the bag exists but is empty of TF.
 // The contract is "silent fall-through so the shell's file completion
 // takes over", matching how `complete_topics` handles bad inputs.

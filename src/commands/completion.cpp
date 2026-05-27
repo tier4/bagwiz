@@ -377,7 +377,7 @@ constexpr std::size_t kFrameIdScanMessageCap = 5000;
 // sorted, deduplicated set of header.frame_id / child_frame_id values
 // it observed. Reads at most `kFrameIdScanMessageCap` messages so
 // completion stays responsive on large bags. Swallows every exception:
-// completion is best-effort and an unopenable bag should silently fall
+// completion is best-effort and a bag that fails to open should silently fall
 // through to the shell's file-completion fallback rather than spew
 // errors during TAB.
 std::vector<std::string> collect_tf_frame_ids(const std::filesystem::path & bag_path)
