@@ -10,6 +10,8 @@
 
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
+#include "bagwiz/core/decoder/decoder.hpp"
+#include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <algorithm>
@@ -20,10 +22,13 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -352,6 +357,134 @@ std::vector<std::string> complete_topics(
   return result;
 }
 
+constexpr std::string_view kTfMessageType = "tf2_msgs/msg/TFMessage";
+
+// Single sentinel surfaced by --from / --to completion when the bag was
+// opened successfully but contains no TF frame ids to suggest. Plain
+// ASCII (no shell metacharacters) so an accidental TAB-accept lands a
+// safe argument that bagwiz will then reject with a clear error. The
+// uppercase / hyphenated shape makes it visually distinct from real
+// frame ids in the completion menu.
+constexpr std::string_view kNoTfFramesSentinel = "NO-TF-FRAMES-FOUND-IN-BAG";
+
+// Soft cap on TF messages scanned for frame-id discovery. Static TF is
+// usually one message; dynamic TF re-publishes the same edges, so the
+// distinct frame-id set saturates well before this cap. The cap keeps
+// per-keystroke completion latency bounded on multi-GB bags.
+constexpr std::size_t kFrameIdScanMessageCap = 5000;
+
+// Walks the bag's tf2_msgs/msg/TFMessage topics once and returns the
+// sorted, deduplicated set of header.frame_id / child_frame_id values
+// it observed. Reads at most `kFrameIdScanMessageCap` messages so
+// completion stays responsive on large bags. Swallows every exception:
+// completion is best-effort and an unopenable bag should silently fall
+// through to the shell's file-completion fallback rather than spew
+// errors during TAB.
+std::vector<std::string> collect_tf_frame_ids(const std::filesystem::path & bag_path)
+{
+  std::vector<std::string> frame_ids;
+  try {
+    auto reader = io::open_read(expand_current_user_home(bag_path));
+
+    std::vector<std::string> tf_topic_names;
+    for (const auto & t : reader->topics()) {
+      if (t.type == kTfMessageType) {
+        tf_topic_names.push_back(t.name);
+      }
+    }
+    if (tf_topic_names.empty()) {
+      return {};
+    }
+
+    io::ReadFilter filter;
+    filter.topics = tf_topic_names;
+    reader->set_filter(filter);
+
+    std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> decoders;
+    for (const auto & topic_info : reader->topics()) {
+      if (topic_info.type != kTfMessageType) {
+        continue;
+      }
+      auto open = core::decoder::open_decoder(topic_info);
+      if (!open.ok()) {
+        continue;  // best-effort: skip undecodable topics rather than abort
+      }
+      decoders.emplace(topic_info.name, std::move(open.decoder));
+    }
+    if (decoders.empty()) {
+      return {};
+    }
+
+    std::unordered_set<std::string> seen;
+    io::RawMessage raw;
+    std::size_t scanned = 0;
+    while (scanned < kFrameIdScanMessageCap && reader->next(raw)) {
+      ++scanned;
+      auto it = decoders.find(raw.topic->name);
+      if (it == decoders.end()) {
+        continue;
+      }
+      const auto decoded = it->second->decode(raw.payload);
+      if (!decoded.ok()) {
+        continue;
+      }
+      for (const auto & t : core::extract_tf_message(*decoded.value)) {
+        if (!t.header.frame_id.empty()) {
+          seen.insert(t.header.frame_id);
+        }
+        if (!t.child_frame_id.empty()) {
+          seen.insert(t.child_frame_id);
+        }
+      }
+    }
+
+    frame_ids.assign(seen.begin(), seen.end());
+    std::sort(frame_ids.begin(), frame_ids.end());
+  } catch (const std::exception &) {
+    return {};
+  }
+  return frame_ids;
+}
+
+// Completion candidates for the value of `--from` / `--to`. When the
+// bag yields frame ids we filter them by `prefix` exactly like every
+// other candidate set; when the bag opens cleanly but has *no* TF data
+// to suggest we emit the `kNoTfFramesSentinel` so the user sees that
+// completion ran and the bag genuinely lacks frames (rather than
+// silently falling through to file completion, which would be
+// misleading here). When the bag fails to open we return an empty list
+// and the shell's default file-completion fallback takes over.
+std::vector<std::string> complete_frame_id_value(
+  const std::filesystem::path & input_path, const std::string_view & prefix)
+{
+  // Gate on existence before scanning so that "the bag does not exist
+  // here" and "the bag exists but has no TF data" stay distinguishable:
+  // the former silently falls through to the shell's file-completion
+  // fallback, the latter surfaces the sentinel.
+  const auto resolved = expand_current_user_home(input_path);
+  std::error_code ec;
+  if (!std::filesystem::exists(resolved, ec)) {
+    return {};
+  }
+
+  std::vector<std::string> result;
+  const auto all_frame_ids = collect_tf_frame_ids(input_path);
+
+  if (all_frame_ids.empty()) {
+    if (starts_with(kNoTfFramesSentinel, prefix)) {
+      result.emplace_back(kNoTfFramesSentinel);
+    }
+    return result;
+  }
+
+  for (const auto & frame : all_frame_ids) {
+    if (starts_with(frame, prefix)) {
+      result.push_back(frame);
+    }
+  }
+  return result;
+}
+
 // Looks up the cursor position in kTopicBindings and, if a binding matches
 // and every positional slot before the topic is non-flag, dispatches to
 // complete_topics. Returns std::nullopt when no binding applies so the
@@ -454,6 +587,23 @@ std::vector<std::string> complete_convert(const CompletionRequest & request)
   return {};
 }
 
+// `traj dump <bag> ...` and `traj join <bag> ...` both place the bag
+// path at word index 2 (subcommand, then bag). Bail out when the slot
+// is missing or holds a flag — otherwise we would invoke io::open_read
+// on something that is definitely not a bag path.
+std::vector<std::string> complete_traj_frame_id(
+  const CompletionRequest & request, const std::string_view & current)
+{
+  if (request.words.size() <= kSecondCommandArgWord) {
+    return {};
+  }
+  const auto & bag_arg = request.words[kSecondCommandArgWord];
+  if (bag_arg.empty() || bag_arg.starts_with("-")) {
+    return {};
+  }
+  return complete_frame_id_value(bag_arg, current);
+}
+
 std::vector<std::string> complete_traj(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -485,6 +635,9 @@ std::vector<std::string> complete_traj(const CompletionRequest & request)
     }
     if (previous == "--msg-type" || previous == "-t") {
       return matching({"tf"}, current);
+    }
+    if (previous == "--from" || previous == "--to") {
+      return complete_traj_frame_id(request, current);
     }
   }
   return {};

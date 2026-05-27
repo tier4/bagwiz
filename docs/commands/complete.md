@@ -145,6 +145,18 @@ source ~/.config/fish/completions/bagwiz.fish
   earlier positional slots have been replaced by flags so flag-value
   completion takes over.
 
+- `--from` / `--to` flag values for `bagwiz traj dump` and `bagwiz traj join`
+  complete to the set of distinct `header.frame_id` and `child_frame_id`
+  values observed in the input bag's `tf2_msgs/msg/TFMessage` topics
+  (static + dynamic). The bag is opened lazily and only the first ~5000 TF
+  messages are scanned so per-keystroke latency stays bounded on large bags.
+  When the bag opens cleanly but carries no TF data at all, a single
+  `NO-TF-FRAMES-FOUND-IN-BAG` sentinel is emitted so the empty result is
+  visibly distinct from the shell's silent file-completion fallback. When
+  the bag path does not exist or the input slot is itself a flag, no
+  candidates are emitted and the shell's default file completion takes
+  over.
+
 - Path completion is delegated to the shell's default file completion when
   bagwiz does not provide command-specific candidates. The bash script uses
   `complete -o default`; the zsh script falls back to `_files`; the fish

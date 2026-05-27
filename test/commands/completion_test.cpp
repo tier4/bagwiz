@@ -8,7 +8,11 @@
 
 #include "bagwiz/commands/completion.hpp"
 
+#include "bagwiz/core/tf_message_wire.hpp"
+#include "bagwiz/core/tf_static_injector.hpp"
 #include "bagwiz/io/bag_io.hpp"
+
+#include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include <gtest/gtest.h>
 
@@ -118,6 +122,51 @@ std::filesystem::path write_mcap_fixture(const std::filesystem::path & path)
   const auto bytes = std::span<const std::byte>(kPayload.data(), kPayload.size());
   writer->write("/foo", 1'000'000'000, bytes);
   writer->write("/bar", 2'000'000'000, bytes);
+  writer->close();
+  return path;
+}
+
+geometry_msgs::msg::TransformStamped make_edge(
+  const std::string & parent, const std::string & child)
+{
+  geometry_msgs::msg::TransformStamped ts;
+  ts.header.frame_id = parent;
+  ts.header.stamp.sec = 0;
+  ts.header.stamp.nanosec = 0;
+  ts.child_frame_id = child;
+  ts.transform.rotation.w = 1.0;
+  return ts;
+}
+
+// Self-describing MCAP carrying one tf2_msgs/msg/TFMessage on `/tf`.
+// The single payload encodes three edges (map → odom → base_link plus
+// base_link → lidar), giving the completion path four distinct frame
+// ids to discover after deduplication.
+std::filesystem::path write_tf_mcap_fixture(const std::filesystem::path & path)
+{
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Mcap;
+  options.layout = bagwiz::io::Layout::SingleFile;
+  options.mcap_compression = "none";
+
+  bagwiz::io::TopicInfo tf_topic;
+  tf_topic.name = "/tf";
+  tf_topic.type = "tf2_msgs/msg/TFMessage";
+  tf_topic.serialization_format = "cdr";
+  tf_topic.schema_encoding = "ros2msg";
+  tf_topic.schema_text = bagwiz::core::kTfMessageWireSchema;
+
+  std::vector<geometry_msgs::msg::TransformStamped> transforms;
+  transforms.push_back(make_edge("map", "odom"));
+  transforms.push_back(make_edge("odom", "base_link"));
+  transforms.push_back(make_edge("base_link", "lidar"));
+  const auto cdr = bagwiz::core::serialize_tf_message(transforms);
+
+  auto writer = bagwiz::io::open_write(path, options);
+  writer->declare_topic(tf_topic);
+  writer->write(
+    tf_topic.name, /*timestamp_ns=*/1'000'000'000LL,
+    std::span<const std::byte>(cdr.data(), cdr.size()));
   writer->close();
   return path;
 }
@@ -247,6 +296,117 @@ TEST_F(CompletionTest, TrajDumpFormatFlagValueCompletes)
     run_completion(
       {"bagwiz", "__complete", "5", "bagwiz", "traj", "dump", "~/fixture.mcap", "--format"}),
     "tum\n");
+}
+
+// `--from <TAB>` after a TF-bearing bag must list every distinct frame
+// id reachable from the bag's /tf message(s), sorted and deduplicated.
+TEST_F(CompletionTest, TrajDumpFromFlagListsBagFrameIds)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", "~/tf.mcap", "/tf", "out.tum",
+       "--from"}),
+    "base_link\nlidar\nmap\nodom\n");
+}
+
+// `--to <TAB>` shares the same value source as `--from`. Pin both so
+// that a future divergence cannot silently regress one branch.
+TEST_F(CompletionTest, TrajDumpToFlagListsBagFrameIds)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", "~/tf.mcap", "/tf", "out.tum",
+       "--to"}),
+    "base_link\nlidar\nmap\nodom\n");
+}
+
+// Typed prefix narrows the candidates to matching frame ids. Validates
+// the prefix filter that `complete_frame_id_value` applies, including
+// the case where a partial prefix matches no frames (returns empty).
+TEST_F(CompletionTest, TrajDumpFromFlagRespectsPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", "~/tf.mcap", "/tf", "out.tum",
+       "--from", "ba"}),
+    "base_link\n");
+}
+
+// `traj join` reuses the same `complete_traj_frame_id` helper since
+// it puts the bag at the same positional slot. Verify it actually
+// surfaces frame ids too — guards against a regression where someone
+// later restricts the helper to just `traj dump`.
+TEST_F(CompletionTest, TrajJoinFromFlagListsBagFrameIds)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "8", "bagwiz", "traj", "join", "~/tf.mcap", "in.tum", "/tf",
+       "--from"}),
+    "base_link\nlidar\nmap\nodom\n");
+}
+
+// When the bag opens successfully but carries no tf2_msgs/msg/TFMessage
+// topic, completion must surface a visible sentinel so the user can tell
+// the difference between "completion ran and found nothing" and "the
+// shell did nothing" (fall-through to file completion).
+TEST_F(CompletionTest, TrajDumpFromFlagShowsSentinelWhenBagHasNoTf)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "no_tf.mcap");  // String + Int32, no TF
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", "~/no_tf.mcap", "/tf", "out.tum",
+       "--from"}),
+    "NO-TF-FRAMES-FOUND-IN-BAG\n");
+}
+
+// An unopenable input path must not surface the sentinel — that would
+// mislead the user into believing the bag exists but is empty of TF.
+// The contract is "silent fall-through so the shell's file completion
+// takes over", matching how `complete_topics` handles bad inputs.
+TEST_F(CompletionTest, TrajDumpFromFlagEmptyForMissingBag)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", "~/missing.mcap", "/tf", "out.tum",
+       "--from"}),
+    "");
+}
+
+// A flag in the bag slot must not be passed to io::open_read by the
+// frame-id completer. Pins the same defensive gate that the topic
+// binding applies for `walk` / `traj`.
+TEST_F(CompletionTest, TrajDumpFromFlagSuppressedWhenBagSlotIsFlag)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", "--unknown-flag", "/tf", "out.tum",
+       "--from"}),
+    "");
 }
 
 // Typing `-` at the bagwiz top-level should list the implicit CLI11 help
