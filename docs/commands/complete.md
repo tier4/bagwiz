@@ -145,12 +145,16 @@ source ~/.config/fish/completions/bagwiz.fish
   earlier positional slots have been replaced by flags so flag-value
   completion takes over.
 
-- `--from` / `--to` flag values for `bagwiz traj dump` and `bagwiz traj join`
-  complete to the set of distinct `header.frame_id` and `child_frame_id`
-  values observed in the input bag's `tf2_msgs/msg/TFMessage` topics
-  (static + dynamic). The bag is opened lazily and only the first ~5000 TF
-  messages are scanned so per-keystroke latency stays bounded on large bags.
-  When the bag opens cleanly but carries no TF data at all, a single
+- TF frame-id positions complete to the set of distinct `header.frame_id`
+  and `child_frame_id` values observed in the input bag's
+  `tf2_msgs/msg/TFMessage` topics (static + dynamic). Coverage:
+  - `bagwiz traj dump <input> ... --from <FRAME>` / `--to <FRAME>`
+  - `bagwiz traj join <input> ... --from <FRAME>` / `--to <FRAME>`
+  - `bagwiz tf walk <input> <from> <to>` (positional)
+
+  The bag is opened lazily and only the first ~5000 TF messages are scanned
+  so per-keystroke latency stays bounded on large bags. When the bag opens
+  cleanly but carries no TF data at all, a single
   `NO-TF-FRAMES-FOUND-IN-BAG` sentinel is emitted so the empty result is
   visibly distinct from the shell's silent file-completion fallback. When
   the bag path does not exist or the input slot is itself a flag, no

@@ -587,17 +587,23 @@ std::vector<std::string> complete_convert(const CompletionRequest & request)
   return {};
 }
 
-// `traj dump <bag> ...` and `traj join <bag> ...` both place the bag
-// path at word index 2 (subcommand, then bag). Bail out when the slot
-// is missing or holds a flag — otherwise we would invoke io::open_read
-// on something that is definitely not a bag path.
-std::vector<std::string> complete_traj_frame_id(
-  const CompletionRequest & request, const std::string_view & current)
+// Shared frame-id completion entry point. Looks up the bag path at
+// `input_word` (the per-command positional slot that holds the input
+// bag) and dispatches to complete_frame_id_value. Bails out when the
+// slot is missing or holds a flag — otherwise we would invoke
+// io::open_read on something that is definitely not a bag path.
+//
+// Callers: traj dump/join --from/--to flag-value completion (bag at
+// word 2) and tf walk <from>/<to> positional completion (bag also at
+// word 2). Parameterising the slot keeps the helper reusable for any
+// future command that places the bag at a different positional index.
+std::vector<std::string> complete_frame_id_arg(
+  const CompletionRequest & request, std::size_t input_word, const std::string_view & current)
 {
-  if (request.words.size() <= kSecondCommandArgWord) {
+  if (request.words.size() <= input_word) {
     return {};
   }
-  const auto & bag_arg = request.words[kSecondCommandArgWord];
+  const auto & bag_arg = request.words[input_word];
   if (bag_arg.empty() || bag_arg.starts_with("-")) {
     return {};
   }
@@ -637,7 +643,7 @@ std::vector<std::string> complete_traj(const CompletionRequest & request)
       return matching({"tf"}, current);
     }
     if (previous == "--from" || previous == "--to") {
-      return complete_traj_frame_id(request, current);
+      return complete_frame_id_arg(request, kSecondCommandArgWord, current);
     }
   }
   return {};
@@ -670,6 +676,20 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
     const auto & previous = request.words[request.cursor_word - 1];
     if (previous == "--rot" || previous == "-r") {
       return matching({"euler", "euler_deg", "euler_rad", "quat"}, current);
+    }
+  }
+
+  // `tf walk <input> <from> <to>` — positional <from> at word 3 and
+  // <to> at word 4 are both TF frame ids read from the input bag.
+  // Reuses the shared helper so flag-value (traj --from/--to) and
+  // positional (tf walk) completion go through the same code path.
+  if (request.cursor_word >= kSecondCommandArgWord) {
+    const auto & mode = request.words[kFirstCommandArgWord];
+    const bool is_walk_frame_slot =
+      mode == "walk" &&
+      (request.cursor_word == kThirdCommandArgWord || request.cursor_word == kFourthCommandArgWord);
+    if (is_walk_frame_slot) {
+      return complete_frame_id_arg(request, kSecondCommandArgWord, current);
     }
   }
   return {};
