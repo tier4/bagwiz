@@ -12,6 +12,11 @@ FROM ros:${ROS_DISTRO}-ros-base
 # here makes it available to the build instructions below.
 ARG ROS_DISTRO
 
+# Optional release compile-flag tweaks forwarded by "build.sh --docker"
+# (e.g. "--native --unroll"). Empty by default so CI and a plain "docker build"
+# produce a portable, release image. See build.sh for the flag definitions.
+ARG BAGWIZ_BUILD_FLAGS=""
+
 WORKDIR /opt/bagwiz_ws
 
 # Place the sources in a colcon "src" layout.
@@ -21,6 +26,16 @@ COPY . src/bagwiz
 # in the image) plus bash-completion (so interactive shells load completions),
 # then build bagwiz in release mode. Kept in a single layer so the apt package
 # lists are removed without lingering in an earlier layer.
+#
+# The rosdep install step is delegated to the repository's setup.sh so the
+# image and a native checkout resolve dependencies the exact same way. setup.sh
+# assumes rosdep is already updated, so "rosdep update" stays here.
+#
+# The colcon build is likewise delegated to build.sh so the image and a native
+# checkout compile bagwiz identically. build.sh expects ROS to be sourced (done
+# on the preceding line) and writes the install tree to the current WORKDIR,
+# which the entrypoint sources. --native/--unroll passed to "build.sh --docker"
+# arrive here through the BAGWIZ_BUILD_FLAGS build arg.
 #
 # The completion script is written to the system-wide bash-completion directory
 # rather than through "bagwiz complete bash --install": --install targets a
@@ -33,14 +48,18 @@ COPY . src/bagwiz
 # /etc/bash.bashrc, so the loader block is appended there to make interactive
 # shells source the framework (which in turn sources the script installed
 # below).
-# hadolint ignore=SC1091,DL3008
+#
+# SC2086 is ignored because ${BAGWIZ_BUILD_FLAGS} is intentionally left unquoted
+# so that a multi-flag value like "--native --unroll" word-splits into separate
+# arguments for build.sh.
+# hadolint ignore=SC1091,DL3008,SC2086
 RUN apt-get update \
     && apt-get install -y --no-install-recommends bash-completion \
     && rosdep update --rosdistro "${ROS_DISTRO}" \
-    && rosdep install --from-paths src --ignore-src -y --rosdistro "${ROS_DISTRO}" \
+    && bash src/bagwiz/setup.sh \
     && rm -rf /var/lib/apt/lists/* \
     && . "/opt/ros/${ROS_DISTRO}/setup.sh" \
-    && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    && bash src/bagwiz/build.sh ${BAGWIZ_BUILD_FLAGS} \
     && . /opt/bagwiz_ws/install/setup.sh \
     && mkdir -p /etc/bash_completion.d \
     && bagwiz complete bash >/etc/bash_completion.d/bagwiz \

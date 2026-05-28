@@ -45,20 +45,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Delegate the image build to build.sh so CI and a local "build.sh
+      # --docker" build bagwiz the exact same way. --push-by-digest switches
+      # build.sh to a buildx push-by-digest build and --metadata-file captures
+      # the pushed digest for the merge job. --native is deliberately never
+      # passed: these images run on other people's CPUs.
       - name: Build and push by digest
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/${{ matrix.arch }}
-          build-args: |
-            ROS_DISTRO=${{ matrix.distro }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+        run: |
+          ./build.sh --docker \
+            --distro "${{ matrix.distro }}" \
+            --platform "linux/${{ matrix.arch }}" \
+            --push-by-digest "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" \
+            --metadata-file "${{ runner.temp }}/metadata.json"
 
       - name: Export digest
         run: |
           mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
+          digest="$(jq -r '."containerimage.digest"' "${{ runner.temp }}/metadata.json")"
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
