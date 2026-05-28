@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Run bagwiz from its container image without a host ROS installation.
+#
+# The current directory is mounted at the same path inside the container and
+# used as the working directory, so bag paths relative to (or under) the
+# current directory resolve unchanged. Install this script somewhere on PATH
+# (for example /usr/local/bin/bagwiz) and invoke it like the native binary:
+#
+#   bagwiz ls path/to/bag.mcap
+#
+# Environment variables:
+#   BAGWIZ_IMAGE  Image reference to run (default: ghcr.io/tier4/bagwiz:latest).
+#   BAGWIZ_WS     Path to a colcon workspace mounted at /overlay; build it once
+#                 inside the container to expose additional message types (see
+#                 the README).
+set -euo pipefail
+
+image="${BAGWIZ_IMAGE:-ghcr.io/tier4/bagwiz:latest}"
+
+run_args=(--rm)
+
+# Allocate a TTY only when both stdin and stdout are terminals, so the
+# interactive walk toggle and the pager work, while piped or scripted use
+# (no TTY) still functions.
+if [ -t 0 ] && [ -t 1 ]; then
+    run_args+=(-it)
+fi
+
+# Map the host user so files written by the container (for example convert
+# output) are owned by the caller rather than root.
+run_args+=(-u "$(id -u):$(id -g)" -e "HOME=/tmp")
+
+# Mount the working directory at the same path inside the container.
+run_args+=(-v "${PWD}:${PWD}" -w "${PWD}")
+
+# Optionally mount a colcon overlay workspace that provides extra message
+# types. The entrypoint sources it automatically once it has been built.
+if [ -n "${BAGWIZ_WS:-}" ]; then
+    run_args+=(-v "${BAGWIZ_WS}:/overlay")
+fi
+
+exec docker run "${run_args[@]}" "${image}" bagwiz "$@"

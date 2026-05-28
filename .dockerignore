@@ -1,0 +1,29 @@
+# Keep the build context small and avoid copying host-built artifacts whose
+# ABI would not match the image; bagwiz is rebuilt from source inside it.
+.git
+.github
+build/
+install/
+log/
+.colcon/
+COLCON_IGNORE
+AMENT_IGNORE
+node_modules/
+.cache/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.reports/
+docs/CODEMAPS/
+.claude/
+.antigravitycli/
+.vscode/
+.idea/
+dependencies/
+*.log
+*.bag
+*.db3
+*.db3-shm
+*.db3-wal
+*.mcap
+*.tum

@@ -36,6 +36,14 @@ Options:
       --unroll             Append -funroll-loops to release compile flags.
                            Helps tight inner loops but increases code size.
                            Ignored on debug.
+      --docker             Build the bagwiz Docker image for the host
+                           architecture instead of running a native colcon
+                           build. Does not require a sourced ROS environment.
+                           The colcon-only options above are ignored.
+      --distro <D>         ROS 2 distribution to build the image for: humble or
+                           jazzy (default: jazzy). Only used with --docker.
+      --tag <T>            Image tag to assign (default: bagwiz:<distro>).
+                           Only used with --docker.
   -h, --help               Show this help message and exit.
 
 With no options, performs an incremental colcon build with build type release
@@ -57,6 +65,9 @@ builder="make"
 parallel_workers=""
 native=0
 unroll=0
+docker=0
+distro="jazzy"
+image_tag=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -119,6 +130,36 @@ while [[ $# -gt 0 ]]; do
         unroll=1
         shift
         ;;
+    --docker)
+        docker=1
+        shift
+        ;;
+    --distro)
+        shift
+        if [[ $# -eq 0 ]]; then
+            echo "[build.sh] --distro requires a value (humble or jazzy)." >&2
+            exit 1
+        fi
+        distro="${1}"
+        shift
+        ;;
+    --distro=*)
+        distro="${1#*=}"
+        shift
+        ;;
+    --tag)
+        shift
+        if [[ $# -eq 0 ]]; then
+            echo "[build.sh] --tag requires a value (e.g. bagwiz:jazzy)." >&2
+            exit 1
+        fi
+        image_tag="${1}"
+        shift
+        ;;
+    --tag=*)
+        image_tag="${1#*=}"
+        shift
+        ;;
     --help | -h)
         usage
         exit 0
@@ -130,6 +171,41 @@ while [[ $# -gt 0 ]]; do
         ;;
     esac
 done
+
+# Docker image build mode. Builds the image defined by ./Dockerfile for the
+# host architecture. This path is independent of the native colcon build and
+# deliberately runs before the ROS_DISTRO check below: the build happens inside
+# the container, so the host needs neither a sourced ROS environment nor any
+# ROS packages installed.
+if [[ ${docker} -eq 1 ]]; then
+    case "${distro}" in
+    humble | jazzy) ;;
+    *)
+        echo "[build.sh] Invalid --distro '${distro}'. Use humble or jazzy." >&2
+        exit 1
+        ;;
+    esac
+
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "[build.sh] 'docker' is not installed or not on PATH." >&2
+        exit 1
+    fi
+
+    if [[ -z ${image_tag} ]]; then
+        image_tag="bagwiz:${distro}"
+    fi
+
+    # The colcon-tuning options do not affect the image, which always builds in
+    # release mode as defined by the Dockerfile.
+    if [[ ${clean} -eq 1 || ${native} -eq 1 || ${unroll} -eq 1 ||
+        ${builder} != "make" || ${build_type} != "release" || -n ${parallel_workers} ]]; then
+        echo "[build.sh] --docker ignores the native colcon options" \
+            "(--clean, --build-type, --builder, -j/--parallel, --native, --unroll)." >&2
+    fi
+
+    echo "[build.sh] Building Docker image '${image_tag}' for the host architecture (ROS_DISTRO=${distro})"
+    exec docker build --build-arg "ROS_DISTRO=${distro}" --tag "${image_tag}" "${SCRIPT_DIR}"
+fi
 
 if [[ -z ${ROS_DISTRO:-} ]]; then
     echo "[build.sh] ROS_DISTRO is not set. Source your ROS environment first." >&2
