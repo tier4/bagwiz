@@ -7,6 +7,108 @@ rosbags. The inspection and export subcommands (`ls`, `walk`, `tf`,
 rosbag2 between MCAP and SQLite3 storage. All of this happens without
 spinning up a ROS graph.
 
+## Run with Docker
+
+If you would rather not install ROS 2 on the host, run bagwiz from its
+container image. The image bundles ROS 2 and the message packages bagwiz
+depends on, so the only requirement on the host is Docker. Images are
+published to the GitHub Container Registry for both Humble and Jazzy and
+for the `linux/amd64` and `linux/arm64` architectures:
+
+- `ghcr.io/tier4/bagwiz:jazzy` (also tagged `latest`)
+- `ghcr.io/tier4/bagwiz:humble`
+
+Pull the tag you want:
+
+```bash
+docker pull ghcr.io/tier4/bagwiz:latest
+```
+
+### Building the image locally
+
+To build the image yourself instead of pulling it, run `./build.sh
+--docker` from the repository root. This mode does not require a sourced
+ROS environment; the build happens inside the container. It builds for the
+host architecture and tags the result `bagwiz:<distro>`:
+
+```bash
+./build.sh --docker                  # builds bagwiz:jazzy
+./build.sh --docker --distro humble  # builds bagwiz:humble
+./build.sh --docker --tag my/bagwiz:dev
+```
+
+Point the wrapper at a locally built image with `BAGWIZ_IMAGE`, for example
+`BAGWIZ_IMAGE=bagwiz:jazzy bagwiz ls recording.mcap`.
+
+### The bagwiz wrapper
+
+`docker/bagwiz` is a small wrapper that runs the image like the native
+binary. It mounts the current directory at the same path inside the
+container, maps your user so output files are not owned by root, and
+allocates a terminal so the interactive walk and the pager work. Install
+it on your PATH:
+
+```bash
+sudo install -m 0755 docker/bagwiz /usr/local/bin/bagwiz
+```
+
+Then call bagwiz against bags under the current directory, exactly as you
+would the native binary:
+
+```bash
+bagwiz ls recording.mcap
+bagwiz tf recording.mcap
+```
+
+Set `BAGWIZ_IMAGE` to choose a different tag, for example
+`BAGWIZ_IMAGE=ghcr.io/tier4/bagwiz:humble bagwiz ls recording.mcap`.
+
+Bash completion is preinstalled. An interactive shell in the container
+(for example `docker run --rm -it ghcr.io/tier4/bagwiz:latest`) has
+`bagwiz` tab-completion ready with no setup.
+
+### Adding custom message types
+
+Bags that embed their message definitions (MCAP records carry the schema)
+decode out of the box. For bags whose types are not embedded, or to make a
+custom package available to every command, provide the message packages
+through a standard colcon overlay. Build the packages once inside the
+container so their ABI matches the image, then source the overlay and run
+bagwiz.
+
+Place your message package sources in a workspace, for example
+`~/msgs_ws/src/my_msgs`. Create the package the usual way (for example
+with `ros2 pkg create --build-type ament_cmake my_msgs`) so it registers
+on `AMENT_PREFIX_PATH` when sourced. Build the overlay and use it in a
+single interactive session:
+
+```bash
+docker run --rm -it \
+  -v ~/msgs_ws:/overlay \
+  -v "$PWD:$PWD" -w "$PWD" \
+  ghcr.io/tier4/bagwiz:latest bash
+# inside the container, build the overlay once, then source and run:
+(cd /overlay && colcon build)
+source /overlay/install/setup.bash
+bagwiz walk recording.mcap /my_topic   # decodes types from ~/msgs_ws
+```
+
+The overlay's `install/` directory persists on the host because the
+workspace is mounted, so later runs can skip the build. The wrapper can
+mount and auto-source a prebuilt overlay for non-interactive use: point
+`BAGWIZ_WS` at the workspace and the entrypoint sources its
+`install/setup.bash` on every invocation:
+
+```bash
+export BAGWIZ_WS=~/msgs_ws
+bagwiz walk recording.mcap /my_topic
+```
+
+If `colcon build` reports missing dependencies for your message package,
+install them inside the container first (start the shell as root with
+`--user 0:0` for that step) or bake them into a derived image with a
+`FROM ghcr.io/tier4/bagwiz:latest` Dockerfile.
+
 ## Installation
 
 You need ROS 2 installed (Ubuntu packages under `/opt/ros/<distro>` are
