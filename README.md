@@ -37,6 +37,13 @@ host architecture and tags the result `bagwiz:<distro>`:
 ./build.sh --docker --tag my/bagwiz:dev
 ```
 
+The release tuning flags `--native` and `--unroll` are forwarded into the
+image build, so a local image can use the same optimizations as a native
+build (`./build.sh --docker --native --unroll`). Avoid `--native` for
+images you share: it bakes the build host's CPU instruction set into the
+binary and will crash on other machines. See `./build.sh --help` for the
+full option list.
+
 Point the wrapper at a locally built image with `BAGWIZ_IMAGE`, for example
 `BAGWIZ_IMAGE=bagwiz:jazzy bagwiz ls recording.mcap`.
 
