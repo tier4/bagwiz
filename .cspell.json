@@ -3,9 +3,11 @@
   "ignoreRegExpList": [],
   "words": [
     "amd",
+    "antigravitycli",
     "bagwiz",
     "buildx",
     "BWCOMP",
+    "CODEMAPS",
     "colcon",
     "compgen",
     "compinit",
@@ -32,8 +34,11 @@
     "RIHS",
     "rosdep",
     "semver",
+    "shopt",
+    "SIGILL",
     "underlay",
     "unparseable",
+    "unsuffixed",
     "wopts",
     "XCDR"
   ]
