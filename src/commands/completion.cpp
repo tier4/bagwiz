@@ -594,7 +594,6 @@ std::vector<std::string> complete_convert(const CompletionRequest & request)
 // io::open_read on something that is definitely not a bag path.
 //
 // Callers: traj dump/join --from/--to flag-value completion (bag at
-// word 2) and tf walk <from>/<to> positional completion (bag also at
 // word 2). Parameterising the slot keeps the helper reusable for any
 // future command that places the bag at a different positional index.
 std::vector<std::string> complete_frame_id_arg(
@@ -656,7 +655,7 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"inject-static", "tree", "walk"}, current);
+    return matching({"inject-static", "tree"}, current);
   }
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
@@ -664,24 +663,11 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
     if (mode == "inject-static") {
       return matching(with_help({"--force", "--output", "--overwrite", "-o"}), current);
     }
-    if (mode == "tree" || mode == "walk") {
+    if (mode == "tree") {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
   }
 
-  // `tf walk <input> <from> <to>` — positional <from> at word 3 and
-  // <to> at word 4 are both TF frame ids read from the input bag.
-  // Reuses the shared helper so flag-value (traj --from/--to) and
-  // positional (tf walk) completion go through the same code path.
-  if (request.cursor_word >= kSecondCommandArgWord) {
-    const auto & mode = request.words[kFirstCommandArgWord];
-    const bool is_walk_frame_slot =
-      mode == "walk" &&
-      (request.cursor_word == kThirdCommandArgWord || request.cursor_word == kFourthCommandArgWord);
-    if (is_walk_frame_slot) {
-      return complete_frame_id_arg(request, kSecondCommandArgWord, current);
-    }
-  }
   return {};
 }
 

@@ -39,7 +39,6 @@ TEST(ToNavKey, AppBindingsArePassthrough)
 {
   EXPECT_EQ(to_nav_key(KeyEvent::kSaveYaml), NavKey::kNone);
   EXPECT_EQ(to_nav_key(KeyEvent::kToggleArrayExpand), NavKey::kNone);
-  EXPECT_EQ(to_nav_key(KeyEvent::kToggleRotation), NavKey::kNone);
 }
 
 TEST(ToNavKey, UnknownIsNone)

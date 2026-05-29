@@ -129,7 +129,7 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz <cmd> -<TAB>` for every registered command (including
     `complete`, `convert`, `ls`, `tf`, `traj`, `walk`)
   - `bagwiz <cmd> <subcommand> -<TAB>` for every nested subcommand
-    (`convert format`, `tf tree`, `tf walk`, `tf inject-static`,
+    (`convert format`, `tf tree`, `tf inject-static`,
     `traj dump`, `traj join`)
 - Selected option values are completed where bagwiz has a closed set, such as
   `--storage <mcap|sqlite3>`.
@@ -150,7 +150,6 @@ source ~/.config/fish/completions/bagwiz.fish
   `tf2_msgs/msg/TFMessage` topics (static + dynamic). Coverage:
   - `bagwiz traj dump <input> ... --from <FRAME>` / `--to <FRAME>`
   - `bagwiz traj join <input> ... --from <FRAME>` / `--to <FRAME>`
-  - `bagwiz tf walk <input> <from> <to>` (positional)
 
   The bag is opened lazily and only the first ~5000 TF messages are scanned
   so per-keystroke latency stays bounded on large bags. When the bag opens

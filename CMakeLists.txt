@@ -34,7 +34,7 @@ find_package(rmw_implementation REQUIRED)
 find_package(rosidl_runtime_c REQUIRED)
 find_package(rosidl_runtime_cpp REQUIRED)
 find_package(rosidl_typesupport_introspection_cpp REQUIRED)
-# tf2 supplies BufferCore + math helpers used by `tf walk` and
+# tf2 supplies BufferCore + math helpers used by `tf tree` and
 # `traj dump --from/--to`. geometry_msgs is needed for the
 # header-only TransformStamped struct we hand to BufferCore::setTransform
 # from tf_value_extract. tf2_msgs is pulled in for `tf inject-static`,
@@ -276,9 +276,6 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_output_path_test test/core/output_path_test.cpp)
   target_link_libraries(bagwiz_output_path_test bagwiz_core)
-
-  ament_add_gtest(bagwiz_tf_rotation_test test/core/tf_rotation_test.cpp)
-  target_link_libraries(bagwiz_tf_rotation_test bagwiz_core)
 
   ament_add_gtest(bagwiz_mcap_reader_test test/io/mcap_reader_test.cpp)
   target_link_libraries(bagwiz_mcap_reader_test bagwiz_core)

@@ -409,83 +409,6 @@ TEST_F(CompletionTest, TrajDumpFromFlagSuppressedWhenBagSlotIsFlag)
     "");
 }
 
-// `tf walk <input> <from>` — the <from> positional shares the same
-// value source as `traj --from`. Pin it so a future refactor cannot
-// silently regress the shared helper path on the positional shape.
-TEST_F(CompletionTest, TfWalkFromArgListsBagFrameIds)
-{
-  const HomeEnvGuard home_guard(tmp_dir_);
-
-  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
-
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "walk", "~/tf.mcap"}),
-    "base_link\nlidar\nmap\nodom\n");
-}
-
-// `tf walk <input> <from> <to>` — once <from> is filled, completing
-// the <to> slot must still surface every frame id (we do not exclude
-// the chosen <from>, matching the existing traj convention).
-TEST_F(CompletionTest, TfWalkToArgListsBagFrameIds)
-{
-  const HomeEnvGuard home_guard(tmp_dir_);
-
-  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
-
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "walk", "~/tf.mcap", "map"}),
-    "base_link\nlidar\nmap\nodom\n");
-}
-
-// Typed prefix narrows positional <from> candidates the same way it
-// narrows flag-value candidates. Pins parity between the two shapes.
-TEST_F(CompletionTest, TfWalkFromArgRespectsPrefix)
-{
-  const HomeEnvGuard home_guard(tmp_dir_);
-
-  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
-
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "walk", "~/tf.mcap", "ba"}),
-    "base_link\n");
-}
-
-// Bag opens cleanly but has no TF — the sentinel surfaces on the
-// positional path too so the user can distinguish "ran, found
-// nothing" from "shell did nothing".
-TEST_F(CompletionTest, TfWalkFromArgShowsSentinelWhenBagHasNoTf)
-{
-  const HomeEnvGuard home_guard(tmp_dir_);
-
-  write_mcap_fixture(tmp_dir_ / "no_tf.mcap");
-
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "walk", "~/no_tf.mcap"}),
-    "NO-TF-FRAMES-FOUND-IN-BAG\n");
-}
-
-// Missing bag stays silent so the shell's file-completion fallback
-// can take over — same contract as traj --from on a missing bag.
-TEST_F(CompletionTest, TfWalkFromArgEmptyForMissingBag)
-{
-  const HomeEnvGuard home_guard(tmp_dir_);
-
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "walk", "~/missing.mcap"}), "");
-}
-
-// A flag in the bag slot must not be passed to io::open_read by the
-// positional frame-id completer either. Matches the traj guard.
-TEST_F(CompletionTest, TfWalkFromArgSuppressedWhenBagSlotIsFlag)
-{
-  const HomeEnvGuard home_guard(tmp_dir_);
-
-  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
-
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "walk", "--unknown-flag"}), "");
-}
-
 // Typing `-` at the bagwiz top-level should list the implicit CLI11 help
 // flags plus the `--version` flag wired up in main().
 TEST(FlagCompletionTest, TopLevelDashListsHelpAndVersion)
@@ -563,12 +486,6 @@ TEST(FlagCompletionTest, TfTreeDashListsHelpFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "tree", "-"}), "--help\n-h\n");
-}
-
-TEST(FlagCompletionTest, TfWalkDashListsHelpFlags)
-{
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "walk", "-"}), "--help\n-h\n");
 }
 
 TEST(FlagCompletionTest, TfInjectStaticDashListsInjectFlags)

@@ -3,7 +3,6 @@
 TF inspection on a ROS 2 rosbag.
 
 - [`tree`](#bagwiz-tf-tree) — merged static∪dynamic forest; edge tags `[S]`/`[D]`/`[B]` and optional TTY colors.
-- [`walk`](#bagwiz-tf-walk) — interactive chain between `<from>` and `<to>` at each dynamic `/tf` update.
 - [`inject-static`](#bagwiz-tf-inject-static) — copy a destination bag with `/tf_static` injected from a source bag at the destination's start time.
 
 ROS 1 `*.bag` inputs are not supported.
@@ -81,7 +80,7 @@ bagwiz tf tree <input>
 
 ### Behavior
 
-- One pass over all TF topics (same loading path as `tf walk`).
+- One pass over all TF topics.
 - Topic names are grouped under two sections (`Dynamic TF topics` and
   `Static TF topics`), each with the same `═`-style rule line as the Legend
   and tree blocks; the list body is comma-separated, indented, and dim on TTY.
@@ -108,150 +107,6 @@ bagwiz tf tree capture.mcap
 | ---- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `0`  | Tree written to stdout.                                                                                                        |
 | `1`  | Bag could not be opened, no TFMessage topic, no decoded transforms, TF union validation failed, decoder failure, or I/O error. |
-
----
-
-## `bagwiz tf walk`
-
-Advance one-at-a-time through the TF chain between `<from>` and `<to>` at
-every dynamic `/tf` update in the bag. Each timeline index renders the lookup
-result at that exact stamp, so you can scrub a recorded TF tree the same way
-you would scrub a YAML message stream with `bagwiz walk`. The view uses the
-same TUI pager as `bagwiz walk`: the header (timestamp and TF arrow) and the
-footer (index row, key legend, status row) are pinned, the body region
-scrolls, and any line that does not fit the terminal width is wrapped onto
-continuation lines that inherit the original line's leading whitespace.
-
-### Usage
-
-```text
-bagwiz tf walk <input> <from> <to>
-```
-
-### Positional arguments
-
-| Name    | Description                                                                        |
-| ------- | ---------------------------------------------------------------------------------- |
-| `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`).                          |
-| `from`  | Reference (fixed) frame — the output expresses `<to>` in this frame's coordinates. |
-| `to`    | Tracked (moving) frame to sample.                                                  |
-
-### Options
-
-`tf walk` takes no user-defined flags. The rotation format is switched
-interactively from inside the viewer — see [Keys](#keys) and
-[Rotation formats](#rotation-formats).
-
-### Behavior
-
-- All `tf2_msgs/msg/TFMessage` topics are read in a single pass:
-  - Topics whose name ends in `tf_static` are inserted as static
-    transforms; everything else as dynamic transforms.
-  - The set of distinct timestamps emitted by dynamic `/tf` messages
-    (i.e. excluding `tf_static`) becomes the walk's timeline. Each one
-    is a moment at which the TF tree observably changed.
-- Before entering the interactive view, bagwiz probes
-  `lookupTransform(<from>, <to>, timeline.front())`:
-  - If the chain is structurally broken (frame absent, no connecting
-    edges) the command exits non-zero.
-  - If the chain simply hasn't been published yet at the bag's first
-    dynamic stamp (typical when sensor `/tf` precedes the localizer),
-    the timeline is cropped forward to the earliest stamp at which the
-    chain is queryable.
-  - If the chain is never queryable for any timeline stamp, the command
-    exits non-zero.
-- Bags with **no** dynamic `/tf` updates (only static TF topics, or no dynamic
-  timestamps) still run a walk: bagwiz inserts a single timeline slot at `t=0`.
-  The UI shows `[0 / 0]` plus `[STATIC TF] (no dynamic /tf in bag)` instead of
-  dynamic timestamps (same `[index / last]` convention as `bagwiz walk`).
-  If `<from>`→`<to>` requires a dynamic segment that never appears in the bag,
-  lookup fails with an error (same idea as a broken chain).
-
-### Layout
-
-The viewport is split into three regions, identical in spirit to
-`bagwiz walk`:
-
-```text
-┌─────────────────────────────────────────────────┐
-│ timestamp: YYYY-MM-DD HH:MM:SS.nnnnnnnnn UTC …  │ ← header (≥ 3 rows)
-│ TF: <from>  ->  <to>                            │
-│                                                 │
-│ chain: <from> -> ... -> <to>                    │ ← body (scrolls)
-│                                                 │
-│ translation:                                    │
-│   x: …                                          │
-│   …                                             │
-│   [<index> / <last>]  <from> -> <to>    …       │ ← footer (≥ 4 rows)
-│   [keys legend …]                               │
-│   <status hint or blank>                        │
-└─────────────────────────────────────────────────┘
-```
-
-Header / footer row counts grow when content wraps. The bracket line
-matches `bagwiz walk`: `<index>` is zero-based and `<last>` is the
-highest timeline index (count of stamps minus one). For static-only
-bags the header's first row becomes `[STATIC TF]  (no dynamic /tf in
-bag)` instead of a timestamp.
-
-The body shows the lookup result at the current index. If a mid-bag gap
-or a chain that ceases to publish before the bag ends causes a lookup to
-fail, `tf2`'s error text is shown inline (`⚠  Lookup failed at this
-index: …`) instead of crashing the walk.
-
-### Rotation formats
-
-The viewer starts in `quat` and the interactive `r` key cycles between the
-three formats:
-
-| Format      | Output                         |
-| ----------- | ------------------------------ |
-| `quat`      | Quaternion `(x, y, z, w)`.     |
-| `euler_rad` | Roll / pitch / yaw in radians. |
-| `euler_deg` | Roll / pitch / yaw in degrees. |
-
-Pressing `r` advances `quat` → `euler_rad` → `euler_deg` → `quat`. The body
-header line (`rotation (quaternion):` / `rotation (euler, rad):` /
-`rotation (euler, deg):`) always reflects the active format.
-
-### Keys
-
-| Key            | Action                                                       |
-| -------------- | ------------------------------------------------------------ |
-| `→` / `Space`  | Next timeline index (wraps from last back to first).         |
-| `←` / `b`      | Previous timeline index.                                     |
-| `↑` / `k`      | Scroll body up one line.                                     |
-| `↓` / `j`      | Scroll body down one line.                                   |
-| `Home` / `H`   | Jump body scroll to the head.                                |
-| `End` / `T`    | Jump body scroll to the tail.                                |
-| `g`            | Jump to the first timeline index.                            |
-| `G`            | Jump to the last timeline index.                             |
-| `r`            | Cycle rotation format (quat → euler rad → euler deg → quat). |
-| `q` / `Ctrl-C` | Quit.                                                        |
-
-When the body is taller than the visible window (typically because the
-`chain:` line wrapped, or the terminal is short), a `lines X-Y of N`
-indicator is shown after the index row in the footer.
-
-### Requirements
-
-- `tf walk` is interactive — both stdin and stdout must be a TTY.
-- The bag must contain at least one `tf2_msgs/msg/TFMessage` topic.
-
-### Examples
-
-```bash
-# Track base_link in the map frame. Starts in quaternion mode; press `r`
-# in the viewer to cycle to euler (rad), then again for euler (deg).
-bagwiz tf walk capture.mcap map base_link
-```
-
-### Exit status
-
-| Code | Meaning                                                                                                                                                                                               |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | Quit cleanly via `q` / `Ctrl-C`.                                                                                                                                                                      |
-| `1`  | Bag could not be opened; no TFMessage topic; TF load or init-time lookup failure (broken chain, missing transforms, or empty timeline after cropping); decoder failure; or stdin/stdout is not a TTY. |
 
 ---
 

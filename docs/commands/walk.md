@@ -135,7 +135,7 @@ indicator is shown above the key legend.
 ## Environment
 
 These variables affect any bagwiz command that decodes messages (`walk`,
-`tf walk`, `tf tree`, `convert format`, `traj …`); they are documented here
+`tf tree`, `convert format`, `traj …`); they are documented here
 because `walk` is the most decoder-centric command.
 
 - `BAGWIZ_DECODER`: decoder backend override. When set to `introspection`,

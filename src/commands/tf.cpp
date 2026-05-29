@@ -11,22 +11,14 @@
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/output_path.hpp"
-#include "bagwiz/core/terminal_input.hpp"
-#include "bagwiz/core/tf_chain.hpp"
-#include "bagwiz/core/tf_rotation.hpp"
 #include "bagwiz/core/tf_static_injector.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
-#include "bagwiz/core/tui/layout.hpp"
-#include "bagwiz/core/tui/pager.hpp"
-#include "bagwiz/core/tui/width.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <rang.hpp>
 
 #include <fmt/core.h>
 #include <tf2/buffer_core.h>
-#include <tf2/exceptions.h>
-#include <tf2/time.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -36,7 +28,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <ctime>
 #include <exception>
 #include <filesystem>
 #include <map>
@@ -89,20 +80,18 @@ std::vector<TfTopic> collect_tf_topics(const io::BagReader & reader)
   return topics;
 }
 
-// Walk the TF topics once: feed every contained TransformStamped into
-// `buffer` with the correct static/dynamic flag, and collect the set of
-// distinct timestamps emitted by dynamic /tf messages. Those timestamps
-// become the sample points of the `tf walk` timeline -- each one is a
-// moment at which the TF tree observably changed.
+// Replay the TF topics once: feed every contained TransformStamped into
+// `buffer` with the correct static/dynamic flag, and (optionally) collect
+// the distinct parent→child edges observed on static and dynamic topics.
 //
 // Decoding goes through the unified open_decoder() path so for MCAP
 // inputs the schema-driven backend handles the work and tf2_msgs no
 // longer needs to be on AMENT_PREFIX_PATH at runtime; only its
 // header-only struct definition is required at build time (via
 // extract_tf_message → geometry_msgs::msg::TransformStamped).
-void load_tf_and_timeline(
+void load_tf(
   const std::filesystem::path & bag_path, const std::vector<TfTopic> & tf_topics,
-  tf2::BufferCore & buffer, std::vector<std::int64_t> & sorted_timestamps,
+  tf2::BufferCore & buffer,
   std::set<std::pair<std::string, std::string>> * static_edges_out = nullptr,
   std::set<std::pair<std::string, std::string>> * dynamic_edges_out = nullptr)
 {
@@ -136,11 +125,6 @@ void load_tf_and_timeline(
     decoder_by_topic.emplace(topic_info.name, std::move(open.decoder));
   }
 
-  // Use a sorted vector-then-unique pattern; std::set has worse locality
-  // for the inner-loop insert of every TransformStamped timestamp on a
-  // large bag.
-  std::vector<std::int64_t> all_dynamic_ts;
-
   io::RawMessage raw;
   while (tf_reader->next(raw)) {
     auto it = decoder_by_topic.find(raw.topic->name);
@@ -168,61 +152,8 @@ void load_tf_and_timeline(
         }
       }
       buffer.setTransform(t, "bagwiz", is_static);
-      if (!is_static) {
-        const std::int64_t ns = static_cast<std::int64_t>(t.header.stamp.sec) * 1'000'000'000LL +
-                                static_cast<std::int64_t>(t.header.stamp.nanosec);
-        all_dynamic_ts.push_back(ns);
-      }
     }
   }
-
-  std::sort(all_dynamic_ts.begin(), all_dynamic_ts.end());
-  all_dynamic_ts.erase(
-    std::unique(all_dynamic_ts.begin(), all_dynamic_ts.end()), all_dynamic_ts.end());
-  sorted_timestamps = std::move(all_dynamic_ts);
-}
-
-std::string format_timestamp(std::int64_t ns)
-{
-  const auto seconds = static_cast<std::time_t>(ns / 1'000'000'000);
-  const auto nanos = static_cast<std::int64_t>(ns % 1'000'000'000);
-  std::tm tm_utc{};
-  ::gmtime_r(&seconds, &tm_utc);
-  char buf[32];
-  std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_utc);
-  return fmt::format("{}.{:09d} UTC ({}.{:09d} s)", buf, nanos, seconds, nanos);
-}
-
-// tf2::ExtrapolationException::what() carries the cache boundary in
-// the form "earliest data is at time X". We parse it back out so the
-// init-time probe can crop the timeline to the chain's published
-// range. Only the "into the past" boundary is used today; the
-// "into the future" wording is rare enough at timeline.front() that
-// we simply ignore it and let the per-step renderer surface it.
-struct ExtrapolationBoundary
-{
-  bool past = false;     // requested time is BEFORE the available range
-  double stamp_s = 0.0;  // the boundary stamp parsed from the message
-  bool stamp_parsed = false;
-};
-
-ExtrapolationBoundary parse_extrapolation(const std::string & what)
-{
-  ExtrapolationBoundary out;
-  out.past = what.find("into the past") != std::string::npos;
-
-  static constexpr std::string_view kMarker = "earliest data is at time ";
-  const auto pos = what.find(kMarker);
-  if (pos != std::string::npos) {
-    const char * begin = what.c_str() + pos + kMarker.size();
-    char * end = nullptr;
-    const double v = std::strtod(begin, &end);
-    if (end != begin) {
-      out.stamp_s = v;
-      out.stamp_parsed = true;
-    }
-  }
-  return out;
 }
 
 bool stdout_use_color()
@@ -567,12 +498,9 @@ std::string format_merged_union_forest(
 //
 // Subcommands
 // -----------
-//   tree    Union of parent→child edges as one forest; each branch colors the child
-//           frame by static-only / dynamic-only / both (validated per-class and combined).
-//   walk    Step one-at-a-time through the TF between <from> and <to>
-//           at each dynamic /tf update in the bag. Uses the same key
-//           scheme as `bagwiz walk`: right/Space = next, left/b = prev,
-//           g = first, G = last, q / Ctrl-C = quit.
+//   tree           Union of parent→child edges as one forest; each branch colors the child
+//                  frame by static-only / dynamic-only / both (validated per-class and combined).
+//   inject-static  Copy a destination bag with /tf_static injected from a source bag.
 class TfCommand : public Command
 {
 public:
@@ -583,7 +511,6 @@ public:
   {
     app.require_subcommand(1);
     configure_tree(app);
-    configure_walk(app);
     configure_inject_static(app);
   }
 
@@ -592,8 +519,6 @@ public:
     switch (selected_) {
       case Subcommand::kTree:
         return run_tree();
-      case Subcommand::kWalk:
-        return run_walk();
       case Subcommand::kInjectStatic:
         return run_inject_static();
       case Subcommand::kNone:
@@ -604,38 +529,13 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kTree, kWalk, kInjectStatic };
+  enum class Subcommand { kNone, kTree, kInjectStatic };
   Subcommand selected_ = Subcommand::kNone;
-
-  enum class RotationFormat { kQuaternion, kEulerRad, kEulerDeg };
-
-  // Interactive `r` cycles quat -> euler_rad -> euler_deg -> quat. Defined
-  // here so the cycle order is colocated with the enum and stays in sync.
-  static constexpr RotationFormat next_rotation_format(RotationFormat current) noexcept
-  {
-    switch (current) {
-      case RotationFormat::kQuaternion:
-        return RotationFormat::kEulerRad;
-      case RotationFormat::kEulerRad:
-        return RotationFormat::kEulerDeg;
-      case RotationFormat::kEulerDeg:
-        return RotationFormat::kQuaternion;
-    }
-    return RotationFormat::kQuaternion;
-  }
 
   struct TreeArgs
   {
     std::filesystem::path input_path;
   } tree_args_;
-
-  struct WalkArgs
-  {
-    std::filesystem::path input_path;
-    std::string from_frame;
-    std::string to_frame;
-    RotationFormat rot = RotationFormat::kQuaternion;
-  } walk_args_;
 
   struct InjectStaticArgs
   {
@@ -655,22 +555,6 @@ private:
       ->required()
       ->check(CLI::ExistingPath);
     sub->callback([this]() { selected_ = Subcommand::kTree; });
-  }
-
-  void configure_walk(CLI::App & app)
-  {
-    auto * sub = app.add_subcommand(
-      "walk", "Step through the TF between two frames at each dynamic /tf update");
-    sub->add_option("input", walk_args_.input_path, "Bag path (file or directory)")
-      ->required()
-      ->check(CLI::ExistingPath);
-    sub
-      ->add_option(
-        "from", walk_args_.from_frame,
-        "Reference (fixed) frame -- the output expresses <to> in this frame's coordinates")
-      ->required();
-    sub->add_option("to", walk_args_.to_frame, "Tracked (moving) frame to sample")->required();
-    sub->callback([this]() { selected_ = Subcommand::kWalk; });
   }
 
   void configure_inject_static(CLI::App & app)
@@ -735,17 +619,14 @@ private:
     }
 
     tf2::BufferCore tf_buffer{std::chrono::hours(24 * 365)};
-    std::vector<std::int64_t> timeline;
     std::set<std::pair<std::string, std::string>> static_edges;
     std::set<std::pair<std::string, std::string>> dynamic_edges;
     try {
-      load_tf_and_timeline(
-        args.input_path, tf_topics, tf_buffer, timeline, &static_edges, &dynamic_edges);
+      load_tf(args.input_path, tf_topics, tf_buffer, &static_edges, &dynamic_edges);
     } catch (const std::exception & e) {
       BAGWIZ_LOG_ERROR(kLogger, "Failed to load TF from the bag: %s", e.what());
       return 1;
     }
-    (void)timeline;
 
     if (tf_buffer.getAllFrameNames().empty()) {
       BAGWIZ_LOG_ERROR(
@@ -809,319 +690,6 @@ private:
       return 1;
     }
     return 0;
-  }
-
-  int run_walk()
-  {
-    const auto & args = walk_args_;
-
-    if (!::isatty(STDIN_FILENO) || !::isatty(STDOUT_FILENO)) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "tf walk requires an interactive terminal (stdin+stdout must be TTY)");
-      return 1;
-    }
-
-    std::unique_ptr<io::BagReader> reader;
-    try {
-      reader = io::open_read(args.input_path);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
-      return 1;
-    }
-
-    const auto tf_topics = collect_tf_topics(*reader);
-    if (tf_topics.empty()) {
-      BAGWIZ_LOG_ERROR(kLogger, "Bag has no tf2_msgs/msg/TFMessage topic; nothing to walk.");
-      return 1;
-    }
-
-    // Default tf2::BufferCore cache is 10 s, which silently ages out
-    // older transforms while we replay an entire bag into it: by the
-    // time loading finishes the buffer only has the last 10 s. Use a
-    // very large window so every transform from the bag stays
-    // available for lookup.
-    tf2::BufferCore tf_buffer{std::chrono::hours(24 * 365)};
-    std::vector<std::int64_t> timeline;
-    try {
-      load_tf_and_timeline(args.input_path, tf_topics, tf_buffer, timeline);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to load TF from the bag: %s", e.what());
-      return 1;
-    }
-
-    // /tf_static-only bags are still walkable: tf2::BufferCore returns
-    // static transforms for any query stamp, so we synthesize a single
-    // step at t=0 and let the existing UI render it. Useful for sensor
-    // calibration bags or any case where the user wants to verify a
-    // fully-static from->to chain.
-    const bool static_only = timeline.empty();
-    if (static_only) {
-      const bool has_static = std::any_of(
-        tf_topics.begin(), tf_topics.end(), [](const TfTopic & t) { return t.is_static; });
-      if (!has_static) {
-        BAGWIZ_LOG_ERROR(
-          kLogger, "Bag has TFMessage topics but no transforms were decoded; nothing to do.");
-        return 1;
-      }
-      timeline.push_back(0);
-    }
-
-    // Probe the chain at timeline.front() to (a) fail fast on chain
-    // errors (frame not in the tree at all, missing bridge) and (b)
-    // crop the warm-up region: when the chain is not yet established
-    // at the bag's first dynamic stamp (typical when sensor /tf
-    // precedes the localizer), tf2 reports the earliest stamp the
-    // chain *is* queryable from. Drop everything before that so the
-    // walk only ever shows valid steps.
-    try {
-      (void)tf_buffer.lookupTransform(
-        args.from_frame, args.to_frame, tf2::TimePoint(std::chrono::nanoseconds(timeline.front())));
-    } catch (const tf2::LookupException & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "TF chain error: %s", e.what());
-      return 1;
-    } catch (const tf2::ConnectivityException & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "TF chain error: %s", e.what());
-      return 1;
-    } catch (const tf2::ExtrapolationException & e) {
-      if (static_only) {
-        // The chain has at least one segment that needs a dynamic /tf
-        // stamp this bag does not provide; cropping a synthetic timeline
-        // would just leave it empty, so error out with a specific message.
-        BAGWIZ_LOG_ERROR(
-          kLogger,
-          "TF chain '%s' -> '%s' is not fully static and this bag has no dynamic /tf updates "
-          "to satisfy the missing segment(s): %s",
-          args.from_frame.c_str(), args.to_frame.c_str(), e.what());
-        return 1;
-      }
-      const auto info = parse_extrapolation(e.what());
-      if (info.past && info.stamp_parsed) {
-        const std::int64_t boundary_ns = static_cast<std::int64_t>(info.stamp_s * 1e9);
-        timeline.erase(
-          timeline.begin(), std::lower_bound(timeline.begin(), timeline.end(), boundary_ns));
-      }
-      if (timeline.empty()) {
-        BAGWIZ_LOG_ERROR(
-          kLogger,
-          "TF chain '%s' -> '%s' is never resolvable in this bag (no dynamic /tf stamps fall "
-          "within the chain's published range).",
-          args.from_frame.c_str(), args.to_frame.c_str());
-        return 1;
-      }
-    } catch (const tf2::TransformException & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "TF error: %s", e.what());
-      return 1;
-    }
-
-    std::size_t index = 0;
-    std::string status;
-
-    core::tui::PagerConfig pager_cfg;
-    core::tui::ScrollablePager pager(pager_cfg);
-
-    auto append_wrapped = [](std::vector<std::string> & out, std::string_view line, int cols) {
-      auto wrapped = core::tui::wrap_to_width(line, cols);
-      for (auto & w : wrapped) {
-        out.push_back(std::move(w));
-      }
-    };
-
-    // Build the body's logical lines for the current timeline index:
-    // the resolved chain, a blank separator, then the translation +
-    // rotation block (or a single ⚠ line when the lookup throws).
-    auto build_body_lines = [&]() {
-      std::vector<std::string> lines;
-      const std::int64_t ts = timeline[index];
-      const auto query_tp = tf2::TimePoint(std::chrono::nanoseconds(ts));
-
-      const auto chain = core::resolve_chain(tf_buffer, args.from_frame, args.to_frame, query_tp);
-      if (!chain.empty()) {
-        std::string chain_line = "chain: ";
-        for (std::size_t i = 0; i < chain.size(); ++i) {
-          if (i > 0) {
-            chain_line += " -> ";
-          }
-          chain_line += chain[i];
-        }
-        lines.push_back(std::move(chain_line));
-      } else {
-        lines.emplace_back("chain: <unresolved (no common ancestor in buffer)>");
-      }
-      lines.emplace_back();
-
-      try {
-        const auto tf = tf_buffer.lookupTransform(args.from_frame, args.to_frame, query_tp);
-        lines.emplace_back("translation:");
-        lines.push_back(fmt::format("  x: {:.15g}", tf.transform.translation.x));
-        lines.push_back(fmt::format("  y: {:.15g}", tf.transform.translation.y));
-        lines.push_back(fmt::format("  z: {:.15g}", tf.transform.translation.z));
-        if (args.rot == RotationFormat::kQuaternion) {
-          lines.emplace_back("rotation (quaternion):");
-          lines.push_back(fmt::format("  x: {:.15g}", tf.transform.rotation.x));
-          lines.push_back(fmt::format("  y: {:.15g}", tf.transform.rotation.y));
-          lines.push_back(fmt::format("  z: {:.15g}", tf.transform.rotation.z));
-          lines.push_back(fmt::format("  w: {:.15g}", tf.transform.rotation.w));
-        } else {
-          auto rpy = core::quat_to_euler_rad(
-            tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z,
-            tf.transform.rotation.w);
-          const bool deg = args.rot == RotationFormat::kEulerDeg;
-          if (deg) {
-            rpy = core::euler_rad_to_euler_deg(rpy);
-          }
-          lines.push_back(fmt::format("rotation (euler, {}):", deg ? "deg" : "rad"));
-          lines.push_back(fmt::format("  roll:  {:.15g}", rpy.roll));
-          lines.push_back(fmt::format("  pitch: {:.15g}", rpy.pitch));
-          lines.push_back(fmt::format("  yaw:   {:.15g}", rpy.yaw));
-        }
-      } catch (const tf2::TransformException & e) {
-        // Past extrapolation has been cropped at init, so the only
-        // failures expected here are mid-bag gaps or the chain
-        // ceasing to publish before the bag ends. Surface tf2's
-        // text directly; rare enough that we do not need
-        // hand-formatted versions.
-        lines.push_back(fmt::format("⚠  Lookup failed at this index: {}", e.what()));
-      }
-      return lines;
-    };
-
-    auto build_frame = [&](std::size_t scroll, core::tui::Size term) -> core::tui::Frame {
-      core::tui::Frame frame;
-
-      const std::int64_t ts = timeline[index];
-      const std::size_t last_timeline_index = timeline.size() - 1;
-      const int cols = std::max(1, term.cols);
-
-      // Header: timestamp (or STATIC marker) + TF arrow + blank.
-      if (static_only) {
-        append_wrapped(frame.header, "[STATIC TF]  (no dynamic /tf in bag)", cols);
-      } else {
-        append_wrapped(frame.header, fmt::format("timestamp: {}", format_timestamp(ts)), cols);
-      }
-      append_wrapped(
-        frame.header, fmt::format("TF: {}  ->  {}", args.from_frame, args.to_frame), cols);
-      frame.header.emplace_back();  // blank separator
-
-      // Body: wrap each logical line built above.
-      const auto body_logical = build_body_lines();
-      frame.body.reserve(body_logical.size());
-      for (const auto & line : body_logical) {
-        append_wrapped(frame.body, line, cols);
-      }
-
-      // Footer: same layout as `bagwiz walk`. The index row's scroll
-      // hint depends on body height, which depends on wrapped footer
-      // height; resolve iteratively (one re-wrap is enough since only
-      // the hint can change the index row's wrapped count).
-      std::vector<std::string> footer_logical;
-      footer_logical.reserve(4);
-      footer_logical.emplace_back();  // blank separator
-      footer_logical.emplace_back();  // index row, patched below
-      footer_logical.emplace_back(
-        "  [→/Space] next   [←/b] prev   [↑/k] up   [↓/j] down   "
-        "[Home/H] head   [End/T] tail   [g] first   [G] last   "
-        "[r] quat/rad/deg   [q] quit");
-      footer_logical.push_back(status.empty() ? std::string{} : fmt::format("  {}", status));
-
-      std::vector<std::string> footer_wrapped;
-      auto wrap_footer = [&](const std::vector<std::string> & src) {
-        footer_wrapped.clear();
-        for (const auto & line : src) {
-          append_wrapped(footer_wrapped, line, cols);
-        }
-      };
-
-      auto recompute_footer = [&](const std::string & index_line) {
-        footer_logical[1] = index_line;
-        wrap_footer(footer_logical);
-      };
-
-      const std::string index_no_hint = fmt::format(
-        "  [{} / {}]  {} -> {}", index, last_timeline_index, args.from_frame, args.to_frame);
-
-      recompute_footer(index_no_hint);
-      auto body_rows_for = [&](const std::vector<std::string> & footer) {
-        return std::max(
-          0, term.rows - static_cast<int>(frame.header.size()) - static_cast<int>(footer.size()));
-      };
-
-      int body_rows = body_rows_for(footer_wrapped);
-      const std::size_t total_body = frame.body.size();
-      std::string scroll_hint;
-      if (body_rows > 0 && total_body > static_cast<std::size_t>(body_rows)) {
-        const std::size_t end = std::min(scroll + static_cast<std::size_t>(body_rows), total_body);
-        scroll_hint = fmt::format("    lines {}-{} of {}", scroll + 1, end, total_body);
-      }
-      if (!scroll_hint.empty()) {
-        recompute_footer(index_no_hint + scroll_hint);
-        body_rows = body_rows_for(footer_wrapped);
-        if (total_body > static_cast<std::size_t>(std::max(body_rows, 0))) {
-          const std::size_t end =
-            std::min(scroll + static_cast<std::size_t>(body_rows), total_body);
-          const std::string new_hint =
-            fmt::format("    lines {}-{} of {}", scroll + 1, end, total_body);
-          if (new_hint != scroll_hint) {
-            scroll_hint = new_hint;
-            recompute_footer(index_no_hint + scroll_hint);
-          }
-        }
-      }
-
-      frame.footer = std::move(footer_wrapped);
-      return frame;
-    };
-
-    auto on_nav = [&](core::tui::NavKey nav) -> core::tui::AppKeyResult {
-      status.clear();
-      switch (nav) {
-        case core::tui::NavKey::kNext:
-          if (index + 1 < timeline.size()) {
-            ++index;
-          } else {
-            index = 0;
-            status = "(wrapped to first)";
-          }
-          pager.set_scroll_offset(0);
-          return core::tui::AppKeyResult::kHandled;
-        case core::tui::NavKey::kPrev:
-          if (index > 0) {
-            --index;
-            pager.set_scroll_offset(0);
-          } else {
-            status = "(at first message)";
-          }
-          return core::tui::AppKeyResult::kHandled;
-        case core::tui::NavKey::kFirst:
-          index = 0;
-          pager.set_scroll_offset(0);
-          return core::tui::AppKeyResult::kHandled;
-        case core::tui::NavKey::kLast:
-          index = timeline.size() - 1;
-          pager.set_scroll_offset(0);
-          return core::tui::AppKeyResult::kHandled;
-        case core::tui::NavKey::kResize:
-          return core::tui::AppKeyResult::kHandled;
-        default:
-          return core::tui::AppKeyResult::kIgnored;
-      }
-    };
-
-    // `r` cycles the rotation format in-place. The body lines are rebuilt
-    // every frame from walk_args_.rot (see build_body_lines), so flipping
-    // the field and asking for a redraw is enough. Body height may change
-    // (quat = 4 rotation rows, euler = 3) so reset scroll to keep the top
-    // of the new layout visible.
-    auto on_app_key = [&](core::KeyEvent ev) -> core::tui::AppKeyResult {
-      if (ev != core::KeyEvent::kToggleRotation) {
-        return core::tui::AppKeyResult::kIgnored;
-      }
-      walk_args_.rot = next_rotation_format(walk_args_.rot);
-      status.clear();
-      pager.set_scroll_offset(0);
-      return core::tui::AppKeyResult::kHandled;
-    };
-
-    return pager.run(build_frame, on_nav, on_app_key);
   }
 
   int run_inject_static()

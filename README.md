@@ -71,7 +71,7 @@ invocation. Click through for full usage, options, and examples:
 | [`bagwiz walk`](docs/commands/walk.md)         | Interactively walk a ROS 2 topic's messages as decoded YAML.                      |
 | [`bagwiz convert`](docs/commands/convert.md)   | Repack a ROS 2 rosbag between MCAP and SQLite3 storage backends.                  |
 | [`bagwiz traj`](docs/commands/traj.md)         | Dump a topic's pose trajectory to TUM, or join a trajectory file back into a bag. |
-| [`bagwiz tf`](docs/commands/tf.md)             | Inspect TF in a ROS 2 rosbag (frame tree or interactive walk).                    |
+| [`bagwiz tf`](docs/commands/tf.md)             | Inspect TF in a ROS 2 rosbag (frame tree or static-TF injection).                 |
 | [`bagwiz complete`](docs/commands/complete.md) | Generate a shell completion script (`bash`, `zsh`, `fish`).                       |
 
 `bagwiz <subcommand> --help` is always available and reflects the same
