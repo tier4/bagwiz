@@ -17,8 +17,7 @@ Cross-format bag conversion. One subcommand:
 - Any pre-existing entry at `<output>` (file or directory) stops the
   run with a clear log line. Pass `--overwrite` to replace it instead.
   The flag is supported by every `bagwiz` subcommand that writes a
-  file or directory output (`convert format`, `traj dump`, `traj join -o`,
-  `tf inject-static -o`).
+  file or directory output (`convert format`, `traj dump`, `traj join -o`).
 - `mcap` outputs are written without chunk compression. Re-compress
   afterwards with `ros2 bag convert` if needed.
 

@@ -14,10 +14,10 @@
 
 // Shared "clobber" policy for every bagwiz subcommand that materialises a
 // file or directory output. Centralising the check here means
-// `bagwiz convert`, `bagwiz traj dump`, `bagwiz traj join -o`, and
-// `bagwiz tf inject-static` all behave identically: any pre-existing entry
-// at the chosen output path stops the run unless the user opts in to
-// replacement with `--overwrite`. Subcommands call the helper once,
+// `bagwiz convert`, `bagwiz traj dump`, and `bagwiz traj join -o` all
+// behave identically: any pre-existing entry at the chosen output path
+// stops the run unless the user opts in to replacement with
+// `--overwrite`. Subcommands call the helper once,
 // immediately after argument parsing, before opening any writer.
 namespace bagwiz::core
 {

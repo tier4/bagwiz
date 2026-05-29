@@ -16,7 +16,6 @@
 #include "bagwiz/core/output_path.hpp"
 #include "bagwiz/core/tf_chain.hpp"
 #include "bagwiz/core/tf_message_wire.hpp"
-#include "bagwiz/core/tf_static_injector.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/core/trajectory.hpp"
 #include "bagwiz/io/bag_io.hpp"

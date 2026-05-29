@@ -9,7 +9,6 @@
 #include "bagwiz/commands/completion.hpp"
 
 #include "bagwiz/core/tf_message_wire.hpp"
-#include "bagwiz/core/tf_static_injector.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -486,13 +485,6 @@ TEST(FlagCompletionTest, TfTreeDashListsHelpFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "tree", "-"}), "--help\n-h\n");
-}
-
-TEST(FlagCompletionTest, TfInjectStaticDashListsInjectFlags)
-{
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "inject-static", "-"}),
-    "--force\n--help\n--output\n--overwrite\n-h\n-o\n");
 }
 
 // Prefix narrowing still works once the flag candidate set is widened.

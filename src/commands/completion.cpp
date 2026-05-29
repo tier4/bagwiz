@@ -655,14 +655,11 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"inject-static", "tree"}, current);
+    return matching({"tree"}, current);
   }
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & mode = request.words[kFirstCommandArgWord];
-    if (mode == "inject-static") {
-      return matching(with_help({"--force", "--output", "--overwrite", "-o"}), current);
-    }
     if (mode == "tree") {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }

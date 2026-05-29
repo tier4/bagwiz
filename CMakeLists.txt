@@ -37,10 +37,11 @@ find_package(rosidl_typesupport_introspection_cpp REQUIRED)
 # tf2 supplies BufferCore + math helpers used by `tf tree` and
 # `traj dump --from/--to`. geometry_msgs is needed for the
 # header-only TransformStamped struct we hand to BufferCore::setTransform
-# from tf_value_extract. tf2_msgs is pulled in for `tf inject-static`,
-# which constructs a tf2_msgs::msg::TFMessage in-memory and serialises
-# it via the introspection typesupport — only the header-only struct is
-# needed at build time (the typesupport `.so` is dlopen'd at runtime).
+# from tf_value_extract. tf2_msgs is pulled in for `traj join`, which
+# constructs a tf2_msgs::msg::TFMessage in-memory and serialises it via
+# the introspection typesupport (see tf_message_wire) — only the
+# header-only struct is needed at build time (the typesupport `.so` is
+# dlopen'd at runtime).
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -107,7 +108,6 @@ add_library(bagwiz_core
   src/core/bag_topic_plan.cpp
   src/core/tf_chain.cpp
   src/core/tf_message_wire.cpp
-  src/core/tf_static_injector.cpp
   src/core/tf_value_extract.cpp
   src/core/trajectory.cpp
   src/core/tui/layout.cpp
@@ -258,9 +258,6 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_tf_chain_test test/core/tf_chain_test.cpp)
   target_link_libraries(bagwiz_tf_chain_test bagwiz_core)
-
-  ament_add_gtest(bagwiz_tf_static_injector_test test/core/tf_static_injector_test.cpp)
-  target_link_libraries(bagwiz_tf_static_injector_test bagwiz_core)
 
   ament_add_gtest(bagwiz_tf_message_wire_test test/core/tf_message_wire_test.cpp)
   target_link_libraries(bagwiz_tf_message_wire_test bagwiz_core)

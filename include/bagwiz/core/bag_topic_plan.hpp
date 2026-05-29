@@ -22,10 +22,9 @@
 // whether to declare it new, keep an empty declaration, replace
 // existing messages under --force, or abort.
 //
-// This codifies the policy already used inline by `bagwiz tf
-// inject-static` so other rewrite-style commands (e.g. `bagwiz traj
-// join`) can apply identical semantics without duplicating the
-// branching.
+// This codifies a shared topic-rewrite policy so rewrite-style
+// commands (e.g. `bagwiz traj join`) can apply identical semantics
+// without duplicating the branching.
 namespace bagwiz::core
 {
 

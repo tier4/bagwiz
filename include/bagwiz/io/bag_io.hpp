@@ -200,10 +200,9 @@ Format infer_format_from_extension(const std::filesystem::path & path) noexcept;
 
 // Compose CreateOptions for a directory-style output path that should
 // inherit the storage format of a reference bag when the user did not
-// pick a single-file format via the output extension. Used by
-// rewrite-style commands (e.g. `bagwiz tf inject-static`) where the
-// user's mental model is "the output should look like the input unless
-// I named a `.mcap` / `.db3` file".
+// pick a single-file format via the output extension. Intended for
+// rewrite-style commands where the user's mental model is "the output
+// should look like the input unless I named a `.mcap` / `.db3` file".
 //
 // The reference bag may be a directory bag OR a single-file bag — only
 // its format is inherited. The output is always Layout::Directory when

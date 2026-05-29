@@ -11,15 +11,17 @@
 
 #include "bagwiz/io/bag_io.hpp"
 
-#include <string_view>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 
-// Wire-level helpers for tf2_msgs/msg/TFMessage. Sits next to
-// tf_static_injector.hpp (which provides `serialize_tf_message`), but
-// the responsibilities are deliberately split: this header carries the
-// constants and TopicInfo synthesis used when declaring a *new* TF
-// topic in a destination bag (e.g. by `bagwiz traj join`), while
-// tf_static_injector keeps the bag-scanning helpers specific to
-// `bagwiz tf inject-static`.
+#include <cstddef>
+#include <span>
+#include <string_view>
+#include <vector>
+
+// Wire-level helpers for tf2_msgs/msg/TFMessage: the canonical schema
+// text, TopicInfo synthesis for declaring a *new* TF topic in a
+// destination bag, and CDR serialisation of a TFMessage payload. Used
+// when writing TF topics into a bag (e.g. by `bagwiz traj join`).
 namespace bagwiz::core
 {
 
@@ -49,6 +51,14 @@ extern const char * const kTfMessageWireSchema;
 // of synthesising a new one, so QoS / type-description-hash metadata
 // is preserved on round-trip.
 io::TopicInfo make_tf_message_topic_info(std::string_view topic_name);
+
+// Encode a single tf2_msgs/msg/TFMessage carrying `transforms` into
+// the on-wire CDR payload. Uses the introspection typesupport (dlopen'd
+// at runtime from libtf2_msgs__rosidl_typesupport_introspection_cpp.so)
+// + rmw_serialize. Throws std::runtime_error when the typesupport
+// cannot be loaded or rmw_serialize fails.
+std::vector<std::byte> serialize_tf_message(
+  std::span<const geometry_msgs::msg::TransformStamped> transforms);
 
 }  // namespace bagwiz::core
 
