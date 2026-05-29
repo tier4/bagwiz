@@ -19,6 +19,7 @@
     "jazzy",
     "libmcap",
     "libsqlite",
+    "libtf",
     "libzstd",
     "mcap",
     "msgs",
