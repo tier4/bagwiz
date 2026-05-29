@@ -116,6 +116,24 @@ install them inside the container first (start the shell as root with
 `--user 0:0` for that step) or bake them into a derived image with a
 `FROM ghcr.io/tier4/bagwiz:latest` Dockerfile.
 
+### Troubleshooting: `denied` or image not found
+
+The images are public, so pulling them needs no authentication. If
+`docker pull` or the `bagwiz` wrapper reports `denied` (or that the image
+cannot be found) even though CI published the image, you are almost
+certainly already logged in to `ghcr.io` with a stale or insufficiently
+scoped token. Docker sends those stored credentials instead of falling
+back to anonymous access, and the registry rejects them for this package.
+
+Log out so Docker uses anonymous access, or refresh the login with a token
+that carries the `read:packages` scope:
+
+```bash
+docker logout ghcr.io
+# or, to stay logged in (e.g. you also pull private images):
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u <username> --password-stdin
+```
+
 ## Installation
 
 You need ROS 2 installed (Ubuntu packages under `/opt/ros/<distro>` are
