@@ -70,74 +70,58 @@ bagwiz tf recording.mcap
 Set `BAGWIZ_IMAGE` to choose a different tag, for example
 `BAGWIZ_IMAGE=ghcr.io/tier4/bagwiz:humble bagwiz ls recording.mcap`.
 
-Bash completion is preinstalled inside the image, so an interactive shell
-in the container (for example `docker run --rm -it
-ghcr.io/tier4/bagwiz:latest`) has `bagwiz` tab-completion ready with no
-setup.
-
-Completion for the wrapper command, however, is driven by your host shell
-rather than the container, so it has to be registered once on the host.
-The wrapper relays `bagwiz complete` to the image, and each subsequent
-`<TAB>` runs a short-lived container to enumerate candidates (expect a
-small per-completion startup delay):
+Install shell completion for the wrapper with `bagwiz complete <shell>
+--install`. The wrapper writes the script to your host shell's completion
+directory (not the container's throwaway filesystem), so it persists across
+sessions:
 
 ```bash
-# bash: install for future shells (bash-completion loads it on next login)
-mkdir -p ~/.local/share/bash-completion/completions
-bagwiz complete bash > ~/.local/share/bash-completion/completions/bagwiz
-
-# ...or enable it in the current shell right away
-source <(bagwiz complete bash)
+bagwiz complete bash --install   # also: zsh, fish
 ```
 
-`bagwiz complete zsh` and `bagwiz complete fish` emit the equivalent
-scripts; see [docs/commands/complete.md](docs/commands/complete.md) for the
-per-shell install paths. Note that `bagwiz complete <shell> --install`
-does not work through the wrapper: `--install` writes inside the
-container's throwaway filesystem, so redirect the output to a host path (as
-above) instead.
+Open a new shell to pick it up. Each `<TAB>` afterwards runs a short-lived
+container to enumerate candidates, so expect a small per-completion startup
+delay. See [docs/commands/complete.md](docs/commands/complete.md) for the
+per-shell install paths and for enabling completion in the current shell
+without `--install`.
 
 ### Adding custom message types
 
 Bags that embed their message definitions (MCAP records carry the schema)
 decode out of the box. For bags whose types are not embedded, or to make a
 custom package available to every command, provide the message packages
-through a standard colcon overlay. Build the packages once inside the
-container so their ABI matches the image, then source the overlay and run
-bagwiz.
+through a standard colcon overlay. The overlay has to be built against the
+image so its ABI matches; the wrapper then auto-sources it on every run.
 
 Place your message package sources in a workspace, for example
 `~/msgs_ws/src/my_msgs`. Create the package the usual way (for example
 with `ros2 pkg create --build-type ament_cmake my_msgs`) so it registers
-on `AMENT_PREFIX_PATH` when sourced. Build the overlay and use it in a
-single interactive session:
+on `AMENT_PREFIX_PATH` when sourced. Build the overlay once with a single
+non-interactive container run; the entrypoint sources ROS before the
+command, the user mapping keeps the output yours, and `install/` persists
+on the host because the workspace is mounted:
 
 ```bash
-docker run --rm -it \
+docker run --rm \
+  -u "$(id -u):$(id -g)" -e HOME=/tmp \
   -v ~/msgs_ws:/overlay \
-  -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/tier4/bagwiz:latest bash
-# inside the container, build the overlay once, then source and run:
-(cd /overlay && colcon build)
-source /overlay/install/setup.bash
-bagwiz walk recording.mcap /my_topic   # decodes types from ~/msgs_ws
+  ghcr.io/tier4/bagwiz:latest \
+  bash -c 'cd /overlay && colcon build'
 ```
 
-The overlay's `install/` directory persists on the host because the
-workspace is mounted, so later runs can skip the build. The wrapper can
-mount and auto-source a prebuilt overlay for non-interactive use: point
-`BAGWIZ_WS` at the workspace and the entrypoint sources its
-`install/setup.bash` on every invocation:
+Point `BAGWIZ_WS` at the workspace so the wrapper mounts it and the
+entrypoint sources its `install/setup.bash` on every invocation:
 
 ```bash
 export BAGWIZ_WS=~/msgs_ws
-bagwiz walk recording.mcap /my_topic
+bagwiz walk recording.mcap /my_topic   # decodes types from ~/msgs_ws
 ```
 
 If `colcon build` reports missing dependencies for your message package,
-install them inside the container first (start the shell as root with
-`--user 0:0` for that step) or bake them into a derived image with a
-`FROM ghcr.io/tier4/bagwiz:latest` Dockerfile.
+build it as root so you can install them first (replace `-u
+"$(id -u):$(id -g)"` with `--user 0:0` and run `rosdep install` or
+`apt-get install` before `colcon build`), or bake them into a derived image
+with a `FROM ghcr.io/tier4/bagwiz:latest` Dockerfile.
 
 ### Troubleshooting: `denied` or image not found
 

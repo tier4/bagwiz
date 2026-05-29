@@ -11,9 +11,21 @@
 # Environment variables:
 #   BAGWIZ_IMAGE  Image reference to run (default: ghcr.io/tier4/bagwiz:latest).
 #   BAGWIZ_WS     Path to a colcon workspace mounted at /overlay; build it once
-#                 inside the container to expose additional message types (see
+#                 against the image to expose additional message types (see
 #                 the README).
+#
+# Run "bagwiz complete <shell> --install" through this wrapper to install shell
+# completion onto the host (see the README).
 set -euo pipefail
+
+# Test whether <path> ($1) is the same as, or nested under, <ancestor> ($2);
+# used to avoid handing docker duplicate bind-mount targets.
+is_under() {
+    case "$1" in
+    "$2" | "$2"/*) return 0 ;;
+    *) return 1 ;;
+    esac
+}
 
 image="${BAGWIZ_IMAGE:-ghcr.io/tier4/bagwiz:latest}"
 
@@ -28,7 +40,7 @@ fi
 
 # Map the host user so files written by the container (for example convert
 # output) are owned by the caller rather than root.
-run_args+=(-u "$(id -u):$(id -g)" -e "HOME=/tmp")
+run_args+=(-u "$(id -u):$(id -g)")
 
 # Mount the working directory at the same path inside the container.
 run_args+=(-v "${PWD}:${PWD}" -w "${PWD}")
@@ -37,6 +49,46 @@ run_args+=(-v "${PWD}:${PWD}" -w "${PWD}")
 # types. The entrypoint sources it automatically once it has been built.
 if [ -n "${BAGWIZ_WS:-}" ]; then
     run_args+=(-v "${BAGWIZ_WS}:/overlay")
+fi
+
+# Detect "complete <shell> --install": that subcommand writes the completion
+# script to a path derived from HOME (and the XDG_*_HOME overrides).
+completion_install=false
+if [ "${1:-}" = "complete" ]; then
+    for arg in "$@"; do
+        if [ "${arg}" = "--install" ]; then
+            completion_install=true
+            break
+        fi
+    done
+fi
+
+if [ "${completion_install}" = true ]; then
+    # Expose the host HOME so --install lands on the host shell's completion
+    # search path instead of the container's throwaway filesystem; the user
+    # mapping above keeps the written file owned by the caller. Skip mounts
+    # whose target is already covered to avoid docker duplicate-mount errors
+    # (e.g. running the install from $HOME, which equals $PWD).
+    if [ -z "${HOME:-}" ]; then
+        echo "bagwiz: cannot install completion: HOME is not set" >&2
+        exit 1
+    fi
+    run_args+=(-e "HOME=${HOME}")
+    if ! is_under "${HOME}" "${PWD}"; then
+        run_args+=(-v "${HOME}:${HOME}")
+    fi
+    for xdg in XDG_DATA_HOME XDG_CONFIG_HOME; do
+        value="${!xdg:-}"
+        [ -n "${value}" ] || continue
+        run_args+=(-e "${xdg}=${value}")
+        if ! is_under "${value}" "${HOME}" && ! is_under "${value}" "${PWD}"; then
+            run_args+=(-v "${value}:${value}")
+        fi
+    done
+else
+    # ROS and colcon need a writable HOME when the container runs as a uid with
+    # no matching /etc/passwd entry.
+    run_args+=(-e "HOME=/tmp")
 fi
 
 exec docker run "${run_args[@]}" "${image}" bagwiz "$@"
