@@ -70,9 +70,32 @@ bagwiz tf recording.mcap
 Set `BAGWIZ_IMAGE` to choose a different tag, for example
 `BAGWIZ_IMAGE=ghcr.io/tier4/bagwiz:humble bagwiz ls recording.mcap`.
 
-Bash completion is preinstalled. An interactive shell in the container
-(for example `docker run --rm -it ghcr.io/tier4/bagwiz:latest`) has
-`bagwiz` tab-completion ready with no setup.
+Bash completion is preinstalled inside the image, so an interactive shell
+in the container (for example `docker run --rm -it
+ghcr.io/tier4/bagwiz:latest`) has `bagwiz` tab-completion ready with no
+setup.
+
+Completion for the wrapper command, however, is driven by your host shell
+rather than the container, so it has to be registered once on the host.
+The wrapper relays `bagwiz complete` to the image, and each subsequent
+`<TAB>` runs a short-lived container to enumerate candidates (expect a
+small per-completion startup delay):
+
+```bash
+# bash: install for future shells (bash-completion loads it on next login)
+mkdir -p ~/.local/share/bash-completion/completions
+bagwiz complete bash > ~/.local/share/bash-completion/completions/bagwiz
+
+# ...or enable it in the current shell right away
+source <(bagwiz complete bash)
+```
+
+`bagwiz complete zsh` and `bagwiz complete fish` emit the equivalent
+scripts; see [docs/commands/complete.md](docs/commands/complete.md) for the
+per-shell install paths. Note that `bagwiz complete <shell> --install`
+does not work through the wrapper: `--install` writes inside the
+container's throwaway filesystem, so redirect the output to a host path (as
+above) instead.
 
 ### Adding custom message types
 
