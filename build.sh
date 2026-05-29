@@ -36,32 +36,6 @@ Options:
       --unroll             Append -funroll-loops to release compile flags.
                            Helps tight inner loops but increases code size.
                            Ignored on debug.
-      --docker             Build the bagwiz Docker image for the host
-                           architecture instead of running a native colcon
-                           build. Does not require a sourced ROS environment.
-                           --native and --unroll are forwarded into the image
-                           build; the other colcon options (--clean,
-                           --build-type, --builder, -j/--parallel) are ignored.
-                           Avoid --native for images you distribute: it ties
-                           the binary to the build host's CPU.
-      --distro <D>         ROS 2 distribution to build the image for: humble or
-                           jazzy (default: jazzy). Only used with --docker.
-      --tag <T>            Image tag to assign (default: bagwiz:<distro>).
-                           Only used with --docker, and ignored together with
-                           --push-by-digest.
-      --push-by-digest <I> Build with buildx and push an untagged,
-                           digest-addressed image to registry image <I> (e.g.
-                           ghcr.io/tier4/bagwiz). Used by the multi-arch CI to
-                           build one platform per runner; a later job assembles
-                           the tags. Implies a registry push. Only used with
-                           --docker.
-      --platform <P>       Target platform for the image build, e.g.
-                           linux/amd64. Only used with --docker together with
-                           --push-by-digest; the plain local build always
-                           targets the host architecture.
-      --metadata-file <F>  Write buildx build metadata (including the pushed
-                           image digest) to file <F>. Only used with --docker
-                           together with --push-by-digest.
   -h, --help               Show this help message and exit.
 
 With no options, performs an incremental colcon build with build type release
@@ -83,12 +57,6 @@ builder="make"
 parallel_workers=""
 native=0
 unroll=0
-docker=0
-distro="jazzy"
-image_tag=""
-platform=""
-push_by_digest=""
-metadata_file=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -151,75 +119,6 @@ while [[ $# -gt 0 ]]; do
         unroll=1
         shift
         ;;
-    --docker)
-        docker=1
-        shift
-        ;;
-    --distro)
-        shift
-        if [[ $# -eq 0 ]]; then
-            echo "[build.sh] --distro requires a value (humble or jazzy)." >&2
-            exit 1
-        fi
-        distro="${1}"
-        shift
-        ;;
-    --distro=*)
-        distro="${1#*=}"
-        shift
-        ;;
-    --tag)
-        shift
-        if [[ $# -eq 0 ]]; then
-            echo "[build.sh] --tag requires a value (e.g. bagwiz:jazzy)." >&2
-            exit 1
-        fi
-        image_tag="${1}"
-        shift
-        ;;
-    --tag=*)
-        image_tag="${1#*=}"
-        shift
-        ;;
-    --platform)
-        shift
-        if [[ $# -eq 0 ]]; then
-            echo "[build.sh] --platform requires a value (e.g. linux/amd64)." >&2
-            exit 1
-        fi
-        platform="${1}"
-        shift
-        ;;
-    --platform=*)
-        platform="${1#*=}"
-        shift
-        ;;
-    --push-by-digest)
-        shift
-        if [[ $# -eq 0 ]]; then
-            echo "[build.sh] --push-by-digest requires an image name (e.g. ghcr.io/tier4/bagwiz)." >&2
-            exit 1
-        fi
-        push_by_digest="${1}"
-        shift
-        ;;
-    --push-by-digest=*)
-        push_by_digest="${1#*=}"
-        shift
-        ;;
-    --metadata-file)
-        shift
-        if [[ $# -eq 0 ]]; then
-            echo "[build.sh] --metadata-file requires a path." >&2
-            exit 1
-        fi
-        metadata_file="${1}"
-        shift
-        ;;
-    --metadata-file=*)
-        metadata_file="${1#*=}"
-        shift
-        ;;
     --help | -h)
         usage
         exit 0
@@ -231,109 +130,6 @@ while [[ $# -gt 0 ]]; do
         ;;
     esac
 done
-
-# --platform, --push-by-digest, and --metadata-file only shape the Docker image
-# build, so they are meaningless for the native colcon build.
-if [[ ${docker} -ne 1 && (-n ${platform} || -n ${push_by_digest} || -n ${metadata_file}) ]]; then
-    echo "[build.sh] --platform, --push-by-digest, and --metadata-file require --docker." >&2
-    exit 1
-fi
-
-# Docker image build mode. Builds the image defined by ./Dockerfile for the
-# host architecture. This path is independent of the native colcon build and
-# deliberately runs before the ROS_DISTRO check below: the build happens inside
-# the container, so the host needs neither a sourced ROS environment nor any
-# ROS packages installed.
-if [[ ${docker} -eq 1 ]]; then
-    case "${distro}" in
-    humble | jazzy) ;;
-    *)
-        echo "[build.sh] Invalid --distro '${distro}'. Use humble or jazzy." >&2
-        exit 1
-        ;;
-    esac
-
-    if ! command -v docker >/dev/null 2>&1; then
-        echo "[build.sh] 'docker' is not installed or not on PATH." >&2
-        exit 1
-    fi
-
-    # --native and --unroll are release compile-flag tweaks that the in-image
-    # colcon build understands (the Dockerfile runs this same script inside the
-    # container), so forward them as a build arg. The remaining colcon options
-    # shape the local build environment rather than the release flags, and the
-    # image deliberately fixes those (release build, make generator), so they
-    # are ignored here.
-    #
-    # WARNING: --native bakes -march=native into the binary, tying the image to
-    # the build host's CPU. Only use it for images you build and run on the same
-    # machine, never for images you distribute. The multi-arch GHCR pipeline in
-    # .github/workflows/docker.yaml must never pass --native: it builds images
-    # for other people's CPUs and would produce SIGILL crashes.
-    docker_build_flags=()
-    if [[ ${native} -eq 1 ]]; then
-        docker_build_flags+=(--native)
-    fi
-    if [[ ${unroll} -eq 1 ]]; then
-        docker_build_flags+=(--unroll)
-    fi
-
-    if [[ ${clean} -eq 1 || ${builder} != "make" || ${build_type} != "release" || -n ${parallel_workers} ]]; then
-        echo "[build.sh] --docker ignores --clean, --build-type, --builder, and -j/--parallel" \
-            "(the image always builds release with make); --native/--unroll are forwarded into the image." >&2
-    fi
-
-    common_build_args=(
-        --build-arg "ROS_DISTRO=${distro}"
-        --build-arg "BAGWIZ_BUILD_FLAGS=${docker_build_flags[*]}"
-    )
-
-    # Push-by-digest mode, used by the multi-arch GHCR pipeline: each CI job
-    # builds one platform on a native runner and pushes an untagged,
-    # digest-addressed image, then a later job assembles the tags into a
-    # manifest list. This needs buildx rather than plain "docker build" and
-    # disables provenance: an attestation manifest would make push-by-digest
-    # publish the attestation's digest instead of the image's, breaking the
-    # manifest assembly step.
-    if [[ -n ${push_by_digest} ]]; then
-        if ! docker buildx version >/dev/null 2>&1; then
-            echo "[build.sh] 'docker buildx' is required for --push-by-digest but is not available." >&2
-            exit 1
-        fi
-        if [[ -n ${image_tag} ]]; then
-            echo "[build.sh] --tag is ignored with --push-by-digest (the image is addressed by digest, not a tag)." >&2
-        fi
-
-        buildx_args=(buildx build "${common_build_args[@]}" --provenance=false)
-        if [[ -n ${platform} ]]; then
-            buildx_args+=(--platform "${platform}")
-        fi
-        if [[ -n ${metadata_file} ]]; then
-            buildx_args+=(--metadata-file "${metadata_file}")
-        fi
-        buildx_args+=(--output "type=image,name=${push_by_digest},push-by-digest=true,name-canonical=true,push=true")
-        buildx_args+=("${SCRIPT_DIR}")
-
-        echo "[build.sh] Building and pushing '${push_by_digest}' by digest${platform:+ for ${platform}} (ROS_DISTRO=${distro})"
-        exec docker "${buildx_args[@]}"
-    fi
-
-    # Local mode: a plain "docker build" loads a tagged image into the host's
-    # image store for immediate "docker run". The push-only options do not
-    # apply here.
-    if [[ -n ${platform} ]]; then
-        echo "[build.sh] --platform is ignored without --push-by-digest (the local build targets the host architecture)." >&2
-    fi
-    if [[ -n ${metadata_file} ]]; then
-        echo "[build.sh] --metadata-file is ignored without --push-by-digest." >&2
-    fi
-    if [[ -z ${image_tag} ]]; then
-        image_tag="bagwiz:${distro}"
-    fi
-
-    echo "[build.sh] Building Docker image '${image_tag}' for the host architecture (ROS_DISTRO=${distro})"
-    exec docker build "${common_build_args[@]}" --tag "${image_tag}" "${SCRIPT_DIR}"
-fi
 
 if [[ -z ${ROS_DISTRO:-} ]]; then
     echo "[build.sh] ROS_DISTRO is not set. Source your ROS environment first." >&2
