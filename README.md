@@ -9,6 +9,9 @@ spinning up a ROS graph.
 
 ## Installation
 
+bagwiz currently supports ROS 2 **Humble** and **Jazzy** (the distros
+exercised in CI).
+
 You need ROS 2 installed (Ubuntu packages under `/opt/ros/<distro>` are
 typical). Install [rosdep](https://docs.ros.org/en/independent/api/rosdep/html/)
 if you do not have it yet (`sudo apt install python3-rosdep`). Run
@@ -17,10 +20,10 @@ the machine.
 
 From the repository root:
 
-1. Load ROS 2 into your shell (replace `humble` with your distro):
+1. Load ROS 2 into your shell (replace <distro> with one of supported distros: humble/jazzy):
 
    ```bash
-   source /opt/ros/humble/setup.bash
+   source /opt/ros/<distro>/setup.bash
    ```
 
 2. Install build dependencies declared in `package.xml` (run from the repo root):
@@ -40,9 +43,22 @@ From the repository root:
    ./build.sh
    ```
 
-Optional flags for `./build.sh` (build type, parallelism, clean rebuild) are
-described in `./build.sh --help`. `CLI11`, `fmt`, and `rang` are pulled in
-automatically when you build; no extra install step for those.
+   The freshly built binary lives at `install/bagwiz/bin/bagwiz`.
+
+4. (Optional) Install the binary onto your `PATH`. Pass `--install` to copy it
+   to `~/.local/bin/bagwiz` (override the destination with `--install-dir <dir>`):
+
+   ```bash
+   ./build.sh --install
+   ```
+
+   `build.sh` creates the target directory if needed and warns when it is not
+   on your `PATH`. The binary is dynamically linked against ROS, so keep ROS
+   sourced (step 1) in any shell where you run `bagwiz`.
+
+Optional flags for `./build.sh` (build type, parallelism, clean rebuild,
+install) are described in `./build.sh --help`. `CLI11`, `fmt`, and `rang` are
+pulled in automatically when you build; no extra install step for those.
 
 ## Subcommands
 
