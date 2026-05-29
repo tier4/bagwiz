@@ -28,6 +28,7 @@
     "rosdep",
     "semver",
     "shopt",
+    "suppr",
     "underlay",
     "unparseable",
     "unsuffixed",
