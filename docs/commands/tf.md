@@ -3,6 +3,7 @@
 TF inspection on a ROS 2 rosbag.
 
 - [`tree`](#bagwiz-tf-tree) — merged static∪dynamic forest; edge tags `[S]`/`[D]`/`[B]` and optional TTY colors.
+- [`static`](#bagwiz-tf-static) — resolve the rigid transform from `<from>` to `<to>` using only the bag's static TF tree; print translation/quaternion/RPY or JSON.
 
 ROS 1 `*.bag` inputs are not supported.
 
@@ -106,3 +107,85 @@ bagwiz tf tree capture.mcap
 | ---- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `0`  | Tree written to stdout.                                                                                                        |
 | `1`  | Bag could not be opened, no TFMessage topic, no decoded transforms, TF union validation failed, decoder failure, or I/O error. |
+
+---
+
+## `bagwiz tf static`
+
+Resolves the rigid-body transform from `<from>` to `<to>` using **only** the
+bag's static TF (topics whose name ends with `tf_static`). Dynamic `/tf` topics
+are intentionally ignored. The transform is composed across the whole static
+chain, so `<from>` and `<to>` need not be directly adjacent — any two frames
+connected through the static tree work.
+
+### Direction convention
+
+The printed transform is `lookupTransform(target=<to>, source=<from>)`, i.e. the
+same result as:
+
+```bash
+ros2 run tf2_ros tf2_echo <from> <to>
+```
+
+The translation is `<from>`'s origin expressed in the `<to>` frame, and the
+rotation re-expresses a `<from>`-frame orientation in `<to>`. Swapping the two
+arguments yields the inverse transform.
+
+### Usage
+
+```text
+bagwiz tf static <input> <from> <to> [--json]
+```
+
+### Positional arguments
+
+| Name    | Description                                               |
+| ------- | --------------------------------------------------------- |
+| `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`). |
+| `from`  | Source frame id.                                          |
+| `to`    | Target frame id.                                          |
+
+### Options
+
+| Flag     | Description                                       |
+| -------- | ------------------------------------------------- |
+| `--json` | Emit the transform as JSON instead of human text. |
+
+### Output
+
+Human form (monochrome, like `tf2_echo`):
+
+```text
+Transform: base_link -> lidar  (static)
+  Translation (x, y, z):          [-0.000000, 1.000000, -0.500000]
+  Rotation quaternion (x,y,z,w):  [0.000000, 0.000000, -0.707107, 0.707107]
+  Rotation RPY (rad):             [0.000000, 0.000000, -1.570796]
+  Rotation RPY (deg):             [0.000000, 0.000000, -90.000000]
+```
+
+JSON form (`--json`, pretty-printed; full-precision doubles):
+
+```json
+{
+  "from": "base_link",
+  "to": "lidar",
+  "translation": { "x": 0.0, "y": 1.0, "z": -0.5 },
+  "rotation": { "x": 0.0, "y": 0.0, "z": -0.7071067811865475, "w": 0.7071067811865476 },
+  "rpy_rad": { "roll": 0.0, "pitch": 0.0, "yaw": -1.5707963267948963 },
+  "rpy_deg": { "roll": 0.0, "pitch": 0.0, "yaw": -89.99999999999999 }
+}
+```
+
+### Examples
+
+```bash
+bagwiz tf static capture.mcap base_link lidar
+bagwiz tf static capture.mcap base_link lidar --json
+```
+
+### Exit status
+
+| Code | Meaning                                                                                                                                                                                                     |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Transform written to stdout.                                                                                                                                                                                |
+| `1`  | Bag could not be opened, no static TF topic, decode failure, the frames are not connected through the static tree, or I/O error. When a frame is unknown, the available static frames are listed on stderr. |

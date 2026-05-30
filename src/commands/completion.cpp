@@ -661,14 +661,29 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"tree"}, current);
+    return matching({"static", "tree"}, current);
   }
 
+  const auto & mode = request.words[kFirstCommandArgWord];
+
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
-    const auto & mode = request.words[kFirstCommandArgWord];
     if (mode == "tree") {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
+    if (mode == "static") {
+      return matching(with_help({"--json"}), current);
+    }
+  }
+
+  // `tf static <input> <from> <to>`: complete the <from>/<to> positional
+  // slots from the bag's TF frame ids (bag path at the <input> slot, word 2).
+  // The <input> slot itself falls through to the shell's file completion.
+  // Frame ids are drawn from every TF topic, like traj's --from/--to; the
+  // command validates static connectivity at run time.
+  if (
+    mode == "static" &&
+    (request.cursor_word == kThirdCommandArgWord || request.cursor_word == kFourthCommandArgWord)) {
+    return complete_frame_id_arg(request, kSecondCommandArgWord, current);
   }
 
   return {};

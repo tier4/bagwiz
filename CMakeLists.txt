@@ -47,6 +47,10 @@ find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_msgs REQUIRED)
+# nlohmann_json (header-only) backs `tf static --json`. Used only inside
+# bagwiz_core's tf_transform_format.cpp, so it is linked PRIVATE and does
+# not leak into the export set.
+find_package(nlohmann_json REQUIRED)
 
 # CLI11 and fmt are not available as rosdep keys on all supported distros, so
 # fetch them at configure time. Both are small, header-light libraries.
@@ -125,6 +129,7 @@ add_library(bagwiz_core
   src/core/bag_topic_plan.cpp
   src/core/tf_chain.cpp
   src/core/tf_message_wire.cpp
+  src/core/tf_transform_format.cpp
   src/core/tf_value_extract.cpp
   src/core/trajectory.cpp
   src/core/tui/layout.cpp
@@ -168,6 +173,10 @@ ament_target_dependencies(bagwiz_core PUBLIC
   tf2_msgs
 )
 target_link_libraries(bagwiz_core PUBLIC yaml-cpp SQLite::SQLite3 zstd::zstd ${CMAKE_DL_LIBS})
+# nlohmann_json is an implementation detail of tf_transform_format.cpp (the
+# public header returns std::string), so keep it PRIVATE and out of the
+# export set.
+target_link_libraries(bagwiz_core PRIVATE nlohmann_json::nlohmann_json)
 # fmt is used header-only inside bagwiz_core (renderer.cpp). Linking fmt::fmt
 # would force it into the bagwiz_core export set, which fails because fmt is
 # fetched via FetchContent and not installable.
@@ -288,6 +297,10 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_tf_message_wire_test test/core/tf_message_wire_test.cpp)
   target_link_libraries(bagwiz_tf_message_wire_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_tf_transform_format_test test/core/tf_transform_format_test.cpp)
+  target_link_libraries(
+    bagwiz_tf_transform_format_test bagwiz_core nlohmann_json::nlohmann_json)
 
   ament_add_gtest(bagwiz_bag_topic_plan_test test/core/bag_topic_plan_test.cpp)
   target_link_libraries(bagwiz_bag_topic_plan_test bagwiz_core)

@@ -487,6 +487,58 @@ TEST(FlagCompletionTest, TfTreeDashListsHelpFlags)
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "tree", "-"}), "--help\n-h\n");
 }
 
+// `bagwiz tf <TAB>` lists both subcommands, sorted.
+TEST(FlagCompletionTest, TfSubcommandListsStaticAndTree)
+{
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "tf", ""}), "static\ntree\n");
+}
+
+// `tf static -` surfaces its own --json flag alongside the implicit help flags.
+TEST(FlagCompletionTest, TfStaticDashListsStaticFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "static", "-"}),
+    "--help\n--json\n-h\n");
+}
+
+// `tf static <bag> <TAB>` (the <from> slot) lists the bag's TF frame ids,
+// sorted and deduplicated, reusing the same frame-id source as traj.
+TEST_F(CompletionTest, TfStaticFromSlotListsFrameIds)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "~/tf.mcap"}),
+    "base_link\nlidar\nmap\nodom\n");
+}
+
+// `tf static <bag> <from> <TAB>` (the <to> slot) shares the same frame-id
+// source as the <from> slot.
+TEST_F(CompletionTest, TfStaticToSlotListsFrameIds)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "static", "~/tf.mcap", "map"}),
+    "base_link\nlidar\nmap\nodom\n");
+}
+
+// A typed prefix narrows the <from> frame-id candidates.
+TEST_F(CompletionTest, TfStaticFromSlotRespectsPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "~/tf.mcap", "ba"}),
+    "base_link\n");
+}
+
 // Prefix narrowing still works once the flag candidate set is widened.
 TEST(FlagCompletionTest, TrajDumpDoubleDashOPrefixSelectsOverwrite)
 {

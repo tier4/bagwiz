@@ -10,13 +10,18 @@
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/tf_transform_format.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <rang.hpp>
 
+#include <geometry_msgs/msg/transform_stamped.hpp>
+
 #include <fmt/core.h>
 #include <tf2/buffer_core.h>
+#include <tf2/exceptions.h>
+#include <tf2/time.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -492,8 +497,10 @@ std::string format_merged_union_forest(
 //
 // Subcommands
 // -----------
-//   tree  Union of parent→child edges as one forest; each branch colors the child
-//         frame by static-only / dynamic-only / both (validated per-class and combined).
+//   tree    Union of parent→child edges as one forest; each branch colors the child
+//           frame by static-only / dynamic-only / both (validated per-class and combined).
+//   static  Resolve the rigid transform from <from> to <to> using only the bag's
+//           static TF tree, and print translation / quaternion / RPY (or JSON).
 class TfCommand : public Command
 {
 public:
@@ -504,6 +511,7 @@ public:
   {
     app.require_subcommand(1);
     configure_tree(app);
+    configure_static(app);
   }
 
   int run() override
@@ -511,6 +519,8 @@ public:
     switch (selected_) {
       case Subcommand::kTree:
         return run_tree();
+      case Subcommand::kStatic:
+        return run_static();
       case Subcommand::kNone:
         BAGWIZ_LOG_ERROR(kLogger, "no subcommand selected");
         return 1;
@@ -519,13 +529,21 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kTree };
+  enum class Subcommand { kNone, kTree, kStatic };
   Subcommand selected_ = Subcommand::kNone;
 
   struct TreeArgs
   {
     std::filesystem::path input_path;
   } tree_args_;
+
+  struct StaticArgs
+  {
+    std::filesystem::path input_path;
+    std::string from_frame;
+    std::string to_frame;
+    bool json = false;
+  } static_args_;
 
   void configure_tree(CLI::App & app)
   {
@@ -637,6 +655,103 @@ private:
 
     if (std::fflush(stdout) != 0) {
       BAGWIZ_LOG_ERROR(kLogger, "Failed to write TF tree to stdout");
+      return 1;
+    }
+    return 0;
+  }
+
+  void configure_static(CLI::App & app)
+  {
+    auto * sub = app.add_subcommand(
+      "static",
+      "Rigid transform from <from> to <to> resolved from the bag's static TF tree "
+      "(tf2_echo convention)");
+    sub->add_option("input", static_args_.input_path, "Bag path (file or directory)")
+      ->required()
+      ->check(CLI::ExistingPath);
+    sub->add_option("from", static_args_.from_frame, "Source frame id (<from>)")->required();
+    sub->add_option("to", static_args_.to_frame, "Target frame id (<to>)")->required();
+    sub->add_flag("--json", static_args_.json, "Emit the transform as JSON instead of text");
+    sub->callback([this]() { selected_ = Subcommand::kStatic; });
+  }
+
+  int run_static()
+  {
+    const auto & args = static_args_;
+
+    // CLI11 marks <from>/<to> required but accepts the empty string; reject
+    // it up front so lookupTransform isn't asked to resolve a blank frame.
+    if (args.from_frame.empty() || args.to_frame.empty()) {
+      BAGWIZ_LOG_ERROR(kLogger, "Both <from> and <to> frame ids must be non-empty.");
+      return 1;
+    }
+
+    std::unique_ptr<io::BagReader> reader;
+    try {
+      reader = io::open_read(args.input_path);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+      return 1;
+    }
+
+    // This subcommand resolves transforms purely from the static tree, so
+    // dynamic /tf topics are intentionally ignored: only *tf_static topics
+    // are fed into the buffer (as static entries).
+    std::vector<TfTopic> static_topics;
+    for (const auto & t : collect_tf_topics(*reader)) {
+      if (t.is_static) {
+        static_topics.push_back(t);
+      }
+    }
+    if (static_topics.empty()) {
+      BAGWIZ_LOG_ERROR(
+        kLogger,
+        "Bag has no static tf2_msgs/msg/TFMessage topic (e.g. /tf_static); nothing to resolve.");
+      return 1;
+    }
+
+    tf2::BufferCore tf_buffer{std::chrono::hours(24 * 365)};
+    try {
+      load_tf(args.input_path, static_topics, tf_buffer);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to load static TF from the bag: %s", e.what());
+      return 1;
+    }
+
+    geometry_msgs::msg::TransformStamped tf;
+    try {
+      // from→to: lookupTransform(target=<to>, source=<from>). Translation is
+      // then <from>'s origin expressed in <to>. Matches
+      // `ros2 run tf2_ros tf2_echo <from> <to>`. Static entries ignore the
+      // query time, so TimePointZero is used.
+      tf = tf_buffer.lookupTransform(args.to_frame, args.from_frame, tf2::TimePointZero);
+    } catch (const tf2::TransformException & e) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "Could not resolve static transform %s -> %s: %s", args.from_frame.c_str(),
+        args.to_frame.c_str(), e.what());
+
+      std::vector<std::string> frames = tf_buffer.getAllFrameNames();
+      std::sort(frames.begin(), frames.end());
+      std::string csv;
+      for (std::size_t i = 0; i < frames.size(); ++i) {
+        if (i > 0) {
+          csv += ", ";
+        }
+        csv += frames[i];
+      }
+      BAGWIZ_LOG_ERROR(
+        kLogger, "Available static frames: %s", csv.empty() ? "(none)" : csv.c_str());
+      return 1;
+    }
+
+    const std::string out = args.json
+                              ? core::format_transform_json(tf, args.from_frame, args.to_frame)
+                              : core::format_transform_human(tf, args.from_frame, args.to_frame);
+    // The human form ends with a newline; the JSON form does not, so add one.
+    fmt::print(stdout, "{}{}", out, args.json ? "\n" : "");
+
+    if (std::fflush(stdout) != 0) {
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to write transform to stdout");
       return 1;
     }
     return 0;
