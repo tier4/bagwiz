@@ -21,12 +21,17 @@ jobs:
         with:
           path: src/bagwiz
 
-      - name: Install rosdep dependencies
+      - name: Install pinned dependencies via setup.sh
         shell: bash
         run: |
+          # Build and test against the versions pinned in deps/<distro>.lock,
+          # the same ones shipped to users, so CI exercises the real install
+          # path. apt-get update populates the cache setup.sh's pinned
+          # `apt-get install name=version` reads; rosdep update keeps the
+          # fallback path working if a lock is ever missing.
           apt-get update
           rosdep update --rosdistro ${{ matrix.distro }}
-          rosdep install --from-paths src --ignore-src -y --rosdistro ${{ matrix.distro }}
+          ./src/bagwiz/setup.sh
 
       - name: colcon build
         shell: bash

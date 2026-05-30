@@ -21,8 +21,8 @@ configuration (no `sources.list`, no `preferences.d`, no `apt-mark hold`), so
 the pin applies to that install only and leaves no residue. Only the directly
 declared packages are pinned — never base system libraries — so there is no
 risk of unsafe downgrades. If no lock exists for the active distro, `setup.sh`
-falls back to a plain `rosdep install`. CI is unaffected: the workflows call
-`rosdep` directly.
+falls back to a plain `rosdep install`. CI runs the same `setup.sh`, so the
+build/test workflow exercises the pinned versions users actually install.
 
 ## Regenerating the locks (maintainers)
 
