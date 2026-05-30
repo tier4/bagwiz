@@ -10,12 +10,8 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>ament_index_cpp</depend>
-  <depend>builtin_interfaces</depend>
-  <depend>can_msgs</depend>
-  <depend>diagnostic_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>libsqlite3-dev</depend>
-  <depend>map_msgs</depend>
   <depend>mcap_vendor</depend>
   <depend>nav_msgs</depend>
   <depend>rcutils</depend>
@@ -25,18 +21,16 @@
   <depend>rosidl_runtime_c</depend>
   <depend>rosidl_runtime_cpp</depend>
   <depend>rosidl_typesupport_introspection_cpp</depend>
-  <depend>sensor_msgs</depend>
-  <depend>shape_msgs</depend>
   <depend>std_msgs</depend>
-  <depend>stereo_msgs</depend>
   <depend>tf2</depend>
   <depend>tf2_msgs</depend>
-  <depend>trajectory_msgs</depend>
-  <depend>visualization_msgs</depend>
   <depend>yaml_cpp_vendor</depend>
   <depend>zstd_vendor</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>builtin_interfaces</test_depend>
+  <test_depend>diagnostic_msgs</test_depend>
+  <test_depend>sensor_msgs</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
