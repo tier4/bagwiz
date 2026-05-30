@@ -42,6 +42,13 @@ public:
   // One-line description shown in --help.
   [[nodiscard]] virtual std::string_view description() const = 0;
 
+  // When true, the command is wired into the CLI exactly like any other but
+  // hidden from the top-level --help listing (main() puts it in an empty
+  // group). It still parses and runs when invoked explicitly, and still
+  // surfaces in shell completion since completion walks the full registry.
+  // Used for undocumented easter-egg commands.
+  [[nodiscard]] virtual bool hidden() const { return false; }
+
   // Declare arguments/options/flags on `app`. Called once at startup.
   virtual void configure(CLI::App & app) = 0;
 

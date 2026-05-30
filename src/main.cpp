@@ -45,6 +45,12 @@ int main(int argc, char ** argv) noexcept
     bagwiz::commands::Command * selected = nullptr;
     for (const auto & cmd : registry.all()) {
       auto * sub = app.add_subcommand(std::string(cmd->name()), std::string(cmd->description()));
+      // An empty group name keeps the subcommand fully functional while
+      // omitting it from the top-level --help listing (used for hidden
+      // easter-egg commands).
+      if (cmd->hidden()) {
+        sub->group("");
+      }
       cmd->configure(*sub);
       sub->callback([&selected, raw = cmd.get()]() { selected = raw; });
     }

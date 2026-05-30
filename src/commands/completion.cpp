@@ -330,6 +330,12 @@ std::vector<std::string> top_level_candidates(const std::string_view & prefix)
 
   std::vector<std::string> result;
   for (const auto & cmd : Registry::instance().all()) {
+    // Hidden commands (e.g. the `joke` easter egg) are omitted from
+    // completion just as they are from --help, so they never surface to a
+    // user who does not already know they exist.
+    if (cmd->hidden()) {
+      continue;
+    }
     if (starts_with(cmd->name(), prefix)) {
       result.emplace_back(cmd->name());
     }

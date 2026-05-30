@@ -1,0 +1,27 @@
+// Copyright 2026 TIER IV, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// GENERATED FILE — do not edit. CMake embeds src/core/joke/jokes.json here at
+// configure time (see configure_file in CMakeLists.txt). Edit
+// src/core/joke/jokes.json and rebuild to change the joke list.
+
+#ifndef BAGWIZ__CORE__JOKE__JOKES_DATA_HPP_
+#define BAGWIZ__CORE__JOKE__JOKES_DATA_HPP_
+
+namespace bagwiz::core::joke
+{
+
+// The verbatim contents of src/core/joke/jokes.json, embedded into the binary so the
+// hidden `joke` command works as a standalone executable on PATH without any
+// runtime file or sourced ROS overlay. The BAGWIZJOKES delimiter cannot
+// appear in the JSON, so the raw string literal is collision-safe.
+inline constexpr const char * kEmbeddedJokesJson = R"BAGWIZJOKES(@BAGWIZ_JOKES_JSON@)BAGWIZJOKES";
+
+}  // namespace bagwiz::core::joke
+
+#endif  // BAGWIZ__CORE__JOKE__JOKES_DATA_HPP_

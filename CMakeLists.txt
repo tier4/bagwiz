@@ -80,6 +80,21 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(cli11 fmt rang)
 
 # ---------------------------------------------------------------------------
+# Embedded joke data: read the single source-of-truth JSON at configure time
+# and bake it into a generated header. This keeps `bagwiz joke` self-contained
+# (no runtime file / sourced overlay needed) while jokes stay managed in one
+# JSON file. CMAKE_CONFIGURE_DEPENDS re-runs configure when the JSON changes.
+# ---------------------------------------------------------------------------
+set(BAGWIZ_JOKES_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/core/joke/jokes.json")
+file(READ "${BAGWIZ_JOKES_SOURCE}" BAGWIZ_JOKES_JSON)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${BAGWIZ_JOKES_SOURCE}")
+set(BAGWIZ_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/core/joke/jokes_data.hpp.in"
+  "${BAGWIZ_GENERATED_INCLUDE_DIR}/bagwiz/core/joke/jokes_data.hpp"
+  @ONLY)
+
+# ---------------------------------------------------------------------------
 # bagwiz_core: shared library with logging, command registry, and IO
 # interfaces. Command implementations live in the executable target so their
 # static registrars pull into the final binary.
@@ -92,6 +107,8 @@ add_library(bagwiz_core
   src/core/decoder/message_view.cpp
   src/core/decoder/schema_decoder.cpp
   src/core/introspection_loader.cpp
+  src/core/joke/jokes.cpp
+  src/core/joke/joke_layout.cpp
   src/core/logging.cpp
   src/core/message_deserializer.cpp
   src/core/output_path.cpp
@@ -130,6 +147,9 @@ target_include_directories(bagwiz_core
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
+  PRIVATE
+    # Generated, build-only: holds the embedded joke data (jokes_data.hpp).
+    "${BAGWIZ_GENERATED_INCLUDE_DIR}"
 )
 ament_target_dependencies(bagwiz_core PUBLIC
   ament_index_cpp
@@ -162,6 +182,7 @@ add_executable(bagwiz
   src/main.cpp
   src/commands/completion.cpp
   src/commands/convert.cpp
+  src/commands/joke.cpp
   src/commands/ls.cpp
   src/commands/walk.cpp
   src/commands/traj.cpp
@@ -243,6 +264,12 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_tui_width_test test/core/tui/width_test.cpp)
   target_link_libraries(bagwiz_tui_width_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_jokes_test test/core/joke/jokes_test.cpp)
+  target_link_libraries(bagwiz_jokes_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_joke_layout_test test/core/joke/joke_layout_test.cpp)
+  target_link_libraries(bagwiz_joke_layout_test bagwiz_core)
 
   ament_add_gtest(bagwiz_tui_layout_test test/core/tui/layout_test.cpp)
   target_link_libraries(bagwiz_tui_layout_test bagwiz_core)
