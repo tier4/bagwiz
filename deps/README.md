@@ -26,6 +26,11 @@ falls back to a plain `rosdep install`. CI is unaffected: the workflows call
 
 ## Regenerating the locks (maintainers)
 
+> **Maintainers only.** `deps/lock-deps.sh` is a maintainer tool — end users
+> never run it. Users only run `./setup.sh`, which consumes the committed
+> locks. Generating locks is the project's responsibility so that everyone
+> installs the same versions.
+
 Run `deps/lock-deps.sh` against each distro's apt repository. The canonical,
 machine-independent way is the official ROS images, from the repo root:
 
@@ -49,8 +54,16 @@ forward.
 ## Upstream retention
 
 `packages.ros.org` keeps only the latest version of each package, so a pin can
-eventually disappear upstream and fail to install — regenerate the locks
-periodically. If you need pins that survive upstream changes, point that single
+eventually disappear upstream and `setup.sh` then fails to install it.
+
+**When that happens it is a maintainer's job to fix it, not the user's.** For a
+single removed version, edit the affected line in `deps/<distro>.lock`
+directly: replace the unavailable version with one the repository currently
+offers (`apt-cache policy <name>` prints the candidate), then commit. Reach for
+`deps/lock-deps.sh` when you want to refresh the whole set rather than patch one
+package.
+
+If you need pins that survive upstream changes entirely, point that single
 `apt-get` call at a dated `snapshots.ros.org` repo via
 `apt-get -o Dir::Etc::SourceList=...`, still without touching system apt
 configuration.
