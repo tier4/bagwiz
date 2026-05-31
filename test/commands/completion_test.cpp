@@ -170,6 +170,48 @@ std::filesystem::path write_tf_mcap_fixture(const std::filesystem::path & path)
   return path;
 }
 
+// Self-describing MCAP carrying two tf2_msgs/msg/TFMessage topics (`/tf` and
+// `/tf_static`) plus one non-TF topic (`/points`). Used to verify that
+// `tf tree` topic completion lists only the TFMessage-typed topics and
+// excludes everything else.
+std::filesystem::path write_mixed_tf_mcap_fixture(const std::filesystem::path & path)
+{
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Mcap;
+  options.layout = bagwiz::io::Layout::SingleFile;
+  options.mcap_compression = "none";
+
+  bagwiz::io::TopicInfo tf_topic;
+  tf_topic.name = "/tf";
+  tf_topic.type = "tf2_msgs/msg/TFMessage";
+  tf_topic.serialization_format = "cdr";
+  tf_topic.schema_encoding = "ros2msg";
+  tf_topic.schema_text = bagwiz::core::kTfMessageWireSchema;
+
+  bagwiz::io::TopicInfo tf_static_topic = tf_topic;
+  tf_static_topic.name = "/tf_static";
+
+  std::vector<geometry_msgs::msg::TransformStamped> transforms;
+  transforms.push_back(make_edge("map", "odom"));
+  transforms.push_back(make_edge("odom", "base_link"));
+  const auto cdr = bagwiz::core::serialize_tf_message(transforms);
+  const auto tf_bytes = std::span<const std::byte>(cdr.data(), cdr.size());
+
+  constexpr std::array<std::byte, 4> kPayload{
+    std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}};
+  const auto other_bytes = std::span<const std::byte>(kPayload.data(), kPayload.size());
+
+  auto writer = bagwiz::io::open_write(path, options);
+  writer->declare_topic(tf_topic);
+  writer->declare_topic(tf_static_topic);
+  writer->declare_topic(make_topic("/points", "sensor_msgs/msg/PointCloud2"));
+  writer->write("/tf", 1'000'000'000LL, tf_bytes);
+  writer->write("/tf_static", 1'000'000'000LL, tf_bytes);
+  writer->write("/points", 2'000'000'000LL, other_bytes);
+  writer->close();
+  return path;
+}
+
 std::string run_completion(std::vector<std::string> args)
 {
   std::vector<char *> argv;
@@ -537,6 +579,108 @@ TEST_F(CompletionTest, TfStaticFromSlotRespectsPrefix)
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "~/tf.mcap", "ba"}),
     "base_link\n");
+}
+
+// `tf tree <bag> <TAB>` (the <topic> slot) lists only the bag's
+// tf2_msgs/msg/TFMessage topics — `/tf` and `/tf_static` here — excluding the
+// non-TF `/points` topic, sorted.
+TEST_F(CompletionTest, TfTreeTopicSlotListsOnlyTfMessageTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "tree", "~/mixed.mcap"}),
+    "/tf\n/tf_static\n");
+}
+
+// A typed prefix narrows the <topic> candidates to matching TF topics.
+TEST_F(CompletionTest, TfTreeTopicSlotRespectsPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "tree", "~/mixed.mcap", "/tf_"}),
+    "/tf_static\n");
+}
+
+// A bag with no tf2_msgs/msg/TFMessage topic yields no <topic> candidates, so
+// the shell's default file completion takes over (matches walk/traj behavior).
+TEST_F(CompletionTest, TfTreeTopicSlotEmptyWhenBagHasNoTf)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "no_tf.mcap");  // String + Int32, no TF
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "tree", "~/no_tf.mcap"}), "");
+}
+
+// A flag in the input slot must not cause the tf-tree topic binding to call the
+// bag reader on a flag-shaped path; the binding's earlier-slot guard bails out
+// and produces no topic candidates.
+TEST_F(CompletionTest, TfTreeTopicSlotSuppressedWhenInputSlotIsFlag)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "tree", "--unknown-flag"}), "");
+}
+
+// Completing the <input> slot itself (cursor on word 2, before the <topic> word)
+// must not trigger tf-tree topic completion; the cursor-position guard bails so
+// the shell's file completion handles the bag path.
+TEST_F(CompletionTest, TfTreeInputSlotDoesNotListTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "tree", "~/mixed.mcap"}), "");
+}
+
+// A bag path that does not exist yields no <topic> candidates: the reader throws
+// and complete_tf_message_topics swallows it, so the shell's file completion
+// takes over instead of surfacing a misleading empty TF result.
+TEST_F(CompletionTest, TfTreeTopicSlotEmptyForMissingBag)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "tree", "~/missing.mcap"}), "");
+}
+
+// `tf tree` takes one-or-more topics, so the SECOND topic slot (and beyond) must
+// also complete TF topics — the variadic binding fires at every positional slot
+// from the first topic onward.
+TEST_F(CompletionTest, TfTreeSecondTopicSlotListsTfMessageTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "tree", "~/mixed.mcap", "/tf"}),
+    "/tf\n/tf_static\n");
+}
+
+// A typed prefix narrows the candidates at a later topic slot too.
+TEST_F(CompletionTest, TfTreeSecondTopicSlotRespectsPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "tf", "tree", "~/mixed.mcap", "/tf", "/tf_st"}),
+    "/tf_static\n");
 }
 
 // Prefix narrowing still works once the flag candidate set is widened.

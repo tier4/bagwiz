@@ -54,19 +54,28 @@ constexpr std::size_t kFourthCommandArgWord = 4;
 // `subcommand` is empty when the command has no subcommand level (e.g.
 // `bagwiz walk <input> <topic>`). `input_word` and `topic_word` are
 // indices into CompletionRequest::words AFTER the leading "bagwiz" has
-// been stripped, so position 0 is the top-level command.
+// been stripped, so position 0 is the top-level command. When
+// `tf_message_only` is set, only topics whose type is
+// tf2_msgs/msg/TFMessage are offered (used by `tf tree`); otherwise every
+// topic in the bag is a candidate. When `variadic` is set the command takes
+// one-or-more topics, so completion fires at `topic_word` AND every later
+// positional slot (`bagwiz tf tree <input> <topic>...`); otherwise it fires
+// only at the single `topic_word`.
 struct TopicArgBinding
 {
   std::string_view command{};
   std::string_view subcommand{};
   std::size_t input_word{0};
   std::size_t topic_word{0};
+  bool tf_message_only{false};
+  bool variadic{false};
 };
 
-constexpr std::array<TopicArgBinding, 3> kTopicBindings{{
-  {"walk", "", kFirstCommandArgWord, kSecondCommandArgWord},
-  {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord},
-  {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord},
+constexpr std::array<TopicArgBinding, 4> kTopicBindings{{
+  {"walk", "", kFirstCommandArgWord, kSecondCommandArgWord, false, false},
+  {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord, false, false},
+  {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord, false, false},
+  {"tf", "tree", kSecondCommandArgWord, kThirdCommandArgWord, true, true},
 }};
 
 enum class CompletionShell { Bash, Zsh, Fish };
@@ -365,6 +374,30 @@ std::vector<std::string> complete_topics(
 
 constexpr std::string_view kTfMessageType = "tf2_msgs/msg/TFMessage";
 
+// Like complete_topics, but restricts candidates to topics whose type is
+// tf2_msgs/msg/TFMessage. Used for the `tf tree <input> <topic>` slot so the
+// menu only offers TF topics the command can actually render. Best-effort:
+// a bag that fails to open yields no candidates and the shell's default file
+// completion takes over (matches complete_topics).
+std::vector<std::string> complete_tf_message_topics(
+  const std::filesystem::path & input_path, const std::string_view & prefix)
+{
+  std::vector<std::string> result;
+  try {
+    const auto reader = io::open_read(expand_current_user_home(input_path));
+    for (const auto & topic : reader->topics()) {
+      if (topic.type == kTfMessageType && starts_with(topic.name, prefix)) {
+        result.push_back(topic.name);
+      }
+    }
+  } catch (const std::exception &) {
+    return {};
+  }
+
+  std::sort(result.begin(), result.end());
+  return result;
+}
+
 // Single sentinel surfaced by --from / --to completion when the bag was
 // opened successfully but contains no TF frame ids to suggest. Plain
 // ASCII (no shell metacharacters) so an accidental TAB-accept lands a
@@ -491,10 +524,48 @@ std::vector<std::string> complete_frame_id_value(
   return result;
 }
 
-// Looks up the cursor position in kTopicBindings and, if a binding matches
-// and every positional slot before the topic is non-flag, dispatches to
-// complete_topics. Returns std::nullopt when no binding applies so the
-// caller can fall through to per-command completion. Returning an empty
+// True when `binding` applies at the request's cursor position: command and
+// subcommand match, the cursor sits on a topic slot (the single `topic_word`,
+// or `topic_word`-and-later for a variadic binding), and no positional slot
+// before the first topic has been replaced by a flag. Callers must ensure
+// `request.words` is non-empty (so words[0] is valid). A matched slot implies
+// `topic_word <= words.size()` (parse_request clamps cursor_word to
+// words.size()), and the explicit `input_word` guard below means the caller can
+// dereference `words[input_word]` safely regardless of the binding's indices.
+bool binding_applies(const TopicArgBinding & binding, const CompletionRequest & request)
+{
+  if (binding.command != request.words[kTopLevelCommandWord]) {
+    return false;
+  }
+  if (!binding.subcommand.empty()) {
+    if (request.words.size() <= kFirstCommandArgWord) {
+      return false;
+    }
+    if (request.words[kFirstCommandArgWord] != binding.subcommand) {
+      return false;
+    }
+  }
+  const bool slot_matches = binding.variadic ? (request.cursor_word >= binding.topic_word)
+                                             : (request.cursor_word == binding.topic_word);
+  if (!slot_matches) {
+    return false;
+  }
+  // The caller dereferences words[input_word]; guard it explicitly so the table
+  // stays safe even for a future binding with input_word >= topic_word.
+  if (request.words.size() <= binding.input_word) {
+    return false;
+  }
+  for (std::size_t i = kFirstCommandArgWord; i < binding.topic_word; ++i) {
+    if (request.words[i].starts_with("-")) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Looks up the cursor position in kTopicBindings and, if a binding applies,
+// dispatches to topic completion. Returns std::nullopt when no binding applies
+// so the caller can fall through to per-command completion. Returning an empty
 // vector means "binding matched, no candidates" (e.g. bad bag path) — the
 // shell's default file completion then takes over.
 std::optional<std::vector<std::string>> try_topic_completion(const CompletionRequest & request)
@@ -508,36 +579,13 @@ std::optional<std::vector<std::string>> try_topic_completion(const CompletionReq
     return std::nullopt;
   }
 
-  const auto & top_level = request.words[kTopLevelCommandWord];
-
   for (const auto & binding : kTopicBindings) {
-    if (binding.command != top_level) {
+    if (!binding_applies(binding, request)) {
       continue;
     }
-    if (!binding.subcommand.empty()) {
-      if (request.words.size() <= kFirstCommandArgWord) {
-        continue;
-      }
-      if (request.words[kFirstCommandArgWord] != binding.subcommand) {
-        continue;
-      }
-    }
-    if (request.cursor_word != binding.topic_word) {
-      continue;
-    }
-
-    bool earlier_slot_is_flag = false;
-    for (std::size_t i = kFirstCommandArgWord; i < binding.topic_word; ++i) {
-      if (request.words[i].starts_with("-")) {
-        earlier_slot_is_flag = true;
-        break;
-      }
-    }
-    if (earlier_slot_is_flag) {
-      continue;
-    }
-
-    return complete_topics(request.words[binding.input_word], current);
+    const auto & input_arg = request.words[binding.input_word];
+    return binding.tf_message_only ? complete_tf_message_topics(input_arg, current)
+                                   : complete_topics(input_arg, current);
   }
 
   return std::nullopt;

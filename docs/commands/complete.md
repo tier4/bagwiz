@@ -139,6 +139,9 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz walk <input> <topic>`
   - `bagwiz traj dump <input> <topic> <output>`
   - `bagwiz traj join <input> <traj_file> <topic>`
+  - `bagwiz tf tree <input> <topic>...` — restricted to `tf2_msgs/msg/TFMessage`
+    topics (the only type `tf tree` can render) and offered at every topic slot,
+    since `tf tree` accepts one or more topics
 
   Paths beginning with `~/` are expanded against the current user's home
   directory before opening the bag. Topic completion is suppressed when the
