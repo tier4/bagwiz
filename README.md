@@ -45,20 +45,21 @@ From the repository root:
 
    The freshly built binary lives at `install/bagwiz/bin/bagwiz`.
 
-4. (Optional) Install the binary onto your `PATH`. Pass `--install` to copy it
-   to `~/.local/bin/bagwiz` (override the destination with `--install-dir <dir>`):
+4. (Optional) Install the binary onto your `PATH`. `install.sh` copies it to
+   `~/.local/bin/bagwiz` (override the destination with `--install-dir <dir>`):
 
    ```bash
-   ./build.sh --install
+   ./install.sh
    ```
 
-   `build.sh` creates the target directory if needed and warns when it is not
+   `install.sh` creates the target directory if needed and warns when it is not
    on your `PATH`. The binary is dynamically linked against ROS, so keep ROS
    sourced (step 1) in any shell where you run `bagwiz`.
 
-Optional flags for `./build.sh` (build type, parallelism, clean rebuild,
-install) are described in `./build.sh --help`. `CLI11`, `fmt`, and `rang` are
-pulled in automatically when you build; no extra install step for those.
+Optional flags for `./build.sh` (build type, parallelism, clean rebuild) are
+described in `./build.sh --help`; `./install.sh --help` covers the install
+destination. `CLI11`, `fmt`, and `rang` are pulled in automatically when you
+build; no extra install step for those.
 
 ## Subcommands
 

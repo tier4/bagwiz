@@ -3,10 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-# Default directory for --install. ~/.local/bin is on PATH for most
-# distributions' default login shells and needs no root privileges.
-BAGWIZ_INSTALL_DIR="${HOME}/.local/bin"
-
 # Default parallel job count: half of the CPU count from nproc(1) (logical
 # processors), minimum 1. nproc is in coreutils and avoids parsing lscpu.
 default_parallel_workers() {
@@ -40,14 +36,11 @@ Options:
       --unroll             Append -funroll-loops to release compile flags.
                            Helps tight inner loops but increases code size.
                            Ignored on debug.
-      --install            After a successful build, copy the bagwiz binary to
-                           the install directory (default: ${BAGWIZ_INSTALL_DIR}).
-      --install-dir <D>    Directory to install the binary into. Implies
-                           --install. Default: ${BAGWIZ_INSTALL_DIR}.
   -h, --help               Show this help message and exit.
 
 With no options, performs an incremental colcon build with build type release
-using GNU Make as the CMake generator.
+using GNU Make as the CMake generator. The built binary lives at
+install/bagwiz/bin/bagwiz.
 EOF
 }
 
@@ -65,7 +58,6 @@ builder="make"
 parallel_workers=""
 native=0
 unroll=0
-install_bin=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -126,25 +118,6 @@ while [[ $# -gt 0 ]]; do
         ;;
     --unroll)
         unroll=1
-        shift
-        ;;
-    --install)
-        install_bin=1
-        shift
-        ;;
-    --install-dir)
-        shift
-        if [[ $# -eq 0 ]]; then
-            echo "[build.sh] --install-dir requires a directory path." >&2
-            exit 1
-        fi
-        BAGWIZ_INSTALL_DIR="${1}"
-        install_bin=1
-        shift
-        ;;
-    --install-dir=*)
-        BAGWIZ_INSTALL_DIR="${1#*=}"
-        install_bin=1
         shift
         ;;
     --help | -h)
@@ -283,51 +256,4 @@ colcon build \
     --packages-up-to bagwiz \
     --cmake-args -G "${cmake_generator}" "-DCMAKE_BUILD_TYPE=${cmake_build_type}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "${extra_release_flag_args[@]}"
 
-# colcon's --symlink-install leaves install/bagwiz/bin/bagwiz as a symlink
-# into build/. Copy the dereferenced binary so the installed copy keeps
-# working after a clean rebuild removes build/.
-install_binary() {
-    local src="${SCRIPT_DIR}/install/bagwiz/bin/bagwiz"
-    if [[ ! -e ${src} ]]; then
-        echo "[build.sh] --install: expected binary not found at ${src}" >&2
-        exit 1
-    fi
-
-    # Create the destination directory if it does not exist yet. mkdir -p is
-    # idempotent, so re-installing into an existing directory is a no-op.
-    if [[ ! -d ${BAGWIZ_INSTALL_DIR} ]]; then
-        echo "[build.sh] Creating install directory ${BAGWIZ_INSTALL_DIR}"
-        mkdir -p "${BAGWIZ_INSTALL_DIR}"
-    fi
-
-    local dest="${BAGWIZ_INSTALL_DIR}/bagwiz"
-    echo "[build.sh] Installing bagwiz to ${dest}"
-    # install(1) dereferences the symlink and sets the executable mode in one
-    # step. -D also creates any leading directories as a safety net.
-    install -D -m 0755 "${src}" "${dest}"
-
-    case ":${PATH}:" in
-    *":${BAGWIZ_INSTALL_DIR}:"*)
-        echo "[build.sh] ${BAGWIZ_INSTALL_DIR} is on your PATH; run 'bagwiz' from anywhere."
-        ;;
-    *)
-        # Pick the startup file matching the current login shell so the
-        # suggested command lands somewhere the user actually sources.
-        local shell_rc
-        case "$(basename "${SHELL:-}")" in
-        zsh) shell_rc="${HOME}/.zshrc" ;;
-        bash) shell_rc="${HOME}/.bashrc" ;;
-        *) shell_rc="your shell startup file" ;;
-        esac
-        echo "[build.sh] Note: ${BAGWIZ_INSTALL_DIR} is NOT on your PATH, so 'bagwiz' will" >&2
-        echo "[build.sh]       not be found until you add it. To make it permanent, append" >&2
-        echo "[build.sh]       it to ${shell_rc}:" >&2
-        echo "[build.sh]           echo 'export PATH=\"${BAGWIZ_INSTALL_DIR}:\$PATH\"' >> ${shell_rc}" >&2
-        echo "[build.sh]       Then reload it (e.g. 'source ${shell_rc}') or open a new shell." >&2
-        ;;
-    esac
-}
-
-if [[ ${install_bin} -eq 1 ]]; then
-    install_binary
-fi
+echo "[build.sh] Done. The binary is at install/bagwiz/bin/bagwiz."

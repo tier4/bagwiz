@@ -137,7 +137,8 @@ govern source code or CLI behavior.
   sourcing the ROS 2 underlay (same prerequisite as in `README.md`
   Installation). The script wraps `colcon` with the expected workspace
   layout and flags; use `./build.sh --help` for clean rebuilds, build type,
-  parallelism, and installing the binary onto `PATH` (`--install`).
+  and parallelism. To copy the built binary onto `PATH`, run `./install.sh`
+  afterwards (`./install.sh --help` covers the install destination).
 - Prefer `./build.sh` over ad-hoc `colcon build` invocations when
   verifying changes, unless you are reproducing a CI or tooling issue that
   requires a different command line.
