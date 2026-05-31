@@ -2,7 +2,7 @@
 
 TF inspection on a ROS 2 rosbag.
 
-- [`tree`](#bagwiz-tf-tree) — merged static∪dynamic forest; edge tags `[S]`/`[D]`/`[B]` and optional TTY colors.
+- [`tree`](#bagwiz-tf-tree) — merged static∪dynamic forest; edge tags `[S]`/`[D]` and optional TTY colors.
 - [`static`](#bagwiz-tf-static) — resolve the rigid transform from `<from>` to `<to>` using only the bag's static TF tree; print translation/quaternion/RPY or JSON.
 
 ROS 1 `*.bag` inputs are not supported.
@@ -19,10 +19,10 @@ ends with `tf_static` are static; all other TF topics are dynamic (`/tf`-style).
 Collects every distinct parent→child pair from static topics (`*tf_static`) and
 from dynamic topics (everything else), then draws **one** merged forest: the
 union of those edges. Each branch line marks the child frame with a short
-tag (`[S]`, `[D]`, `[B]`) so the edge kind is identifiable without relying on
-color alone. On a color-capable TTY, the child name also uses bright blue,
-yellow, or magenta for static-only, dynamic-only, or both (respectively)—hues
-chosen to stay distinguishable under common color-vision deficiency, via
+tag (`[S]`, `[D]`) so the edge kind is identifiable without relying on
+color alone. On a color-capable TTY, the child name also uses bright blue or
+yellow for static or dynamic (respectively)—hues chosen to stay
+distinguishable under common color-vision deficiency, via
 [rang](https://github.com/agauniyal/rang).
 
 `├──` / `└──` / `│` box drawing is the default. Set `BAGWIZ_TF_TREE_ASCII=1` to
@@ -43,6 +43,13 @@ exits with an error:
 - A directed cycle exists among frames.
 - A self edge `F → F` appears.
 
+The static and dynamic edge sets must also be **disjoint**: bagwiz does not
+allow the same `parent → child` transform to be published on both a static
+(`*tf_static`) and a dynamic topic. If an edge appears in both classes the
+command exits with a `TF union: edge '…' -> '…' is published on both static and
+dynamic topics …` error. Consequently every branch is exactly one of static
+`[S]` or dynamic `[D]` — there is no "both" classification.
+
 ### Stdout layout
 
 <!-- AUTO-GENERATED: bagwiz tf tree print order (sync with `run_tree` in `src/commands/tf.cpp`) -->
@@ -52,8 +59,8 @@ exits with an error:
 1. **Dynamic TF topics** — `═` rule line, then an indented comma-separated list
    of dynamic TF topic names (or `(none)`).
 2. **Static TF topics** — same for `*tf_static`-style topics.
-3. **Legend** — `═` rule line, then one line: `static-only [S] · dynamic-only [D] · both [B]`
-   (with TTY colors on the three keywords when applicable).
+3. **Legend** — `═` rule line, then one line: `static [S] · dynamic [D]`
+   (with TTY colors on the two keywords when applicable).
 4. **TF tree (static ∪ dynamic edges)** — `═` rule line, then the merged forest
    (or `(none)` if there are no edges).
 
@@ -61,7 +68,7 @@ exits with an error:
 
 <!-- AUTO-GENERATED: `tf tree` / terminal styling (sync with `stdout_use_color`, `make_tree_glyphs` in `src/commands/tf.cpp`) -->
 
-- `NO_COLOR`: if set to any value, disables ANSI colors on `tf tree`. Tags `[S]`, `[D]`, and `[B]` after each child frame name are still printed.
+- `NO_COLOR`: if set to any value, disables ANSI colors on `tf tree`. Tags `[S]` and `[D]` after each child frame name are still printed.
 - `BAGWIZ_TF_TREE_ASCII`: if set to any value, uses ASCII branch glyphs instead of Unicode box drawing (see `make_tree_glyphs` in `src/commands/tf.cpp`).
 
 Colors are also omitted when stdout is not a TTY (same effect as `NO_COLOR` for styling).
@@ -84,11 +91,11 @@ bagwiz tf tree <input>
 - Topic names are grouped under two sections (`Dynamic TF topics` and
   `Static TF topics`), each with the same `═`-style rule line as the Legend
   and tree blocks; the list body is comma-separated, indented, and dim on TTY.
-- Tags `[S]` / `[D]` / `[B]` are always printed after each branch child
+- Tags `[S]` / `[D]` are always printed after each branch child
   frame name so edge kind is readable when color is absent (`NO_COLOR`), piped
   to a file, or hard to distinguish by hue.
 - When stdout is a TTY and `NO_COLOR` is unset, child names use the Legend hues
-  (blue / yellow / magenta); branch glyphs stay dim gray for readability.
+  (blue / yellow); branch glyphs stay dim gray for readability.
 - The Legend block is a `═` section (not a `#` comment): one rule line, then
   the single legend line of keywords and tags. See [Stdout layout](#stdout-layout)
   and [Environment](#environment).

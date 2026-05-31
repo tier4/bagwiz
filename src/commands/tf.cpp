@@ -212,7 +212,7 @@ std::string tf_format_tf_topics_section(
   return out;
 }
 
-enum class EdgeTfKind { kStaticOnly, kDynamicOnly, kBoth };
+enum class EdgeTfKind { kStaticOnly, kDynamicOnly };
 
 const char * tf_edge_kind_tag(EdgeTfKind kind)
 {
@@ -221,27 +221,20 @@ const char * tf_edge_kind_tag(EdgeTfKind kind)
       return " [S]";
     case EdgeTfKind::kDynamicOnly:
       return " [D]";
-    case EdgeTfKind::kBoth:
-      return " [B]";
   }
   return "";
 }
 
+// An edge in the merged forest is, by construction, in the static set or the
+// dynamic set. The two sets are validated as disjoint before rendering (bagwiz
+// does not allow the same transform on both topic classes), so static
+// membership alone decides the kind.
 EdgeTfKind classify_tf_edge(
-  const std::set<std::pair<std::string, std::string>> & static_edges,
-  const std::set<std::pair<std::string, std::string>> & dynamic_edges, const std::string & parent,
+  const std::set<std::pair<std::string, std::string>> & static_edges, const std::string & parent,
   const std::string & child)
 {
-  const std::pair<std::string, std::string> pr{parent, child};
-  const bool ins = static_edges.count(pr) != 0;
-  const bool ind = dynamic_edges.count(pr) != 0;
-  if (ins && ind) {
-    return EdgeTfKind::kBoth;
-  }
-  if (ins) {
-    return EdgeTfKind::kStaticOnly;
-  }
-  return EdgeTfKind::kDynamicOnly;
+  return static_edges.count({parent, child}) != 0 ? EdgeTfKind::kStaticOnly
+                                                  : EdgeTfKind::kDynamicOnly;
 }
 
 std::string tf_colored_tree_root_line(const std::string & text, bool use_color)
@@ -268,17 +261,13 @@ std::string tf_colored_tree_edge_line(
   rang::setControlMode(rang::control::Force);
   std::ostringstream oss;
   oss << rang::fg::gray << prefix << branch << rang::style::reset;
-  // Bright blue / yellow / magenta read apart under common color-vision deficiency (avoid green vs
-  // cyan).
+  // Bright blue / yellow read apart under common color-vision deficiency (avoid green vs cyan).
   switch (kind) {
     case EdgeTfKind::kStaticOnly:
       oss << rang::fgB::blue;
       break;
     case EdgeTfKind::kDynamicOnly:
       oss << rang::fgB::yellow;
-      break;
-    case EdgeTfKind::kBoth:
-      oss << rang::fgB::magenta;
       break;
   }
   oss << child << rang::style::reset;
@@ -293,18 +282,16 @@ std::string tf_format_tree_legend(bool use_color)
 {
   std::string out = tf_section_rule("Legend", use_color);
   if (!use_color) {
-    out += "  static-only [S] · dynamic-only [D] · both [B]\n\n";
+    out += "  static [S] · dynamic [D]\n\n";
     return out;
   }
   rang::setControlMode(rang::control::Force);
   std::ostringstream oss;
   oss << rang::fg::gray << "  " << rang::style::reset;
-  oss << rang::fgB::blue << "static-only" << rang::style::reset;
+  oss << rang::fgB::blue << "static" << rang::style::reset;
   oss << rang::fg::gray << " [S] · " << rang::style::reset;
-  oss << rang::fgB::yellow << "dynamic-only" << rang::style::reset;
-  oss << rang::fg::gray << " [D] · " << rang::style::reset;
-  oss << rang::fgB::magenta << "both" << rang::style::reset;
-  oss << rang::fg::gray << " [B]\n" << rang::style::reset;
+  oss << rang::fgB::yellow << "dynamic" << rang::style::reset;
+  oss << rang::fg::gray << " [D]\n" << rang::style::reset;
   out += oss.str();
   rang::setControlMode(rang::control::Auto);
   out += "\n";
@@ -370,14 +357,31 @@ std::optional<std::string> validate_union_edge_set(
   return std::nullopt;
 }
 
+// bagwiz does not allow the same parent→child transform to be published on both
+// a static (`*tf_static`) and a dynamic topic. Reject any edge that appears in
+// both classes so a "static ∩ dynamic" (formerly "both") edge can never reach
+// the tree renderer.
+std::optional<std::string> validate_static_dynamic_disjoint(
+  const std::set<std::pair<std::string, std::string>> & static_edges,
+  const std::set<std::pair<std::string, std::string>> & dynamic_edges)
+{
+  for (const auto & edge : static_edges) {
+    if (dynamic_edges.count(edge) != 0) {
+      return fmt::format(
+        "TF union: edge '{}' -> '{}' is published on both static and dynamic topics; bagwiz does "
+        "not allow the same transform on both topic classes.",
+        edge.first, edge.second);
+    }
+  }
+  return std::nullopt;
+}
+
 // Forest from an adjacency map (parent → sorted children) and sorted roots; each branch line
-// colors the child frame by whether that parent→child edge appeared in static-only, dynamic-only,
-// or both topic classes.
+// colors the child frame by whether that parent→child edge appeared on static or dynamic topics.
 std::string format_merged_parent_map_forest(
   const std::unordered_map<std::string, std::vector<std::string>> & parent_to_children,
   const std::vector<std::string> & roots_sorted,
-  const std::set<std::pair<std::string, std::string>> & static_edges,
-  const std::set<std::pair<std::string, std::string>> & dynamic_edges, const TreeGlyphs & g,
+  const std::set<std::pair<std::string, std::string>> & static_edges, const TreeGlyphs & g,
   bool use_color)
 {
   std::vector<std::string> lines;
@@ -395,7 +399,7 @@ std::string format_merged_parent_map_forest(
       const std::string & branch = last ? g.branch_end : g.branch_mid;
       const std::string next_prefix = prefix + (last ? "    " : g.vertical_pad);
       const auto & child = kids[i];
-      const EdgeTfKind kind = classify_tf_edge(static_edges, dynamic_edges, parent, child);
+      const EdgeTfKind kind = classify_tf_edge(static_edges, parent, child);
       if (visiting.count(child) != 0) {
         lines.push_back(
           tf_colored_tree_edge_line(prefix, branch, child, " (cycle)", use_color, kind));
@@ -488,7 +492,7 @@ std::string format_merged_union_forest(
   }
 
   return format_merged_parent_map_forest(
-    parent_to_children, roots, static_edges, dynamic_edges, glyphs, use_color);
+    parent_to_children, roots, static_edges, glyphs, use_color);
 }
 
 }  // namespace
@@ -498,7 +502,7 @@ std::string format_merged_union_forest(
 // Subcommands
 // -----------
 //   tree    Union of parent→child edges as one forest; each branch colors the child
-//           frame by static-only / dynamic-only / both (validated per-class and combined).
+//           frame by static / dynamic (validated per-class, combined, and disjoint).
 //   static  Resolve the rigid transform from <from> to <to> using only the bag's
 //           static TF tree, and print translation / quaternion / RPY (or JSON).
 class TfCommand : public Command
@@ -549,7 +553,7 @@ private:
   {
     auto * sub = app.add_subcommand(
       "tree",
-      "Validated union of parent→child edges (one tree; branches colored by static/dynamic/both)");
+      "Validated union of parent→child edges (one tree; branches colored by static/dynamic)");
     sub->add_option("input", tree_args_.input_path, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
@@ -607,6 +611,10 @@ private:
       return 1;
     }
     if (const auto err = validate_union_edge_set(dynamic_edges, "Dynamic")) {
+      BAGWIZ_LOG_ERROR(kLogger, "%s", err->c_str());
+      return 1;
+    }
+    if (const auto err = validate_static_dynamic_disjoint(static_edges, dynamic_edges)) {
       BAGWIZ_LOG_ERROR(kLogger, "%s", err->c_str());
       return 1;
     }
