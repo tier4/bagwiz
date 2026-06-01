@@ -25,9 +25,12 @@ jobs:
         shell: bash
         run: |
           # Run the same setup.sh users run, so CI exercises the real install
-          # path. apt-get update populates the package cache and rosdep update
-          # refreshes the rosdep database that setup.sh's `rosdep install`
+          # path. Source ROS first: setup.sh requires a sourced environment
+          # (ROS_DISTRO and AMENT_PREFIX_PATH), and the base image sets only
+          # ROS_DISTRO. apt-get update populates the package cache and rosdep
+          # update refreshes the rosdep database that setup.sh's `rosdep install`
           # reads to resolve the latest available dependency versions.
+          source /opt/ros/${{ matrix.distro }}/setup.bash
           apt-get update
           rosdep update --rosdistro ${{ matrix.distro }}
           ./src/bagwiz/setup.sh
