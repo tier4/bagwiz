@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        distro: [humble, jazzy]
+        distro: [humble, jazzy, lyrical]
     runs-on: ubuntu-latest
     container:
       image: ros:${{ matrix.distro }}-ros-base

@@ -9,9 +9,9 @@ spinning up a ROS graph.
 
 ## Installation
 
-bagwiz is **tested in CI on ROS 2 Humble and Jazzy**. Other ROS 2 distros
-are not exercised in CI but should work — bagwiz builds against whichever
-distro you have sourced.
+bagwiz is **tested in CI on ROS 2 Humble, Jazzy, and Lyrical**. Other ROS 2
+distros are not exercised in CI but should work — bagwiz builds against
+whichever distro you have sourced.
 
 You need ROS 2 installed (Ubuntu packages under `/opt/ros/<distro>` are
 typical). Install [rosdep](https://docs.ros.org/en/independent/api/rosdep/html/)
