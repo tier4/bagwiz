@@ -637,10 +637,10 @@ private:
     sub->add_option("input", tree_args_.input_path, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
-    sub
-      ->add_option(
-        "topics", tree_args_.topics, "tf2_msgs/msg/TFMessage topic(s) to merge and render")
-      ->required();
+    sub->add_option(
+      "topics", tree_args_.topics,
+      "tf2_msgs/msg/TFMessage topic(s) to merge and render; defaults to all TF "
+      "topics in the bag when omitted");
     sub->callback([this]() { selected_ = Subcommand::kTree; });
   }
 
@@ -649,7 +649,8 @@ private:
     const auto & args = tree_args_;
 
     // Dedup the requested topics, preserving first-occurrence order, and reject
-    // empty names (CLI11 marks the list required but accepts empty strings).
+    // empty names (CLI11 accepts empty strings even for an explicit list). An
+    // empty list is allowed and means "merge every TF topic in the bag".
     std::vector<std::string> requested;
     {
       std::unordered_set<std::string> seen;
@@ -662,10 +663,6 @@ private:
           requested.push_back(t);
         }
       }
-    }
-    if (requested.empty()) {
-      BAGWIZ_LOG_ERROR(kLogger, "At least one <topic> argument is required.");
-      return 1;
     }
 
     std::unique_ptr<io::BagReader> reader;
@@ -682,10 +679,21 @@ private:
       return 1;
     }
 
-    // Every requested topic must be a TFMessage topic that exists in the bag;
+    // With no explicit <topics>, default to every TF topic in the bag, sorted by
+    // name so the per-topic [N] legend ordering is deterministic. Otherwise every
+    // requested topic must be a TFMessage topic that exists in the bag;
     // resolve_requested_topics logs the unknown names + available TF topics.
     std::vector<TfTopic> selected;
-    if (!resolve_requested_topics(requested, tf_topics, selected)) {
+    if (requested.empty()) {
+      selected = tf_topics;
+      std::sort(selected.begin(), selected.end(), [](const TfTopic & a, const TfTopic & b) {
+        return a.name < b.name;
+      });
+      requested.reserve(selected.size());
+      for (const auto & t : selected) {
+        requested.push_back(t.name);
+      }
+    } else if (!resolve_requested_topics(requested, tf_topics, selected)) {
       return 1;
     }
 

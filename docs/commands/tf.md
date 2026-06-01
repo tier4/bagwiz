@@ -18,6 +18,11 @@ no longer classifies them as static vs dynamic. With two or more topics each
 topic's edges are drawn in a distinct color and tagged so their source is
 identifiable; with a single topic the tree is drawn plain.
 
+When `<topics>` is omitted, bagwiz defaults to **every** `tf2_msgs/msg/TFMessage`
+topic in the bag, sorted by name. The result is identical to listing all of them
+explicitly: two or more TF topics produce the colored, `[N]`-tagged merged view,
+and a bag with a single TF topic produces the plain tree.
+
 Each `<topic>` supports TAB completion: only `tf2_msgs/msg/TFMessage` topics in
 the input bag are offered as candidates, at every topic position (see
 [`bagwiz complete`](complete.md)). A topic repeated on the command line is
@@ -85,20 +90,23 @@ Colors are also omitted when stdout is not a TTY (same effect as `NO_COLOR` for 
 ### Usage
 
 ```text
-bagwiz tf tree <input> <topic> [<topic>...]
+bagwiz tf tree <input> [<topic>...]
 ```
 
 ### Positional arguments
 
-| Name     | Description                                                                              |
-| -------- | ---------------------------------------------------------------------------------------- |
-| `input`  | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`).                                |
-| `topics` | One or more `tf2_msgs/msg/TFMessage` topics to merge and render (e.g. `/tf /tf_static`). |
+| Name     | Description                                                                                                                                                |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input`  | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`).                                                                                                  |
+| `topics` | Zero or more `tf2_msgs/msg/TFMessage` topics to merge and render (e.g. `/tf /tf_static`). When omitted, all TF topics in the bag are used, sorted by name. |
 
 ### Behavior
 
 - One pass over the requested topics; their distinct parent→child edges are
   merged into one tree.
+- When no `<topic>` is given, every `tf2_msgs/msg/TFMessage` topic in the bag is
+  merged (sorted by name) — equivalent to listing them all explicitly, so the
+  same per-topic / merged validation applies.
 - Every `<topic>` must name a `tf2_msgs/msg/TFMessage` topic that exists in the
   bag. If any is missing or has another message type, the command exits with an
   error that lists the offending names and the bag's available TF topics on
@@ -109,6 +117,7 @@ bagwiz tf tree <input> <topic> [<topic>...]
 ### Examples
 
 ```bash
+bagwiz tf tree capture.mcap              # merge every TF topic in the bag
 bagwiz tf tree capture.mcap /tf
 bagwiz tf tree capture.mcap /tf /tf_static
 ```
@@ -143,10 +152,10 @@ the `Topics` legend; on a TTY each topic's edges are also colored):
 
 ### Exit status
 
-| Code | Meaning                                                                                                                                                                                                                                            |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | Tree written to stdout.                                                                                                                                                                                                                            |
-| `1`  | Bag could not be opened, has no TFMessage topic, a `<topic>` is missing or not a TFMessage topic, no transforms were decoded, a topic shares an edge with another, TF tree validation failed (per-topic or merged), decoder failure, or I/O error. |
+| Code | Meaning                                                                                                                                                                                                                                                  |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Tree written to stdout.                                                                                                                                                                                                                                  |
+| `1`  | Bag could not be opened, has no TFMessage topic, a given `<topic>` is missing or not a TFMessage topic, no transforms were decoded, a topic shares an edge with another, TF tree validation failed (per-topic or merged), decoder failure, or I/O error. |
 
 ---
 
