@@ -2,12 +2,13 @@
 # ros-source.sh - Ensure a ROS 2 environment is sourced for the calling script.
 #
 # This file is meant to be SOURCED, not executed. setup.sh and build.sh source
-# it and call ensure_ros_sourced to guarantee ROS_DISTRO is set before they run
-# rosdep / colcon. Because those scripts are executed (their own process), the
-# `source` performed here applies to the rest of that script's run.
+# it and call ensure_ros_sourced to guarantee a ROS 2 environment is sourced
+# before they run rosdep / colcon. Because those scripts are executed (their own
+# process), the `source` performed here applies to the rest of that script's run.
 #
 # Behavior of ensure_ros_sourced <tag>:
-#   - ROS already sourced (ROS_DISTRO set) -> report it and return.
+#   - ROS already sourced (ROS_DISTRO and AMENT_PREFIX_PATH set) -> report and
+#     return.
 #   - No ROS install found under ROS_INSTALL_ROOT (default /opt/ros) -> tell the
 #     user to install ROS 2 and exit 1 (no interactive install).
 #   - One or more distros installed -> list them and prompt for a choice on an
@@ -29,12 +30,21 @@ _discover_ros_distros() {
     done
 }
 
-# Ensure ROS_DISTRO is set, sourcing a user-selected distro if it is not.
+# Decide whether a ROS 2 environment is actually sourced. ROS_DISTRO alone is
+# not enough: it can be exported by a shell rc or a container's ENV without the
+# environment ever being sourced. AMENT_PREFIX_PATH is populated when a distro's
+# setup.bash is sourced and is absent when only ROS_DISTRO is set, so require
+# both before treating the environment as sourced.
+_ros_is_sourced() {
+    [[ -n ${ROS_DISTRO:-} && -n ${AMENT_PREFIX_PATH:-} ]]
+}
+
+# Ensure a ROS 2 environment is sourced, sourcing a user-selected distro if not.
 # Usage: ensure_ros_sourced <tag>   (tag is the caller name used in messages)
 ensure_ros_sourced() {
     local tag="$1"
 
-    if [[ -n ${ROS_DISTRO:-} ]]; then
+    if _ros_is_sourced; then
         echo "[${tag}] Using sourced ROS 2 distro: ${ROS_DISTRO}"
         return 0
     fi
@@ -84,8 +94,8 @@ ensure_ros_sourced() {
     source "${setup_file}"
     set -eu
 
-    if [[ -z ${ROS_DISTRO:-} ]]; then
-        echo "[${tag}] Sourcing ${setup_file} did not set ROS_DISTRO; aborting." >&2
+    if ! _ros_is_sourced; then
+        echo "[${tag}] Sourcing ${setup_file} did not establish a ROS 2 environment; aborting." >&2
         exit 1
     fi
     echo "[${tag}] Now using ROS 2 distro: ${ROS_DISTRO}"
