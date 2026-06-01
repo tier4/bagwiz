@@ -11,10 +11,12 @@
 #include "bagwiz/core/bag_copy.hpp"
 #include "bagwiz/core/bag_inplace.hpp"
 #include "bagwiz/core/bag_topic_plan.hpp"
+#include "bagwiz/core/cdr_walker/value.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/output_path.hpp"
 #include "bagwiz/core/tf_chain.hpp"
+#include "bagwiz/core/tf_merge_check.hpp"
 #include "bagwiz/core/tf_message_wire.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/core/trajectory.hpp"
@@ -164,46 +166,6 @@ struct InputEdge
   std::int64_t stamp_ns;
 };
 
-// Apply lookupTransform(--from, pose.header.frame_id): maps points from the
-// pose's reference frame into `--from`. Composes with the pose expressed in
-// the reference frame (same convention as multiplying tf2::Transform poses).
-geometry_msgs::msg::PoseStamped transform_pose_to_target_frame(
-  const geometry_msgs::msg::PoseStamped & in,
-  const geometry_msgs::msg::TransformStamped & tf_target_source)
-{
-  tf2::Quaternion q_body(
-    in.pose.orientation.x, in.pose.orientation.y, in.pose.orientation.z, in.pose.orientation.w);
-  tf2::Transform T_source_body;
-  T_source_body.setRotation(q_body);
-  T_source_body.setOrigin(tf2::Vector3(in.pose.position.x, in.pose.position.y, in.pose.position.z));
-
-  tf2::Quaternion qt(
-    tf_target_source.transform.rotation.x, tf_target_source.transform.rotation.y,
-    tf_target_source.transform.rotation.z, tf_target_source.transform.rotation.w);
-  tf2::Transform T_target_source;
-  T_target_source.setRotation(qt);
-  T_target_source.setOrigin(
-    tf2::Vector3(
-      tf_target_source.transform.translation.x, tf_target_source.transform.translation.y,
-      tf_target_source.transform.translation.z));
-
-  const tf2::Transform T_target_body = T_target_source * T_source_body;
-
-  geometry_msgs::msg::PoseStamped out;
-  out.header.stamp = in.header.stamp;
-  out.header.frame_id = tf_target_source.header.frame_id;
-  const tf2::Vector3 o = T_target_body.getOrigin();
-  out.pose.position.x = o.x();
-  out.pose.position.y = o.y();
-  out.pose.position.z = o.z();
-  const tf2::Quaternion qr = T_target_body.getRotation();
-  out.pose.orientation.x = qr.x();
-  out.pose.orientation.y = qr.y();
-  out.pose.orientation.z = qr.z();
-  out.pose.orientation.w = qr.w();
-  return out;
-}
-
 // Walk every TF topic once: insert each contained TransformStamped into
 // `buffer` (static or dynamic per topic name) and, for messages on
 // `input_topic`, record the (frame_id, child_frame_id, stamp_ns) so the
@@ -241,6 +203,11 @@ void load_tf_buffer_and_input_edges(
     decoder_by_topic.emplace(topic_info.name, std::move(open.decoder));
   }
 
+  // Refuse to merge TF that disagrees: a child given different parents by two
+  // topics, or a child declared by both a static and a dynamic topic. The
+  // checker is cross-topic only, so a single topic's own time series is fine.
+  core::TfMergeConflictChecker conflict_checker;
+
   io::RawMessage raw;
   while (reader->next(raw)) {
     auto it = decoder_by_topic.find(raw.topic->name);
@@ -256,6 +223,11 @@ void load_tf_buffer_and_input_edges(
     const bool is_static = is_static_by_topic.at(raw.topic->name);
     const bool is_input = (raw.topic->name == input_topic);
     for (const auto & t : transforms) {
+      if (
+        const auto conflict =
+          conflict_checker.add(t.header.frame_id, t.child_frame_id, raw.topic->name, is_static)) {
+        throw std::runtime_error("TF merge conflict: " + *conflict);
+      }
       buffer.setTransform(t, "bagwiz", is_static);
       if (is_input) {
         const std::int64_t ns = static_cast<std::int64_t>(t.header.stamp.sec) * 1'000'000'000LL +
@@ -266,19 +238,75 @@ void load_tf_buffer_and_input_edges(
   }
 }
 
+// One decoded sample from a pose / odometry input topic. `pose` carries the
+// tracked body expressed in its own header.frame_id. `child_frame` is the
+// Odometry child_frame_id (the body's frame name); it is empty for the pose
+// topics, which do not name their body.
+struct PoseSample
+{
+  geometry_msgs::msg::PoseStamped pose;
+  std::string child_frame;
+};
+
+// Decode one input message into a PoseSample according to `kind`. Returns
+// false (and sets `skip_reason`) when the payload does not match the expected
+// shape; the caller counts that as a skipped sample rather than aborting.
+bool decode_pose_sample(
+  PoseDumpKind kind, const core::cdr_walker::Value & value, PoseSample & out,
+  std::string & skip_reason)
+{
+  switch (kind) {
+    case PoseDumpKind::PoseStamped: {
+      const auto ps = core::extract_pose_stamped_message(value);
+      if (!ps.has_value()) {
+        skip_reason = "could not parse PoseStamped";
+        return false;
+      }
+      out.pose = *ps;
+      return true;
+    }
+    case PoseDumpKind::PoseWithCovarianceStamped: {
+      const auto pwc = core::extract_pose_with_covariance_stamped_message(value);
+      if (!pwc.has_value()) {
+        skip_reason = "could not parse PoseWithCovarianceStamped";
+        return false;
+      }
+      out.pose.header = pwc->header;
+      out.pose.pose = pwc->pose.pose;
+      return true;
+    }
+    case PoseDumpKind::Odometry: {
+      const auto odom = core::extract_odometry_message(value);
+      if (!odom.has_value()) {
+        skip_reason = "could not parse Odometry";
+        return false;
+      }
+      out.pose.header = odom->header;
+      out.pose.pose = odom->pose.pose;
+      out.child_frame = odom->child_frame_id;
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 // `bagwiz traj` is a command group for trajectory-shaped operations.
 //
 // Subcommands
 // -----------
-//   dump      Write TUM trajectory samples. For tf2_msgs/msg/TFMessage,
-//             --from/--to are required and sampling follows TF chain edges
-//             on the input topic. For PoseStamped / PoseWithCovarianceStamped,
-//             --from/--to are optional; --to is ignored; header.frame_id must
-//             be non-empty per message. For nav_msgs/msg/Odometry, header.frame_id
-//             and child_frame_id must be non-empty; --to optionally filters
-//             child_frame_id; --from selects an optional TF remap.
+//   dump      Write TUM trajectory samples. Every row is the pose of the
+//             tracked frame --to expressed in the reference frame --from,
+//             resolved through the bag's TF tree (static + dynamic). For
+//             tf2_msgs/msg/TFMessage, --from/--to are required and sampling
+//             follows TF chain edges on the input topic. For nav_msgs/msg/
+//             Odometry, both default per message (--from to header.frame_id,
+//             --to to child_frame_id); a --to that differs from child_frame_id
+//             traverses the TF tree (e.g. static base_link -> sensor). For
+//             PoseStamped / PoseWithCovarianceStamped, --to is the asserted
+//             body frame (the pose already encodes it, so it does not change
+//             the numbers); --from optionally re-expresses each pose via TF.
 class TrajCommand : public Command
 {
 public:
@@ -359,36 +387,44 @@ private:
       ->check(CLI::IsMember({kFormatTum}));
     sub->add_option(
       "--from", dump_args_.from_frame,
-      "Parent / reference frame id. Required or optional depending on the topic's "
-      "message type — see SUPPORTED TOPIC TYPES below.");
+      "Reference frame the trajectory is expressed in. Required for TF topics; "
+      "optional for pose / odometry (defaults to each message's header.frame_id). "
+      "See SUPPORTED TOPIC TYPES below.");
     sub->add_option(
       "--to", dump_args_.to_frame,
-      "Child / filter frame id. Required, optional, or ignored depending on the topic's "
-      "message type — see SUPPORTED TOPIC TYPES below.");
+      "Tracked frame whose trajectory is written. Required for TF topics; optional "
+      "for odometry (defaults to child_frame_id; a different value traverses the TF "
+      "tree). For pose topics it names the body the pose reports. See SUPPORTED "
+      "TOPIC TYPES below.");
     sub->add_flag(
       "--overwrite", dump_args_.overwrite,
       "Replace <output> if it already exists. Without this flag, an "
       "existing output path stops the run.");
     sub->footer(
       "SUPPORTED TOPIC TYPES:\n"
-      "  All TF lookups below are resolved automatically from the bag's static and\n"
-      "  dynamic TFs (/tf and *tf_static are picked up from the bag) — any multi-hop\n"
-      "  path through the TF tree is OK; --from / --to do not need to be directly\n"
-      "  connected.\n"
+      "  Every row is the pose of --to expressed in --from. All TF lookups are\n"
+      "  resolved automatically from the bag's static and dynamic TFs (/tf and\n"
+      "  *tf_static are picked up from the bag) — any multi-hop path through the TF\n"
+      "  tree is OK; --from / --to need not be directly connected.\n"
       "\n"
       "  tf2_msgs/msg/TFMessage  (e.g. /tf)\n"
-      "    --from  REQUIRED  parent frame of the trajectory\n"
-      "    --to    REQUIRED  child frame (the tracked frame)\n"
+      "    --from  REQUIRED  reference frame of the trajectory\n"
+      "    --to    REQUIRED  tracked frame\n"
+      "\n"
+      "  nav_msgs/msg/Odometry\n"
+      "    --from  optional  reference frame; defaults to header.frame_id (no remap)\n"
+      "    --to    optional  tracked frame; defaults to child_frame_id. A value that\n"
+      "                      differs from child_frame_id walks the TF tree from the\n"
+      "                      body to --to (e.g. static base_link -> sensor)\n"
       "\n"
       "  geometry_msgs/msg/PoseStamped\n"
       "  geometry_msgs/msg/PoseWithCovarianceStamped\n"
       "    --from  optional  re-express each pose into this frame via TF;\n"
       "                      when omitted, the pose's header.frame_id is kept as-is\n"
-      "    --to    ignored\n"
-      "\n"
-      "  nav_msgs/msg/Odometry\n"
-      "    --from  optional  same as PoseStamped above\n"
-      "    --to    optional  filter — keep only rows whose child_frame_id == <to>");
+      "    --to    optional  the body frame the pose reports. The pose already\n"
+      "                      encodes its body, so --to does not change the numbers\n"
+      "                      and never traverses further; use Odometry or /tf for\n"
+      "                      tracked-side TF traversal");
     sub->callback([this]() { selected_ = Subcommand::kDump; });
   }
 
@@ -541,20 +577,80 @@ private:
     return 0;
   }
 
+  // Build the full TF tree (every TFMessage topic in the bag: *tf_static as
+  // static, the rest as dynamic) into `tf_buffer`. Returns false (after
+  // logging) when a lookup is requested but the bag carries no TF to resolve
+  // it. A no-op (returns true) when `need_tree` is false.
+  bool build_dump_tf_tree(const DumpArgs & args, bool need_tree, tf2::BufferCore & tf_buffer)
+  {
+    if (!need_tree) {
+      return true;
+    }
+    std::unique_ptr<io::BagReader> reader;
+    try {
+      reader = io::open_read(args.input_path);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+      return false;
+    }
+    const auto tf_topics = collect_tf_topics(*reader);
+    if (tf_topics.empty()) {
+      BAGWIZ_LOG_ERROR(
+        kLogger,
+        "Topic '%s' needs a TF lookup (--from / --to) but the bag has no "
+        "tf2_msgs/msg/TFMessage topics to resolve it.",
+        args.topic.c_str());
+      return false;
+    }
+    std::vector<InputEdge> ignored_edges;
+    try {
+      // input_topic = "" : load every TF topic into the buffer, record no edges.
+      load_tf_buffer_and_input_edges(
+        args.input_path, tf_topics, std::string{}, tf_buffer, ignored_edges);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to load TF from the bag: %s", e.what());
+      return false;
+    }
+    return true;
+  }
+
+  // Unified pose / odometry trajectory dump.
+  //
+  // Each output row is the pose of the tracked frame `--to` expressed in the
+  // reference frame `--from`, composed as
+  //
+  //   T_from_to = T_from_header * T_header_body * T_body_to
+  //
+  // where T_header_body is the message's own pose and the two bridges come
+  // from the bag's TF tree (static + dynamic). Frames default per message:
+  // `--from` to header.frame_id (no remap) and, for Odometry, `--to` to
+  // child_frame_id (no tracked-side traversal). PoseStamped / PWC do not name
+  // their body, so `--to` is accepted as the asserted body frame but never
+  // traverses further (the pose already encodes the body); only `--from`
+  // re-expresses them.
   int run_dump_pose_topic(
     const DumpArgs & args, const io::TopicInfo & topic_info, PoseDumpKind kind)
   {
-    const bool warn_ignore_to =
-      (kind == PoseDumpKind::PoseStamped || kind == PoseDumpKind::PoseWithCovarianceStamped);
-    if (warn_ignore_to && args.to_frame.has_value() && !args.to_frame->empty()) {
-      BAGWIZ_LOG_WARN(kLogger, "'--to' is ignored for topic type '%s'.", topic_info.type.c_str());
-    }
+    const bool is_odom = (kind == PoseDumpKind::Odometry);
+
     if (args.from_frame.has_value() && args.from_frame->empty()) {
       BAGWIZ_LOG_ERROR(kLogger, "When set, --from must be a non-empty frame id.");
       return 1;
     }
+    if (args.to_frame.has_value() && args.to_frame->empty()) {
+      BAGWIZ_LOG_ERROR(kLogger, "When set, --to must be a non-empty frame id.");
+      return 1;
+    }
 
-    const bool remap = args.from_frame.has_value() && !args.from_frame->empty();
+    // A TF lookup can be non-identity only when --from is set (reference-side
+    // bridge) or Odometry has --to set (tracked-side bridge). Pure raw dumps
+    // (no flags) need no TF tree at all.
+    const bool need_tree = args.from_frame.has_value() || (is_odom && args.to_frame.has_value());
+
+    tf2::BufferCore tf_buffer{std::chrono::hours(24 * 365)};
+    if (!build_dump_tf_tree(args, need_tree, tf_buffer)) {
+      return 1;
+    }
 
     std::unique_ptr<io::BagReader> reader;
     try {
@@ -563,170 +659,97 @@ private:
       BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
       return 1;
     }
-
-    std::vector<TfTopic> tf_topics;
-    if (remap) {
-      tf_topics = collect_tf_topics(*reader);
-      if (tf_topics.empty()) {
-        BAGWIZ_LOG_ERROR(
-          kLogger, "No tf2_msgs/msg/TFMessage topics in the bag; cannot remap poses with --from.");
-        return 1;
-      }
-    }
-
     io::ReadFilter filter;
     filter.topics.push_back(args.topic);
-    if (remap) {
-      for (const auto & t : tf_topics) {
-        filter.topics.push_back(t.name);
-      }
-    }
-
-    reader = io::open_read(args.input_path);
     reader->set_filter(filter);
 
-    std::unordered_map<std::string, bool> is_static_by_topic;
-    for (const auto & t : tf_topics) {
-      is_static_by_topic[t.name] = t.is_static;
-    }
-
-    std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> decoder_by_topic;
+    std::unique_ptr<core::decoder::Decoder> decoder;
     for (const auto & ti : reader->topics()) {
-      if (ti.name == args.topic) {
-        auto open = core::decoder::open_decoder(ti);
-        if (!open.ok()) {
-          BAGWIZ_LOG_ERROR(
-            kLogger, "Could not open decoder for topic '%s': %s", ti.name.c_str(),
-            open.error.c_str());
-          return 1;
-        }
-        decoder_by_topic.emplace(ti.name, std::move(open.decoder));
-        continue;
-      }
-      if (!remap) {
-        continue;
-      }
-      if (ti.type != kTfMessageType) {
-        continue;
-      }
-      if (is_static_by_topic.find(ti.name) == is_static_by_topic.end()) {
+      if (ti.name != args.topic) {
         continue;
       }
       auto open = core::decoder::open_decoder(ti);
       if (!open.ok()) {
         BAGWIZ_LOG_ERROR(
-          kLogger, "Could not open decoder for TF topic '%s': %s", ti.name.c_str(),
+          kLogger, "Could not open decoder for topic '%s': %s", ti.name.c_str(),
           open.error.c_str());
         return 1;
       }
-      decoder_by_topic.emplace(ti.name, std::move(open.decoder));
+      decoder = std::move(open.decoder);
+      break;
     }
-
-    if (decoder_by_topic.find(args.topic) == decoder_by_topic.end()) {
+    if (!decoder) {
       BAGWIZ_LOG_ERROR(kLogger, "Could not open decoder for topic '%s'.", args.topic.c_str());
       return 1;
     }
 
-    tf2::BufferCore tf_buffer{std::chrono::hours(24 * 365)};
     std::vector<core::TrajectoryPose> poses;
     std::int64_t skipped = 0;
     std::string last_skip_reason;
 
     io::RawMessage raw;
     while (reader->next(raw)) {
-      auto it = decoder_by_topic.find(raw.topic->name);
-      if (it == decoder_by_topic.end()) {
+      if (raw.topic->name != args.topic) {
         continue;
       }
-      const auto decoded = it->second->decode(raw.payload);
+      const auto decoded = decoder->decode(raw.payload);
       if (!decoded.ok()) {
         BAGWIZ_LOG_ERROR(
           kLogger, "Failed to decode message on '%s': %s", raw.topic->name.c_str(),
           decoded.error.c_str());
         return 1;
       }
-      if (raw.topic->name != args.topic) {
-        const auto transforms = core::extract_tf_message(*decoded.value);
-        const bool is_static = is_static_by_topic.at(raw.topic->name);
-        for (const auto & t : transforms) {
-          tf_buffer.setTransform(t, "bagwiz", is_static);
-        }
+
+      PoseSample sample;
+      if (!decode_pose_sample(kind, *decoded.value, sample, last_skip_reason)) {
+        ++skipped;
         continue;
       }
-
-      geometry_msgs::msg::PoseStamped cur;
-      switch (kind) {
-        case PoseDumpKind::PoseStamped: {
-          const auto ps = core::extract_pose_stamped_message(*decoded.value);
-          if (!ps.has_value()) {
-            ++skipped;
-            last_skip_reason = "could not parse PoseStamped";
-            continue;
-          }
-          cur = *ps;
-        } break;
-        case PoseDumpKind::PoseWithCovarianceStamped: {
-          const auto pwc = core::extract_pose_with_covariance_stamped_message(*decoded.value);
-          if (!pwc.has_value()) {
-            ++skipped;
-            last_skip_reason = "could not parse PoseWithCovarianceStamped";
-            continue;
-          }
-          cur.header = pwc->header;
-          cur.pose = pwc->pose.pose;
-        } break;
-        case PoseDumpKind::Odometry: {
-          const auto odom = core::extract_odometry_message(*decoded.value);
-          if (!odom.has_value()) {
-            ++skipped;
-            last_skip_reason = "could not parse Odometry";
-            continue;
-          }
-          if (odom->header.frame_id.empty() || odom->child_frame_id.empty()) {
-            BAGWIZ_LOG_ERROR(
-              kLogger,
-              "Topic '%s': nav_msgs/msg/Odometry requires non-empty header.frame_id and "
-              "child_frame_id.",
-              args.topic.c_str());
-            return 1;
-          }
-          if (
-            args.to_frame.has_value() && !args.to_frame->empty() &&
-            odom->child_frame_id != *args.to_frame) {
-            continue;
-          }
-          cur.header = odom->header;
-          cur.pose = odom->pose.pose;
-        } break;
-      }
-
-      if (cur.header.frame_id.empty()) {
+      if (sample.pose.header.frame_id.empty()) {
         BAGWIZ_LOG_ERROR(
           kLogger, "Topic '%s': message has empty header.frame_id (required for %s).",
           args.topic.c_str(), topic_info.type.c_str());
         return 1;
       }
+      if (is_odom && sample.child_frame.empty()) {
+        BAGWIZ_LOG_ERROR(
+          kLogger, "Topic '%s': nav_msgs/msg/Odometry requires a non-empty child_frame_id.",
+          args.topic.c_str());
+        return 1;
+      }
 
-      const std::int64_t ns = static_cast<std::int64_t>(cur.header.stamp.sec) * 1'000'000'000LL +
-                              static_cast<std::int64_t>(cur.header.stamp.nanosec);
+      const std::string & header_frame = sample.pose.header.frame_id;
+      const std::string from_frame = args.from_frame.has_value() ? *args.from_frame : header_frame;
+      const std::int64_t ns =
+        static_cast<std::int64_t>(sample.pose.header.stamp.sec) * 1'000'000'000LL +
+        static_cast<std::int64_t>(sample.pose.header.stamp.nanosec);
+      const tf2::TimePoint tp{std::chrono::nanoseconds(ns)};
 
       try {
-        geometry_msgs::msg::PoseStamped out_pose = cur;
-        if (remap) {
-          const tf2::TimePoint tp{std::chrono::nanoseconds(ns)};
-          const auto tf = tf_buffer.lookupTransform(*args.from_frame, cur.header.frame_id, tp);
-          out_pose = transform_pose_to_target_frame(cur, tf);
+        // Reference-side bridge: re-express the result into --from. Identity
+        // (no lookup) when --from is absent or already equals header.frame_id.
+        std::optional<geometry_msgs::msg::Transform> from_header;
+        if (from_frame != header_frame) {
+          from_header = tf_buffer.lookupTransform(from_frame, header_frame, tp).transform;
+        }
+        // Tracked-side bridge (Odometry only): walk body/child -> --to via the
+        // TF tree (e.g. base_link -> sensor through static TF). Identity when
+        // --to is absent or already equals the body frame.
+        std::optional<geometry_msgs::msg::Transform> body_to;
+        if (is_odom && args.to_frame.has_value() && *args.to_frame != sample.child_frame) {
+          body_to = tf_buffer.lookupTransform(sample.child_frame, *args.to_frame, tp).transform;
         }
 
+        const auto out_pose = core::compose_trajectory_pose(from_header, sample.pose.pose, body_to);
         core::TrajectoryPose p;
         p.timestamp_ns = ns;
-        p.tx = out_pose.pose.position.x;
-        p.ty = out_pose.pose.position.y;
-        p.tz = out_pose.pose.position.z;
-        p.qx = out_pose.pose.orientation.x;
-        p.qy = out_pose.pose.orientation.y;
-        p.qz = out_pose.pose.orientation.z;
-        p.qw = out_pose.pose.orientation.w;
+        p.tx = out_pose.position.x;
+        p.ty = out_pose.position.y;
+        p.tz = out_pose.position.z;
+        p.qx = out_pose.orientation.x;
+        p.qy = out_pose.orientation.y;
+        p.qz = out_pose.orientation.z;
+        p.qw = out_pose.orientation.w;
         poses.push_back(p);
       } catch (const tf2::TransformException & e) {
         ++skipped;

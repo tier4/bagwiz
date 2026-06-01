@@ -8,9 +8,13 @@
 
 #include "bagwiz/core/trajectory.hpp"
 
+#include <geometry_msgs/msg/pose.hpp>
+#include <geometry_msgs/msg/transform.hpp>
+
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -18,10 +22,42 @@
 namespace
 {
 
+using bagwiz::core::compose_trajectory_pose;
 using bagwiz::core::pose_to_transform_stamped;
 using bagwiz::core::read_tum;
 using bagwiz::core::TrajectoryPose;
 using bagwiz::core::write_tum;
+
+// 90-degree rotation about +Z as a unit quaternion (qz, qw); the rest zero.
+constexpr double kSinPiOver4 = 0.7071067811865476;
+
+geometry_msgs::msg::Transform make_transform(
+  double x, double y, double z, double qx, double qy, double qz, double qw)
+{
+  geometry_msgs::msg::Transform t;
+  t.translation.x = x;
+  t.translation.y = y;
+  t.translation.z = z;
+  t.rotation.x = qx;
+  t.rotation.y = qy;
+  t.rotation.z = qz;
+  t.rotation.w = qw;
+  return t;
+}
+
+geometry_msgs::msg::Pose make_pose(
+  double x, double y, double z, double qx, double qy, double qz, double qw)
+{
+  geometry_msgs::msg::Pose p;
+  p.position.x = x;
+  p.position.y = y;
+  p.position.z = z;
+  p.orientation.x = qx;
+  p.orientation.y = qy;
+  p.orientation.z = qz;
+  p.orientation.w = qw;
+  return p;
+}
 
 TEST(WriteTum, EmitsExpectedLineLayout)
 {
@@ -226,6 +262,63 @@ TEST(PoseToTransformStamped, HandlesYear2026EpochWithoutDrift)
   const auto ts = pose_to_transform_stamped(p, "a", "b");
   EXPECT_EQ(ts.header.stamp.sec, 1773211197);
   EXPECT_EQ(ts.header.stamp.nanosec, 937418279U);
+}
+
+TEST(ComposeTrajectoryPose, NoBridgesReturnsPoseVerbatim)
+{
+  // A deliberately non-unit quaternion: the verbatim path must NOT renormalise.
+  const auto body = make_pose(1.25, -2.5, 3.75, 0.0, 0.0, 0.3, 0.8);
+  const auto out = compose_trajectory_pose(std::nullopt, body, std::nullopt);
+  EXPECT_DOUBLE_EQ(out.position.x, 1.25);
+  EXPECT_DOUBLE_EQ(out.position.y, -2.5);
+  EXPECT_DOUBLE_EQ(out.position.z, 3.75);
+  EXPECT_DOUBLE_EQ(out.orientation.x, 0.0);
+  EXPECT_DOUBLE_EQ(out.orientation.y, 0.0);
+  EXPECT_DOUBLE_EQ(out.orientation.z, 0.3);
+  EXPECT_DOUBLE_EQ(out.orientation.w, 0.8);
+}
+
+TEST(ComposeTrajectoryPose, ReferenceBridgeRotatesIntoFromFrame)
+{
+  // from_header = 90 deg about Z; body pose at (1, 0, 0) with identity rotation.
+  // T_from_to = R_z(90) * pose -> position rotates to (0, 1, 0).
+  const auto from_header = make_transform(0.0, 0.0, 0.0, 0.0, 0.0, kSinPiOver4, kSinPiOver4);
+  const auto body = make_pose(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+  const auto out = compose_trajectory_pose(from_header, body, std::nullopt);
+  EXPECT_NEAR(out.position.x, 0.0, 1e-9);
+  EXPECT_NEAR(out.position.y, 1.0, 1e-9);
+  EXPECT_NEAR(out.position.z, 0.0, 1e-9);
+  EXPECT_NEAR(out.orientation.z, kSinPiOver4, 1e-9);
+  EXPECT_NEAR(out.orientation.w, kSinPiOver4, 1e-9);
+}
+
+TEST(ComposeTrajectoryPose, TrackedBridgeAppliesInBodyFrame)
+{
+  // body pose = pure 90 deg about Z at the origin; body_to = +1 along X in the
+  // body frame. The tracked offset must be applied in the body frame (right
+  // multiply): R_z(90) * (1, 0, 0) -> (0, 1, 0).
+  const auto body = make_pose(0.0, 0.0, 0.0, 0.0, 0.0, kSinPiOver4, kSinPiOver4);
+  const auto body_to = make_transform(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+  const auto out = compose_trajectory_pose(std::nullopt, body, body_to);
+  EXPECT_NEAR(out.position.x, 0.0, 1e-9);
+  EXPECT_NEAR(out.position.y, 1.0, 1e-9);
+  EXPECT_NEAR(out.position.z, 0.0, 1e-9);
+  EXPECT_NEAR(out.orientation.z, kSinPiOver4, 1e-9);
+  EXPECT_NEAR(out.orientation.w, kSinPiOver4, 1e-9);
+}
+
+TEST(ComposeTrajectoryPose, BothBridgesComposeLeftAndRight)
+{
+  // from_header translates +10 in Y; body at (2, 0, 0) identity; body_to
+  // translates +3 in Z (identity rotations throughout, so positions add).
+  const auto from_header = make_transform(0.0, 10.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+  const auto body = make_pose(2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+  const auto body_to = make_transform(0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 1.0);
+  const auto out = compose_trajectory_pose(from_header, body, body_to);
+  EXPECT_NEAR(out.position.x, 2.0, 1e-9);
+  EXPECT_NEAR(out.position.y, 10.0, 1e-9);
+  EXPECT_NEAR(out.position.z, 3.0, 1e-9);
+  EXPECT_NEAR(out.orientation.w, 1.0, 1e-9);
 }
 
 }  // namespace

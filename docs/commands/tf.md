@@ -2,7 +2,7 @@
 
 TF inspection on a ROS 2 rosbag.
 
-- [`tree`](#bagwiz-tf-tree) — merge one or more `tf2_msgs/msg/TFMessage` topics into one TF frame tree, colored per topic.
+- [`tree`](#bagwiz-tf-tree) — merge one or more `tf2_msgs/msg/TFMessage` topics into one TF frame tree, colored by static vs dynamic (`static` / `dynamic` selectors supported).
 - [`static`](#bagwiz-tf-static) — resolve the rigid transform from `<from>` to `<to>` using only the bag's static TF tree; print translation/quaternion/RPY or JSON.
 - [`walk`](#bagwiz-tf-walk) — merge every TF topic into one buffer and step interactively through the times the merged TF changed, showing the `<from>` → `<to>` transform at each.
 
@@ -13,69 +13,75 @@ ROS 1 `*.bag` inputs are not supported.
 ## `bagwiz tf tree`
 
 Merges one or more `tf2_msgs/msg/TFMessage` topics (`<topics>...`) into a single
-TF frame tree built from the union of their distinct parent→child edges. Any TF
-topic works — a dynamic `/tf`-style topic or a static `*tf_static` one; bagwiz
-no longer classifies them as static vs dynamic. With two or more topics each
-topic's edges are drawn in a distinct color and tagged so their source is
-identifiable; with a single topic the tree is drawn plain.
+TF frame tree built from the union of their distinct parent→child edges. In the
+merged tree each edge is colored by whether it came from a **static**
+(`*tf_static`) or a **dynamic** topic. When the tree contains both kinds, a
+legend is printed and each child frame is colored and tagged `[S]` (static) or
+`[D]` (dynamic); when only one kind is present the tree is drawn plain and the
+header names the category, e.g. `═══ TF tree (static) ═══`.
 
-When `<topics>` is omitted, bagwiz defaults to **every** `tf2_msgs/msg/TFMessage`
-topic in the bag, sorted by name. The result is identical to listing all of them
-explicitly: two or more TF topics produce the colored, `[N]`-tagged merged view,
-and a bag with a single TF topic produces the plain tree.
+`<topics>` accepts two reserved selectors in addition to literal topic names:
 
-Each `<topic>` supports TAB completion: only `tf2_msgs/msg/TFMessage` topics in
-the input bag are offered as candidates, at every topic position (see
+- `static` — expands to **every** `*tf_static` topic in the bag.
+- `dynamic` — expands to every non-static TF topic in the bag.
+
+They compose with each other and with literal names. For example
+`tf tree bag dynamic /extra_tf` merges all dynamic TF topics plus `/extra_tf`,
+and `tf tree bag static` shows the merged static tree alone. (ROS topic names
+start with `/`, so the bare words `static` / `dynamic` never collide with a real
+topic.) When `<topics>` is omitted, bagwiz defaults to **every**
+`tf2_msgs/msg/TFMessage` topic in the bag.
+
+Literal `<topic>` names support TAB completion: only `tf2_msgs/msg/TFMessage`
+topics in the input bag are offered as candidates (see
 [`bagwiz complete`](complete.md)). A topic repeated on the command line is
 treated once.
 
 ### Validation
 
-The command exits with an error (and prints nothing) when the topics cannot
-form one consistent tree. Specifically:
+The command exits with an error (and prints nothing) when the selected topics
+cannot form one consistent tree. Specifically:
 
-- **Per topic** — each topic's own edges must form a valid forest. It is an
-  error if, within a single topic, the same child lists two different parents,
-  both `A → B` and `B → A` appear, a directed cycle exists, or a self edge
-  `F → F` appears.
-- **Across topics** — no edge may be defined on more than one topic. If two
-  topics publish the same `parent → child` transform the command reports which
-  two topics share it.
-- **Merged** — the union of all topics' edges must also form a valid forest.
-  This catches conflicts that appear only after merging, e.g. two topics each
-  giving the same child a different parent.
+- **Merge conflict** — the merge is rejected when the same `child_frame_id` is
+  given a different parent by two different topics, or when a frame is declared
+  by both a static and a dynamic topic. This is consistent with the merge-and-
+  detect-conflicts behavior of [`bagwiz tf static`](#bagwiz-tf-static) and
+  [`bagwiz traj dump`](traj.md). Two topics declaring the **same** edge (same
+  parent, same class) are fine.
+- **Forest** — the union of all selected edges must form a valid forest: no
+  frame may have two parents, both `A → B` and `B → A` cannot appear, no
+  directed cycle, and no self edge `F → F`.
 
 ### Stdout layout
 
 <!-- AUTO-GENERATED: bagwiz tf tree print order (sync with `run_tree` in `src/commands/tf.cpp`) -->
 
-With a **single** topic, `tf tree` writes:
+When the merged tree is a **single category** (only static, or only dynamic),
+`tf tree` writes:
 
-1. A `═` rule line naming the topic: `═══ TF tree (<topic>) ═══`.
+1. A `═` rule naming the category: `═══ TF tree (static) ═══` or
+   `═══ TF tree (dynamic) ═══`.
 2. The forest: one root frame per tree (each `●`-prefixed, bold on a TTY),
    followed by its descendants on `├──` / `└──` branch lines (plain names).
 
-With **two or more** topics it writes:
+When it contains **both** static and dynamic edges it writes:
 
-1. A `═══ Topics ═══` rule, then one `[N] <topic>` line per topic (in the
-   order given on the command line), each colored with that topic's color on a
-   TTY.
+1. A `═══ Legend ═══` rule, then a `[D] dynamic` line and a `[S] static` line,
+   each colored with that category's color on a TTY.
 2. A `═══ TF tree ═══` rule, then the merged forest. Each child frame carries a
-   `[N]` tag identifying the topic that defined its parent→child edge, and on a
-   TTY the child name is drawn in that topic's color.
+   `[S]` / `[D]` tag for its edge's category, and on a TTY the child name is
+   drawn in that category's color.
 
 ### Terminal styling
 
 <!-- AUTO-GENERATED: `tf tree` / terminal styling (sync with `stdout_use_color`, `make_tree_glyphs` in `src/commands/tf.cpp`) -->
 
 - On a color-capable TTY (and when `NO_COLOR` is unset) section headers and root
-  lines are bold and branch glyphs are dim gray. For multiple topics each
-  topic is assigned a color from a fixed palette (bright blue, yellow, magenta,
-  cyan, green, red, then wrapping) and its edges' child names use that color;
-  for a single topic child names use the terminal's default color.
-- The `[N]` tags always print for multiple topics, so the source topic stays
-  identifiable under `NO_COLOR`, when piped to a file, or when colors repeat
-  past the palette size.
+  lines are bold and branch glyphs are dim gray. In a mixed tree, dynamic edges
+  are bright cyan and static edges bright yellow; a single-category tree uses
+  the terminal's default color.
+- The `[S]` / `[D]` tags always print in a mixed tree, so the category stays
+  identifiable under `NO_COLOR` or when piped to a file.
 - `├──` / `└──` / `│` box drawing is the default. Set `BAGWIZ_TF_TREE_ASCII=1`
   to use `|--` / `` `-- `` / `|` instead (see [Environment](#environment)).
 
@@ -83,7 +89,7 @@ With **two or more** topics it writes:
 
 <!-- AUTO-GENERATED: `tf tree` / terminal styling (sync with `stdout_use_color`, `make_tree_glyphs` in `src/commands/tf.cpp`) -->
 
-- `NO_COLOR`: if set to any value, disables ANSI colors on `tf tree`. The `[N]` topic tags are still printed.
+- `NO_COLOR`: if set to any value, disables ANSI colors on `tf tree`. The `[S]` / `[D]` category tags are still printed.
 - `BAGWIZ_TF_TREE_ASCII`: if set to any value, uses ASCII branch glyphs instead of Unicode box drawing (see `make_tree_glyphs` in `src/commands/tf.cpp`).
 
 Colors are also omitted when stdout is not a TTY (same effect as `NO_COLOR` for styling).
@@ -91,72 +97,71 @@ Colors are also omitted when stdout is not a TTY (same effect as `NO_COLOR` for 
 ### Usage
 
 ```text
-bagwiz tf tree <input> [<topic>...]
+bagwiz tf tree <input> [<topic-or-selector>...]
 ```
 
 ### Positional arguments
 
-| Name     | Description                                                                                                                                                |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `input`  | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`).                                                                                                  |
-| `topics` | Zero or more `tf2_msgs/msg/TFMessage` topics to merge and render (e.g. `/tf /tf_static`). When omitted, all TF topics in the bag are used, sorted by name. |
+| Name     | Description                                                                                                                                                                                       |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input`  | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`).                                                                                                                                         |
+| `topics` | Zero or more `tf2_msgs/msg/TFMessage` topics and/or the selectors `static` / `dynamic` (e.g. `/tf /tf_static`, `static`, `dynamic /extra_tf`). When omitted, all TF topics in the bag are merged. |
 
 ### Behavior
 
-- One pass over the requested topics; their distinct parent→child edges are
-  merged into one tree.
+- One pass over the selected topics; their distinct parent→child edges are
+  merged into one tree, each tagged static or dynamic by its source.
+- `static` / `dynamic` expand to all static / dynamic TF topics; any other token
+  must name a `tf2_msgs/msg/TFMessage` topic that exists in the bag. An unknown
+  literal exits with an error listing the offending names and the bag's
+  available TF topics on stderr.
 - When no `<topic>` is given, every `tf2_msgs/msg/TFMessage` topic in the bag is
-  merged (sorted by name) — equivalent to listing them all explicitly, so the
-  same per-topic / merged validation applies.
-- Every `<topic>` must name a `tf2_msgs/msg/TFMessage` topic that exists in the
-  bag. If any is missing or has another message type, the command exits with an
-  error that lists the offending names and the bag's available TF topics on
-  stderr.
+  merged.
 - Tree glyphs default to Unicode; `BAGWIZ_TF_TREE_ASCII=1` forces ASCII branch
   characters (see [Environment](#environment)).
 
 ### Examples
 
 ```bash
-bagwiz tf tree capture.mcap              # merge every TF topic in the bag
-bagwiz tf tree capture.mcap /tf
-bagwiz tf tree capture.mcap /tf /tf_static
+bagwiz tf tree capture.mcap                  # merge every TF topic in the bag
+bagwiz tf tree capture.mcap static           # only the static (*tf_static) tree
+bagwiz tf tree capture.mcap dynamic          # only the dynamic tree
+bagwiz tf tree capture.mcap dynamic /extra_tf  # all dynamic topics + /extra_tf
+bagwiz tf tree capture.mcap /tf /tf_static   # explicit merge
 ```
 
-Single-topic output (plain):
+Single-category output, e.g. `tf tree capture.mcap dynamic` (plain):
 
 ```text
-═══ TF tree (/tf) ═══
+═══ TF tree (dynamic) ═══
 ● map
 └── odom
     └── base_link
-        ├── camera
-        └── lidar
 ```
 
-Merged output for `tf tree capture.mcap /tf /tf_static` (the `[N]` tags map to
-the `Topics` legend; on a TTY each topic's edges are also colored):
+Mixed output for `tf tree capture.mcap /tf /tf_static`, where `map → base_link`
+is dynamic and the sensor mounts are static (on a TTY the names are also colored
+cyan/yellow):
 
 ```text
-═══ Topics ═══
-  [1] /tf
-  [2] /tf_static
+═══ Legend ═══
+  [D] dynamic
+  [S] static
 
 ═══ TF tree ═══
 ● map
-└── odom [1]
-    └── base_link [1]
-        ├── camera [1]
-        ├── imu [2]
-        └── lidar [1]
+└── base_link [D]
+    ├── camera [S]
+    ├── imu [S]
+    └── lidar [S]
 ```
 
 ### Exit status
 
-| Code | Meaning                                                                                                                                                                                                                                                  |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | Tree written to stdout.                                                                                                                                                                                                                                  |
-| `1`  | Bag could not be opened, has no TFMessage topic, a given `<topic>` is missing or not a TFMessage topic, no transforms were decoded, a topic shares an edge with another, TF tree validation failed (per-topic or merged), decoder failure, or I/O error. |
+| Code | Meaning                                                                                                                                                                                                                                         |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Tree written to stdout.                                                                                                                                                                                                                         |
+| `1`  | Bag could not be opened, has no TFMessage topic, a token is neither a TFMessage topic nor a selector, the selectors matched nothing, no transforms were decoded, a TF merge conflict, TF tree validation failed, decoder failure, or I/O error. |
 
 ---
 
@@ -167,6 +172,13 @@ bag's static TF (topics whose name ends with `tf_static`). Dynamic `/tf` topics
 are intentionally ignored. The transform is composed across the whole static
 chain, so `<from>` and `<to>` need not be directly adjacent — any two frames
 connected through the static tree work.
+
+When the bag has **several** static topics (e.g. `/tf_static` and
+`/sensing/tf_static`), they are all merged into one static tree. The merge is
+rejected if the topics disagree: the command exits with an error when the same
+`child_frame_id` is given a different parent by two different topics. Two topics
+declaring the **same** edge (same parent) are fine. This matches the merge-and-
+detect-conflicts behavior of [`bagwiz traj dump`](traj.md).
 
 ### Direction convention
 
@@ -258,10 +270,10 @@ bagwiz tf static capture.mcap base_link lidar --json
 
 ### Exit status
 
-| Code | Meaning                                                                                                                                                                                                     |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | Transform written to stdout.                                                                                                                                                                                |
-| `1`  | Bag could not be opened, no static TF topic, decode failure, the frames are not connected through the static tree, or I/O error. When a frame is unknown, the available static frames are listed on stderr. |
+| Code | Meaning                                                                                                                                                                                                                                                                                |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Transform written to stdout.                                                                                                                                                                                                                                                           |
+| `1`  | Bag could not be opened, no static TF topic, decode failure, a TF merge conflict between static topics (same child, different parents), the frames are not connected through the static tree, or I/O error. When a frame is unknown, the available static frames are listed on stderr. |
 
 ---
 

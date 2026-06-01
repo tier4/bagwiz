@@ -8,6 +8,12 @@
 
 #include "bagwiz/core/trajectory.hpp"
 
+#include <tf2/LinearMath/Quaternion.hpp>
+#include <tf2/LinearMath/Transform.hpp>
+#include <tf2/LinearMath/Vector3.hpp>
+
+#include <geometry_msgs/msg/pose.hpp>
+#include <geometry_msgs/msg/transform.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include <algorithm>
@@ -21,6 +27,7 @@
 #include <cstdlib>
 #include <ios>
 #include <istream>
+#include <optional>
 #include <ostream>
 #include <span>
 #include <sstream>
@@ -98,6 +105,26 @@ bool parse_tum_timestamp_ns(std::string_view token, std::int64_t & out_ns)
   }
   out_ns = sec * 1'000'000'000LL + nsec;
   return true;
+}
+
+// Build a tf2::Transform from a geometry_msgs Transform (translation +
+// quaternion rotation, ROS / Hamilton convention).
+tf2::Transform to_tf2(const geometry_msgs::msg::Transform & t)
+{
+  tf2::Transform out;
+  out.setOrigin(tf2::Vector3(t.translation.x, t.translation.y, t.translation.z));
+  out.setRotation(tf2::Quaternion(t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w));
+  return out;
+}
+
+// Build a tf2::Transform from a geometry_msgs Pose (position + orientation).
+tf2::Transform to_tf2(const geometry_msgs::msg::Pose & p)
+{
+  tf2::Transform out;
+  out.setOrigin(tf2::Vector3(p.position.x, p.position.y, p.position.z));
+  out.setRotation(
+    tf2::Quaternion(p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w));
+  return out;
 }
 
 bool parse_double(const std::string & token, double & out)
@@ -197,6 +224,40 @@ geometry_msgs::msg::TransformStamped pose_to_transform_stamped(
   ts.transform.rotation.z = pose.qz;
   ts.transform.rotation.w = pose.qw;
   return ts;
+}
+
+geometry_msgs::msg::Pose compose_trajectory_pose(
+  const std::optional<geometry_msgs::msg::Transform> & from_header,
+  const geometry_msgs::msg::Pose & body_pose,
+  const std::optional<geometry_msgs::msg::Transform> & body_to)
+{
+  // No bridge on either side: return the pose verbatim. Routing through
+  // tf2 would renormalise the quaternion and perturb the translation in
+  // the last ULPs, breaking the "values as stored in the bag" guarantee
+  // for a no-transform dump.
+  if (!from_header.has_value() && !body_to.has_value()) {
+    return body_pose;
+  }
+
+  tf2::Transform t = to_tf2(body_pose);  // T_header_body
+  if (from_header.has_value()) {
+    t = to_tf2(*from_header) * t;  // T_from_header * T_header_body
+  }
+  if (body_to.has_value()) {
+    t = t * to_tf2(*body_to);  // ... * T_body_to
+  }
+
+  geometry_msgs::msg::Pose out;
+  const tf2::Vector3 o = t.getOrigin();
+  out.position.x = o.x();
+  out.position.y = o.y();
+  out.position.z = o.z();
+  const tf2::Quaternion q = t.getRotation();
+  out.orientation.x = q.x();
+  out.orientation.y = q.y();
+  out.orientation.z = q.z();
+  out.orientation.w = q.w();
+  return out;
 }
 
 }  // namespace bagwiz::core

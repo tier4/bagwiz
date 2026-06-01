@@ -140,6 +140,7 @@ add_library(bagwiz_core
   src/core/bag_inplace.cpp
   src/core/bag_topic_plan.cpp
   src/core/tf_chain.cpp
+  src/core/tf_merge_check.cpp
   src/core/tf_message_wire.cpp
   src/core/tf_transform_format.cpp
   src/core/tf_value_extract.cpp
@@ -320,6 +321,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_tf_chain_test test/core/tf_chain_test.cpp)
   target_link_libraries(bagwiz_tf_chain_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_tf_merge_check_test test/core/tf_merge_check_test.cpp)
+  target_link_libraries(bagwiz_tf_merge_check_test bagwiz_core)
 
   ament_add_gtest(bagwiz_tf_message_wire_test test/core/tf_message_wire_test.cpp)
   target_link_libraries(bagwiz_tf_message_wire_test bagwiz_core)

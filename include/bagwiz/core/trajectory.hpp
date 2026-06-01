@@ -9,10 +9,13 @@
 #ifndef BAGWIZ__CORE__TRAJECTORY_HPP_
 #define BAGWIZ__CORE__TRAJECTORY_HPP_
 
+#include <geometry_msgs/msg/pose.hpp>
+#include <geometry_msgs/msg/transform.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include <cstdint>
 #include <istream>
+#include <optional>
 #include <ostream>
 #include <span>
 #include <string_view>
@@ -70,6 +73,28 @@ TrajectoryReadResult read_tum(std::istream & is);
 // responsible for ensuring (qx, qy, qz, qw) is normalised.
 geometry_msgs::msg::TransformStamped pose_to_transform_stamped(
   const TrajectoryPose & pose, std::string_view frame_id, std::string_view child_frame_id);
+
+// Compose the output trajectory pose for `traj dump`:
+//
+//   T_from_to = T_from_header * T_header_body * T_body_to
+//
+// `body_pose` is the message's pose — the tracked body expressed in its own
+// `header.frame_id` (`T_header_body`). The two optional bridges come from the
+// bag's TF tree:
+//   * `from_header` re-expresses the result into the requested `--from` frame
+//     (`lookupTransform(--from, header.frame_id)`); pass std::nullopt when
+//     `--from` is omitted or equals `header.frame_id` (identity, no remap).
+//   * `body_to` walks from the body frame to the requested `--to` frame
+//     (`lookupTransform(body, --to)`, e.g. Odometry child_frame_id -> sensor
+//     via static TF); pass std::nullopt when no tracked-side traversal applies.
+//
+// When both bridges are std::nullopt the input pose is returned verbatim (no
+// quaternion renormalisation), so a no-transform dump round-trips bit-exactly.
+// Quaternion convention matches ROS / tf2 (Hamilton).
+geometry_msgs::msg::Pose compose_trajectory_pose(
+  const std::optional<geometry_msgs::msg::Transform> & from_header,
+  const geometry_msgs::msg::Pose & body_pose,
+  const std::optional<geometry_msgs::msg::Transform> & body_to);
 
 }  // namespace bagwiz::core
 

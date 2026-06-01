@@ -11,6 +11,7 @@
 #include "bagwiz/commands/tf_walk.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/tf_merge_check.hpp"
 #include "bagwiz/core/tf_transform_format.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
@@ -89,6 +90,12 @@ std::vector<TfTopic> collect_tf_topics(const io::BagReader & reader)
 // (to resolve transforms) but not the edges; `tf tree` needs the per-topic
 // edges but not the buffer.
 //
+// When `conflict_checker` is non-null, every edge is run through it and the
+// first cross-topic conflict (multi-parent, or static/dynamic mix) throws —
+// used by `tf static` so several `*tf_static` topics are merged but a
+// contradiction aborts instead of silently last-winning. `tf tree` leaves it
+// null and runs its own forest validation downstream.
+//
 // Decoding goes through the unified open_decoder() path so for MCAP
 // inputs the schema-driven backend handles the work and tf2_msgs no
 // longer needs to be on AMENT_PREFIX_PATH at runtime; only its
@@ -98,7 +105,8 @@ void load_tf(
   const std::filesystem::path & bag_path, const std::vector<TfTopic> & tf_topics,
   tf2::BufferCore * buffer = nullptr,
   std::map<std::string, std::set<std::pair<std::string, std::string>>> * edges_by_topic_out =
-    nullptr)
+    nullptr,
+  core::TfMergeConflictChecker * conflict_checker = nullptr)
 {
   auto tf_reader = io::open_read(bag_path);
   io::ReadFilter filter;
@@ -144,6 +152,13 @@ void load_tf(
     const auto transforms = core::extract_tf_message(*decoded.value);
     const bool is_static = is_static_by_topic.at(raw.topic->name);
     for (const auto & t : transforms) {
+      if (conflict_checker != nullptr && !t.header.frame_id.empty() && !t.child_frame_id.empty()) {
+        if (
+          const auto conflict = conflict_checker->add(
+            t.header.frame_id, t.child_frame_id, raw.topic->name, is_static)) {
+          throw std::runtime_error("TF merge conflict: " + *conflict);
+        }
+      }
       if (
         edges_by_topic_out != nullptr && !t.header.frame_id.empty() && !t.child_frame_id.empty()) {
         (*edges_by_topic_out)[raw.topic->name].insert(
@@ -209,53 +224,42 @@ std::string tf_colored_tree_root_line(const std::string & text, bool use_color)
   return out;
 }
 
-// Per-topic foreground color for the merged multi-topic view. rang color
-// manipulators can't be stored in a container, so selection is by index here.
-// Indices past the palette wrap around; the [N] tag and Topics legend keep the
-// mapping unambiguous even when colors repeat or are disabled.
-void apply_topic_fg(std::ostream & os, std::size_t topic_index)
+// Category of an edge for coloring: a child is reached either via a static
+// (*tf_static) topic or a dynamic one. The two-way classification is what
+// `tf tree` colors by; -1 means "do not classify" (a single-category tree is
+// rendered plain).
+enum class EdgeCategory { kNone = -1, kDynamic = 0, kStatic = 1 };
+
+// Foreground color per edge category for the merged static+dynamic view.
+void apply_category_fg(std::ostream & os, EdgeCategory category)
 {
-  switch (topic_index % 6) {
-    case 0:
-      os << rang::fgB::blue;
-      break;
-    case 1:
-      os << rang::fgB::yellow;
-      break;
-    case 2:
-      os << rang::fgB::magenta;
-      break;
-    case 3:
-      os << rang::fgB::cyan;
-      break;
-    case 4:
-      os << rang::fgB::green;
-      break;
-    default:
-      os << rang::fgB::red;
-      break;
+  if (category == EdgeCategory::kStatic) {
+    os << rang::fgB::yellow;
+  } else {
+    os << rang::fgB::cyan;
   }
 }
 
 // Branch line for a child frame: dim branch glyphs then the child name. When
-// `topic_index >= 0` (merged multi-topic view) the name is colored by that
-// topic's palette entry and a " [N]" tag (N = topic_index + 1) is appended so
-// the source topic stays identifiable without color; when it is < 0
-// (single-topic view) the name is plain and no tag is shown. `suffix` is e.g.
-// " (cycle)".
+// `category` is kStatic / kDynamic (a mixed static+dynamic tree) the name is
+// colored by that category and a " [S]" / " [D]" tag is appended so the class
+// stays identifiable without color; when it is kNone (single-category tree) the
+// name is plain and no tag is shown. `suffix` is e.g. " (cycle)".
 std::string tf_tree_edge_line(
   const std::string & prefix, const std::string & branch, const std::string & child,
-  const std::string & suffix, bool use_color, int topic_index)
+  const std::string & suffix, bool use_color, EdgeCategory category)
 {
-  const std::string tag = topic_index >= 0 ? fmt::format(" [{}]", topic_index + 1) : std::string{};
+  const std::string tag = category == EdgeCategory::kStatic    ? " [S]"
+                          : category == EdgeCategory::kDynamic ? " [D]"
+                                                               : std::string{};
   if (!use_color) {
     return prefix + branch + child + tag + suffix;
   }
   rang::setControlMode(rang::control::Force);
   std::ostringstream oss;
   oss << rang::fg::gray << prefix << branch << rang::style::reset;
-  if (topic_index >= 0) {
-    apply_topic_fg(oss, static_cast<std::size_t>(topic_index));
+  if (category != EdgeCategory::kNone) {
+    apply_category_fg(oss, category);
     oss << child << rang::style::reset;
     oss << rang::fg::gray << tag << rang::style::reset;
   } else {
@@ -331,22 +335,23 @@ std::optional<std::string> validate_union_edge_set(
 
 // Render a forest from an adjacency map (parent → sorted children) and sorted
 // roots: bold root line, dim branch glyphs, and " (cycle)" on a frame already
-// on the current path (rather than recursing). When `multi` is set, each child
-// is colored and " [N]"-tagged by the topic that owns its parent→child edge
-// (looked up in `edge_to_topic`); otherwise child names are plain.
+// on the current path (rather than recursing). When `show_category` is set,
+// each child is colored and " [S]" / " [D]"-tagged by its edge's category
+// (looked up in `edge_to_category`); otherwise child names are plain.
 std::string format_parent_map_forest(
   const std::unordered_map<std::string, std::vector<std::string>> & parent_to_children,
   const std::vector<std::string> & roots_sorted, const TreeGlyphs & g, bool use_color,
-  const std::map<std::pair<std::string, std::string>, std::size_t> & edge_to_topic, bool multi)
+  const std::map<std::pair<std::string, std::string>, EdgeCategory> & edge_to_category,
+  bool show_category)
 {
   std::vector<std::string> lines;
 
-  auto topic_index_of = [&](const std::string & parent, const std::string & child) -> int {
-    if (!multi) {
-      return -1;
+  auto category_of = [&](const std::string & parent, const std::string & child) -> EdgeCategory {
+    if (!show_category) {
+      return EdgeCategory::kNone;
     }
-    const auto eit = edge_to_topic.find({parent, child});
-    return eit != edge_to_topic.end() ? static_cast<int>(eit->second) : -1;
+    const auto eit = edge_to_category.find({parent, child});
+    return eit != edge_to_category.end() ? eit->second : EdgeCategory::kNone;
   };
 
   auto emit_children = [&](
@@ -362,13 +367,12 @@ std::string format_parent_map_forest(
       const std::string & branch = last ? g.branch_end : g.branch_mid;
       const std::string next_prefix = prefix + (last ? "    " : g.vertical_pad);
       const auto & child = kids[i];
-      const int topic_index = topic_index_of(parent, child);
+      const EdgeCategory category = category_of(parent, child);
       if (visiting.count(child) != 0) {
-        lines.push_back(
-          tf_tree_edge_line(prefix, branch, child, " (cycle)", use_color, topic_index));
+        lines.push_back(tf_tree_edge_line(prefix, branch, child, " (cycle)", use_color, category));
         continue;
       }
-      lines.push_back(tf_tree_edge_line(prefix, branch, child, "", use_color, topic_index));
+      lines.push_back(tf_tree_edge_line(prefix, branch, child, "", use_color, category));
       visiting.insert(child);
       self(self, child, next_prefix, visiting);
       visiting.erase(child);
@@ -401,12 +405,14 @@ std::string format_parent_map_forest(
 
 // Build the adjacency map + sorted roots from the merged edge set and render the
 // forest. `validate_union_edge_set` runs before this, so a non-empty edge set
-// always has at least one root. `edge_to_topic` / `multi` are forwarded to the
-// renderer for per-topic coloring (see format_parent_map_forest).
-std::string format_topic_forest(
+// always has at least one root. `edge_to_category` / `show_category` are
+// forwarded to the renderer for static/dynamic coloring (see
+// format_parent_map_forest).
+std::string format_tree_forest(
   const std::set<std::pair<std::string, std::string>> & edges, const TreeGlyphs & glyphs,
-  bool use_color, const std::map<std::pair<std::string, std::string>, std::size_t> & edge_to_topic,
-  bool multi)
+  bool use_color,
+  const std::map<std::pair<std::string, std::string>, EdgeCategory> & edge_to_category,
+  bool show_category)
 {
   if (edges.empty()) {
     return {};
@@ -435,7 +441,7 @@ std::string format_topic_forest(
   std::sort(roots.begin(), roots.end());
 
   return format_parent_map_forest(
-    parent_to_children, roots, glyphs, use_color, edge_to_topic, multi);
+    parent_to_children, roots, glyphs, use_color, edge_to_category, show_category);
 }
 
 // Comma-joined list for human-readable messages; "(none)" when empty.
@@ -454,29 +460,58 @@ std::string join_csv(const std::vector<std::string> & names)
   return out;
 }
 
-// Maps each requested topic name to its TfTopic entry, preserving requested
-// order. On success returns true and fills `selected_out`; on failure logs the
-// names that are not tf2_msgs/msg/TFMessage topics plus the bag's available TF
-// topics, and returns false.
-bool resolve_requested_topics(
+// Reserved <topics> selectors. "static" expands to every *tf_static topic,
+// "dynamic" to every non-static TF topic. ROS topic names start with '/', so
+// these bare words never collide with a real topic name.
+constexpr const char * kSelectStatic = "static";
+constexpr const char * kSelectDynamic = "dynamic";
+
+// Expand the requested <topics> tokens into concrete TfTopics, deduplicated by
+// name (first appearance wins). "static" / "dynamic" expand to all static /
+// dynamic TF topics in the bag (and compose with literal topic names); any
+// other token must name a TFMessage topic that exists. On an unknown literal,
+// logs the offending names + the bag's available TF topics and returns false.
+bool select_tree_topics(
   const std::vector<std::string> & requested, const std::vector<TfTopic> & tf_topics,
   std::vector<TfTopic> & selected_out)
 {
+  std::unordered_set<std::string> added;
+  auto add_topic = [&](const TfTopic & t) {
+    if (added.insert(t.name).second) {
+      selected_out.push_back(t);
+    }
+  };
+
   std::vector<std::string> unknown;
-  for (const auto & name : requested) {
-    const TfTopic * match = nullptr;
-    for (const auto & t : tf_topics) {
-      if (t.name == name) {
-        match = &t;
-        break;
+  for (const auto & token : requested) {
+    if (token == kSelectStatic) {
+      for (const auto & t : tf_topics) {
+        if (t.is_static) {
+          add_topic(t);
+        }
+      }
+    } else if (token == kSelectDynamic) {
+      for (const auto & t : tf_topics) {
+        if (!t.is_static) {
+          add_topic(t);
+        }
+      }
+    } else {
+      const TfTopic * match = nullptr;
+      for (const auto & t : tf_topics) {
+        if (t.name == token) {
+          match = &t;
+          break;
+        }
+      }
+      if (match != nullptr) {
+        add_topic(*match);
+      } else {
+        unknown.push_back(token);
       }
     }
-    if (match != nullptr) {
-      selected_out.push_back(*match);
-    } else {
-      unknown.push_back(name);
-    }
   }
+
   if (unknown.empty()) {
     return true;
   }
@@ -488,88 +523,33 @@ bool resolve_requested_topics(
   }
   std::sort(available.begin(), available.end());
   BAGWIZ_LOG_ERROR(
-    kLogger, "Not a tf2_msgs/msg/TFMessage topic in the bag: %s", join_csv(unknown).c_str());
+    kLogger,
+    "Not a tf2_msgs/msg/TFMessage topic in the bag (nor the 'static' / 'dynamic' selector): %s",
+    join_csv(unknown).c_str());
   BAGWIZ_LOG_ERROR(kLogger, "Available TF topics: %s", join_csv(available).c_str());
   return false;
 }
 
-// Attributes every edge to the topic that defines it (by `requested` index) and
-// rejects an edge shared by two different topics. Fills `edge_to_topic_out`;
-// returns nullopt on success, or the offending message when an edge is shared.
-std::optional<std::string> attribute_edges_to_topics(
-  const std::vector<std::string> & requested,
-  const std::map<std::string, std::set<std::pair<std::string, std::string>>> & edges_by_topic,
-  std::map<std::pair<std::string, std::string>, std::size_t> & edge_to_topic_out)
+// Legend for the mixed static+dynamic view: a "═══ Legend ═══" rule then a
+// colored "[D] dynamic" and "[S] static" line, plus a trailing blank line that
+// separates it from the tree block.
+std::string format_category_legend(bool use_color)
 {
-  std::map<std::pair<std::string, std::string>, std::string> edge_owner;
-  for (std::size_t i = 0; i < requested.size(); ++i) {
-    const auto & topic = requested[i];
-    const auto it = edges_by_topic.find(topic);
-    if (it == edges_by_topic.end()) {
-      continue;
-    }
-    for (const auto & edge : it->second) {
-      const auto ins = edge_owner.emplace(edge, topic);
-      if (!ins.second) {
-        return fmt::format(
-          "TF tree: edge '{}' -> '{}' is defined on both topic '{}' and topic '{}'; merged topics "
-          "must not share an edge.",
-          edge.first, edge.second, ins.first->second, topic);
-      }
-      edge_to_topic_out[edge] = i;
-    }
-  }
-  return std::nullopt;
-}
-
-// Runs every TF-tree validation for the selected topics: each topic's edges
-// must form a valid forest; for multiple topics no edge may be shared and the
-// merged set must also be a valid forest. Fills `edge_to_topic_out` (multi
-// only). Returns the first failure message, or nullopt when consistent.
-std::optional<std::string> validate_tree_topics(
-  const std::vector<std::string> & requested,
-  const std::map<std::string, std::set<std::pair<std::string, std::string>>> & edges_by_topic,
-  const std::set<std::pair<std::string, std::string>> & merged, bool multi,
-  std::map<std::pair<std::string, std::string>, std::size_t> & edge_to_topic_out)
-{
-  for (const auto & name : requested) {
-    const auto it = edges_by_topic.find(name);
-    if (it == edges_by_topic.end()) {
-      continue;
-    }
-    if (auto err = validate_union_edge_set(it->second, fmt::format("for topic '{}'", name))) {
-      return err;
-    }
-  }
-  if (!multi) {
-    return std::nullopt;
-  }
-  if (auto err = attribute_edges_to_topics(requested, edges_by_topic, edge_to_topic_out)) {
-    return err;
-  }
-  return validate_union_edge_set(merged, "for the merged topics");
-}
-
-// Topics legend: a "═══ Topics ═══" rule followed by one "  [N] <topic>" line
-// per topic, each colored with that topic's palette entry on a TTY, then a
-// trailing blank line that separates it from the tree block.
-std::string format_topics_legend(const std::vector<std::string> & topics, bool use_color)
-{
-  std::string out = tf_section_rule("Topics", use_color);
+  std::string out = tf_section_rule("Legend", use_color);
   if (!use_color) {
-    for (std::size_t i = 0; i < topics.size(); ++i) {
-      out += fmt::format("  [{}] {}\n", i + 1, topics[i]);
-    }
+    out += "  [D] dynamic\n";
+    out += "  [S] static\n";
     out += "\n";
     return out;
   }
   rang::setControlMode(rang::control::Force);
   std::ostringstream oss;
-  for (std::size_t i = 0; i < topics.size(); ++i) {
-    oss << "  ";
-    apply_topic_fg(oss, i);
-    oss << "[" << (i + 1) << "] " << topics[i] << rang::style::reset << '\n';
-  }
+  oss << "  ";
+  apply_category_fg(oss, EdgeCategory::kDynamic);
+  oss << "[D] dynamic" << rang::style::reset << '\n';
+  oss << "  ";
+  apply_category_fg(oss, EdgeCategory::kStatic);
+  oss << "[S] static" << rang::style::reset << '\n';
   out += oss.str();
   rang::setControlMode(rang::control::Auto);
   out += "\n";
@@ -583,7 +563,10 @@ std::string format_topics_legend(const std::vector<std::string> & topics, bool u
 // Subcommands
 // -----------
 //   tree    Merge one or more tf2_msgs/msg/TFMessage <topics> into one validated
-//           TF frame tree; on a TTY each topic's edges get a distinct color.
+//           TF frame tree; on a TTY edges are colored by static vs dynamic. The
+//           'static' / 'dynamic' selectors pick all static / dynamic TF topics.
+//           A merge conflict (same child via different parents, or both static
+//           and dynamic) aborts with an error.
 //   static  Resolve the rigid transform from <from> to <to> using only the bag's
 //           static TF tree, and print translation / quaternion / RPY (or JSON).
 //   walk    Merge every TF topic into one buffer and step interactively through
@@ -652,8 +635,10 @@ private:
       ->check(CLI::ExistingPath);
     sub->add_option(
       "topics", tree_args_.topics,
-      "tf2_msgs/msg/TFMessage topic(s) to merge and render; defaults to all TF "
-      "topics in the bag when omitted");
+      "tf2_msgs/msg/TFMessage topic(s) to merge and render; defaults to all TF topics in the bag "
+      "when omitted. The selectors 'static' and 'dynamic' expand to all static (*tf_static) / "
+      "dynamic TF topics respectively and may be combined with literal topic names. In the merged "
+      "tree, edges are colored by static vs dynamic.");
     sub->callback([this]() { selected_ = Subcommand::kTree; });
   }
 
@@ -692,38 +677,66 @@ private:
       return 1;
     }
 
-    // With no explicit <topics>, default to every TF topic in the bag, sorted by
-    // name so the per-topic [N] legend ordering is deterministic. Otherwise every
-    // requested topic must be a TFMessage topic that exists in the bag;
-    // resolve_requested_topics logs the unknown names + available TF topics.
+    // With no explicit <topics>, default to every TF topic in the bag.
+    // Otherwise expand the tokens: "static" / "dynamic" select all static /
+    // dynamic TF topics (and compose with literal names); any other token must
+    // be a TFMessage topic that exists. select_tree_topics logs the unknown
+    // names + available TF topics on failure.
     std::vector<TfTopic> selected;
     if (requested.empty()) {
       selected = tf_topics;
-      std::sort(selected.begin(), selected.end(), [](const TfTopic & a, const TfTopic & b) {
-        return a.name < b.name;
-      });
-      requested.reserve(selected.size());
-      for (const auto & t : selected) {
-        requested.push_back(t.name);
+    } else if (!select_tree_topics(requested, tf_topics, selected)) {
+      return 1;
+    }
+    if (selected.empty()) {
+      std::vector<std::string> available;
+      available.reserve(tf_topics.size());
+      for (const auto & t : tf_topics) {
+        available.push_back(t.name);
       }
-    } else if (!resolve_requested_topics(requested, tf_topics, selected)) {
+      std::sort(available.begin(), available.end());
+      BAGWIZ_LOG_ERROR(
+        kLogger, "No TF topics matched <topics> %s. Available TF topics: %s",
+        join_csv(requested).c_str(), join_csv(available).c_str());
       return 1;
     }
 
-    // Replay only the requested topics, keeping their edges grouped by topic so
-    // the merged tree can color each edge by its source. No tf2 buffer is needed
-    // (unlike `tf static`, which resolves transforms through one).
+    // Replay the selected topics, grouping edges by topic so each merged edge
+    // can be tagged static or dynamic by its source. The conflict checker
+    // rejects contradictory merges (a child given two parents by different
+    // topics, or a child declared both static and dynamic) — consistent with
+    // `traj dump` and `tf static`. No tf2 buffer is needed (unlike `tf static`).
     std::map<std::string, std::set<std::pair<std::string, std::string>>> edges_by_topic;
+    core::TfMergeConflictChecker conflict_checker;
     try {
-      load_tf(args.input_path, selected, /*buffer=*/nullptr, &edges_by_topic);
+      load_tf(args.input_path, selected, /*buffer=*/nullptr, &edges_by_topic, &conflict_checker);
     } catch (const std::exception & e) {
       BAGWIZ_LOG_ERROR(kLogger, "Failed to load TF from the bag: %s", e.what());
       return 1;
     }
 
+    // Merge the edges and tag each with its source category. A frame cannot be
+    // both static and dynamic (the conflict checker would have rejected it), so
+    // every merged edge has a single well-defined category.
+    std::unordered_map<std::string, bool> static_by_name;
+    for (const auto & t : selected) {
+      static_by_name[t.name] = t.is_static;
+    }
     std::set<std::pair<std::string, std::string>> merged;
-    for (const auto & entry : edges_by_topic) {
-      merged.insert(entry.second.begin(), entry.second.end());
+    std::map<std::pair<std::string, std::string>, EdgeCategory> edge_to_category;
+    bool has_static = false;
+    bool has_dynamic = false;
+    for (const auto & [topic, edges] : edges_by_topic) {
+      const bool is_static = static_by_name.at(topic);
+      for (const auto & edge : edges) {
+        merged.insert(edge);
+        edge_to_category[edge] = is_static ? EdgeCategory::kStatic : EdgeCategory::kDynamic;
+        if (is_static) {
+          has_static = true;
+        } else {
+          has_dynamic = true;
+        }
+      }
     }
     if (merged.empty()) {
       BAGWIZ_LOG_ERROR(
@@ -732,28 +745,30 @@ private:
       return 1;
     }
 
-    // Single topic stays a plain tree; two or more get per-topic colors + tags.
-    const bool multi = requested.size() >= 2;
-
-    std::map<std::pair<std::string, std::string>, std::size_t> edge_to_topic;
-    if (
-      const auto err =
-        validate_tree_topics(requested, edges_by_topic, merged, multi, edge_to_topic)) {
+    // The merged set must also form a valid forest (no cycles, opposite edges,
+    // self edges, or multi-parent); this complements the conflict checker.
+    if (const auto err = validate_union_edge_set(merged, "for the merged topics")) {
       BAGWIZ_LOG_ERROR(kLogger, "%s", err->c_str());
       return 1;
     }
 
+    // Color/tag by static vs dynamic only when both are present; a single
+    // category renders plain with the category named in the header.
+    const bool show_category = has_static && has_dynamic;
+
     const bool color = stdout_use_color();
     const TreeGlyphs glyphs = make_tree_glyphs();
 
-    if (multi) {
-      fmt::print(stdout, "{}", format_topics_legend(requested, color));
+    if (show_category) {
+      fmt::print(stdout, "{}", format_category_legend(color));
       fmt::print(stdout, "{}", tf_section_rule("TF tree", color));
     } else {
-      const std::string header_label = "TF tree (" + requested.front() + ")";
+      const std::string header_label =
+        std::string("TF tree (") + (has_static ? "static" : "dynamic") + ")";
       fmt::print(stdout, "{}", tf_section_rule(header_label.c_str(), color));
     }
-    fmt::print(stdout, "{}", format_topic_forest(merged, glyphs, color, edge_to_topic, multi));
+    fmt::print(
+      stdout, "{}", format_tree_forest(merged, glyphs, color, edge_to_category, show_category));
 
     if (std::fflush(stdout) != 0) {
       BAGWIZ_LOG_ERROR(kLogger, "Failed to write TF tree to stdout");
@@ -812,9 +827,15 @@ private:
       return 1;
     }
 
+    // Merge every static topic into one buffer, but refuse to silently
+    // last-wins on a contradiction: the checker aborts when two static topics
+    // give the same child different parents.
     tf2::BufferCore tf_buffer{std::chrono::hours(24 * 365)};
+    core::TfMergeConflictChecker conflict_checker;
     try {
-      load_tf(args.input_path, static_topics, &tf_buffer);
+      load_tf(
+        args.input_path, static_topics, &tf_buffer, /*edges_by_topic_out=*/nullptr,
+        &conflict_checker);
     } catch (const std::exception & e) {
       BAGWIZ_LOG_ERROR(kLogger, "Failed to load static TF from the bag: %s", e.what());
       return 1;
