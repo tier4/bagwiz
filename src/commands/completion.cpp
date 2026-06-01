@@ -373,6 +373,17 @@ std::vector<std::string> complete_topics(
 }
 
 constexpr std::string_view kTfMessageType = "tf2_msgs/msg/TFMessage";
+constexpr std::string_view kTfStaticSuffix = "tf_static";
+
+// True when a TF topic's name marks it static (ends with "tf_static", e.g.
+// "/tf_static"). `tf static` resolves only the static tree, so its frame-id
+// completion is restricted to these topics.
+bool is_static_tf_topic_name(std::string_view name)
+{
+  return name.size() >= kTfStaticSuffix.size() &&
+         name.compare(
+           name.size() - kTfStaticSuffix.size(), kTfStaticSuffix.size(), kTfStaticSuffix) == 0;
+}
 
 // Like complete_topics, but restricts candidates to topics whose type is
 // tf2_msgs/msg/TFMessage. Used for the `tf tree <input> <topic>` slot so the
@@ -414,12 +425,16 @@ constexpr std::size_t kFrameIdScanMessageCap = 5000;
 
 // Walks the bag's tf2_msgs/msg/TFMessage topics once and returns the
 // sorted, deduplicated set of header.frame_id / child_frame_id values
-// it observed. Reads at most `kFrameIdScanMessageCap` messages so
-// completion stays responsive on large bags. Swallows every exception:
+// it observed. When `static_only` is true only *tf_static topics are
+// scanned (for `tf static`, which resolves the static tree); otherwise
+// every TF topic contributes. Reads at most `kFrameIdScanMessageCap`
+// messages so completion stays responsive on large bags. Swallows every
+// exception:
 // completion is best-effort and a bag that fails to open should silently fall
 // through to the shell's file-completion fallback rather than spew
 // errors during TAB.
-std::vector<std::string> collect_tf_frame_ids(const std::filesystem::path & bag_path)
+std::vector<std::string> collect_tf_frame_ids(
+  const std::filesystem::path & bag_path, bool static_only = false)
 {
   std::vector<std::string> frame_ids;
   try {
@@ -427,7 +442,7 @@ std::vector<std::string> collect_tf_frame_ids(const std::filesystem::path & bag_
 
     std::vector<std::string> tf_topic_names;
     for (const auto & t : reader->topics()) {
-      if (t.type == kTfMessageType) {
+      if (t.type == kTfMessageType && (!static_only || is_static_tf_topic_name(t.name))) {
         tf_topic_names.push_back(t.name);
       }
     }
@@ -442,6 +457,9 @@ std::vector<std::string> collect_tf_frame_ids(const std::filesystem::path & bag_
     std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> decoders;
     for (const auto & topic_info : reader->topics()) {
       if (topic_info.type != kTfMessageType) {
+        continue;
+      }
+      if (static_only && !is_static_tf_topic_name(topic_info.name)) {
         continue;
       }
       auto open = core::decoder::open_decoder(topic_info);
@@ -494,7 +512,8 @@ std::vector<std::string> collect_tf_frame_ids(const std::filesystem::path & bag_
 // misleading here). When the bag fails to open we return an empty list
 // and the shell's default file-completion fallback takes over.
 std::vector<std::string> complete_frame_id_value(
-  const std::filesystem::path & input_path, const std::string_view & prefix)
+  const std::filesystem::path & input_path, const std::string_view & prefix,
+  bool static_only = false)
 {
   // Gate on existence before scanning so that "the bag does not exist
   // here" and "the bag exists but has no TF data" stay distinguishable:
@@ -507,7 +526,7 @@ std::vector<std::string> complete_frame_id_value(
   }
 
   std::vector<std::string> result;
-  const auto all_frame_ids = collect_tf_frame_ids(input_path);
+  const auto all_frame_ids = collect_tf_frame_ids(input_path, static_only);
 
   if (all_frame_ids.empty()) {
     if (starts_with(kNoTfFramesSentinel, prefix)) {
@@ -651,7 +670,8 @@ std::vector<std::string> complete_convert(const CompletionRequest & request)
 // word 2). Parameterising the slot keeps the helper reusable for any
 // future command that places the bag at a different positional index.
 std::vector<std::string> complete_frame_id_arg(
-  const CompletionRequest & request, std::size_t input_word, const std::string_view & current)
+  const CompletionRequest & request, std::size_t input_word, const std::string_view & current,
+  bool static_only = false)
 {
   if (request.words.size() <= input_word) {
     return {};
@@ -660,7 +680,7 @@ std::vector<std::string> complete_frame_id_arg(
   if (bag_arg.empty() || bag_arg.starts_with("-")) {
     return {};
   }
-  return complete_frame_id_value(bag_arg, current);
+  return complete_frame_id_value(bag_arg, current, static_only);
 }
 
 std::vector<std::string> complete_traj(const CompletionRequest & request)
@@ -709,29 +729,31 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"static", "tree"}, current);
+    return matching({"static", "tree", "walk"}, current);
   }
 
   const auto & mode = request.words[kFirstCommandArgWord];
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
-    if (mode == "tree") {
-      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
-    }
+    // Only `static` defines a user flag (--json); `tree` and `walk` carry just
+    // the implicit help flags.
     if (mode == "static") {
       return matching(with_help({"--json"}), current);
     }
+    return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
   }
 
-  // `tf static <input> <from> <to>`: complete the <from>/<to> positional
-  // slots from the bag's TF frame ids (bag path at the <input> slot, word 2).
-  // The <input> slot itself falls through to the shell's file completion.
-  // Frame ids are drawn from every TF topic, like traj's --from/--to; the
-  // command validates static connectivity at run time.
+  // `tf static <input> <from> <to>` and `tf walk <input> <from> <to>` share the
+  // same positional shape: complete the <from>/<to> slots from the bag's TF
+  // frame ids (bag path at the <input> slot, word 2). The <input> slot itself
+  // falls through to the shell's file completion. `tf static` resolves only the
+  // static tree, so its candidates are restricted to *tf_static topics; `tf walk`
+  // merges every TF topic, so it offers frame ids from all of them.
   if (
-    mode == "static" &&
+    (mode == "static" || mode == "walk") &&
     (request.cursor_word == kThirdCommandArgWord || request.cursor_word == kFourthCommandArgWord)) {
-    return complete_frame_id_arg(request, kSecondCommandArgWord, current);
+    return complete_frame_id_arg(
+      request, kSecondCommandArgWord, current, /*static_only=*/mode == "static");
   }
 
   return {};

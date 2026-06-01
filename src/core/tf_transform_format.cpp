@@ -59,26 +59,41 @@ RollPitchYaw quaternion_to_rpy(const geometry_msgs::msg::Quaternion & q)
 
 std::string format_transform_human(
   const geometry_msgs::msg::TransformStamped & tf, const std::string & from_frame,
-  const std::string & to_frame)
+  const std::string & to_frame, const std::string & annotation)
 {
   const auto & t = tf.transform.translation;
-  const auto & r = tf.transform.rotation;
-  const RollPitchYaw rpy = quaternion_to_rpy(r);
+  const auto & rot = tf.transform.rotation;
+  const RollPitchYaw rpy = quaternion_to_rpy(rot);
 
   // std::ostringstream rather than fmt: bagwiz_core is built with
   // FMT_HEADER_ONLY, and fmt's consteval format-string checking trips the
   // clang-tidy pass when instantiated here (the same reason renderer.cpp
   // avoids fmt formatting). Fixed 6-decimal precision matches tf2_echo.
+  //
+  // The body mirrors the --json hierarchy and key names: translation under
+  // `t`; rotation under `r` as `quat` plus `rpy_rad` / `rpy_deg`. One value
+  // per line, two-space indent per level (YAML-like).
   std::ostringstream oss;
   oss << std::fixed << std::setprecision(kHumanDecimals);
-  oss << "Transform: " << from_frame << " -> " << to_frame << "  (static)\n";
-  oss << "  Translation (x, y, z):          [" << t.x << ", " << t.y << ", " << t.z << "]\n";
-  oss << "  Rotation quaternion (x,y,z,w):  [" << r.x << ", " << r.y << ", " << r.z << ", " << r.w
-      << "]\n";
-  oss << "  Rotation RPY (rad):             [" << rpy.roll << ", " << rpy.pitch << ", " << rpy.yaw
-      << "]\n";
-  oss << "  Rotation RPY (deg):             [" << rpy.roll * kRadToDeg << ", "
-      << rpy.pitch * kRadToDeg << ", " << rpy.yaw * kRadToDeg << "]\n";
+  oss << "Transform: " << from_frame << " -> " << to_frame << annotation << "\n";
+  oss << "  t:\n";
+  oss << "    x: " << t.x << "\n";
+  oss << "    y: " << t.y << "\n";
+  oss << "    z: " << t.z << "\n";
+  oss << "  r:\n";
+  oss << "    quat:\n";
+  oss << "      x: " << rot.x << "\n";
+  oss << "      y: " << rot.y << "\n";
+  oss << "      z: " << rot.z << "\n";
+  oss << "      w: " << rot.w << "\n";
+  oss << "    rpy_rad:\n";
+  oss << "      roll: " << rpy.roll << "\n";
+  oss << "      pitch: " << rpy.pitch << "\n";
+  oss << "      yaw: " << rpy.yaw << "\n";
+  oss << "    rpy_deg:\n";
+  oss << "      roll: " << rpy.roll * kRadToDeg << "\n";
+  oss << "      pitch: " << rpy.pitch * kRadToDeg << "\n";
+  oss << "      yaw: " << rpy.yaw * kRadToDeg << "\n";
   return oss.str();
 }
 
@@ -87,16 +102,16 @@ std::string format_transform_json(
   const std::string & to_frame)
 {
   const auto & t = tf.transform.translation;
-  const auto & r = tf.transform.rotation;
-  const RollPitchYaw rpy = quaternion_to_rpy(r);
+  const auto & rot = tf.transform.rotation;
+  const RollPitchYaw rpy = quaternion_to_rpy(rot);
 
   nlohmann::json j;
   j["from"] = from_frame;
   j["to"] = to_frame;
-  j["translation"] = {{"x", t.x}, {"y", t.y}, {"z", t.z}};
-  j["rotation"] = {{"x", r.x}, {"y", r.y}, {"z", r.z}, {"w", r.w}};
-  j["rpy_rad"] = {{"roll", rpy.roll}, {"pitch", rpy.pitch}, {"yaw", rpy.yaw}};
-  j["rpy_deg"] = {
+  j["t"] = {{"x", t.x}, {"y", t.y}, {"z", t.z}};
+  j["r"]["quat"] = {{"x", rot.x}, {"y", rot.y}, {"z", rot.z}, {"w", rot.w}};
+  j["r"]["rpy_rad"] = {{"roll", rpy.roll}, {"pitch", rpy.pitch}, {"yaw", rpy.yaw}};
+  j["r"]["rpy_deg"] = {
     {"roll", rpy.roll * kRadToDeg}, {"pitch", rpy.pitch * kRadToDeg}, {"yaw", rpy.yaw * kRadToDeg}};
 
   return j.dump(kJsonIndent);

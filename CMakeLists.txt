@@ -143,6 +143,7 @@ add_library(bagwiz_core
   src/core/tf_message_wire.cpp
   src/core/tf_transform_format.cpp
   src/core/tf_value_extract.cpp
+  src/core/tf_walk_timeline.cpp
   src/core/trajectory.cpp
   src/core/tui/layout.cpp
   src/core/tui/pager.cpp
@@ -220,6 +221,7 @@ add_executable(bagwiz
   src/commands/walk.cpp
   src/commands/traj.cpp
   src/commands/tf.cpp
+  src/commands/tf_walk.cpp
 )
 target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang)
 
@@ -325,6 +327,9 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_tf_transform_format_test test/core/tf_transform_format_test.cpp)
   target_link_libraries(
     bagwiz_tf_transform_format_test bagwiz_core nlohmann_json::nlohmann_json)
+
+  ament_add_gtest(bagwiz_tf_walk_timeline_test test/core/tf_walk_timeline_test.cpp)
+  target_link_libraries(bagwiz_tf_walk_timeline_test bagwiz_core)
 
   ament_add_gtest(bagwiz_bag_topic_plan_test test/core/bag_topic_plan_test.cpp)
   target_link_libraries(bagwiz_bag_topic_plan_test bagwiz_core)

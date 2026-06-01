@@ -113,7 +113,7 @@ TEST(QuaternionToRpy, NonUnitQuaternionIsNormalized)
 // format_transform_human
 // ---------------------------------------------------------------------------
 
-TEST(FormatTransformHuman, MentionsFramesTranslationAndRotation)
+TEST(FormatTransformHuman, MirrorsJsonKeyHierarchy)
 {
   const auto tf = make_identity_tf("base_link", "velodyne", 1.0, 2.0, 3.0);
 
@@ -121,12 +121,16 @@ TEST(FormatTransformHuman, MentionsFramesTranslationAndRotation)
 
   // Direction label is "<from> -> <to>".
   EXPECT_NE(out.find("base_link -> velodyne"), std::string::npos);
-  EXPECT_NE(out.find("Translation"), std::string::npos);
+  // Body uses the --json key/hierarchy: t {x,y,z}, r {quat, rpy_rad, rpy_deg}.
+  EXPECT_NE(out.find("  t:"), std::string::npos);
+  EXPECT_NE(out.find("  r:"), std::string::npos);
+  EXPECT_NE(out.find("    quat:"), std::string::npos);
+  EXPECT_NE(out.find("    rpy_rad:"), std::string::npos);
+  EXPECT_NE(out.find("    rpy_deg:"), std::string::npos);
+  // Translation values (x, y, z) appear under t.
   EXPECT_NE(out.find("1.000000"), std::string::npos);
   EXPECT_NE(out.find("2.000000"), std::string::npos);
   EXPECT_NE(out.find("3.000000"), std::string::npos);
-  EXPECT_NE(out.find("quaternion"), std::string::npos);
-  EXPECT_NE(out.find("RPY"), std::string::npos);
   // Trailing newline is part of the contract.
   ASSERT_FALSE(out.empty());
   EXPECT_EQ(out.back(), '\n');
@@ -146,6 +150,29 @@ TEST(FormatTransformHuman, IdentitySelfTransform)
   EXPECT_EQ(out.back(), '\n');
 }
 
+// `tf static` passes an annotation so the direction line is tagged "(static)";
+// the annotation appears right after the "<from> -> <to>" label.
+TEST(FormatTransformHuman, AppendsAnnotationToDirectionLine)
+{
+  const auto tf = make_identity_tf("base_link", "lidar", 1.0, 0.0, 0.0);
+
+  const std::string out =
+    bagwiz::core::format_transform_human(tf, "base_link", "lidar", "  (static)");
+
+  EXPECT_NE(out.find("base_link -> lidar  (static)"), std::string::npos);
+}
+
+// `tf walk` does not classify transforms, so the default (no annotation) must
+// not tag the block with a "(static)" suffix.
+TEST(FormatTransformHuman, OmitsAnnotationByDefault)
+{
+  const auto tf = make_identity_tf("base_link", "velodyne", 1.0, 2.0, 3.0);
+
+  const std::string out = bagwiz::core::format_transform_human(tf, "base_link", "velodyne");
+
+  EXPECT_EQ(out.find("(static)"), std::string::npos);
+}
+
 // ---------------------------------------------------------------------------
 // format_transform_json (parsed back with nlohmann to verify values)
 // ---------------------------------------------------------------------------
@@ -160,17 +187,17 @@ TEST(FormatTransformJson, RoundTripsExpectedSchemaAndValues)
   EXPECT_EQ(j.at("from").get<std::string>(), "map");
   EXPECT_EQ(j.at("to").get<std::string>(), "odom");
 
-  EXPECT_DOUBLE_EQ(j.at("translation").at("x").get<double>(), 1.5);
-  EXPECT_DOUBLE_EQ(j.at("translation").at("y").get<double>(), -2.5);
-  EXPECT_DOUBLE_EQ(j.at("translation").at("z").get<double>(), 0.25);
+  EXPECT_DOUBLE_EQ(j.at("t").at("x").get<double>(), 1.5);
+  EXPECT_DOUBLE_EQ(j.at("t").at("y").get<double>(), -2.5);
+  EXPECT_DOUBLE_EQ(j.at("t").at("z").get<double>(), 0.25);
 
-  EXPECT_DOUBLE_EQ(j.at("rotation").at("x").get<double>(), 0.0);
-  EXPECT_DOUBLE_EQ(j.at("rotation").at("y").get<double>(), 0.0);
-  EXPECT_DOUBLE_EQ(j.at("rotation").at("z").get<double>(), 0.0);
-  EXPECT_DOUBLE_EQ(j.at("rotation").at("w").get<double>(), 1.0);
+  EXPECT_DOUBLE_EQ(j.at("r").at("quat").at("x").get<double>(), 0.0);
+  EXPECT_DOUBLE_EQ(j.at("r").at("quat").at("y").get<double>(), 0.0);
+  EXPECT_DOUBLE_EQ(j.at("r").at("quat").at("z").get<double>(), 0.0);
+  EXPECT_DOUBLE_EQ(j.at("r").at("quat").at("w").get<double>(), 1.0);
 
-  EXPECT_NEAR(j.at("rpy_rad").at("yaw").get<double>(), 0.0, 1e-9);
-  EXPECT_NEAR(j.at("rpy_deg").at("yaw").get<double>(), 0.0, 1e-9);
+  EXPECT_NEAR(j.at("r").at("rpy_rad").at("yaw").get<double>(), 0.0, 1e-9);
+  EXPECT_NEAR(j.at("r").at("rpy_deg").at("yaw").get<double>(), 0.0, 1e-9);
 }
 
 TEST(FormatTransformJson, DegreesAreRadiansScaled)
@@ -184,8 +211,8 @@ TEST(FormatTransformJson, DegreesAreRadiansScaled)
   const std::string out = bagwiz::core::format_transform_json(tf, "a", "b");
   const auto j = nlohmann::json::parse(out);
 
-  EXPECT_NEAR(j.at("rpy_rad").at("yaw").get<double>(), kPi / 2.0, 1e-9);
-  EXPECT_NEAR(j.at("rpy_deg").at("yaw").get<double>(), 90.0, 1e-6);
+  EXPECT_NEAR(j.at("r").at("rpy_rad").at("yaw").get<double>(), kPi / 2.0, 1e-9);
+  EXPECT_NEAR(j.at("r").at("rpy_deg").at("yaw").get<double>(), 90.0, 1e-6);
 }
 
 }  // namespace

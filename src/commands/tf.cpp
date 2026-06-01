@@ -8,6 +8,7 @@
 
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
+#include "bagwiz/commands/tf_walk.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/tf_transform_format.hpp"
@@ -585,6 +586,8 @@ std::string format_topics_legend(const std::vector<std::string> & topics, bool u
 //           TF frame tree; on a TTY each topic's edges get a distinct color.
 //   static  Resolve the rigid transform from <from> to <to> using only the bag's
 //           static TF tree, and print translation / quaternion / RPY (or JSON).
+//   walk    Merge every TF topic into one buffer and step interactively through
+//           the times the merged TF changed, showing <from> -> <to> at each.
 class TfCommand : public Command
 {
 public:
@@ -596,6 +599,7 @@ public:
     app.require_subcommand(1);
     configure_tree(app);
     configure_static(app);
+    configure_walk(app);
   }
 
   int run() override
@@ -605,6 +609,8 @@ public:
         return run_tree();
       case Subcommand::kStatic:
         return run_static();
+      case Subcommand::kWalk:
+        return run_walk();
       case Subcommand::kNone:
         BAGWIZ_LOG_ERROR(kLogger, "no subcommand selected");
         return 1;
@@ -613,7 +619,7 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kTree, kStatic };
+  enum class Subcommand { kNone, kTree, kStatic, kWalk };
   Subcommand selected_ = Subcommand::kNone;
 
   struct TreeArgs
@@ -629,6 +635,13 @@ private:
     std::string to_frame;
     bool json = false;
   } static_args_;
+
+  struct WalkArgs
+  {
+    std::filesystem::path input_path;
+    std::string from_frame;
+    std::string to_frame;
+  } walk_args_;
 
   void configure_tree(CLI::App & app)
   {
@@ -833,9 +846,9 @@ private:
       return 1;
     }
 
-    const std::string out = args.json
-                              ? core::format_transform_json(tf, args.from_frame, args.to_frame)
-                              : core::format_transform_human(tf, args.from_frame, args.to_frame);
+    const std::string out =
+      args.json ? core::format_transform_json(tf, args.from_frame, args.to_frame)
+                : core::format_transform_human(tf, args.from_frame, args.to_frame, "  (static)");
     // The human form ends with a newline; the JSON form does not, so add one.
     fmt::print(stdout, "{}{}", out, args.json ? "\n" : "");
 
@@ -844,6 +857,34 @@ private:
       return 1;
     }
     return 0;
+  }
+
+  void configure_walk(CLI::App & app)
+  {
+    auto * sub = app.add_subcommand(
+      "walk",
+      "Step interactively through the times the merged TF changed, showing the "
+      "<from> -> <to> transform at each (merges every TF topic in the bag)");
+    sub->add_option("input", walk_args_.input_path, "Bag path (file or directory)")
+      ->required()
+      ->check(CLI::ExistingPath);
+    sub->add_option("from", walk_args_.from_frame, "Source frame id (<from>)")->required();
+    sub->add_option("to", walk_args_.to_frame, "Target frame id (<to>)")->required();
+    sub->callback([this]() { selected_ = Subcommand::kWalk; });
+  }
+
+  int run_walk()
+  {
+    const auto & args = walk_args_;
+
+    // CLI11 marks <from>/<to> required but accepts the empty string; reject it
+    // up front so lookupTransform isn't asked to resolve a blank frame.
+    if (args.from_frame.empty() || args.to_frame.empty()) {
+      BAGWIZ_LOG_ERROR(kLogger, "Both <from> and <to> frame ids must be non-empty.");
+      return 1;
+    }
+
+    return run_tf_walk(args.input_path, args.from_frame, args.to_frame);
   }
 };
 

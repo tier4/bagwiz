@@ -15,9 +15,9 @@
 #include <string>
 
 // Rendering of a single resolved rigid-body transform (the result of
-// tf2::BufferCore::lookupTransform) for `bagwiz tf static`. Kept free of
-// I/O and colour so it is pure and unit-testable without a bag; the
-// command layer decides where the strings go.
+// tf2::BufferCore::lookupTransform), shared by `bagwiz tf static` and
+// `bagwiz tf walk`. Kept free of I/O and colour so it is pure and
+// unit-testable without a bag; the command layer decides where the strings go.
 namespace bagwiz::core
 {
 
@@ -39,21 +39,29 @@ RollPitchYaw quaternion_to_rpy(const geometry_msgs::msg::Quaternion & q);
 // Human-readable rendering of `tf` as the rigid transform from
 // `from_frame` to `to_frame` — i.e. the result of
 // lookupTransform(target=to_frame, source=from_frame), matching
-// `ros2 run tf2_ros tf2_echo <from_frame> <to_frame>`. Shows translation,
-// the rotation quaternion, and RPY in both radians and degrees. Monochrome
-// (like tf2_echo); the trailing newline is included.
+// `ros2 run tf2_ros tf2_echo <from_frame> <to_frame>`. The body mirrors the
+// --json hierarchy and key names (translation under `t`; rotation under `r`
+// as `quat` plus `rpy_rad` / `rpy_deg`), one value per line with a two-space
+// indent per level. Monochrome (like tf2_echo); fixed 6-decimal precision;
+// the trailing newline is included.
+//
+// `annotation` is appended to the direction line right after
+// "<from> -> <to>" (e.g. "  (static)" for `tf static`, which resolves only
+// the static tree). `tf walk` does not classify transforms as static vs
+// dynamic, so it passes the default empty annotation.
 std::string format_transform_human(
   const geometry_msgs::msg::TransformStamped & tf, const std::string & from_frame,
-  const std::string & to_frame);
+  const std::string & to_frame, const std::string & annotation = {});
 
 // Machine-readable JSON rendering (pretty-printed, 2-space indent) carrying
 // the same data as the human form. Schema:
 //   {"from": str, "to": str,
-//    "translation": {"x","y","z"},
-//    "rotation": {"x","y","z","w"},
-//    "rpy_rad": {"roll","pitch","yaw"},
-//    "rpy_deg": {"roll","pitch","yaw"}}
-// No trailing newline (nlohmann::json::dump does not add one).
+//    "t": {"x","y","z"},
+//    "r": {"quat":    {"x","y","z","w"},
+//          "rpy_rad": {"roll","pitch","yaw"},
+//          "rpy_deg": {"roll","pitch","yaw"}}}
+// Object keys are emitted in nlohmann's default (alphabetical) order. No
+// trailing newline (nlohmann::json::dump does not add one).
 std::string format_transform_json(
   const geometry_msgs::msg::TransformStamped & tf, const std::string & from_frame,
   const std::string & to_frame);

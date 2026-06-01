@@ -529,10 +529,11 @@ TEST(FlagCompletionTest, TfTreeDashListsHelpFlags)
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "tree", "-"}), "--help\n-h\n");
 }
 
-// `bagwiz tf <TAB>` lists both subcommands, sorted.
-TEST(FlagCompletionTest, TfSubcommandListsStaticAndTree)
+// `bagwiz tf <TAB>` lists all subcommands, sorted.
+TEST(FlagCompletionTest, TfSubcommandListsStaticTreeAndWalk)
 {
-  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "tf", ""}), "static\ntree\n");
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "tf", ""}), "static\ntree\nwalk\n");
 }
 
 // `tf static -` surfaces its own --json flag alongside the implicit help flags.
@@ -543,42 +544,90 @@ TEST(FlagCompletionTest, TfStaticDashListsStaticFlags)
     "--help\n--json\n-h\n");
 }
 
-// `tf static <bag> <TAB>` (the <from> slot) lists the bag's TF frame ids,
-// sorted and deduplicated, reusing the same frame-id source as traj.
-TEST_F(CompletionTest, TfStaticFromSlotListsFrameIds)
+// `tf walk -` has no user flags, so only the implicit help flags appear.
+TEST(FlagCompletionTest, TfWalkDashListsHelpFlagsOnly)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "walk", "-"}), "--help\n-h\n");
+}
+
+// `tf static <bag> <TAB>` (the <from> slot) lists only frame ids from the
+// bag's static TF (*tf_static) topics, since `tf static` resolves the static
+// tree. The mixed fixture's /tf_static carries map→odom→base_link.
+TEST_F(CompletionTest, TfStaticFromSlotListsStaticFrameIds)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
-  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
+  write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "~/tf.mcap"}),
-    "base_link\nlidar\nmap\nodom\n");
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "~/mixed.mcap"}),
+    "base_link\nmap\nodom\n");
 }
 
-// `tf static <bag> <from> <TAB>` (the <to> slot) shares the same frame-id
-// source as the <from> slot.
-TEST_F(CompletionTest, TfStaticToSlotListsFrameIds)
+// `tf static <bag> <from> <TAB>` (the <to> slot) shares the same static-only
+// frame-id source as the <from> slot.
+TEST_F(CompletionTest, TfStaticToSlotListsStaticFrameIds)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
-  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
+  write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "static", "~/tf.mcap", "map"}),
-    "base_link\nlidar\nmap\nodom\n");
+    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "static", "~/mixed.mcap", "map"}),
+    "base_link\nmap\nodom\n");
 }
 
-// A typed prefix narrows the <from> frame-id candidates.
+// A typed prefix narrows the static <from> frame-id candidates.
 TEST_F(CompletionTest, TfStaticFromSlotRespectsPrefix)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
+  write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "~/mixed.mcap", "ba"}),
+    "base_link\n");
+}
+
+// A bag with only a dynamic /tf topic (no *tf_static) has no static frames, so
+// `tf static` completion surfaces the sentinel rather than listing the dynamic
+// frames — confirming the static-only restriction. (`tf walk` on the same bag
+// does list those frames; see TfWalkFromSlotListsFrameIds.)
+TEST_F(CompletionTest, TfStaticFromSlotExcludesDynamicOnlyFrames)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");  // /tf only, no /tf_static
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "~/tf.mcap"}),
+    "NO-TF-FRAMES-FOUND-IN-BAG\n");
+}
+
+// `tf walk <bag> <TAB>` (the <from> slot) lists the bag's TF frame ids, sharing
+// the same positional shape and frame-id source as `tf static`.
+TEST_F(CompletionTest, TfWalkFromSlotListsFrameIds)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
   write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "~/tf.mcap", "ba"}),
-    "base_link\n");
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "walk", "~/tf.mcap"}),
+    "base_link\nlidar\nmap\nodom\n");
+}
+
+// `tf walk <bag> <from> <TAB>` (the <to> slot) shares the same frame-id source.
+TEST_F(CompletionTest, TfWalkToSlotListsFrameIds)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "walk", "~/tf.mcap", "map"}),
+    "base_link\nlidar\nmap\nodom\n");
 }
 
 // `tf tree <bag> <TAB>` (the <topic> slot) lists only the bag's

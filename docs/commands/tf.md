@@ -4,6 +4,7 @@ TF inspection on a ROS 2 rosbag.
 
 - [`tree`](#bagwiz-tf-tree) — merge one or more `tf2_msgs/msg/TFMessage` topics into one TF frame tree, colored per topic.
 - [`static`](#bagwiz-tf-static) — resolve the rigid transform from `<from>` to `<to>` using only the bag's static TF tree; print translation/quaternion/RPY or JSON.
+- [`walk`](#bagwiz-tf-walk) — merge every TF topic into one buffer and step interactively through the times the merged TF changed, showing the `<from>` → `<to>` transform at each.
 
 ROS 1 `*.bag` inputs are not supported.
 
@@ -194,6 +195,10 @@ bagwiz tf static <input> <from> <to> [--json]
 | `from`  | Source frame id.                                          |
 | `to`    | Target frame id.                                          |
 
+`<from>` and `<to>` support TAB completion. Because `tf static` resolves only
+the static tree, the candidates are restricted to frame ids found in the bag's
+static `*tf_static` topics (see [`bagwiz complete`](complete.md)).
+
 ### Options
 
 | Flag     | Description                                       |
@@ -206,22 +211,41 @@ Human form (monochrome, like `tf2_echo`):
 
 ```text
 Transform: base_link -> lidar  (static)
-  Translation (x, y, z):          [-0.000000, 1.000000, -0.500000]
-  Rotation quaternion (x,y,z,w):  [0.000000, 0.000000, -0.707107, 0.707107]
-  Rotation RPY (rad):             [0.000000, 0.000000, -1.570796]
-  Rotation RPY (deg):             [0.000000, 0.000000, -90.000000]
+  t:
+    x: -0.000000
+    y: 1.000000
+    z: -0.500000
+  r:
+    quat:
+      x: 0.000000
+      y: 0.000000
+      z: -0.707107
+      w: 0.707107
+    rpy_rad:
+      roll: 0.000000
+      pitch: 0.000000
+      yaw: -1.570796
+    rpy_deg:
+      roll: 0.000000
+      pitch: 0.000000
+      yaw: -90.000000
 ```
 
-JSON form (`--json`, pretty-printed; full-precision doubles):
+JSON form (`--json`, pretty-printed; full-precision doubles). Translation is
+under `t`; rotation is under `r` as a quaternion (`quat`) plus RPY in radians
+(`rpy_rad`) and degrees (`rpy_deg`). Object keys are emitted in alphabetical
+order (nlohmann's default), so consumers should not rely on key ordering:
 
 ```json
 {
   "from": "base_link",
   "to": "lidar",
-  "translation": { "x": 0.0, "y": 1.0, "z": -0.5 },
-  "rotation": { "x": 0.0, "y": 0.0, "z": -0.7071067811865475, "w": 0.7071067811865476 },
-  "rpy_rad": { "roll": 0.0, "pitch": 0.0, "yaw": -1.5707963267948963 },
-  "rpy_deg": { "roll": 0.0, "pitch": 0.0, "yaw": -89.99999999999999 }
+  "t": { "x": 0.0, "y": 1.0, "z": -0.5 },
+  "r": {
+    "quat": { "x": 0.0, "y": 0.0, "z": -0.7071067811865475, "w": 0.7071067811865476 },
+    "rpy_rad": { "roll": 0.0, "pitch": 0.0, "yaw": -1.5707963267948963 },
+    "rpy_deg": { "roll": 0.0, "pitch": 0.0, "yaw": -89.99999999999999 }
+  }
 }
 ```
 
@@ -238,3 +262,102 @@ bagwiz tf static capture.mcap base_link lidar --json
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | Transform written to stdout.                                                                                                                                                                                |
 | `1`  | Bag could not be opened, no static TF topic, decode failure, the frames are not connected through the static tree, or I/O error. When a frame is unknown, the available static frames are listed on stderr. |
+
+---
+
+## `bagwiz tf walk`
+
+Merges **every** `tf2_msgs/msg/TFMessage` topic in the bag (`/tf`, `*tf_static`,
+and any other TF topic) into one TF buffer, then steps through the distinct
+times at which the merged TF changed — one step per timestamp — resolving the
+`<from>` → `<to>` transform at each. Unlike [`tf static`](#bagwiz-tf-static),
+`tf walk` does **not** classify transforms as static vs dynamic: static topics
+are merged in alongside dynamic ones so a chain that crosses both (e.g. a
+dynamic `map → base_link` plus a static `base_link → lidar`) resolves at every
+step. The view is the same interactive pager as [`bagwiz walk`](walk.md).
+
+### Direction convention
+
+Each step shows `lookupTransform(target=<to>, source=<from>)`, identical to
+`tf static` and to `ros2 run tf2_ros tf2_echo <from> <to>`: the translation is
+`<from>`'s origin expressed in the `<to>` frame.
+
+### Usage
+
+```text
+bagwiz tf walk <input> <from> <to>
+```
+
+`tf walk` requires an interactive terminal (stdin and stdout must be a TTY).
+
+### Positional arguments
+
+| Name    | Description                                               |
+| ------- | --------------------------------------------------------- |
+| `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`). |
+| `from`  | Source frame id.                                          |
+| `to`    | Target frame id.                                          |
+
+Both `<from>` and `<to>` support TAB completion from the bag's TF frame ids
+across **all** TF topics (static + dynamic, since `tf walk` merges them; see
+[`bagwiz complete`](complete.md)). This is broader than `tf static`, which
+restricts the same slots to static `*tf_static` frames.
+
+### Keys
+
+| Key                       | Action                                    |
+| ------------------------- | ----------------------------------------- |
+| `→` / `Space`             | next timestamp (wraps from last to first) |
+| `←` / `b`                 | previous timestamp                        |
+| `↑` / `k`, `↓` / `j`      | scroll the transform body up / down       |
+| `Home` / `H`, `End` / `T` | jump the body scroll to head / tail       |
+| `g` / `G`                 | jump to the first / last timestamp        |
+| `q` / `Ctrl-C`            | quit                                      |
+
+### Output
+
+Per step, the header shows the timestamp and the body shows the resolved
+transform (monochrome, like `tf2_echo`; no `(static)` tag since the walk does
+not classify transforms):
+
+```text
+timestamp: 2026-01-01 12:00:00.000000000 UTC (1767268800.000000000)
+
+Transform: base_link -> lidar
+  t:
+    x: -0.000000
+    y: 1.000000
+    z: -0.500000
+  r:
+    quat:
+      x: 0.000000
+      y: 0.000000
+      z: -0.707107
+      w: 0.707107
+    rpy_rad:
+      roll: 0.000000
+      pitch: 0.000000
+      yaw: -1.570796
+    rpy_deg:
+      roll: 0.000000
+      pitch: 0.000000
+      yaw: -90.000000
+```
+
+When the merged TF cannot connect `<from>` and `<to>` at a given timestamp
+(e.g. the chain is not yet complete), that step shows a `⚠` warning line with
+the tf2 reason instead of a transform, and navigation continues.
+
+### Examples
+
+```bash
+bagwiz tf walk capture.mcap base_link lidar
+bagwiz tf walk capture.mcap map base_link
+```
+
+### Exit status
+
+| Code | Meaning                                                                                                                           |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | The pager ran and the user quit.                                                                                                  |
+| `1`  | Not a TTY, the bag could not be opened, it has no `tf2_msgs/msg/TFMessage` topic, or the TF topics carry no decodable transforms. |
