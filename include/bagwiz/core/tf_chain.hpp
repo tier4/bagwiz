@@ -9,8 +9,8 @@
 #ifndef BAGWIZ__CORE__TF_CHAIN_HPP_
 #define BAGWIZ__CORE__TF_CHAIN_HPP_
 
-#include <tf2/buffer_core.h>
-#include <tf2/time.h>
+#include <tf2/buffer_core.hpp>
+#include <tf2/time.hpp>
 
 #include <string>
 #include <utility>

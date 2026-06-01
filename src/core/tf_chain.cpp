@@ -8,8 +8,8 @@
 
 #include "bagwiz/core/tf_chain.hpp"
 
-#include <tf2/buffer_core.h>
-#include <tf2/time.h>
+#include <tf2/buffer_core.hpp>
+#include <tf2/time.hpp>
 
 #include <algorithm>
 #include <cstddef>
