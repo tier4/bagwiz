@@ -3,9 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-# shellcheck source=ros-source.sh
-source "${SCRIPT_DIR}/ros-source.sh"
-
 # Default parallel job count: half of the CPU count from nproc(1) (logical
 # processors), minimum 1. nproc is in coreutils and avoids parsing lscpu.
 default_parallel_workers() {
@@ -135,9 +132,31 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Ensure a ROS 2 environment is available, prompting for a distro when none is
-# sourced. Done after argument parsing so --help works without ROS sourced.
-ensure_ros_sourced build.sh
+# Require a sourced ROS 2 environment. ROS_DISTRO alone is not enough (it can be
+# exported without sourcing); AMENT_PREFIX_PATH is set when a distro's
+# setup.bash is sourced, so require both. If not sourced, print the exact source
+# command for each ROS 2 distro installed under /opt/ros (or, when none is
+# found, tell the user to install ROS 2) and exit. Done after argument parsing
+# so --help works without ROS sourced.
+ros_install_root="${ROS_INSTALL_ROOT:-/opt/ros}"
+if [[ -n ${ROS_DISTRO:-} && -n ${AMENT_PREFIX_PATH:-} ]]; then
+    echo "[build.sh] Using sourced ROS 2 distro: ${ROS_DISTRO}"
+else
+    installed_distros=()
+    for entry in "${ros_install_root}"/*/; do
+        [[ -f "${entry}setup.bash" ]] && installed_distros+=("$(basename "${entry}")")
+    done
+    if [[ ${#installed_distros[@]} -eq 0 ]]; then
+        echo "[build.sh] ROS 2 is not sourced and no installation was found under ${ros_install_root}." >&2
+        echo "[build.sh] Install ROS 2 first: https://docs.ros.org/en/rolling/Installation.html" >&2
+        exit 1
+    fi
+    echo "[build.sh] ROS 2 is not sourced. Source an installed distro, then re-run this command:" >&2
+    for distro in "${installed_distros[@]}"; do
+        echo "[build.sh]     source ${ros_install_root}/${distro}/setup.bash" >&2
+    done
+    exit 1
+fi
 
 case "${build_type}" in
 release)
