@@ -87,7 +87,13 @@ FetchContent_Declare(
   GIT_TAG v3.2
   GIT_SHALLOW TRUE
 )
+# rang (and older CLI11) declare cmake_minimum_required below the floor CMake
+# 4.0 still accepts, which is a hard error on newer toolchains such as the ROS 2
+# Lyrical image. Give the fetched subprojects a compatibility floor. Older CMake
+# (Humble/Jazzy) does not know this variable and simply ignores it.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 FetchContent_MakeAvailable(cli11 fmt rang)
+unset(CMAKE_POLICY_VERSION_MINIMUM)
 
 # ---------------------------------------------------------------------------
 # Embedded joke data: read the single source-of-truth JSON at configure time
