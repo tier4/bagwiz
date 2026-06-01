@@ -9,9 +9,6 @@ log/
 COLCON_IGNORE
 AMENT_IGNORE
 
-# Remembered ROS distro chosen by setup.sh/build.sh (see ros-source.sh)
-.ros_distro
-
 # ROS bag files
 *.bag
 *.db3
