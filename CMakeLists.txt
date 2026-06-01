@@ -19,10 +19,16 @@ find_package(mcap_vendor REQUIRED)
 find_package(yaml_cpp_vendor REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(SQLite3 REQUIRED)
-# zstd_vendor wires up CMAKE_MODULE_PATH so the inner find_package(zstd) can
-# locate the imported `zstd::zstd` target. Used by message_decompressor.cpp
-# to handle rosbag2 MESSAGE-mode (per-message zstd) bags transparently.
-find_package(zstd_vendor REQUIRED)
+# zstd is used by message_decompressor.cpp to handle rosbag2 MESSAGE-mode
+# (per-message zstd) bags transparently. The vendor/module package below wires
+# up CMAKE_MODULE_PATH so the inner find_package(zstd) can locate the imported
+# `zstd::zstd` target. Humble/Jazzy ship zstd_vendor; Lyrical and newer replaced
+# it with zstd_cmake_module (a thin module over the system libzstd). Both expose
+# the same zstd::zstd target, so try zstd_vendor first and fall back.
+find_package(zstd_vendor QUIET)
+if(NOT zstd_vendor_FOUND)
+  find_package(zstd_cmake_module REQUIRED)
+endif()
 find_package(zstd REQUIRED)
 # Introspection fallback path: rmw_deserialize plus the per-package
 # typesupport `.so`s loaded at runtime via dlopen. Still required

@@ -26,7 +26,10 @@
   <depend>tf2</depend>
   <depend>tf2_msgs</depend>
   <depend>yaml_cpp_vendor</depend>
-  <depend>zstd_vendor</depend>
+  <depend condition="$ROS_DISTRO != 'humble' and $ROS_DISTRO != 'jazzy'">zstd_cmake_module</depend>
+  <depend condition="$ROS_DISTRO == 'humble' or $ROS_DISTRO == 'jazzy'">zstd_vendor</depend>
+  <!-- zstd provider split upstream: Humble/Jazzy ship zstd_vendor; Lyrical and
+       newer replaced it with zstd_cmake_module. Select by distro. -->
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>builtin_interfaces</test_depend>
