@@ -602,9 +602,9 @@ private:
         args.topic.c_str());
       return false;
     }
-    std::vector<InputEdge> ignored_edges;
     try {
       // input_topic = "" : load every TF topic into the buffer, record no edges.
+      std::vector<InputEdge> ignored_edges;
       load_tf_buffer_and_input_edges(
         args.input_path, tf_topics, std::string{}, tf_buffer, ignored_edges);
     } catch (const std::exception & e) {
