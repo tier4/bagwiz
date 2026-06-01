@@ -21,14 +21,13 @@ jobs:
         with:
           path: src/bagwiz
 
-      - name: Install pinned dependencies via setup.sh
+      - name: Install dependencies via setup.sh
         shell: bash
         run: |
-          # Build and test against the versions pinned in deps/<distro>.lock,
-          # the same ones shipped to users, so CI exercises the real install
-          # path. apt-get update populates the cache setup.sh's pinned
-          # `apt-get install name=version` reads; rosdep update keeps the
-          # fallback path working if a lock is ever missing.
+          # Run the same setup.sh users run, so CI exercises the real install
+          # path. apt-get update populates the package cache and rosdep update
+          # refreshes the rosdep database that setup.sh's `rosdep install`
+          # reads to resolve the latest available dependency versions.
           apt-get update
           rosdep update --rosdistro ${{ matrix.distro }}
           ./src/bagwiz/setup.sh
