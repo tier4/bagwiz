@@ -10,18 +10,18 @@
 #
 # Despite the filename, this script is meant to be executed, not sourced.
 #
-# Requires:
-#   - ROS_DISTRO sourced (e.g. `source /opt/ros/humble/setup.bash`)
-#   - rosdep (initialised with `sudo rosdep init && rosdep update`)
+# ROS sourcing: if ROS is already sourced the active distro is used. Otherwise
+# the installed distros are listed and you are prompted to choose one (see
+# ros-source.sh). Install rosdep with `sudo apt install python3-rosdep` and
+# initialise it once with `sudo rosdep init && rosdep update`.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-if [[ -z ${ROS_DISTRO:-} ]]; then
-    echo "[setup.sh] ROS_DISTRO is not set. Source your ROS environment first." >&2
-    exit 1
-fi
+# shellcheck source=ros-source.sh
+source "${SCRIPT_DIR}/ros-source.sh"
+ensure_ros_sourced setup.sh
 
 if ! command -v rosdep >/dev/null 2>&1; then
     echo "[setup.sh] 'rosdep' is not installed or not on PATH." >&2

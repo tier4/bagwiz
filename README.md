@@ -21,11 +21,17 @@ the machine.
 
 From the repository root:
 
-1. Load ROS 2 into your shell (replace `<distro>` with your installed ROS 2 distro, e.g. `humble` or `jazzy`):
+1. (Optional) Load ROS 2 into your shell (replace `<distro>` with your installed ROS 2 distro, e.g. `humble` or `jazzy`):
 
    ```bash
    source /opt/ros/<distro>/setup.bash
    ```
+
+   You can skip this: if ROS is not sourced, both `./setup.sh` and `./build.sh`
+   list the ROS 2 distros installed under `/opt/ros` and prompt you to pick one
+   for that run. They build against whichever distro you choose; there is no
+   distro allow-list. (If no ROS 2 is installed, they tell you to install it
+   first.)
 
 2. Install build dependencies declared in `package.xml` (run from the repo root):
 
@@ -38,7 +44,7 @@ From the repository root:
    `apt` or build them in a separate workspace and `source` that install
    space so they appear on `AMENT_PREFIX_PATH` when you run bagwiz.
 
-3. Build — again with ROS sourced (repeat step 1 if you opened a new terminal):
+3. Build:
 
    ```bash
    ./build.sh
@@ -54,8 +60,9 @@ From the repository root:
    ```
 
    `install.sh` creates the target directory if needed and warns when it is not
-   on your `PATH`. The binary is dynamically linked against ROS, so keep ROS
-   sourced (step 1) in any shell where you run `bagwiz`.
+   on your `PATH`. The binary is dynamically linked against ROS, so source ROS 2
+   (as in step 1) in any shell where you run `bagwiz` — the interactive prompt
+   only covers `setup.sh`/`build.sh`, not the installed binary.
 
 Optional flags for `./build.sh` (build type, parallelism, clean rebuild) are
 described in `./build.sh --help`; `./install.sh --help` covers the install

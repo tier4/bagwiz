@@ -3,6 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
+# shellcheck source=ros-source.sh
+source "${SCRIPT_DIR}/ros-source.sh"
+
 # Default parallel job count: half of the CPU count from nproc(1) (logical
 # processors), minimum 1. nproc is in coreutils and avoids parsing lscpu.
 default_parallel_workers() {
@@ -132,12 +135,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z ${ROS_DISTRO:-} ]]; then
-    echo "[build.sh] ROS_DISTRO is not set. Source your ROS environment first." >&2
-    # shellcheck disable=SC2016  # show literal ${ROS_DISTRO} in the suggested command
-    echo '[build.sh] Example: source /opt/ros/${ROS_DISTRO}/setup.bash' >&2
-    exit 1
-fi
+# Ensure a ROS 2 environment is available, prompting for a distro when none is
+# sourced. Done after argument parsing so --help works without ROS sourced.
+ensure_ros_sourced build.sh
 
 case "${build_type}" in
 release)
