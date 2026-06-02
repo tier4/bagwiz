@@ -137,7 +137,11 @@ source ~/.config/fish/completions/bagwiz.fish
   `<input>` as a ROS 2 rosbag and listing topics with names that start with
   the current prefix. The currently-covered positions are:
   - `bagwiz walk <input> <topic>`
-  - `bagwiz traj dump <input> <topic> <output>`
+  - `bagwiz traj dump <input> <topic> <output>` — restricted to the message
+    types `traj dump` can process (`tf2_msgs/msg/TFMessage`,
+    `geometry_msgs/msg/PoseStamped`,
+    `geometry_msgs/msg/PoseWithCovarianceStamped`, `nav_msgs/msg/Odometry`);
+    topics of any other type are omitted
   - `bagwiz traj join <input> <traj_file> <topic>`
   - `bagwiz tf tree <input> <topic>...` — restricted to `tf2_msgs/msg/TFMessage`
     topics (the only type `tf tree` can render) and offered at every topic slot,

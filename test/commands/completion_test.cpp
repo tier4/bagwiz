@@ -212,6 +212,38 @@ std::filesystem::path write_mixed_tf_mcap_fixture(const std::filesystem::path & 
   return path;
 }
 
+// MCAP carrying one topic of each message type `traj dump` supports (/odom,
+// /pose, /pwcs, /tf) plus two unsupported topics (/img, /points). Used to
+// verify that `traj dump` <topic> completion offers only the supported types.
+// Topic metadata alone drives completion, so the payloads are arbitrary bytes.
+std::filesystem::path write_traj_dump_mixed_fixture(const std::filesystem::path & path)
+{
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Mcap;
+  options.layout = bagwiz::io::Layout::SingleFile;
+  options.mcap_compression = "none";
+
+  constexpr std::array<std::byte, 4> kPayload{
+    std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}};
+  const auto bytes = std::span<const std::byte>(kPayload.data(), kPayload.size());
+
+  auto writer = bagwiz::io::open_write(path, options);
+  writer->declare_topic(make_topic("/tf", "tf2_msgs/msg/TFMessage"));
+  writer->declare_topic(make_topic("/pose", "geometry_msgs/msg/PoseStamped"));
+  writer->declare_topic(make_topic("/pwcs", "geometry_msgs/msg/PoseWithCovarianceStamped"));
+  writer->declare_topic(make_topic("/odom", "nav_msgs/msg/Odometry"));
+  writer->declare_topic(make_topic("/points", "sensor_msgs/msg/PointCloud2"));
+  writer->declare_topic(make_topic("/img", "sensor_msgs/msg/Image"));
+  writer->write("/tf", 1'000'000'000, bytes);
+  writer->write("/pose", 2'000'000'000, bytes);
+  writer->write("/pwcs", 3'000'000'000, bytes);
+  writer->write("/odom", 4'000'000'000, bytes);
+  writer->write("/points", 5'000'000'000, bytes);
+  writer->write("/img", 6'000'000'000, bytes);
+  writer->close();
+  return path;
+}
+
 std::string run_completion(std::vector<std::string> args)
 {
   std::vector<char *> argv;
@@ -261,26 +293,57 @@ TEST_F(CompletionTest, WalkTopicCompletionExpandsCurrentUserHome)
     "/bar\n/foo\n");
 }
 
-TEST_F(CompletionTest, TrajDumpTopicCompletionListsBagTopics)
+// `traj dump <bag> <TAB>` (the <topic> slot) lists only topics whose type is
+// one traj dump can process — /odom, /pose, /pwcs, /tf here — excluding the
+// unsupported /img and /points, sorted.
+TEST_F(CompletionTest, TrajDumpTopicCompletionListsOnlySupportedTypes)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
-  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+  write_traj_dump_mixed_fixture(tmp_dir_ / "fixture.mcap");
 
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "~/fixture.mcap"}),
-    "/bar\n/foo\n");
+    "/odom\n/pose\n/pwcs\n/tf\n");
 }
 
+// A typed prefix narrows the <topic> candidates within the supported set.
 TEST_F(CompletionTest, TrajDumpTopicCompletionRespectsPrefix)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
-  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+  write_traj_dump_mixed_fixture(tmp_dir_ / "fixture.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "~/fixture.mcap", "/f"}),
-    "/foo\n");
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "~/fixture.mcap", "/p"}),
+    "/pose\n/pwcs\n");
+}
+
+// A prefix that matches only an unsupported topic (/points) yields nothing:
+// the type filter excludes it even though the name matches.
+TEST_F(CompletionTest, TrajDumpTopicCompletionExcludesUnsupportedTypeOnPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_traj_dump_mixed_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "~/fixture.mcap", "/poi"}),
+    "");
+}
+
+// A bag whose topics are all unsupported types yields no <topic> candidates, so
+// the shell's default file completion takes over.
+TEST_F(CompletionTest, TrajDumpTopicCompletionEmptyWhenNoSupportedTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "unsupported.mcap");  // String + Int32 only
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "~/unsupported.mcap"}),
+    "");
 }
 
 TEST_F(CompletionTest, TrajJoinTopicCompletionListsBagTopics)

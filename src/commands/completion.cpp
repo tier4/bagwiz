@@ -24,6 +24,7 @@
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -50,14 +51,30 @@ constexpr std::size_t kSecondCommandArgWord = 2;
 constexpr std::size_t kThirdCommandArgWord = 3;
 constexpr std::size_t kFourthCommandArgWord = 4;
 
+constexpr std::string_view kTfMessageType = "tf2_msgs/msg/TFMessage";
+
+// Message types `traj dump` can process. This MUST mirror the supported set
+// dispatched in src/commands/traj.cpp (TrajCommand::run_dump); keep the two in
+// sync. A topic typed as anything outside this set is rejected by the command,
+// so completion never offers it.
+constexpr std::array<std::string_view, 4> kTrajDumpSupportedTypes{{
+  kTfMessageType,
+  "geometry_msgs/msg/PoseStamped",
+  "geometry_msgs/msg/PoseWithCovarianceStamped",
+  "nav_msgs/msg/Odometry",
+}};
+
+// `tf tree` renders only tf2_msgs/msg/TFMessage topics.
+constexpr std::array<std::string_view, 1> kTfTreeSupportedTypes{{kTfMessageType}};
+
 // Declarative table of commands that take a positional <topic> argument.
 // `subcommand` is empty when the command has no subcommand level (e.g.
 // `bagwiz walk <input> <topic>`). `input_word` and `topic_word` are
 // indices into CompletionRequest::words AFTER the leading "bagwiz" has
-// been stripped, so position 0 is the top-level command. When
-// `tf_message_only` is set, only topics whose type is
-// tf2_msgs/msg/TFMessage are offered (used by `tf tree`); otherwise every
-// topic in the bag is a candidate. When `variadic` is set the command takes
+// been stripped, so position 0 is the top-level command. `allowed_types`
+// restricts the offered topics to those whose type is listed (e.g. `tf tree`
+// to TFMessage, `traj dump` to the message types it can process); an empty
+// span offers every topic in the bag. When `variadic` is set the command takes
 // one-or-more topics, so completion fires at `topic_word` AND every later
 // positional slot (`bagwiz tf tree <input> <topic>...`); otherwise it fires
 // only at the single `topic_word`.
@@ -67,15 +84,15 @@ struct TopicArgBinding
   std::string_view subcommand{};
   std::size_t input_word{0};
   std::size_t topic_word{0};
-  bool tf_message_only{false};
+  std::span<const std::string_view> allowed_types{};
   bool variadic{false};
 };
 
 constexpr std::array<TopicArgBinding, 4> kTopicBindings{{
-  {"walk", "", kFirstCommandArgWord, kSecondCommandArgWord, false, false},
-  {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord, false, false},
-  {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord, false, false},
-  {"tf", "tree", kSecondCommandArgWord, kThirdCommandArgWord, true, true},
+  {"walk", "", kFirstCommandArgWord, kSecondCommandArgWord, {}, false},
+  {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord, kTrajDumpSupportedTypes, false},
+  {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord, {}, false},
+  {"tf", "tree", kSecondCommandArgWord, kThirdCommandArgWord, kTfTreeSupportedTypes, true},
 }};
 
 enum class CompletionShell { Bash, Zsh, Fish };
@@ -353,16 +370,29 @@ std::vector<std::string> top_level_candidates(const std::string_view & prefix)
   return result;
 }
 
+// Topic-name completion candidates from the bag at `input_path` whose names
+// start with `prefix`. When `allowed_types` is non-empty, a topic is offered
+// only if its type is one of the listed types (e.g. `tf tree`'s single
+// TFMessage type, or `traj dump`'s supported set); an empty `allowed_types`
+// offers every topic. Best-effort: a bag that fails to open yields no
+// candidates and the shell's default file completion takes over.
 std::vector<std::string> complete_topics(
-  const std::filesystem::path & input_path, const std::string_view & prefix)
+  const std::filesystem::path & input_path, const std::string_view & prefix,
+  std::span<const std::string_view> allowed_types)
 {
   std::vector<std::string> result;
   try {
     const auto reader = io::open_read(expand_current_user_home(input_path));
     for (const auto & topic : reader->topics()) {
-      if (starts_with(topic.name, prefix)) {
-        result.push_back(topic.name);
+      if (!starts_with(topic.name, prefix)) {
+        continue;
       }
+      if (
+        !allowed_types.empty() &&
+        std::find(allowed_types.begin(), allowed_types.end(), topic.type) == allowed_types.end()) {
+        continue;
+      }
+      result.push_back(topic.name);
     }
   } catch (const std::exception &) {
     return {};
@@ -372,7 +402,6 @@ std::vector<std::string> complete_topics(
   return result;
 }
 
-constexpr std::string_view kTfMessageType = "tf2_msgs/msg/TFMessage";
 constexpr std::string_view kTfStaticSuffix = "tf_static";
 
 // True when a TF topic's name marks it static (ends with "tf_static", e.g.
@@ -383,30 +412,6 @@ bool is_static_tf_topic_name(std::string_view name)
   return name.size() >= kTfStaticSuffix.size() &&
          name.compare(
            name.size() - kTfStaticSuffix.size(), kTfStaticSuffix.size(), kTfStaticSuffix) == 0;
-}
-
-// Like complete_topics, but restricts candidates to topics whose type is
-// tf2_msgs/msg/TFMessage. Used for the `tf tree <input> <topic>` slot so the
-// menu only offers TF topics the command can actually render. Best-effort:
-// a bag that fails to open yields no candidates and the shell's default file
-// completion takes over (matches complete_topics).
-std::vector<std::string> complete_tf_message_topics(
-  const std::filesystem::path & input_path, const std::string_view & prefix)
-{
-  std::vector<std::string> result;
-  try {
-    const auto reader = io::open_read(expand_current_user_home(input_path));
-    for (const auto & topic : reader->topics()) {
-      if (topic.type == kTfMessageType && starts_with(topic.name, prefix)) {
-        result.push_back(topic.name);
-      }
-    }
-  } catch (const std::exception &) {
-    return {};
-  }
-
-  std::sort(result.begin(), result.end());
-  return result;
 }
 
 // Single sentinel surfaced by --from / --to completion when the bag was
@@ -603,8 +608,7 @@ std::optional<std::vector<std::string>> try_topic_completion(const CompletionReq
       continue;
     }
     const auto & input_arg = request.words[binding.input_word];
-    return binding.tf_message_only ? complete_tf_message_topics(input_arg, current)
-                                   : complete_topics(input_arg, current);
+    return complete_topics(input_arg, current, binding.allowed_types);
   }
 
   return std::nullopt;
