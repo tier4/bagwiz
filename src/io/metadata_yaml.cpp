@@ -12,6 +12,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <cctype>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
@@ -40,6 +41,14 @@ std::optional<int64_t> read_i64(const YAML::Node & parent, const char * key)
   return std::nullopt;
 }
 
+std::string to_lower_copy(std::string s)
+{
+  for (auto & c : s) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return s;
+}
+
 }  // namespace
 
 BagMetadata load_metadata_yaml(const std::filesystem::path & yaml_path)
@@ -66,10 +75,26 @@ BagMetadata load_metadata_yaml(const std::filesystem::path & yaml_path)
     throw std::runtime_error("metadata.yaml missing storage_identifier");
   }
 
+  // Compression metadata must be read before choosing the shard-path list:
+  // FILE-mode bags list the decompressed logical name in `files[].path`
+  // (e.g. `shard_0.db3`) but the *on-disk* name in `relative_file_paths`
+  // (e.g. `shard_0.db3.zstd`). For those we must use `relative_file_paths`
+  // so the reader opens the file that actually exists.
+  if (auto cm = info["compression_mode"]; cm && cm.IsScalar()) {
+    md.compression_mode = cm.as<std::string>("");
+  }
+  if (auto cf = info["compression_format"]; cf && cf.IsScalar()) {
+    md.compression_format = cf.as<std::string>("");
+  }
+  const bool file_compressed = to_lower_copy(md.compression_mode) == "file";
+
   // Newer rosbag2 versions emit `files:` with per-shard metadata; older
   // versions (and simple single-shard bags) emit `relative_file_paths:`.
-  // Prefer `files:` when present since it preserves order explicitly.
-  if (auto files = info["files"]; files && files.IsSequence() && files.size() > 0) {
+  // Prefer `files:` when present since it preserves order explicitly — except
+  // for FILE-compressed bags, where only `relative_file_paths` carries the
+  // real `.zstd` on-disk names.
+  auto files = info["files"];
+  if (!file_compressed && files && files.IsSequence() && files.size() > 0) {
     for (const auto & f : files) {
       if (auto p = f["path"]; p) {
         md.relative_file_paths.emplace_back(p.as<std::string>());
@@ -78,6 +103,15 @@ BagMetadata load_metadata_yaml(const std::filesystem::path & yaml_path)
   } else if (auto paths = info["relative_file_paths"]; paths && paths.IsSequence()) {
     for (const auto & p : paths) {
       md.relative_file_paths.emplace_back(p.as<std::string>());
+    }
+  } else if (files && files.IsSequence() && files.size() > 0) {
+    // FILE-compressed bag with no `relative_file_paths` — fall back to the
+    // logical names; the reader will surface a clear open error if they do
+    // not exist on disk.
+    for (const auto & f : files) {
+      if (auto p = f["path"]; p) {
+        md.relative_file_paths.emplace_back(p.as<std::string>());
+      }
     }
   }
 
@@ -122,13 +156,6 @@ BagMetadata load_metadata_yaml(const std::filesystem::path & yaml_path)
     md.total_messages = *total;
     md.start_ns = *start;
     md.end_ns = *start + *duration;
-  }
-
-  if (auto cm = info["compression_mode"]; cm && cm.IsScalar()) {
-    md.compression_mode = cm.as<std::string>("");
-  }
-  if (auto cf = info["compression_format"]; cf && cf.IsScalar()) {
-    md.compression_format = cf.as<std::string>("");
   }
 
   return md;

@@ -73,9 +73,14 @@ bagwiz convert format [OPTIONS] <input> <output>
   - `FILE` on MCAP: this is rosbag2's label for storage-internal
     chunk compression, which libmcap decompresses transparently.
     Accepted; no extra work needed.
-  - `FILE` on SQLite3: this is a whole-database `.zstd` envelope
-    outside the `.db3` and is out of scope for bagwiz. Run
-    `ros2 bag convert --compression-mode none` first.
+  - `FILE` + `zstd` on SQLite3: a whole-database `.db3.zstd` envelope.
+    Each shard is stream-decompressed to a temporary `.db3` on read (an
+    `[INFO]` line announces the path) and removed when the reader
+    closes; reading needs free temp space roughly the size of the
+    decompressed database. A bare single-file `.db3.zstd` is accepted
+    the same way. The output bag is always written uncompressed.
+  - `FILE` + non-zstd on SQLite3: rejected with a clear error (only
+    `zstd` is implemented today).
   - `NONE` / empty / single-file MCAP inputs: nothing to do; MCAP
     chunk compression on a single-file MCAP is already transparent
     via libmcap.

@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <span>
 #include <string>
 #include <system_error>
@@ -139,6 +140,47 @@ TEST_F(CreateOptionsPreservingStorageTest, ReturnsAutoWhenDirectoryHasNoMetadata
   // Format::Auto.
   const auto reference = tmp_dir_ / "empty_dir";
   std::filesystem::create_directory(reference);
+
+  const auto opts = bagwiz::io::create_options_preserving_storage(reference);
+
+  EXPECT_EQ(opts.format, bagwiz::io::Format::Auto);
+  EXPECT_EQ(opts.layout, bagwiz::io::Layout::Auto);
+}
+
+TEST_F(CreateOptionsPreservingStorageTest, ReturnsAutoForFileCompressedDirectory)
+{
+  // FILE-mode `.db3.zstd` envelope: bagwiz writers cannot reproduce the
+  // compression, so an in-place rewrite must not pin Sqlite3 (which would
+  // silently emit a plain `.db3`). The helper returns Auto/Auto so the
+  // caller errors out and asks for an explicit `-o`.
+  const auto reference = tmp_dir_ / "file_compressed_dir";
+  std::filesystem::create_directory(reference);
+  {
+    std::ofstream md(reference / "metadata.yaml");
+    md << "rosbag2_bagfile_information:\n"
+       << "  version: 5\n"
+       << "  storage_identifier: sqlite3\n"
+       << "  compression_format: zstd\n"
+       << "  compression_mode: FILE\n"
+       << "  relative_file_paths:\n"
+       << "    - shard_0.db3.zstd\n";
+  }
+
+  const auto opts = bagwiz::io::create_options_preserving_storage(reference);
+
+  EXPECT_EQ(opts.format, bagwiz::io::Format::Auto);
+  EXPECT_EQ(opts.layout, bagwiz::io::Layout::Auto);
+}
+
+TEST_F(CreateOptionsPreservingStorageTest, ReturnsAutoForSingleFileZstdEnvelope)
+{
+  // A bare `.db3.zstd` single-file envelope likewise cannot be preserved.
+  const auto reference = tmp_dir_ / "bag.db3.zstd";
+  {
+    std::ofstream f(reference, std::ios::binary);
+    const std::array<char, 4> magic{0x28, '\xB5', 0x2F, '\xFD'};
+    f.write(magic.data(), magic.size());
+  }
 
   const auto opts = bagwiz::io::create_options_preserving_storage(reference);
 

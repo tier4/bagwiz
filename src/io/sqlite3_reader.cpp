@@ -10,6 +10,7 @@
 
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/file_decompressor.hpp"
 #include "bagwiz/io/message_decompressor.hpp"
 #include "bagwiz/io/metadata_yaml.hpp"
 #include "bagwiz/io/sqlite3_helpers.hpp"
@@ -45,8 +46,10 @@ public:
   // `messages.data` blob is routed through it before being exposed via
   // `next()`.
   SqliteFileReader(
-    const std::filesystem::path & path, std::shared_ptr<MessageDecompressor> decompressor)
+    const std::filesystem::path & path, std::shared_ptr<MessageDecompressor> decompressor,
+    TempFile temp = {})
   : path_(path),
+    temp_(std::move(temp)),
     db_(sqlite_open_or_throw(
       path.string(), SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, "sqlite3 open")),
     decompressor_(std::move(decompressor))
@@ -320,6 +323,10 @@ private:
   }
 
   std::filesystem::path path_;
+  // Owned decompressed temp file for FILE-mode `.db3.zstd` envelopes; empty
+  // for ordinary on-disk bags. Declared before db_ so that on destruction db_
+  // is closed first and then the temp file is removed.
+  TempFile temp_;
   SqlitePtr db_;
   SqliteStmtPtr read_stmt_;
   std::vector<TopicInfo> topics_;
@@ -345,12 +352,13 @@ public:
   SqliteShardReader(
     std::filesystem::path dir, std::vector<std::filesystem::path> shard_rel_paths,
     std::vector<TopicInfo> topics, BagMetadata metadata,
-    std::shared_ptr<MessageDecompressor> decompressor)
+    std::shared_ptr<MessageDecompressor> decompressor, bool zstd_envelope)
   : dir_(std::move(dir)),
     shard_rel_paths_(std::move(shard_rel_paths)),
     topics_(std::move(topics)),
     metadata_(std::move(metadata)),
-    decompressor_(std::move(decompressor))
+    decompressor_(std::move(decompressor)),
+    zstd_envelope_(zstd_envelope)
   {
     shards_.resize(shard_rel_paths_.size());
   }
@@ -440,10 +448,20 @@ private:
   SqliteFileReader & ensure_shard(std::size_t i) const
   {
     if (!shards_[i]) {
-      // Share the decompressor across shards so the ZSTD_DCtx is reused for
-      // the entire iteration (per-thread context reuse is the hot-path
-      // contract documented by rosbag2_compression_zstd).
-      shards_[i] = std::make_unique<SqliteFileReader>(dir_ / shard_rel_paths_[i], decompressor_);
+      const auto shard_path = dir_ / shard_rel_paths_[i];
+      if (zstd_envelope_) {
+        // FILE-mode `.db3.zstd` envelope: decompress this shard to a temp
+        // `.db3` lazily (only now, when it is actually iterated) and hand
+        // ownership of the temp file to the reader so it is removed on close.
+        TempFile temp = decompress_zstd_file_to_temp(shard_path);
+        const auto temp_path = temp.path();
+        shards_[i] = std::make_unique<SqliteFileReader>(temp_path, decompressor_, std::move(temp));
+      } else {
+        // Share the decompressor across shards so the ZSTD_DCtx is reused for
+        // the entire iteration (per-thread context reuse is the hot-path
+        // contract documented by rosbag2_compression_zstd).
+        shards_[i] = std::make_unique<SqliteFileReader>(shard_path, decompressor_);
+      }
     }
     return *shards_[i];
   }
@@ -459,24 +477,29 @@ private:
   std::size_t current_ = 0;
   bool iteration_started_ = false;
   std::shared_ptr<MessageDecompressor> decompressor_;
+  // True when each shard in shard_rel_paths_ is a `.db3.zstd` envelope that
+  // must be decompressed to a temp `.db3` before SQLite can open it.
+  bool zstd_envelope_ = false;
 };
 
 }  // namespace
 
 std::unique_ptr<BagReader> open_sqlite3_file(
-  const std::filesystem::path & path, std::shared_ptr<MessageDecompressor> decompressor)
+  const std::filesystem::path & path, std::shared_ptr<MessageDecompressor> decompressor,
+  TempFile temp)
 {
-  return std::make_unique<SqliteFileReader>(path, std::move(decompressor));
+  return std::make_unique<SqliteFileReader>(path, std::move(decompressor), std::move(temp));
 }
 
 std::unique_ptr<BagReader> open_sqlite3_directory(
   const std::filesystem::path & dir, BagMetadata md,
-  std::shared_ptr<MessageDecompressor> decompressor)
+  std::shared_ptr<MessageDecompressor> decompressor, bool zstd_file_envelope)
 {
   std::vector<TopicInfo> topics = md.topics;
   std::vector<std::filesystem::path> rel_paths = md.relative_file_paths;
   return std::make_unique<SqliteShardReader>(
-    dir, std::move(rel_paths), std::move(topics), std::move(md), std::move(decompressor));
+    dir, std::move(rel_paths), std::move(topics), std::move(md), std::move(decompressor),
+    zstd_file_envelope);
 }
 
 }  // namespace bagwiz::io::detail

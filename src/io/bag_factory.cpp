@@ -8,6 +8,7 @@
 
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/file_decompressor.hpp"
 #include "bagwiz/io/mcap_reader.hpp"
 #include "bagwiz/io/mcap_writer.hpp"
 #include "bagwiz/io/message_decompressor.hpp"
@@ -81,20 +82,58 @@ std::shared_ptr<MessageDecompressor> select_decompressor(
   if (mode == "file") {
     // MCAP FILE-mode = storage-internal chunk compression. libmcap
     // decompresses chunks transparently, so bagwiz needs no extra work.
-    // SQLite FILE-mode = whole-database `.zstd` envelope outside the .db3,
-    // which is out of scope for this PR.
-    if (md.storage_identifier == "sqlite3") {
-      throw std::runtime_error(
-        "FILE-level compression on sqlite3 storage is not supported by bagwiz "
-        "(the entire .db3 is wrapped in a .zstd envelope); "
-        "decompress first with `ros2 bag convert --compression-mode none` "
-        "(input: " +
-        path.string() + ")");
-    }
+    // SQLite FILE-mode = whole-database `.db3.zstd` envelope; that is handled
+    // upstream in open_read() by routing to the envelope-decompressing
+    // sqlite3 reader, so select_decompressor is never asked for it. No
+    // per-message decompressor is involved in either case.
     return nullptr;
   }
 
   throw std::runtime_error("unknown compression_mode '" + mode + "' in " + path.string());
+}
+
+// True when `md` describes a rosbag2 `compression_mode: FILE` whole-database
+// zstd envelope over sqlite3 storage (the `.db3.zstd` case). Case-insensitive
+// on the mode/format strings to tolerate both rosbag2's uppercase enum names
+// and bagwiz's lowercase output.
+bool is_sqlite3_file_zstd_envelope(const BagMetadata & md)
+{
+  return to_lower_copy(md.compression_mode) == "file" && md.storage_identifier == "sqlite3";
+}
+
+// Resolve the storage format hidden inside a single-file zstd envelope from
+// its extension alone, by stripping a trailing `.zstd` and re-inferring
+// (e.g. `foo.db3.zstd` -> Sqlite3, `foo.mcap.zstd` -> Mcap). Returns
+// Format::Auto when the inner extension is not recognised. Cheap and never
+// touches file contents.
+Format infer_inner_format_from_zstd_extension(const std::filesystem::path & path) noexcept
+{
+  if (to_lower_copy(path.extension().string()) != ".zstd") {
+    return Format::Auto;
+  }
+  return infer_format_from_extension(path.stem());
+}
+
+// True when `path` is a rosbag2 FILE-mode (whole-database zstd envelope) bag:
+// a directory whose metadata.yaml declares `compression_mode: FILE`, or a
+// bare `.db3.zstd` single file. Used to keep in-place rewrites from silently
+// emitting an uncompressed bag over a compressed source. Never throws.
+bool reference_is_file_compressed(const std::filesystem::path & path) noexcept
+{
+  std::error_code ec;
+  if (std::filesystem::is_directory(path, ec)) {
+    const auto metadata_path = path / "metadata.yaml";
+    if (!std::filesystem::exists(metadata_path, ec)) {
+      return false;
+    }
+    try {
+      const auto md = load_metadata_yaml(metadata_path);
+      return to_lower_copy(md.compression_mode) == "file";
+    } catch (const std::exception &) {
+      return false;
+    }
+  }
+  return is_zstd_file(path);
 }
 
 // Magic-byte sniff: opens `path`, reads up to 16 bytes, and matches the
@@ -157,7 +196,17 @@ Format detect_format(const std::filesystem::path & path) noexcept
     return Format::Auto;
   }
 
-  return sniff_file_magic(path);
+  const Format sniffed = sniff_file_magic(path);
+  if (sniffed != Format::Auto) {
+    return sniffed;
+  }
+  // Single-file zstd envelope: resolve the inner storage format cheaply from
+  // the `.db3.zstd` / `.mcap.zstd` extension without decompressing, so this
+  // stays the documented "reads at most 16 bytes" cheap path.
+  if (is_zstd_file(path)) {
+    return infer_inner_format_from_zstd_extension(path);
+  }
+  return Format::Auto;
 }
 
 Format infer_format_from_extension(const std::filesystem::path & path) noexcept
@@ -195,6 +244,28 @@ std::unique_ptr<BagReader> open_read(const std::filesystem::path & path, OpenOpt
     auto md = std::filesystem::exists(metadata_path) ? load_metadata_yaml(metadata_path)
                                                      : MetadataComputer::compute(path);
 
+    // FILE-mode `.db3.zstd` envelope over sqlite3: each shard is a whole
+    // database wrapped in zstd. Route to the envelope-decompressing reader,
+    // which expands each shard to a temp .db3 lazily on first iteration.
+    // Validate the format here so an unsupported envelope (e.g. lz4) fails
+    // fast before any shard work.
+    if (is_sqlite3_file_zstd_envelope(md)) {
+      const std::string fmt = to_lower_copy(md.compression_format);
+      if (fmt != "zstd") {
+        throw std::runtime_error(
+          "FILE-level compression format '" + md.compression_format +
+          "' is not supported on sqlite3 storage (only 'zstd' is implemented); "
+          "re-encode with `ros2 bag convert --compression-format zstd` or "
+          "decompress with `--compression-mode none` (input: " +
+          path.string() + ")");
+      }
+      BAGWIZ_LOG_INFO(
+        kLogger, "%s: FILE-mode (zstd) sqlite3 bag; shards decompressed to temp .db3 on read",
+        path.c_str());
+      return detail::open_sqlite3_directory(
+        path, std::move(md), nullptr, /*zstd_file_envelope=*/true);
+    }
+
     auto decompressor = select_decompressor(md, path);
 
     if (md.storage_identifier == "mcap") {
@@ -209,6 +280,26 @@ std::unique_ptr<BagReader> open_read(const std::filesystem::path & path, OpenOpt
   Format fmt = options.format;
   if (fmt == Format::Auto) {
     fmt = sniff_file_magic(path);
+  }
+
+  // Single-file zstd envelope (e.g. `foo.db3.zstd`): decompress to a temp
+  // file, detect the inner format, and open that. Only sqlite3 inner content
+  // is supported — rosbag2 never wraps MCAP this way (MCAP carries its own
+  // internal chunk compression).
+  if (fmt == Format::Auto && is_zstd_file(path)) {
+    TempFile temp = decompress_zstd_file_to_temp(path);
+    const Format inner = sniff_file_magic(temp.path());
+    if (inner == Format::Sqlite3) {
+      const auto temp_path = temp.path();
+      return detail::open_sqlite3_file(temp_path, nullptr, std::move(temp));
+    }
+    if (inner == Format::Mcap) {
+      throw std::runtime_error(
+        "zstd-wrapped MCAP files are not supported (MCAP uses internal chunk "
+        "compression; decompress the envelope first): " +
+        path.string());
+    }
+    throw std::runtime_error("unable to detect bag format inside zstd envelope: " + path.string());
   }
 
   switch (fmt) {
@@ -301,6 +392,15 @@ CreateOptions create_options_preserving_storage(
   CreateOptions opts;
   opts.format = Format::Auto;
   opts.layout = Layout::Auto;
+
+  // FILE-compressed sources cannot be preserved by an in-place rewrite:
+  // bagwiz's writers emit uncompressed bags, so pinning the storage format
+  // would silently replace a `.db3.zstd` envelope with a plain `.db3`. Return
+  // Auto/Auto so the caller surfaces a "could not detect storage format"
+  // error and asks the user to pass an explicit `-o` output instead.
+  if (reference_is_file_compressed(reference_path)) {
+    return opts;
+  }
 
   const auto detected = detect_format(reference_path);
   if (detected == Format::Auto) {

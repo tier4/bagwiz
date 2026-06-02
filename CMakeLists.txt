@@ -154,6 +154,7 @@ add_library(bagwiz_core
   src/core/tui/width.cpp
   src/commands/registry.cpp
   src/io/bag_factory.cpp
+  src/io/file_decompressor.cpp
   src/io/mcap_reader.cpp
   src/io/mcap_writer.cpp
   src/io/message_decompressor.cpp
@@ -363,6 +364,14 @@ if(BUILD_TESTING)
   ament_add_gtest(
     bagwiz_message_compression_e2e_test test/io/message_compression_e2e_test.cpp)
   target_link_libraries(bagwiz_message_compression_e2e_test bagwiz_core)
+
+  ament_add_gtest(
+    bagwiz_file_decompressor_test test/io/file_decompressor_test.cpp)
+  target_link_libraries(bagwiz_file_decompressor_test bagwiz_core)
+
+  ament_add_gtest(
+    bagwiz_file_compression_e2e_test test/io/file_compression_e2e_test.cpp)
+  target_link_libraries(bagwiz_file_compression_e2e_test bagwiz_core)
 
   ament_add_gtest(bagwiz_writer_roundtrip_test test/io/writer_roundtrip_test.cpp)
   target_link_libraries(bagwiz_writer_roundtrip_test bagwiz_core)

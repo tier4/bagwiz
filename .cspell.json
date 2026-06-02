@@ -3,6 +3,7 @@
   "ignoreRegExpList": [],
   "words": [
     "antigravitycli",
+    "bagfile",
     "bagwiz",
     "BAGWIZJOKES",
     "BWCOMP",
@@ -28,6 +29,7 @@
     "relaxable",
     "relwithdebinfo",
     "RIHS",
+    "rosbag",
     "rosdep",
     "semver",
     "shopt",

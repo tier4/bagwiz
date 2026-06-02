@@ -297,19 +297,9 @@ TEST_F(MessageCompressionE2ETest, RejectsMessageModeWithNonZstdFormat)
   EXPECT_THROW(bagwiz::io::open_read(bag), std::runtime_error);
 }
 
-TEST_F(MessageCompressionE2ETest, RejectsFileModeOnSqlite3)
-{
-  // Whole-database `.zstd` envelope: out of scope for bagwiz; must throw a
-  // clear "use `ros2 bag convert --compression-mode none` first" error.
-  const auto bag = tmp_dir_ / "sqlite_file_reject";
-  std::filesystem::create_directories(bag);
-  // A bag directory with no shard file is fine for this test — the factory
-  // gate fires before any file open is attempted.
-  write_metadata_yaml(
-    bag, "sqlite3", "shard_0.db3", "file", "zstd", {{"/foo", "std_msgs/msg/String"}});
-
-  EXPECT_THROW(bagwiz::io::open_read(bag), std::runtime_error);
-}
+// FILE-mode zstd over sqlite3 (the whole-database `.db3.zstd` envelope) is now
+// accepted and transparently decompressed on read — see
+// file_compression_e2e_test.cpp for the full coverage of that path.
 
 TEST_F(MessageCompressionE2ETest, AcceptsFileModeOnMcap)
 {

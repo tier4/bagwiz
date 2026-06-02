@@ -3,9 +3,21 @@
 Fast CLI for analyzing, processing, and extracting data from ROS 2
 rosbags. The inspection and export subcommands (`ls`, `walk`, `tf`,
 `traj`) read rosbag2 inputs — directory layouts and single-file `*.mcap`
-/ `*.db3` — through a unified backend. The `convert` subcommand repacks
-rosbag2 between MCAP and SQLite3 storage. All of this happens without
-spinning up a ROS graph.
+/ `*.db3` — through a unified backend. zstd-compressed inputs are
+accepted transparently: rosbag2 `compression_mode: MESSAGE` bags, MCAP
+chunk compression, and whole-database `compression_mode: FILE` SQLite3
+envelopes (`*.db3.zstd`, including the bare single file). The `convert`
+subcommand repacks rosbag2 between MCAP and SQLite3 storage. All of this
+happens without spinning up a ROS graph.
+
+> **Note on `*.db3.zstd` (FILE-mode) inputs.** Because SQLite must open a
+> real file, bagwiz stream-decompresses each `.db3.zstd` shard to a
+> temporary `.db3` (in the system temp directory) the first time it is read, and removes
+> it when the reader closes — so reading needs free temp space roughly the
+> size of the decompressed database. Metadata-only commands (`ls`) answer
+> from `metadata.yaml` and never decompress. bagwiz's writers always emit
+> uncompressed bags, so in-place rewrites of a FILE-compressed bag are
+> refused; pass an explicit `-o` output instead.
 
 ## Installation
 
