@@ -213,7 +213,7 @@ std::filesystem::path write_mixed_tf_mcap_fixture(const std::filesystem::path & 
 }
 
 // MCAP carrying one topic of each message type `traj dump` supports (/odom,
-// /pose, /pwcs, /tf) plus two unsupported topics (/img, /points). Used to
+// /pose, /pwc, /tf) plus two unsupported topics (/img, /points). Used to
 // verify that `traj dump` <topic> completion offers only the supported types.
 // Topic metadata alone drives completion, so the payloads are arbitrary bytes.
 std::filesystem::path write_traj_dump_mixed_fixture(const std::filesystem::path & path)
@@ -230,13 +230,13 @@ std::filesystem::path write_traj_dump_mixed_fixture(const std::filesystem::path 
   auto writer = bagwiz::io::open_write(path, options);
   writer->declare_topic(make_topic("/tf", "tf2_msgs/msg/TFMessage"));
   writer->declare_topic(make_topic("/pose", "geometry_msgs/msg/PoseStamped"));
-  writer->declare_topic(make_topic("/pwcs", "geometry_msgs/msg/PoseWithCovarianceStamped"));
+  writer->declare_topic(make_topic("/pwc", "geometry_msgs/msg/PoseWithCovarianceStamped"));
   writer->declare_topic(make_topic("/odom", "nav_msgs/msg/Odometry"));
   writer->declare_topic(make_topic("/points", "sensor_msgs/msg/PointCloud2"));
   writer->declare_topic(make_topic("/img", "sensor_msgs/msg/Image"));
   writer->write("/tf", 1'000'000'000, bytes);
   writer->write("/pose", 2'000'000'000, bytes);
-  writer->write("/pwcs", 3'000'000'000, bytes);
+  writer->write("/pwc", 3'000'000'000, bytes);
   writer->write("/odom", 4'000'000'000, bytes);
   writer->write("/points", 5'000'000'000, bytes);
   writer->write("/img", 6'000'000'000, bytes);
@@ -294,7 +294,7 @@ TEST_F(CompletionTest, WalkTopicCompletionExpandsCurrentUserHome)
 }
 
 // `traj dump <bag> <TAB>` (the <topic> slot) lists only topics whose type is
-// one traj dump can process — /odom, /pose, /pwcs, /tf here — excluding the
+// one traj dump can process — /odom, /pose, /pwc, /tf here — excluding the
 // unsupported /img and /points, sorted.
 TEST_F(CompletionTest, TrajDumpTopicCompletionListsOnlySupportedTypes)
 {
@@ -304,7 +304,7 @@ TEST_F(CompletionTest, TrajDumpTopicCompletionListsOnlySupportedTypes)
 
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "~/fixture.mcap"}),
-    "/odom\n/pose\n/pwcs\n/tf\n");
+    "/odom\n/pose\n/pwc\n/tf\n");
 }
 
 // A typed prefix narrows the <topic> candidates within the supported set.
@@ -316,7 +316,7 @@ TEST_F(CompletionTest, TrajDumpTopicCompletionRespectsPrefix)
 
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "~/fixture.mcap", "/p"}),
-    "/pose\n/pwcs\n");
+    "/pose\n/pwc\n");
 }
 
 // A prefix that matches only an unsupported topic (/points) yields nothing:
