@@ -18,10 +18,10 @@ bagwiz walk <input> <topic>
 
 ## Positional arguments
 
-| Name    | Description                                               |
-| ------- | --------------------------------------------------------- |
-| `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`). |
-| `topic` | Topic name to inspect. Must exist in the bag.             |
+| Name    | Description                                                             |
+| ------- | ----------------------------------------------------------------------- |
+| `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). |
+| `topic` | Topic name to inspect. Must exist in the bag.                           |
 
 ## Behavior
 

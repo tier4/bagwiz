@@ -104,7 +104,7 @@ bagwiz tf tree <input> [<topic-or-selector>...]
 
 | Name     | Description                                                                                                                                                                                       |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `input`  | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`).                                                                                                                                         |
+| `input`  | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).                                                                                                                           |
 | `topics` | Zero or more `tf2_msgs/msg/TFMessage` topics and/or the selectors `static` / `dynamic` (e.g. `/tf /tf_static`, `static`, `dynamic /extra_tf`). When omitted, all TF topics in the bag are merged. |
 
 ### Behavior
@@ -201,11 +201,11 @@ bagwiz tf static <input> <from> <to> [--json]
 
 ### Positional arguments
 
-| Name    | Description                                               |
-| ------- | --------------------------------------------------------- |
-| `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`). |
-| `from`  | Source frame id.                                          |
-| `to`    | Target frame id.                                          |
+| Name    | Description                                                             |
+| ------- | ----------------------------------------------------------------------- |
+| `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). |
+| `from`  | Source frame id.                                                        |
+| `to`    | Target frame id.                                                        |
 
 `<from>` and `<to>` support TAB completion. Because `tf static` resolves only
 the static tree, the candidates are restricted to frame ids found in the bag's
@@ -304,11 +304,11 @@ bagwiz tf walk <input> <from> <to>
 
 ### Positional arguments
 
-| Name    | Description                                               |
-| ------- | --------------------------------------------------------- |
-| `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`). |
-| `from`  | Source frame id.                                          |
-| `to`    | Target frame id.                                          |
+| Name    | Description                                                             |
+| ------- | ----------------------------------------------------------------------- |
+| `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). |
+| `from`  | Source frame id.                                                        |
+| `to`    | Target frame id.                                                        |
 
 Both `<from>` and `<to>` support TAB completion from the bag's TF frame ids
 across **all** TF topics (static + dynamic, since `tf walk` merges them; see

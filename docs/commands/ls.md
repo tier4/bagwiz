@@ -11,9 +11,9 @@ bagwiz ls <input>
 
 ## Positional arguments
 
-| Name    | Description                                                                 |
-| ------- | --------------------------------------------------------------------------- |
-| `input` | ROS 2 rosbag path: a rosbag2 directory or a single-file `*.mcap` / `*.db3`. |
+| Name    | Description                                                                                                                        |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `input` | ROS 2 rosbag path: a rosbag2 directory or a single-file `*.mcap` / `*.db3`. zstd-compressed `*.db3.zstd` inputs are also accepted. |
 
 ## Output
 

@@ -171,7 +171,7 @@ bagwiz traj dump [OPTIONS] <input> <topic> <output>
 
 | Name     | Description                                                                                                                                                   |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `input`  | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`).                                                                                                     |
+| `input`  | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).                                                                                       |
 | `topic`  | Topic whose type selects processing (`TFMessage`, `PoseStamped`, `PoseWithCovarianceStamped`, or `Odometry`).                                                 |
 | `output` | Output file path. Pre-existing files stop the run unless `--overwrite` is passed. With no `-f/--format`, the extension must be recognized (currently `.tum`). |
 
@@ -292,7 +292,7 @@ bagwiz traj join [OPTIONS] <input> <traj_file> <topic>
 
 | Name        | Description                                                                                 |
 | ----------- | ------------------------------------------------------------------------------------------- |
-| `input`     | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`).                                   |
+| `input`     | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).                     |
 | `traj_file` | Trajectory file. Format is selected by `-f/--format`, or inferred from the file extension.  |
 | `topic`     | Topic name to publish the trajectory under. May already exist in `<input>` (see `--force`). |
 
