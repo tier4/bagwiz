@@ -55,7 +55,7 @@ constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
 constexpr std::string_view kTfStaticSuffix = "tf_static";
 // Retain every dynamic transform for the whole walk so stepping back to an
 // early time still resolves. A year dwarfs any realistic bag and matches
-// `tf static`'s buffer sizing.
+// `tf static calc`'s buffer sizing.
 constexpr std::chrono::hours kTfBufferCacheTime{24 * 365};
 
 // is_static here only governs how a transform is fed to the buffer (static

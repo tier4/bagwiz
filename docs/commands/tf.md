@@ -3,7 +3,7 @@
 TF inspection on a ROS 2 rosbag.
 
 - [`tree`](#bagwiz-tf-tree) — merge one or more `tf2_msgs/msg/TFMessage` topics into one TF frame tree, colored by static vs dynamic (`static` / `dynamic` selectors supported).
-- [`static`](#bagwiz-tf-static) — resolve the rigid transform from `<from>` to `<to>` using only the bag's static TF tree; print translation/quaternion/RPY or JSON.
+- [`static calc`](#bagwiz-tf-static-calc) — resolve the rigid transform from `<from>` to `<to>` using only the bag's static TF tree; print translation/quaternion/RPY or JSON. (`static` is a command group; `calc` is its action.)
 - [`walk`](#bagwiz-tf-walk) — merge every TF topic into one buffer and step interactively through the times the merged TF changed, showing the `<from>` → `<to>` transform at each.
 
 ROS 1 `*.bag` inputs are not supported.
@@ -45,7 +45,7 @@ cannot form one consistent tree. Specifically:
 - **Merge conflict** — the merge is rejected when the same `child_frame_id` is
   given a different parent by two different topics, or when a frame is declared
   by both a static and a dynamic topic. This is consistent with the merge-and-
-  detect-conflicts behavior of [`bagwiz tf static`](#bagwiz-tf-static) and
+  detect-conflicts behavior of [`bagwiz tf static calc`](#bagwiz-tf-static-calc) and
   [`bagwiz traj dump`](traj.md). Two topics declaring the **same** edge (same
   parent, same class) are fine.
 - **Forest** — the union of all selected edges must form a valid forest: no
@@ -165,7 +165,11 @@ cyan/yellow):
 
 ---
 
-## `bagwiz tf static`
+## `bagwiz tf static calc`
+
+`static` is a command group for queries over the bag's static TF tree; `calc` is
+its sole action (so the full invocation is `bagwiz tf static calc ...`). Running
+`bagwiz tf static` without an action prints an error and the group's help.
 
 Resolves the rigid-body transform from `<from>` to `<to>` using **only** the
 bag's static TF (topics whose name ends with `tf_static`). Dynamic `/tf` topics
@@ -198,7 +202,7 @@ arguments yields the inverse transform.
 ### Usage
 
 ```text
-bagwiz tf static <input> <from> <to> [--json]
+bagwiz tf static calc <input> <from> <to> [--json]
 ```
 
 ### Positional arguments
@@ -209,9 +213,9 @@ bagwiz tf static <input> <from> <to> [--json]
 | `from`  | Source frame id.                                                        |
 | `to`    | Target frame id.                                                        |
 
-`<from>` and `<to>` support TAB completion. Because `tf static` resolves only
-the static tree, the candidates are restricted to frame ids found in the bag's
-static `*tf_static` topics (see [`bagwiz complete`](complete.md)).
+`<from>` and `<to>` support TAB completion. Because `tf static calc` resolves
+only the static tree, the candidates are restricted to frame ids found in the
+bag's static `*tf_static` topics (see [`bagwiz complete`](complete.md)).
 
 ### Options
 
@@ -270,8 +274,8 @@ consumers should not rely on key ordering:
 ### Examples
 
 ```bash
-bagwiz tf static capture.mcap base_link lidar
-bagwiz tf static capture.mcap base_link lidar --json
+bagwiz tf static calc capture.mcap base_link lidar
+bagwiz tf static calc capture.mcap base_link lidar --json
 ```
 
 ### Exit status
@@ -288,7 +292,7 @@ bagwiz tf static capture.mcap base_link lidar --json
 Merges **every** `tf2_msgs/msg/TFMessage` topic in the bag (`/tf`, `*tf_static`,
 and any other TF topic) into one TF buffer, then steps through the distinct
 times at which the merged TF changed — one step per timestamp — resolving the
-`<from>` → `<to>` transform at each. Unlike [`tf static`](#bagwiz-tf-static),
+`<from>` → `<to>` transform at each. Unlike [`tf static calc`](#bagwiz-tf-static-calc),
 `tf walk` does **not** classify transforms as static vs dynamic: static topics
 are merged in alongside dynamic ones so a chain that crosses both (e.g. a
 dynamic `map → base_link` plus a static `base_link → lidar`) resolves at every
@@ -297,8 +301,8 @@ step. The view is the same interactive pager as [`bagwiz walk`](walk.md).
 ### Direction convention
 
 Each step shows `lookupTransform(target=<to>, source=<from>)`, identical to
-`tf static` and to `ros2 run tf2_ros tf2_echo <from> <to>`: the translation is
-`<from>`'s origin expressed in the `<to>` frame.
+`tf static calc` and to `ros2 run tf2_ros tf2_echo <from> <to>`: the translation
+is `<from>`'s origin expressed in the `<to>` frame.
 
 ### Usage
 
@@ -318,7 +322,7 @@ bagwiz tf walk <input> <from> <to>
 
 Both `<from>` and `<to>` support TAB completion from the bag's TF frame ids
 across **all** TF topics (static + dynamic, since `tf walk` merges them; see
-[`bagwiz complete`](complete.md)). This is broader than `tf static`, which
+[`bagwiz complete`](complete.md)). This is broader than `tf static calc`, which
 restricts the same slots to static `*tf_static` frames.
 
 ### Keys

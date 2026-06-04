@@ -87,13 +87,13 @@ std::vector<TfTopic> collect_tf_topics(const io::BagReader & reader)
 // Replay the given TF topics once: when `buffer` is non-null, feed every
 // contained TransformStamped into it with the correct static/dynamic flag;
 // when `edges_by_topic_out` is non-null, collect the distinct parent→child
-// edges into it keyed by the source topic name. `tf static` needs the buffer
-// (to resolve transforms) but not the edges; `tf tree` needs the per-topic
-// edges but not the buffer.
+// edges into it keyed by the source topic name. `tf static calc` needs the
+// buffer (to resolve transforms) but not the edges; `tf tree` needs the
+// per-topic edges but not the buffer.
 //
 // When `conflict_checker` is non-null, every edge is run through it and the
 // first cross-topic conflict (multi-parent, or static/dynamic mix) throws —
-// used by `tf static` so several `*tf_static` topics are merged but a
+// used by `tf static calc` so several `*tf_static` topics are merged but a
 // contradiction aborts instead of silently last-winning. `tf tree` leaves it
 // null and runs its own forest validation downstream.
 //
@@ -563,15 +563,17 @@ std::string format_category_legend(bool use_color)
 //
 // Subcommands
 // -----------
-//   tree    Merge one or more tf2_msgs/msg/TFMessage <topics> into one validated
-//           TF frame tree; on a TTY edges are colored by static vs dynamic. The
-//           'static' / 'dynamic' selectors pick all static / dynamic TF topics.
-//           A merge conflict (same child via different parents, or both static
-//           and dynamic) aborts with an error.
-//   static  Resolve the rigid transform from <from> to <to> using only the bag's
-//           static TF tree, and print translation / quaternion / RPY (or JSON).
-//   walk    Merge every TF topic into one buffer and step interactively through
-//           the times the merged TF changed, showing <from> -> <to> at each.
+//   tree         Merge one or more tf2_msgs/msg/TFMessage <topics> into one
+//                validated TF frame tree; on a TTY edges are colored by static
+//                vs dynamic. The 'static' / 'dynamic' selectors pick all static
+//                / dynamic TF topics. A merge conflict (same child via different
+//                parents, or both static and dynamic) aborts with an error.
+//   static calc  Resolve the rigid transform from <from> to <to> using only the
+//                bag's static TF tree, and print translation / quaternion / RPY
+//                (or JSON). 'static' is a command group; 'calc' is its action.
+//   walk         Merge every TF topic into one buffer and step interactively
+//                through the times the merged TF changed, showing <from> -> <to>
+//                at each.
 class TfCommand : public Command
 {
 public:
@@ -591,8 +593,8 @@ public:
     switch (selected_) {
       case Subcommand::kTree:
         return run_tree();
-      case Subcommand::kStatic:
-        return run_static();
+      case Subcommand::kStaticCalc:
+        return run_static_calc();
       case Subcommand::kWalk:
         return run_walk();
       case Subcommand::kNone:
@@ -603,7 +605,7 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kTree, kStatic, kWalk };
+  enum class Subcommand { kNone, kTree, kStaticCalc, kWalk };
   Subcommand selected_ = Subcommand::kNone;
 
   struct TreeArgs
@@ -706,7 +708,8 @@ private:
     // can be tagged static or dynamic by its source. The conflict checker
     // rejects contradictory merges (a child given two parents by different
     // topics, or a child declared both static and dynamic) — consistent with
-    // `traj dump` and `tf static`. No tf2 buffer is needed (unlike `tf static`).
+    // `traj dump` and `tf static calc`. No tf2 buffer is needed (unlike
+    // `tf static calc`).
     std::map<std::string, std::set<std::pair<std::string, std::string>>> edges_by_topic;
     core::TfMergeConflictChecker conflict_checker;
     try {
@@ -778,10 +781,17 @@ private:
     return 0;
   }
 
+  // `static` is a command group, not a leaf: its single action lives under
+  // `static calc`. Modeling it as a group (require_subcommand(1)) leaves room
+  // for further static-tree queries to be added as sibling actions later, and
+  // keeps `bagwiz tf static` from silently resolving a transform without an
+  // explicit verb.
   void configure_static(CLI::App & app)
   {
-    auto * sub = app.add_subcommand(
-      "static",
+    auto * group = app.add_subcommand("static", "Static TF tree queries");
+    group->require_subcommand(1);
+    auto * sub = group->add_subcommand(
+      "calc",
       "Rigid transform from <from> to <to> resolved from the bag's static TF tree "
       "(tf2_echo convention)");
     sub->add_option("input", static_args_.input_path, "Bag path (file or directory)")
@@ -790,10 +800,10 @@ private:
     sub->add_option("from", static_args_.from_frame, "Source frame id (<from>)")->required();
     sub->add_option("to", static_args_.to_frame, "Target frame id (<to>)")->required();
     sub->add_flag("--json", static_args_.json, "Emit the transform as JSON instead of text");
-    sub->callback([this]() { selected_ = Subcommand::kStatic; });
+    sub->callback([this]() { selected_ = Subcommand::kStaticCalc; });
   }
 
-  int run_static()
+  int run_static_calc()
   {
     const auto & args = static_args_;
 

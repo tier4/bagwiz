@@ -50,6 +50,7 @@ constexpr std::size_t kFirstCommandArgWord = 1;
 constexpr std::size_t kSecondCommandArgWord = 2;
 constexpr std::size_t kThirdCommandArgWord = 3;
 constexpr std::size_t kFourthCommandArgWord = 4;
+constexpr std::size_t kFifthCommandArgWord = 5;
 
 constexpr std::string_view kTfMessageType = "tf2_msgs/msg/TFMessage";
 
@@ -405,8 +406,8 @@ std::vector<std::string> complete_topics(
 constexpr std::string_view kTfStaticSuffix = "tf_static";
 
 // True when a TF topic's name marks it static (ends with "tf_static", e.g.
-// "/tf_static"). `tf static` resolves only the static tree, so its frame-id
-// completion is restricted to these topics.
+// "/tf_static"). `tf static calc` resolves only the static tree, so its
+// frame-id completion is restricted to these topics.
 bool is_static_tf_topic_name(std::string_view name)
 {
   return name.size() >= kTfStaticSuffix.size() &&
@@ -431,7 +432,7 @@ constexpr std::size_t kFrameIdScanMessageCap = 5000;
 // Walks the bag's tf2_msgs/msg/TFMessage topics once and returns the
 // sorted, deduplicated set of header.frame_id / child_frame_id values
 // it observed. When `static_only` is true only *tf_static topics are
-// scanned (for `tf static`, which resolves the static tree); otherwise
+// scanned (for `tf static calc`, which resolves the static tree); otherwise
 // every TF topic contributes. Reads at most `kFrameIdScanMessageCap`
 // messages so completion stays responsive on large bags. Swallows every
 // exception:
@@ -726,6 +727,44 @@ std::vector<std::string> complete_traj(const CompletionRequest & request)
   return {};
 }
 
+// `tf static` is a command group whose only action is `calc`; the action verb
+// adds one positional slot, shifting every argument one word to the right of the
+// other `tf` subcommands. Words: `tf`(0) `static`(1) `calc`(2) `<input>`(3)
+// `<from>`(4) `<to>`(5) [--json].
+//
+// At the `calc` slot (word 2) the only candidate is `calc` itself. Once `calc`
+// is present, `--json` is offered for any `-` word, and the <from>/<to> slots
+// complete from the bag's static `*tf_static` frame ids only (the bag path sits
+// at the <input> slot, word 3). `tf static calc` resolves the static tree, so —
+// unlike `tf walk` — dynamic-only frames are never offered.
+std::vector<std::string> complete_tf_static(
+  const CompletionRequest & request, const std::string & current)
+{
+  if (request.cursor_word == kSecondCommandArgWord) {
+    if (current.starts_with("-")) {
+      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
+    }
+    return matching({"calc"}, current);
+  }
+
+  // Reaching here implies cursor_word > kSecondCommandArgWord, so words[2]
+  // exists (parse_request clamps cursor_word to words.size()). Anything other
+  // than the `calc` action offers nothing.
+  if (request.words[kSecondCommandArgWord] != "calc") {
+    return {};
+  }
+
+  if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
+    return matching(with_help({"--json"}), current);
+  }
+
+  if (request.cursor_word == kFourthCommandArgWord || request.cursor_word == kFifthCommandArgWord) {
+    return complete_frame_id_arg(request, kThirdCommandArgWord, current, /*static_only=*/true);
+  }
+
+  return {};
+}
+
 std::vector<std::string> complete_tf(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -738,26 +777,25 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
 
   const auto & mode = request.words[kFirstCommandArgWord];
 
+  // `static` is a nested command group (`static calc`); its positional shape
+  // differs from the flat `tree` / `walk` subcommands, so it is handled apart.
+  if (mode == "static") {
+    return complete_tf_static(request, current);
+  }
+
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
-    // Only `static` defines a user flag (--json); `tree` and `walk` carry just
-    // the implicit help flags.
-    if (mode == "static") {
-      return matching(with_help({"--json"}), current);
-    }
+    // `tree` and `walk` carry just the implicit help flags.
     return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
   }
 
-  // `tf static <input> <from> <to>` and `tf walk <input> <from> <to>` share the
-  // same positional shape: complete the <from>/<to> slots from the bag's TF
-  // frame ids (bag path at the <input> slot, word 2). The <input> slot itself
-  // falls through to the shell's file completion. `tf static` resolves only the
-  // static tree, so its candidates are restricted to *tf_static topics; `tf walk`
-  // merges every TF topic, so it offers frame ids from all of them.
+  // `tf walk <input> <from> <to>`: complete the <from>/<to> slots from the bag's
+  // TF frame ids (bag path at the <input> slot, word 2). The <input> slot itself
+  // falls through to the shell's file completion. `tf walk` merges every TF
+  // topic, so it offers frame ids from all of them (static + dynamic).
   if (
-    (mode == "static" || mode == "walk") &&
+    mode == "walk" &&
     (request.cursor_word == kThirdCommandArgWord || request.cursor_word == kFourthCommandArgWord)) {
-    return complete_frame_id_arg(
-      request, kSecondCommandArgWord, current, /*static_only=*/mode == "static");
+    return complete_frame_id_arg(request, kSecondCommandArgWord, current);
   }
 
   return {};

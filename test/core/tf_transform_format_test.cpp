@@ -156,8 +156,8 @@ TEST(FormatTransformHuman, IdentitySelfTransform)
   EXPECT_EQ(out.back(), '\n');
 }
 
-// `tf static` passes an annotation so the direction line is tagged "(static)";
-// the annotation appears right after the "<from> -> <to>" label.
+// `tf static calc` passes an annotation so the direction line is tagged
+// "(static)"; the annotation appears right after the "<from> -> <to>" label.
 TEST(FormatTransformHuman, AppendsAnnotationToDirectionLine)
 {
   const auto tf = make_identity_tf("base_link", "lidar", 1.0, 0.0, 0.0);

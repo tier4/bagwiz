@@ -129,8 +129,10 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz <cmd> -<TAB>` for every registered command (including
     `complete`, `convert`, `ls`, `tf`, `traj`, `walk`)
   - `bagwiz <cmd> <subcommand> -<TAB>` for every nested subcommand
-    (`convert format`, `tf static`, `tf tree`, `tf walk`, `traj dump`,
-    `traj join`); `tf static -<TAB>` also surfaces `--json`
+    (`convert format`, `tf static calc`, `tf tree`, `tf walk`, `traj dump`,
+    `traj join`); `tf static calc -<TAB>` also surfaces `--json`. `tf static`
+    is itself a command group, so `tf static <TAB>` completes its only action
+    (`calc`) and `tf static -<TAB>` lists just the help flags
 - Selected option values are completed where bagwiz has a closed set, such as
   `--storage <mcap|sqlite3>`.
 - Commands that take a `<topic>` positional argument complete it by opening
@@ -159,14 +161,14 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz traj join <input> ... --from <FRAME>` / `--to <FRAME>` (all TF topics)
   - `bagwiz tf walk <input> <FRAME> <FRAME>` (the `<from>` and `<to>`
     positional slots; all TF topics, static + dynamic, merged)
-  - `bagwiz tf static <input> <FRAME> <FRAME>` (the `<from>` and `<to>`
-    positional slots; **only** static `*tf_static` topics, since `tf static`
+  - `bagwiz tf static calc <input> <FRAME> <FRAME>` (the `<from>` and `<to>`
+    positional slots; **only** static `*tf_static` topics, since `tf static calc`
     resolves the static tree)
 
   The bag is opened lazily and only the first ~5000 TF messages are scanned
   so per-keystroke latency stays bounded on large bags. When the bag opens
   cleanly but carries no matching TF data — no TF at all, or, for
-  `tf static`, no static `*tf_static` topic — a single
+  `tf static calc`, no static `*tf_static` topic — a single
   `NO-TF-FRAMES-FOUND-IN-BAG` sentinel is emitted so the empty result is
   visibly distinct from the shell's silent file-completion fallback. When
   the bag path does not exist or the input slot is itself a flag, no
