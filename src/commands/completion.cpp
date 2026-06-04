@@ -727,16 +727,19 @@ std::vector<std::string> complete_traj(const CompletionRequest & request)
   return {};
 }
 
-// `tf static` is a command group whose only action is `calc`; the action verb
-// adds one positional slot, shifting every argument one word to the right of the
-// other `tf` subcommands. Words: `tf`(0) `static`(1) `calc`(2) `<input>`(3)
-// `<from>`(4) `<to>`(5) [--json].
+// `tf static` is a command group with two actions, `calc` and `cp`. The action
+// verb adds one positional slot, shifting every argument one word to the right
+// of the flat `tf` subcommands.
 //
-// At the `calc` slot (word 2) the only candidate is `calc` itself. Once `calc`
-// is present, `--json` is offered for any `-` word, and the <from>/<to> slots
-// complete from the bag's static `*tf_static` frame ids only (the bag path sits
-// at the <input> slot, word 3). `tf static calc` resolves the static tree, so —
-// unlike `tf walk` — dynamic-only frames are never offered.
+//   calc: `tf`(0) `static`(1) `calc`(2) `<input>`(3) `<from>`(4) `<to>`(5) [--json]
+//   cp:   `tf`(0) `static`(1) `cp`(2)   `<src>`(3)   `<dst>`(4)  [-o <out>] [--overwrite]
+//
+// At the action slot (word 2) the candidates are `calc` / `cp`. For `calc`,
+// `--json` is offered for any `-` word and the <from>/<to> slots complete from
+// the bag's static `*tf_static` frame ids only (the bag path sits at word 3);
+// unlike `tf walk`, dynamic-only frames are never offered. For `cp`, the
+// <src>/<dst>/-o values are bag paths that fall through to the shell's file
+// completion, so only the flags are surfaced.
 std::vector<std::string> complete_tf_static(
   const CompletionRequest & request, const std::string & current)
 {
@@ -744,22 +747,29 @@ std::vector<std::string> complete_tf_static(
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"calc"}, current);
+    return matching({"calc", "cp"}, current);
   }
 
   // Reaching here implies cursor_word > kSecondCommandArgWord, so words[2]
-  // exists (parse_request clamps cursor_word to words.size()). Anything other
-  // than the `calc` action offers nothing.
-  if (request.words[kSecondCommandArgWord] != "calc") {
+  // exists (parse_request clamps cursor_word to words.size()).
+  const auto & action = request.words[kSecondCommandArgWord];
+
+  if (action == "calc") {
+    if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
+      return matching(with_help({"--json"}), current);
+    }
+    if (
+      request.cursor_word == kFourthCommandArgWord || request.cursor_word == kFifthCommandArgWord) {
+      return complete_frame_id_arg(request, kThirdCommandArgWord, current, /*static_only=*/true);
+    }
     return {};
   }
 
-  if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
-    return matching(with_help({"--json"}), current);
-  }
-
-  if (request.cursor_word == kFourthCommandArgWord || request.cursor_word == kFifthCommandArgWord) {
-    return complete_frame_id_arg(request, kThirdCommandArgWord, current, /*static_only=*/true);
+  if (action == "cp") {
+    if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
+      return matching(with_help({"--output", "--overwrite", "-o"}), current);
+    }
+    return {};
   }
 
   return {};

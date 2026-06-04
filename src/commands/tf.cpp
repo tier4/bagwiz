@@ -8,6 +8,7 @@
 
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
+#include "bagwiz/commands/tf_static_cp.hpp"
 #include "bagwiz/commands/tf_walk.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/logging.hpp"
@@ -571,6 +572,9 @@ std::string format_category_legend(bool use_color)
 //   static calc  Resolve the rigid transform from <from> to <to> using only the
 //                bag's static TF tree, and print translation / quaternion / RPY
 //                (or JSON). 'static' is a command group; 'calc' is its action.
+//   static cp    Copy every static TF topic from <src> into <dst> (in place, or
+//                to a new bag via -o), preserving topic names and stamping each
+//                at <dst>'s start time.
 //   walk         Merge every TF topic into one buffer and step interactively
 //                through the times the merged TF changed, showing <from> -> <to>
 //                at each.
@@ -595,6 +599,8 @@ public:
         return run_tree();
       case Subcommand::kStaticCalc:
         return run_static_calc();
+      case Subcommand::kStaticCp:
+        return run_static_cp();
       case Subcommand::kWalk:
         return run_walk();
       case Subcommand::kNone:
@@ -605,7 +611,7 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kTree, kStaticCalc, kWalk };
+  enum class Subcommand { kNone, kTree, kStaticCalc, kStaticCp, kWalk };
   Subcommand selected_ = Subcommand::kNone;
 
   struct TreeArgs
@@ -621,6 +627,14 @@ private:
     std::string to_frame;
     bool json = false;
   } static_args_;
+
+  struct StaticCpArgs
+  {
+    std::filesystem::path src_path;
+    std::filesystem::path dst_path;
+    std::optional<std::filesystem::path> output_path;
+    bool overwrite = false;
+  } static_cp_args_;
 
   struct WalkArgs
   {
@@ -781,16 +795,22 @@ private:
     return 0;
   }
 
-  // `static` is a command group, not a leaf: its single action lives under
-  // `static calc`. Modeling it as a group (require_subcommand(1)) leaves room
-  // for further static-tree queries to be added as sibling actions later, and
-  // keeps `bagwiz tf static` from silently resolving a transform without an
-  // explicit verb.
+  // `static` is a command group, not a leaf: its actions live under
+  // `static calc` (resolve a transform) and `static cp` (copy static TF between
+  // bags). Modeling it as a group (require_subcommand(1)) keeps room for further
+  // static-tree queries and keeps `bagwiz tf static` from doing anything without
+  // an explicit verb.
   void configure_static(CLI::App & app)
   {
     auto * group = app.add_subcommand("static", "Static TF tree queries");
     group->require_subcommand(1);
-    auto * sub = group->add_subcommand(
+    configure_static_calc(*group);
+    configure_static_cp(*group);
+  }
+
+  void configure_static_calc(CLI::App & group)
+  {
+    auto * sub = group.add_subcommand(
       "calc",
       "Rigid transform from <from> to <to> resolved from the bag's static TF tree "
       "(tf2_echo convention)");
@@ -801,6 +821,28 @@ private:
     sub->add_option("to", static_args_.to_frame, "Target frame id (<to>)")->required();
     sub->add_flag("--json", static_args_.json, "Emit the transform as JSON instead of text");
     sub->callback([this]() { selected_ = Subcommand::kStaticCalc; });
+  }
+
+  void configure_static_cp(CLI::App & group)
+  {
+    auto * sub = group.add_subcommand(
+      "cp",
+      "Copy every static TF topic from <src> into <dst>, preserving topic names. Each copied "
+      "topic is written as one TFMessage stamped at <dst>'s start time.");
+    sub->add_option("src", static_cp_args_.src_path, "Source bag to copy static TF from")
+      ->required()
+      ->check(CLI::ExistingPath);
+    sub->add_option("dst", static_cp_args_.dst_path, "Destination bag to copy static TF into")
+      ->required()
+      ->check(CLI::ExistingPath);
+    sub->add_option(
+      "-o,--output", static_cp_args_.output_path,
+      "Write the result to this new bag instead of rewriting <dst> in place.");
+    sub->add_flag(
+      "--overwrite", static_cp_args_.overwrite,
+      "Permit clobbering: replace an existing -o/--output path, and replace any static topic in "
+      "<dst> whose name collides with one being copied. Without it, either conflict aborts.");
+    sub->callback([this]() { selected_ = Subcommand::kStaticCp; });
   }
 
   int run_static_calc()
@@ -902,6 +944,12 @@ private:
       return 1;
     }
     return 0;
+  }
+
+  int run_static_cp()
+  {
+    const auto & args = static_cp_args_;
+    return run_tf_static_cp(args.src_path, args.dst_path, args.output_path, args.overwrite);
   }
 
   void configure_walk(CLI::App & app)

@@ -224,6 +224,7 @@ add_executable(bagwiz
   src/commands/traj.cpp
   src/commands/tf.cpp
   src/commands/tf_walk.cpp
+  src/commands/tf_static_cp.cpp
 )
 target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang)
 
@@ -271,6 +272,11 @@ if(BUILD_TESTING)
     test/commands/completion_test.cpp
     src/commands/completion.cpp)
   target_link_libraries(bagwiz_completion_test bagwiz_core CLI11::CLI11 fmt::fmt)
+
+  ament_add_gtest(bagwiz_tf_static_cp_test
+    test/commands/tf_static_cp_test.cpp
+    src/commands/tf_static_cp.cpp)
+  target_link_libraries(bagwiz_tf_static_cp_test bagwiz_core fmt::fmt)
 
   ament_add_gtest(bagwiz_smoke_test test/smoke_test.cpp)
   ament_add_gtest(bagwiz_yaml_msg_validate_test test/core/yaml_msg_validate_test.cpp)

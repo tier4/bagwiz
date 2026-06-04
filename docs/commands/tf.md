@@ -4,6 +4,7 @@ TF inspection on a ROS 2 rosbag.
 
 - [`tree`](#bagwiz-tf-tree) — merge one or more `tf2_msgs/msg/TFMessage` topics into one TF frame tree, colored by static vs dynamic (`static` / `dynamic` selectors supported).
 - [`static calc`](#bagwiz-tf-static-calc) — resolve the rigid transform from `<from>` to `<to>` using only the bag's static TF tree; print translation/quaternion/RPY or JSON. (`static` is a command group; `calc` is its action.)
+- [`static cp`](#bagwiz-tf-static-cp) — copy every static TF topic from `<src>` into `<dst>` (in place, or to a new bag via `-o`), preserving topic names and stamping each at `<dst>`'s start time.
 - [`walk`](#bagwiz-tf-walk) — merge every TF topic into one buffer and step interactively through the times the merged TF changed, showing the `<from>` → `<to>` transform at each.
 
 ROS 1 `*.bag` inputs are not supported.
@@ -167,9 +168,11 @@ cyan/yellow):
 
 ## `bagwiz tf static calc`
 
-`static` is a command group for queries over the bag's static TF tree; `calc` is
-its sole action (so the full invocation is `bagwiz tf static calc ...`). Running
-`bagwiz tf static` without an action prints an error and the group's help.
+`static` is a command group for working with the bag's static TF tree. Its
+actions are `calc` (resolve a transform, below) and [`cp`](#bagwiz-tf-static-cp)
+(copy static TF between bags), so the full invocation is
+`bagwiz tf static calc ...`. Running `bagwiz tf static` without an action prints
+an error and the group's help.
 
 Resolves the rigid-body transform from `<from>` to `<to>` using **only** the
 bag's static TF (topics whose name ends with `tf_static`). Dynamic `/tf` topics
@@ -284,6 +287,85 @@ bagwiz tf static calc capture.mcap base_link lidar --json
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | Transform written to stdout.                                                                                                                                                                                                                                                           |
 | `1`  | Bag could not be opened, no static TF topic, decode failure, a TF merge conflict between static topics (same child, different parents), the frames are not connected through the static tree, or I/O error. When a frame is unknown, the available static frames are listed on stderr. |
+
+---
+
+## `bagwiz tf static cp`
+
+Copies every static TF topic (a `tf2_msgs/msg/TFMessage` topic whose name ends
+with `tf_static`) from `<src>` into `<dst>`, preserving each topic's original
+name. Dynamic `/tf` topics in `<src>` are ignored. Each copied topic is written
+as a single `TFMessage`: a static topic that was re-published several times in
+`<src>` collapses to one latched message carrying the final transform per
+`child_frame_id`.
+
+### Timestamp
+
+Every copied message is stamped at `<dst>`'s start time — both the message's
+receive time and the `header.stamp` of every transform it carries are set to the
+earliest message timestamp in `<dst>`. The source timestamps are not preserved;
+this places the latched static TF at the very start of the destination's
+timeline, where a static transform is expected to already hold.
+
+### Output modes
+
+- Default (no `-o`): `<dst>` is rewritten in place via an atomic tmp-swap that
+  preserves its storage format and layout. If the pass fails, `<dst>` is left
+  untouched.
+- `-o <output>`: `<dst>` is left untouched and the result (`<dst>`'s messages
+  plus the copied static TF) is written to `<output>`. The storage format and
+  layout follow `<output>`'s extension (`.mcap` / `.db3` / a directory).
+
+### `--overwrite`
+
+A single flag that permits clobbering either conflict:
+
+- The `-o <output>` path already exists — it is replaced.
+- `<dst>` already contains a static topic whose name collides with one being
+  copied — its existing messages are dropped and replaced by `<src>`'s.
+
+Without `--overwrite`, either conflict aborts the run with an explanatory error
+and leaves `<dst>` (and any existing output) untouched. A collision with a
+destination topic of a **different** message type is always an error, regardless
+of the flag.
+
+### Usage
+
+```text
+bagwiz tf static cp <src> <dst> [-o <output>] [--overwrite]
+```
+
+`<src>` and `<dst>` are read; `<dst>` (or `<output>`) is the write target —
+source-before-destination, like `cp src dst`.
+
+### Positional arguments
+
+| Name  | Description                                                                       |
+| ----- | --------------------------------------------------------------------------------- |
+| `src` | Source rosbag to copy static TF from (rosbag2 directory, `*.mcap`, `*.db3`, ...). |
+| `dst` | Destination rosbag to copy static TF into (rewritten in place unless `-o`).       |
+
+### Options
+
+| Flag             | Description                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------- |
+| `-o`, `--output` | Write the result to this new bag instead of rewriting `<dst>` in place.                                 |
+| `--overwrite`    | Replace an existing `-o`/`--output` path, and replace any colliding static topic's messages in `<dst>`. |
+
+### Examples
+
+```bash
+bagwiz tf static cp donor.mcap target.mcap              # rewrite target.mcap in place
+bagwiz tf static cp donor.mcap target.mcap -o merged.mcap  # write a new bag
+bagwiz tf static cp donor.mcap target.mcap --overwrite  # replace a colliding /tf_static
+```
+
+### Exit status
+
+| Code | Meaning                                                                                                                                                                                                                            |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Static TF copied; `<dst>` rewritten or `<output>` written.                                                                                                                                                                         |
+| `1`  | A bag could not be opened, `<src>` has no static TF topic carrying transforms, a decode/serialize failure, an unresolved conflict (existing output or colliding topic without `--overwrite`, or a type mismatch), or an I/O error. |
 
 ---
 

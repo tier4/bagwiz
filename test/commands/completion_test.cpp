@@ -599,10 +599,11 @@ TEST(FlagCompletionTest, TfSubcommandListsStaticTreeAndWalk)
     run_completion({"bagwiz", "__complete", "2", "bagwiz", "tf", ""}), "static\ntree\nwalk\n");
 }
 
-// `tf static <TAB>` lists the command group's only action, `calc`.
-TEST(FlagCompletionTest, TfStaticSubcommandListsCalc)
+// `tf static <TAB>` lists the command group's actions, sorted.
+TEST(FlagCompletionTest, TfStaticSubcommandListsCalcAndCp)
 {
-  EXPECT_EQ(run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "static", ""}), "calc\n");
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "static", ""}), "calc\ncp\n");
 }
 
 // `tf static -` is the command-group slot; `--json` lives under `calc`, so only
@@ -620,6 +621,16 @@ TEST(FlagCompletionTest, TfStaticCalcDashListsStaticFlags)
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "calc", "-"}),
     "--help\n--json\n-h\n");
+}
+
+// `tf static cp -` surfaces the copy action's flags (--output/-o, --overwrite)
+// alongside the implicit help flags, sorted. <src>/<dst> are bag paths, so they
+// carry no bagwiz candidates and fall through to the shell's file completion.
+TEST(FlagCompletionTest, TfStaticCpDashListsCpFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "cp", "-"}),
+    "--help\n--output\n--overwrite\n-h\n-o\n");
 }
 
 // `tf walk -` has no user flags, so only the implicit help flags appear.

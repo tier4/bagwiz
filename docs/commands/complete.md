@@ -129,10 +129,11 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz <cmd> -<TAB>` for every registered command (including
     `complete`, `convert`, `ls`, `tf`, `traj`, `walk`)
   - `bagwiz <cmd> <subcommand> -<TAB>` for every nested subcommand
-    (`convert format`, `tf static calc`, `tf tree`, `tf walk`, `traj dump`,
-    `traj join`); `tf static calc -<TAB>` also surfaces `--json`. `tf static`
-    is itself a command group, so `tf static <TAB>` completes its only action
-    (`calc`) and `tf static -<TAB>` lists just the help flags
+    (`convert format`, `tf static calc`, `tf static cp`, `tf tree`, `tf walk`,
+    `traj dump`, `traj join`); `tf static calc -<TAB>` also surfaces `--json`,
+    and `tf static cp -<TAB>` surfaces `--output`/`-o` and `--overwrite`.
+    `tf static` is itself a command group, so `tf static <TAB>` completes its
+    actions (`calc`, `cp`) and `tf static -<TAB>` lists just the help flags
 - Selected option values are completed where bagwiz has a closed set, such as
   `--storage <mcap|sqlite3>`.
 - Commands that take a `<topic>` positional argument complete it by opening
