@@ -171,7 +171,9 @@ Resolves the rigid-body transform from `<from>` to `<to>` using **only** the
 bag's static TF (topics whose name ends with `tf_static`). Dynamic `/tf` topics
 are intentionally ignored. The transform is composed across the whole static
 chain, so `<from>` and `<to>` need not be directly adjacent — any two frames
-connected through the static tree work.
+connected through the static tree work. The printed `transform:` line lists
+that full chain (every intermediate frame joined with `->`), not just the two
+endpoints.
 
 When the bag has **several** static topics (e.g. `/tf_static` and
 `/sensing/tf_static`), they are all merged into one static tree. The merge is
@@ -219,16 +221,18 @@ static `*tf_static` topics (see [`bagwiz complete`](complete.md)).
 
 ### Output
 
-Human form (monochrome, like `tf2_echo`):
+Human form (monochrome, like `tf2_echo`). The `transform:` line lists the full
+resolved frame chain from `<from>` to `<to>`, not just the endpoints (here
+`base_link` reaches `lidar` through `sensor_kit_base_link`):
 
 ```text
-Transform: base_link -> lidar  (static)
-  t:
+transform: base_link -> sensor_kit_base_link -> lidar  (static)
+  translation:
     x: -0.000000
     y: 1.000000
     z: -0.500000
-  r:
-    quat:
+  rotation:
+    quaternion:
       x: 0.000000
       y: 0.000000
       z: -0.707107
@@ -244,17 +248,19 @@ Transform: base_link -> lidar  (static)
 ```
 
 JSON form (`--json`, pretty-printed; full-precision doubles). Translation is
-under `t`; rotation is under `r` as a quaternion (`quat`) plus RPY in radians
-(`rpy_rad`) and degrees (`rpy_deg`). Object keys are emitted in alphabetical
-order (nlohmann's default), so consumers should not rely on key ordering:
+under `translation`; rotation is under `rotation` as a quaternion
+(`quaternion`) plus RPY in radians (`rpy_rad`) and degrees (`rpy_deg`). The
+JSON carries only the `from` / `to` endpoints, not the intermediate chain.
+Object keys are emitted in alphabetical order (nlohmann's default), so
+consumers should not rely on key ordering:
 
 ```json
 {
   "from": "base_link",
   "to": "lidar",
-  "t": { "x": 0.0, "y": 1.0, "z": -0.5 },
-  "r": {
-    "quat": { "x": 0.0, "y": 0.0, "z": -0.7071067811865475, "w": 0.7071067811865476 },
+  "translation": { "x": 0.0, "y": 1.0, "z": -0.5 },
+  "rotation": {
+    "quaternion": { "x": 0.0, "y": 0.0, "z": -0.7071067811865475, "w": 0.7071067811865476 },
     "rpy_rad": { "roll": 0.0, "pitch": 0.0, "yaw": -1.5707963267948963 },
     "rpy_deg": { "roll": 0.0, "pitch": 0.0, "yaw": -89.99999999999999 }
   }
@@ -330,18 +336,19 @@ restricts the same slots to static `*tf_static` frames.
 
 Per step, the header shows the timestamp and the body shows the resolved
 transform (monochrome, like `tf2_echo`; no `(static)` tag since the walk does
-not classify transforms):
+not classify transforms). The `transform:` line lists the full frame chain
+resolved at that step, not just the endpoints:
 
 ```text
 timestamp: 2026-01-01 12:00:00.000000000 UTC (1767268800.000000000)
 
-Transform: base_link -> lidar
-  t:
+transform: base_link -> sensor_kit_base_link -> lidar
+  translation:
     x: -0.000000
     y: 1.000000
     z: -0.500000
-  r:
-    quat:
+  rotation:
+    quaternion:
       x: 0.000000
       y: 0.000000
       z: -0.707107

@@ -11,6 +11,7 @@
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/terminal_input.hpp"
+#include "bagwiz/core/tf_chain.hpp"
 #include "bagwiz/core/tf_transform_format.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/core/tf_walk_timeline.hpp"
@@ -241,8 +242,16 @@ int run_tf_walk(
 
     std::vector<std::string> body_logical;
     if (step.transform.has_value()) {
-      body_logical =
-        split_lines(core::format_transform_human(*step.transform, from_frame, to_frame));
+      // Show the full frame chain (resolved at this step's time) in the
+      // direction line, not just the endpoints. The step resolved
+      // successfully, so a chain exists; fall back to the bare endpoints if
+      // resolve_chain cannot reconstruct it.
+      std::vector<std::string> chain =
+        core::resolve_chain(buffer, from_frame, to_frame, timeline[index]);
+      if (chain.empty()) {
+        chain = {from_frame, to_frame};
+      }
+      body_logical = split_lines(core::format_transform_human(*step.transform, chain));
     } else {
       body_logical.push_back(
         fmt::format(

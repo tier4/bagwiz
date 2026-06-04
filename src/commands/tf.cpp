@@ -11,6 +11,7 @@
 #include "bagwiz/commands/tf_walk.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/tf_chain.hpp"
 #include "bagwiz/core/tf_merge_check.hpp"
 #include "bagwiz/core/tf_transform_format.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
@@ -867,9 +868,22 @@ private:
       return 1;
     }
 
-    const std::string out =
-      args.json ? core::format_transform_json(tf, args.from_frame, args.to_frame)
-                : core::format_transform_human(tf, args.from_frame, args.to_frame, "  (static)");
+    std::string out;
+    if (args.json) {
+      out = core::format_transform_json(tf, args.from_frame, args.to_frame);
+    } else {
+      // Resolve the full frame chain so the direction line lists every
+      // intermediate frame, not just the endpoints. Static entries ignore the
+      // query time (TimePointZero). The lookupTransform above already
+      // succeeded, so a chain exists; fall back to the bare endpoints if
+      // resolve_chain cannot reconstruct it.
+      std::vector<std::string> chain =
+        core::resolve_chain(tf_buffer, args.from_frame, args.to_frame, tf2::TimePointZero);
+      if (chain.empty()) {
+        chain = {args.from_frame, args.to_frame};
+      }
+      out = core::format_transform_human(tf, chain, "  (static)");
+    }
     // The human form ends with a newline; the JSON form does not, so add one.
     fmt::print(stdout, "{}{}", out, args.json ? "\n" : "");
 

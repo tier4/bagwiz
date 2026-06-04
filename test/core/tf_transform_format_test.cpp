@@ -17,6 +17,7 @@
 #include <cmath>
 #include <numbers>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -117,17 +118,21 @@ TEST(FormatTransformHuman, MirrorsJsonKeyHierarchy)
 {
   const auto tf = make_identity_tf("base_link", "velodyne", 1.0, 2.0, 3.0);
 
-  const std::string out = bagwiz::core::format_transform_human(tf, "base_link", "velodyne");
+  const std::string out = bagwiz::core::format_transform_human(tf, {"base_link", "velodyne"});
 
-  // Direction label is "<from> -> <to>".
+  // The header label is lowercase "transform:" (not "Transform:").
+  EXPECT_NE(out.find("transform: "), std::string::npos);
+  EXPECT_EQ(out.find("Transform:"), std::string::npos);
+  // Direction label joins the chain with " -> "; here it is just the endpoints.
   EXPECT_NE(out.find("base_link -> velodyne"), std::string::npos);
-  // Body uses the --json key/hierarchy: t {x,y,z}, r {quat, rpy_rad, rpy_deg}.
-  EXPECT_NE(out.find("  t:"), std::string::npos);
-  EXPECT_NE(out.find("  r:"), std::string::npos);
-  EXPECT_NE(out.find("    quat:"), std::string::npos);
+  // Body uses the --json key/hierarchy: translation {x,y,z},
+  // rotation {quaternion, rpy_rad, rpy_deg}.
+  EXPECT_NE(out.find("  translation:"), std::string::npos);
+  EXPECT_NE(out.find("  rotation:"), std::string::npos);
+  EXPECT_NE(out.find("    quaternion:"), std::string::npos);
   EXPECT_NE(out.find("    rpy_rad:"), std::string::npos);
   EXPECT_NE(out.find("    rpy_deg:"), std::string::npos);
-  // Translation values (x, y, z) appear under t.
+  // Translation values (x, y, z) appear under translation.
   EXPECT_NE(out.find("1.000000"), std::string::npos);
   EXPECT_NE(out.find("2.000000"), std::string::npos);
   EXPECT_NE(out.find("3.000000"), std::string::npos);
@@ -142,7 +147,8 @@ TEST(FormatTransformHuman, IdentitySelfTransform)
   // render a well-formed block labelled "<frame> -> <frame>".
   const auto tf = make_identity_tf("lidar", "lidar", 0.0, 0.0, 0.0);
 
-  const std::string out = bagwiz::core::format_transform_human(tf, "lidar", "lidar");
+  // A single-frame chain (source == target) keeps the arrow form "x -> x".
+  const std::string out = bagwiz::core::format_transform_human(tf, {"lidar"});
 
   EXPECT_NE(out.find("lidar -> lidar"), std::string::npos);
   EXPECT_NE(out.find("0.000000"), std::string::npos);
@@ -157,9 +163,23 @@ TEST(FormatTransformHuman, AppendsAnnotationToDirectionLine)
   const auto tf = make_identity_tf("base_link", "lidar", 1.0, 0.0, 0.0);
 
   const std::string out =
-    bagwiz::core::format_transform_human(tf, "base_link", "lidar", "  (static)");
+    bagwiz::core::format_transform_human(tf, {"base_link", "lidar"}, "  (static)");
 
   EXPECT_NE(out.find("base_link -> lidar  (static)"), std::string::npos);
+}
+
+// A multi-frame chain (from -> ... -> to) is rendered with every intermediate
+// frame in the direction line, joined by " -> ", not just the endpoints.
+TEST(FormatTransformHuman, RendersFullChainInDirectionLine)
+{
+  const auto tf = make_identity_tf("base_link", "velodyne_top", 1.0, 0.0, 0.0);
+
+  const std::string out = bagwiz::core::format_transform_human(
+    tf, {"base_link", "sensor_kit_base_link", "velodyne_top_base_link", "velodyne_top"});
+
+  EXPECT_NE(
+    out.find("base_link -> sensor_kit_base_link -> velodyne_top_base_link -> velodyne_top"),
+    std::string::npos);
 }
 
 // `tf walk` does not classify transforms, so the default (no annotation) must
@@ -168,7 +188,7 @@ TEST(FormatTransformHuman, OmitsAnnotationByDefault)
 {
   const auto tf = make_identity_tf("base_link", "velodyne", 1.0, 2.0, 3.0);
 
-  const std::string out = bagwiz::core::format_transform_human(tf, "base_link", "velodyne");
+  const std::string out = bagwiz::core::format_transform_human(tf, {"base_link", "velodyne"});
 
   EXPECT_EQ(out.find("(static)"), std::string::npos);
 }
@@ -187,17 +207,17 @@ TEST(FormatTransformJson, RoundTripsExpectedSchemaAndValues)
   EXPECT_EQ(j.at("from").get<std::string>(), "map");
   EXPECT_EQ(j.at("to").get<std::string>(), "odom");
 
-  EXPECT_DOUBLE_EQ(j.at("t").at("x").get<double>(), 1.5);
-  EXPECT_DOUBLE_EQ(j.at("t").at("y").get<double>(), -2.5);
-  EXPECT_DOUBLE_EQ(j.at("t").at("z").get<double>(), 0.25);
+  EXPECT_DOUBLE_EQ(j.at("translation").at("x").get<double>(), 1.5);
+  EXPECT_DOUBLE_EQ(j.at("translation").at("y").get<double>(), -2.5);
+  EXPECT_DOUBLE_EQ(j.at("translation").at("z").get<double>(), 0.25);
 
-  EXPECT_DOUBLE_EQ(j.at("r").at("quat").at("x").get<double>(), 0.0);
-  EXPECT_DOUBLE_EQ(j.at("r").at("quat").at("y").get<double>(), 0.0);
-  EXPECT_DOUBLE_EQ(j.at("r").at("quat").at("z").get<double>(), 0.0);
-  EXPECT_DOUBLE_EQ(j.at("r").at("quat").at("w").get<double>(), 1.0);
+  EXPECT_DOUBLE_EQ(j.at("rotation").at("quaternion").at("x").get<double>(), 0.0);
+  EXPECT_DOUBLE_EQ(j.at("rotation").at("quaternion").at("y").get<double>(), 0.0);
+  EXPECT_DOUBLE_EQ(j.at("rotation").at("quaternion").at("z").get<double>(), 0.0);
+  EXPECT_DOUBLE_EQ(j.at("rotation").at("quaternion").at("w").get<double>(), 1.0);
 
-  EXPECT_NEAR(j.at("r").at("rpy_rad").at("yaw").get<double>(), 0.0, 1e-9);
-  EXPECT_NEAR(j.at("r").at("rpy_deg").at("yaw").get<double>(), 0.0, 1e-9);
+  EXPECT_NEAR(j.at("rotation").at("rpy_rad").at("yaw").get<double>(), 0.0, 1e-9);
+  EXPECT_NEAR(j.at("rotation").at("rpy_deg").at("yaw").get<double>(), 0.0, 1e-9);
 }
 
 TEST(FormatTransformJson, DegreesAreRadiansScaled)
@@ -211,8 +231,8 @@ TEST(FormatTransformJson, DegreesAreRadiansScaled)
   const std::string out = bagwiz::core::format_transform_json(tf, "a", "b");
   const auto j = nlohmann::json::parse(out);
 
-  EXPECT_NEAR(j.at("r").at("rpy_rad").at("yaw").get<double>(), kPi / 2.0, 1e-9);
-  EXPECT_NEAR(j.at("r").at("rpy_deg").at("yaw").get<double>(), 90.0, 1e-6);
+  EXPECT_NEAR(j.at("rotation").at("rpy_rad").at("yaw").get<double>(), kPi / 2.0, 1e-9);
+  EXPECT_NEAR(j.at("rotation").at("rpy_deg").at("yaw").get<double>(), 90.0, 1e-6);
 }
 
 }  // namespace

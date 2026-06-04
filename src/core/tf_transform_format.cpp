@@ -12,10 +12,12 @@
 #include <tf2/LinearMath/Matrix3x3.hpp>
 #include <tf2/LinearMath/Quaternion.hpp>
 
+#include <cstddef>
 #include <iomanip>
 #include <numbers>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace bagwiz::core
 {
@@ -31,6 +33,27 @@ constexpr double kMinQuatLength2 = 1e-12;
 constexpr int kHumanDecimals = 6;
 // Indent width for the pretty-printed --json output.
 constexpr int kJsonIndent = 2;
+
+// Render the frame chain as the human direction line. `path` is ordered
+// front=source, back=target, so the frames join left-to-right with " -> "
+// (e.g. "base_link -> sensor_kit_base_link -> velodyne"). A single-frame path
+// (source == target) keeps the arrow form as "frame -> frame"; an empty path
+// (no chain resolved) yields "(unknown)".
+std::string format_chain(const std::vector<std::string> & path)
+{
+  if (path.empty()) {
+    return "(unknown)";
+  }
+  if (path.size() == 1) {
+    return path.front() + " -> " + path.front();
+  }
+  std::string out = path.front();
+  for (std::size_t i = 1; i < path.size(); ++i) {
+    out += " -> ";
+    out += path[i];
+  }
+  return out;
+}
 
 }  // namespace
 
@@ -58,8 +81,8 @@ RollPitchYaw quaternion_to_rpy(const geometry_msgs::msg::Quaternion & q)
 }
 
 std::string format_transform_human(
-  const geometry_msgs::msg::TransformStamped & tf, const std::string & from_frame,
-  const std::string & to_frame, const std::string & annotation)
+  const geometry_msgs::msg::TransformStamped & tf, const std::vector<std::string> & path,
+  const std::string & annotation)
 {
   const auto & t = tf.transform.translation;
   const auto & rot = tf.transform.rotation;
@@ -71,17 +94,17 @@ std::string format_transform_human(
   // avoids fmt formatting). Fixed 6-decimal precision matches tf2_echo.
   //
   // The body mirrors the --json hierarchy and key names: translation under
-  // `t`; rotation under `r` as `quat` plus `rpy_rad` / `rpy_deg`. One value
-  // per line, two-space indent per level (YAML-like).
+  // `translation`; rotation under `rotation` as `quaternion` plus `rpy_rad` /
+  // `rpy_deg`. One value per line, two-space indent per level (YAML-like).
   std::ostringstream oss;
   oss << std::fixed << std::setprecision(kHumanDecimals);
-  oss << "Transform: " << from_frame << " -> " << to_frame << annotation << "\n";
-  oss << "  t:\n";
+  oss << "transform: " << format_chain(path) << annotation << "\n";
+  oss << "  translation:\n";
   oss << "    x: " << t.x << "\n";
   oss << "    y: " << t.y << "\n";
   oss << "    z: " << t.z << "\n";
-  oss << "  r:\n";
-  oss << "    quat:\n";
+  oss << "  rotation:\n";
+  oss << "    quaternion:\n";
   oss << "      x: " << rot.x << "\n";
   oss << "      y: " << rot.y << "\n";
   oss << "      z: " << rot.z << "\n";
@@ -108,10 +131,10 @@ std::string format_transform_json(
   nlohmann::json j;
   j["from"] = from_frame;
   j["to"] = to_frame;
-  j["t"] = {{"x", t.x}, {"y", t.y}, {"z", t.z}};
-  j["r"]["quat"] = {{"x", rot.x}, {"y", rot.y}, {"z", rot.z}, {"w", rot.w}};
-  j["r"]["rpy_rad"] = {{"roll", rpy.roll}, {"pitch", rpy.pitch}, {"yaw", rpy.yaw}};
-  j["r"]["rpy_deg"] = {
+  j["translation"] = {{"x", t.x}, {"y", t.y}, {"z", t.z}};
+  j["rotation"]["quaternion"] = {{"x", rot.x}, {"y", rot.y}, {"z", rot.z}, {"w", rot.w}};
+  j["rotation"]["rpy_rad"] = {{"roll", rpy.roll}, {"pitch", rpy.pitch}, {"yaw", rpy.yaw}};
+  j["rotation"]["rpy_deg"] = {
     {"roll", rpy.roll * kRadToDeg}, {"pitch", rpy.pitch * kRadToDeg}, {"yaw", rpy.yaw * kRadToDeg}};
 
   return j.dump(kJsonIndent);
