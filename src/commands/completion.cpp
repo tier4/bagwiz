@@ -640,6 +640,58 @@ std::vector<std::string> complete_help_only(const CompletionRequest & request)
   return {};
 }
 
+// `convert msgtype` is a nested command group with one action verb, `geo`,
+// shifting every argument one word right of the flat `format` subcommand:
+//
+//   geo: `convert`(0) `msgtype`(1) `geo`(2) `<input>`(3) [--src V] [--dst V]
+//        [--topic ...] [--crs V] [--origin V] [--frame-id V] [-o <out>]
+//        [--overwrite]
+//
+// At the action slot (word 2) the only candidate is `geo`. Past it, `-` words
+// surface the geo flags, and the `--src` / `--dst` / `--crs` slots complete from
+// the same snake_case choice sets the command's CLI::IsMember checks enforce
+// (kept in sync by hand, like the other hard-coded candidate sets here). The
+// `<input>` and `-o` values are paths that fall through to file completion.
+std::vector<std::string> complete_convert_msgtype(
+  const CompletionRequest & request, const std::string & current)
+{
+  if (request.cursor_word == kSecondCommandArgWord) {
+    if (current.starts_with("-")) {
+      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
+    }
+    return matching({"geo"}, current);
+  }
+
+  // Reaching here implies cursor_word > kSecondCommandArgWord, so words[2]
+  // exists (parse_request clamps cursor_word to words.size()).
+  const auto & action = request.words[kSecondCommandArgWord];
+  if (action != "geo") {
+    return {};
+  }
+
+  if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
+    return matching(
+      with_help(
+        {"--crs", "--dst", "--frame-id", "--origin", "--output", "--overwrite", "--src", "--topic",
+         "-o"}),
+      current);
+  }
+
+  if (request.cursor_word > 0) {
+    const auto & previous = request.words[request.cursor_word - 1];
+    if (previous == "--src") {
+      return matching({"nav_sat_fix"}, current);
+    }
+    if (previous == "--dst") {
+      return matching({"pose_with_covariance_stamped", "pose_stamped"}, current);
+    }
+    if (previous == "--crs") {
+      return matching({"enu", "utm"}, current);
+    }
+  }
+  return {};
+}
+
 std::vector<std::string> complete_convert(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -647,11 +699,18 @@ std::vector<std::string> complete_convert(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"format"}, current);
+    return matching({"format", "msgtype"}, current);
+  }
+
+  const auto & mode = request.words[kFirstCommandArgWord];
+
+  // `msgtype` is a nested command group (`msgtype geo`); its positional shape
+  // differs from the flat `format` subcommand, so it is handled apart.
+  if (mode == "msgtype") {
+    return complete_convert_msgtype(request, current);
   }
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
-    const auto & mode = request.words[kFirstCommandArgWord];
     if (mode == "format") {
       return matching(with_help({"--overwrite", "--storage", "-s"}), current);
     }

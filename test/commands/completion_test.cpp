@@ -560,6 +560,55 @@ TEST(FlagCompletionTest, ConvertFormatDashListsFormatFlags)
     "--help\n--overwrite\n--storage\n-h\n-s\n");
 }
 
+// `bagwiz convert <TAB>` lists both subcommands, sorted.
+TEST(FlagCompletionTest, ConvertSubcommandListsFormatAndMsgtype)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "convert", ""}), "format\nmsgtype\n");
+}
+
+// `bagwiz convert msgtype <TAB>` lists its single action verb.
+TEST(FlagCompletionTest, ConvertMsgtypeSubcommandListsGeo)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "convert", "msgtype", ""}), "geo\n");
+}
+
+// `bagwiz convert msgtype geo -` lists the geo flags, sorted, with help merged.
+TEST(FlagCompletionTest, ConvertMsgtypeGeoDashListsGeoFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "convert", "msgtype", "geo", "-"}),
+    "--crs\n--dst\n--frame-id\n--help\n--origin\n--output\n--overwrite\n--src\n--topic\n-h\n-o\n");
+}
+
+// `--src` completes from the source snake_case choice set (no bag access).
+TEST(FlagCompletionTest, ConvertMsgtypeGeoSrcFlagListsChoices)
+{
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "convert", "msgtype", "geo", "in.mcap", "--src"}),
+    "nav_sat_fix\n");
+}
+
+// `--dst` completes from the target snake_case choice set, sorted.
+TEST(FlagCompletionTest, ConvertMsgtypeGeoDstFlagListsChoices)
+{
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "convert", "msgtype", "geo", "in.mcap", "--dst"}),
+    "pose_stamped\npose_with_covariance_stamped\n");
+}
+
+// `--crs` completes the coordinate-system choices, sorted.
+TEST(FlagCompletionTest, ConvertMsgtypeGeoCrsFlagListsChoices)
+{
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "convert", "msgtype", "geo", "in.mcap", "--crs"}),
+    "enu\nutm\n");
+}
+
 // Parent-level flag completion at the subcommand slot.
 TEST(FlagCompletionTest, TrajParentDashListsHelpFlags)
 {

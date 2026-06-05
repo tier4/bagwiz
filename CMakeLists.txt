@@ -58,6 +58,16 @@ find_package(tf2_msgs REQUIRED)
 # not leak into the export set.
 find_package(nlohmann_json REQUIRED)
 
+# GeographicLib provides the WGS84 -> ENU / UTM projections used by
+# `convert msgtype geo` (geo_pose_convert.cpp). The system package ships a
+# classic Find module (no imported target) rather than a config package, so
+# add its module dir to CMAKE_MODULE_PATH and consume the
+# GeographicLib_LIBRARIES / _INCLUDE_DIRS variables it sets. Linked PRIVATE —
+# it is an implementation detail behind the GeoPoseConverter pimpl and must
+# not leak into bagwiz_core's export set.
+list(APPEND CMAKE_MODULE_PATH "/usr/share/cmake/geographiclib")
+find_package(GeographicLib REQUIRED)
+
 # CLI11 and fmt are not available as rosdep keys on all supported distros, so
 # fetch them at configure time. Both are small, header-light libraries.
 include(FetchContent)
@@ -146,6 +156,7 @@ add_library(bagwiz_core
   src/core/tf_value_extract.cpp
   src/core/tf_walk_timeline.cpp
   src/core/trajectory.cpp
+  src/core/msgtype_convert/geo_pose_convert.cpp
   src/core/tui/layout.cpp
   src/core/tui/pager.cpp
   src/core/tui/renderer.cpp
@@ -200,6 +211,9 @@ else()
   endforeach()
 endif()
 target_link_libraries(bagwiz_core PUBLIC yaml-cpp SQLite::SQLite3 zstd::zstd ${CMAKE_DL_LIBS})
+# GeographicLib (WGS84 -> ENU/UTM projection) is private to geo_pose_convert.cpp.
+target_include_directories(bagwiz_core PRIVATE ${GeographicLib_INCLUDE_DIRS})
+target_link_libraries(bagwiz_core PRIVATE ${GeographicLib_LIBRARIES})
 # nlohmann_json is an implementation detail of tf_transform_format.cpp (the
 # public header returns std::string), so keep it PRIVATE and out of the
 # export set.
@@ -218,6 +232,7 @@ add_executable(bagwiz
   src/main.cpp
   src/commands/completion.cpp
   src/commands/convert.cpp
+  src/commands/convert_msgtype_geo.cpp
   src/commands/joke.cpp
   src/commands/ls.cpp
   src/commands/walk.cpp
@@ -397,6 +412,20 @@ if(BUILD_TESTING)
   ament_add_gtest(
     bagwiz_msg_definition_resolver_test test/core/msg_definition_resolver_test.cpp)
   target_link_libraries(bagwiz_msg_definition_resolver_test bagwiz_core)
+
+  # geo_pose_convert lives in bagwiz_core; GeographicLib is linked explicitly so
+  # the test still resolves the projection symbols under a static-lib build.
+  ament_add_gtest(
+    bagwiz_geo_pose_convert_test test/core/msgtype_convert/geo_pose_convert_test.cpp)
+  target_link_libraries(
+    bagwiz_geo_pose_convert_test bagwiz_core ${GeographicLib_LIBRARIES})
+
+  ament_add_gtest(bagwiz_convert_msgtype_geo_test
+    test/commands/convert_msgtype_geo_test.cpp
+    src/commands/convert_msgtype_geo.cpp)
+  target_link_libraries(
+    bagwiz_convert_msgtype_geo_test bagwiz_core fmt::fmt ${GeographicLib_LIBRARIES}
+    ${sensor_msgs_TARGETS})
 endif()
 
 ament_package()
