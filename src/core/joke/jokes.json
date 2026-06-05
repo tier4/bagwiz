@@ -12,6 +12,7 @@
     "ros2 bag play gives a different result every run, depending on CPU load, scheduling, and how the machine feels that morning. My simulation isn't deterministic; it's moody. We get along.",
     "ros2 bag play: the only simulation where the result depends on whether you also had Slack open. Science.",
     "ROS custom messages: choose your fields carefully, because that .msg is forever. It's not a schema, it's a tattoo.",
-    "dora-rs moves data in microseconds with zero-copy Rust. I'm still shaking hands over DDS, asking if the subscriber's there yet. But I have a decade of packages for every sensor ever made... so you won't abandon me, right? You'll keep using me?"
+    "dora-rs moves data in microseconds with zero-copy Rust. I'm still shaking hands over DDS, asking if the subscriber's there yet. But I have a decade of packages for every sensor ever made... so you won't abandon me, right? You'll keep using me?",
+    "pixi puts a whole ROS 2 distro into an isolated, lockfile-pinned environment in one command. The remarkable part isn't pixi -- it's that for a decade no real Python venv tool would touch ROS, so we bled system interpreters into sourced overlays and called it 'environment management.' The fix finally wandered in from the conda side of town, never even built for us. Took an outsider that long to notice I was a mess. That tracks."
   ]
 }
