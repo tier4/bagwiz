@@ -16,6 +16,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # default login shells and needs no root privileges.
 BAGWIZ_INSTALL_DIR="${HOME}/.local/bin"
 
+# Whether to replace an already-installed bagwiz. Off by default so a re-run
+# never silently clobbers an existing binary; pass --overwrite to update it.
+OVERWRITE=false
+
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [options]
@@ -25,6 +29,9 @@ Copy the built bagwiz binary onto your PATH. Run ./build.sh first.
 Options:
   -d, --install-dir <D>    Directory to install the binary into.
                            Default: ${BAGWIZ_INSTALL_DIR}.
+      --overwrite          Replace an existing bagwiz at the destination.
+                           Without it, an already-installed binary is left
+                           untouched and the script exits with an error.
   -h, --help               Show this help message and exit.
 EOF
 }
@@ -46,6 +53,10 @@ while [[ $# -gt 0 ]]; do
         ;;
     -d*)
         BAGWIZ_INSTALL_DIR="${1#-d}"
+        shift
+        ;;
+    --overwrite)
+        OVERWRITE=true
         shift
         ;;
     --help | -h)
@@ -75,6 +86,15 @@ if [[ ! -d ${BAGWIZ_INSTALL_DIR} ]]; then
 fi
 
 dest="${BAGWIZ_INSTALL_DIR}/bagwiz"
+
+# Refuse to clobber an existing install unless --overwrite was given, so a
+# re-run never silently replaces a binary the user may not want changed.
+if [[ -e ${dest} && ${OVERWRITE} != true ]]; then
+    echo "[install.sh] bagwiz is already installed at ${dest}." >&2
+    echo "[install.sh] Pass --overwrite to replace (update) it." >&2
+    exit 1
+fi
+
 echo "[install.sh] Installing bagwiz to ${dest}"
 # install(1) dereferences the symlink and sets the executable mode in one
 # step. -D also creates any leading directories as a safety net.

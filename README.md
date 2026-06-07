@@ -72,8 +72,11 @@ From the repository root:
    ```
 
    `install.sh` creates the target directory if needed and warns when it is not
-   on your `PATH`. The binary is dynamically linked against ROS, so source ROS 2
-   (as in step 1) in any shell where you run `bagwiz`.
+   on your `PATH`. If a `bagwiz` is already installed at the destination, it
+   refuses to overwrite it and exits with an error; pass `--overwrite` to
+   replace (update) the existing binary. The binary is dynamically linked
+   against ROS, so source ROS 2 (as in step 1) in any shell where you run
+   `bagwiz`.
 
 Optional flags for `./build.sh` (build type, parallelism, clean rebuild) are
 described in `./build.sh --help`; `./install.sh --help` covers the install
