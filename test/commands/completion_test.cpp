@@ -466,10 +466,9 @@ TEST_F(CompletionTest, TrajJoinFromFlagListsBagFrameIds)
 }
 
 // When the bag opens successfully but carries no tf2_msgs/msg/TFMessage
-// topic, completion must surface a visible sentinel so the user can tell
-// the difference between "completion ran and found nothing" and "the
-// shell did nothing" (fall-through to file completion).
-TEST_F(CompletionTest, TrajDumpFromFlagShowsSentinelWhenBagHasNoTf)
+// topic, completion has nothing to suggest and returns empty — completion
+// simply offers nothing rather than surfacing a placeholder candidate.
+TEST_F(CompletionTest, TrajDumpFromFlagEmptyWhenBagHasNoTf)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
@@ -479,7 +478,7 @@ TEST_F(CompletionTest, TrajDumpFromFlagShowsSentinelWhenBagHasNoTf)
     run_completion(
       {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", "~/no_tf.mcap", "/tf", "out.tum",
        "--from"}),
-    "NO-TF-FRAMES-FOUND-IN-BAG\n");
+    "");
 }
 
 // An input path that fails to open must not surface the sentinel — that would
@@ -731,9 +730,9 @@ TEST_F(CompletionTest, TfStaticCalcFromSlotRespectsPrefix)
 }
 
 // A bag with only a dynamic /tf topic (no *tf_static) has no static frames, so
-// `tf static calc` completion surfaces the sentinel rather than listing the
-// dynamic frames — confirming the static-only restriction. (`tf walk` on the
-// same bag does list those frames; see TfWalkFromSlotListsFrameIds.)
+// `tf static calc` completion returns empty rather than listing the dynamic
+// frames — confirming the static-only restriction. (`tf walk` on the same bag
+// does list those frames; see TfWalkFromSlotListsFrameIds.)
 TEST_F(CompletionTest, TfStaticCalcFromSlotExcludesDynamicOnlyFrames)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
@@ -742,7 +741,7 @@ TEST_F(CompletionTest, TfStaticCalcFromSlotExcludesDynamicOnlyFrames)
 
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "static", "calc", "~/tf.mcap"}),
-    "NO-TF-FRAMES-FOUND-IN-BAG\n");
+    "");
 }
 
 // `tf walk <bag> <TAB>` (the <from> slot) lists the bag's TF frame ids. Unlike

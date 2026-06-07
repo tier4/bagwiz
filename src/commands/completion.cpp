@@ -415,14 +415,6 @@ bool is_static_tf_topic_name(std::string_view name)
            name.size() - kTfStaticSuffix.size(), kTfStaticSuffix.size(), kTfStaticSuffix) == 0;
 }
 
-// Single sentinel surfaced by --from / --to completion when the bag was
-// opened successfully but contains no TF frame ids to suggest. Plain
-// ASCII (no shell metacharacters) so an accidental TAB-accept lands a
-// safe argument that bagwiz will then reject with a clear error. The
-// uppercase / hyphenated shape makes it visually distinct from real
-// frame ids in the completion menu.
-constexpr std::string_view kNoTfFramesSentinel = "NO-TF-FRAMES-FOUND-IN-BAG";
-
 // Soft cap on TF messages scanned for frame-id discovery. Static TF is
 // usually one message; dynamic TF re-publishes the same edges, so the
 // distinct frame-id set saturates well before this cap. The cap keeps
@@ -509,39 +501,17 @@ std::vector<std::string> collect_tf_frame_ids(
   return frame_ids;
 }
 
-// Completion candidates for the value of `--from` / `--to`. When the
-// bag yields frame ids we filter them by `prefix` exactly like every
-// other candidate set; when the bag opens cleanly but has *no* TF data
-// to suggest we emit the `kNoTfFramesSentinel` so the user sees that
-// completion ran and the bag genuinely lacks frames (rather than
-// silently falling through to file completion, which would be
-// misleading here). When the bag fails to open we return an empty list
+// Completion candidates for the value of `--from` / `--to`. Returns the
+// bag's TF frame ids filtered by `prefix`. When the bag yields no frame
+// ids to suggest — whether it failed to open or opened cleanly but carries
+// no TF data — we return an empty list so completion simply offers nothing
 // and the shell's default file-completion fallback takes over.
 std::vector<std::string> complete_frame_id_value(
   const std::filesystem::path & input_path, const std::string_view & prefix,
   bool static_only = false)
 {
-  // Gate on existence before scanning so that "the bag does not exist
-  // here" and "the bag exists but has no TF data" stay distinguishable:
-  // the former silently falls through to the shell's file-completion
-  // fallback, the latter surfaces the sentinel.
-  const auto resolved = expand_current_user_home(input_path);
-  std::error_code ec;
-  if (!std::filesystem::exists(resolved, ec)) {
-    return {};
-  }
-
   std::vector<std::string> result;
-  const auto all_frame_ids = collect_tf_frame_ids(input_path, static_only);
-
-  if (all_frame_ids.empty()) {
-    if (starts_with(kNoTfFramesSentinel, prefix)) {
-      result.emplace_back(kNoTfFramesSentinel);
-    }
-    return result;
-  }
-
-  for (const auto & frame : all_frame_ids) {
+  for (const auto & frame : collect_tf_frame_ids(input_path, static_only)) {
     if (starts_with(frame, prefix)) {
       result.push_back(frame);
     }

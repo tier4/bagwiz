@@ -169,12 +169,9 @@ source ~/.config/fish/completions/bagwiz.fish
   The bag is opened lazily and only the first ~5000 TF messages are scanned
   so per-keystroke latency stays bounded on large bags. When the bag opens
   cleanly but carries no matching TF data — no TF at all, or, for
-  `tf static calc`, no static `*tf_static` topic — a single
-  `NO-TF-FRAMES-FOUND-IN-BAG` sentinel is emitted so the empty result is
-  visibly distinct from the shell's silent file-completion fallback. When
-  the bag path does not exist or the input slot is itself a flag, no
-  candidates are emitted and the shell's default file completion takes
-  over.
+  `tf static calc`, no static `*tf_static` topic — no candidates are emitted
+  and the shell's default file completion takes over, exactly as when the bag
+  path does not exist or the input slot is itself a flag.
 
 - Path completion is delegated to the shell's default file completion when
   bagwiz does not provide command-specific candidates. The bash script uses
