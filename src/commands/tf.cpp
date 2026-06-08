@@ -462,6 +462,14 @@ std::string join_csv(const std::vector<std::string> & names)
   return out;
 }
 
+// Sorted, comma-separated list of every frame id known to `buffer`, or "(none)".
+std::string sorted_frames_csv(const tf2::BufferCore & buffer)
+{
+  std::vector<std::string> frames = buffer.getAllFrameNames();
+  std::sort(frames.begin(), frames.end());
+  return join_csv(frames);
+}
+
 // Reserved <topics> selectors. "static" expands to every *tf_static topic,
 // "dynamic" to every non-static TF topic. ROS topic names start with '/', so
 // these bare words never collide with a real topic name.
@@ -894,6 +902,20 @@ private:
       return 1;
     }
 
+    // tf2's lookupTransform returns an identity transform when target == source
+    // WITHOUT checking the frame exists, so `tf static calc <f> <f>` for an
+    // absent frame would otherwise print a bogus identity transform. Reject
+    // either endpoint up front when the static tree does not contain it.
+    const std::vector<std::string> missing =
+      core::missing_frames(tf_buffer, args.from_frame, args.to_frame);
+    if (!missing.empty()) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "Frame(s) not present in the bag's static TF tree: %s", join_csv(missing).c_str());
+      BAGWIZ_LOG_ERROR(
+        kLogger, "Available static frames: %s", sorted_frames_csv(tf_buffer).c_str());
+      return 1;
+    }
+
     geometry_msgs::msg::TransformStamped tf;
     try {
       // from→to: lookupTransform(target=<to>, source=<from>). Translation is
@@ -902,21 +924,13 @@ private:
       // query time, so TimePointZero is used.
       tf = tf_buffer.lookupTransform(args.to_frame, args.from_frame, tf2::TimePointZero);
     } catch (const tf2::TransformException & e) {
+      // Both endpoints exist (validated above) but are not connected in the
+      // static tree at TimePointZero.
       BAGWIZ_LOG_ERROR(
         kLogger, "Could not resolve static transform %s -> %s: %s", args.from_frame.c_str(),
         args.to_frame.c_str(), e.what());
-
-      std::vector<std::string> frames = tf_buffer.getAllFrameNames();
-      std::sort(frames.begin(), frames.end());
-      std::string csv;
-      for (std::size_t i = 0; i < frames.size(); ++i) {
-        if (i > 0) {
-          csv += ", ";
-        }
-        csv += frames[i];
-      }
       BAGWIZ_LOG_ERROR(
-        kLogger, "Available static frames: %s", csv.empty() ? "(none)" : csv.c_str());
+        kLogger, "Available static frames: %s", sorted_frames_csv(tf_buffer).c_str());
       return 1;
     }
 
