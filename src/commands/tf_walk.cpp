@@ -106,6 +106,20 @@ std::int64_t time_point_to_ns(tf2::TimePoint tp)
   return std::chrono::duration_cast<std::chrono::nanoseconds>(tp.time_since_epoch()).count();
 }
 
+// Join frame ids with ", "; returns "(none)" for an empty list.
+std::string join_frames(std::vector<std::string> frames)
+{
+  std::sort(frames.begin(), frames.end());
+  std::string csv;
+  for (std::size_t i = 0; i < frames.size(); ++i) {
+    if (i > 0) {
+      csv += ", ";
+    }
+    csv += frames[i];
+  }
+  return csv.empty() ? "(none)" : csv;
+}
+
 // A TF topic in the bag plus the static flag used to populate the buffer.
 struct TfTopic
 {
@@ -212,6 +226,19 @@ int run_tf_walk(
   const std::vector<tf2::TimePoint> timeline = core::build_tf_walk_timeline(std::move(stamps));
   if (timeline.empty()) {
     BAGWIZ_LOG_ERROR(kLogger, "TF topics carry no decodable transforms; nothing to walk.");
+    return 1;
+  }
+
+  // Reject a <from>/<to> the bag's TF tree does not contain before opening the
+  // viewer. tf2's lookupTransform returns an identity transform when
+  // target == source WITHOUT checking the frame exists, so `tf walk <f> <f>`
+  // for an absent frame would otherwise display a bogus identity transform.
+  const std::vector<std::string> missing = core::missing_frames(buffer, from_frame, to_frame);
+  if (!missing.empty()) {
+    BAGWIZ_LOG_ERROR(
+      kLogger, "Frame(s) not present in the bag's TF tree: %s", join_frames(missing).c_str());
+    BAGWIZ_LOG_ERROR(
+      kLogger, "Available frames: %s", join_frames(buffer.getAllFrameNames()).c_str());
     return 1;
   }
 

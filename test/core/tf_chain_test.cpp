@@ -147,4 +147,64 @@ TEST(ChainToEdges, EmptyAndSingletonChainsYieldEmpty)
   EXPECT_TRUE(bagwiz::core::chain_to_edges(buffer, {"a"}, tf2::TimePoint{}).empty());
 }
 
+// Both endpoints present in the buffer ⇒ nothing missing.
+TEST(MissingFrames, BothPresentYieldsEmpty)
+{
+  tf2::BufferCore buffer{std::chrono::seconds(60)};
+  buffer.setTransform(make_tf("a", "b", 0), "test", true);
+
+  EXPECT_TRUE(bagwiz::core::missing_frames(buffer, "a", "b").empty());
+}
+
+// A single absent endpoint is reported, on either side.
+TEST(MissingFrames, AbsentEndpointReported)
+{
+  tf2::BufferCore buffer{std::chrono::seconds(60)};
+  buffer.setTransform(make_tf("a", "b", 0), "test", true);
+
+  const auto from_missing = bagwiz::core::missing_frames(buffer, "nope", "b");
+  ASSERT_EQ(from_missing.size(), 1u);
+  EXPECT_EQ(from_missing[0], "nope");
+
+  const auto to_missing = bagwiz::core::missing_frames(buffer, "a", "nope");
+  ASSERT_EQ(to_missing.size(), 1u);
+  EXPECT_EQ(to_missing[0], "nope");
+}
+
+// Two distinct absent endpoints are both reported, in {from, to} order.
+TEST(MissingFrames, BothAbsentReportedInOrder)
+{
+  tf2::BufferCore buffer{std::chrono::seconds(60)};
+  buffer.setTransform(make_tf("a", "b", 0), "test", true);
+
+  const auto missing = bagwiz::core::missing_frames(buffer, "x", "y");
+  ASSERT_EQ(missing.size(), 2u);
+  EXPECT_EQ(missing[0], "x");
+  EXPECT_EQ(missing[1], "y");
+}
+
+// The exact `tf walk <f> <f>` bug: an absent frame given for both endpoints is
+// reported once (deduplicated), not twice. tf2's lookupTransform would
+// otherwise return an identity transform for the same-frame case without ever
+// checking the frame exists.
+TEST(MissingFrames, SameAbsentFrameReportedOnce)
+{
+  tf2::BufferCore buffer{std::chrono::seconds(60)};
+  buffer.setTransform(make_tf("a", "b", 0), "test", true);
+
+  const auto missing = bagwiz::core::missing_frames(buffer, "hoge", "hoge");
+  ASSERT_EQ(missing.size(), 1u);
+  EXPECT_EQ(missing[0], "hoge");
+}
+
+// A frame that genuinely exists, given for both endpoints, is not flagged --
+// the same-frame identity lookup is legitimate when the frame is real.
+TEST(MissingFrames, SamePresentFrameYieldsEmpty)
+{
+  tf2::BufferCore buffer{std::chrono::seconds(60)};
+  buffer.setTransform(make_tf("a", "b", 0), "test", true);
+
+  EXPECT_TRUE(bagwiz::core::missing_frames(buffer, "b", "b").empty());
+}
+
 }  // namespace

@@ -83,6 +83,24 @@ std::vector<std::string> resolve_chain(
   return chain;
 }
 
+std::vector<std::string> missing_frames(
+  const tf2::BufferCore & buffer, const std::string & from_frame, const std::string & to_frame)
+{
+  const std::vector<std::string> all = buffer.getAllFrameNames();
+  const std::unordered_set<std::string> known(all.begin(), all.end());
+
+  std::vector<std::string> missing;
+  if (known.count(from_frame) == 0) {
+    missing.push_back(from_frame);
+  }
+  // Skip the second check when both endpoints are the same frame so a missing
+  // `tf walk <f> <f>` reports the frame once rather than twice.
+  if (to_frame != from_frame && known.count(to_frame) == 0) {
+    missing.push_back(to_frame);
+  }
+  return missing;
+}
+
 std::vector<std::pair<std::string, std::string>> chain_to_edges(
   const tf2::BufferCore & buffer, const std::vector<std::string> & chain, tf2::TimePoint time)
 {

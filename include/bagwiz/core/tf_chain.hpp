@@ -42,6 +42,18 @@ std::vector<std::string> resolve_chain(
 std::vector<std::pair<std::string, std::string>> chain_to_edges(
   const tf2::BufferCore & buffer, const std::vector<std::string> & chain, tf2::TimePoint time);
 
+// Return whichever of `from_frame` and `to_frame` is NOT a frame known to
+// `buffer` (i.e. not among buffer.getAllFrameNames()), in {from, to} order and
+// de-duplicated when both are the same missing frame. Returns empty when both
+// frames exist.
+//
+// This guards against tf2::BufferCore::lookupTransform's same-frame fast path:
+// when target == source it returns an identity transform WITHOUT verifying the
+// frame exists, so `tf walk <f> <f>` for a frame absent from the bag would
+// otherwise display a bogus identity transform instead of erroring.
+std::vector<std::string> missing_frames(
+  const tf2::BufferCore & buffer, const std::string & from_frame, const std::string & to_frame);
+
 }  // namespace bagwiz::core
 
 #endif  // BAGWIZ__CORE__TF_CHAIN_HPP_
