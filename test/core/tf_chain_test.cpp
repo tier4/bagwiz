@@ -192,9 +192,9 @@ TEST(MissingFrames, SameAbsentFrameReportedOnce)
   tf2::BufferCore buffer{std::chrono::seconds(60)};
   buffer.setTransform(make_tf("a", "b", 0), "test", true);
 
-  const auto missing = bagwiz::core::missing_frames(buffer, "hoge", "hoge");
+  const auto missing = bagwiz::core::missing_frames(buffer, "ghost", "ghost");
   ASSERT_EQ(missing.size(), 1u);
-  EXPECT_EQ(missing[0], "hoge");
+  EXPECT_EQ(missing[0], "ghost");
 }
 
 // A frame that genuinely exists, given for both endpoints, is not flagged --
