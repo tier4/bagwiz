@@ -536,12 +536,12 @@ TEST(FlagCompletionTest, WalkDashListsHelpFlags)
 }
 
 // The `complete` subcommand defines two flags of its own; with help merged
-// in they sort as: --force, --help, --install, -h.
+// in they sort as: --help, --install, --overwrite, -h.
 TEST(FlagCompletionTest, CompleteDashListsCompleteFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "2", "bagwiz", "complete", "-"}),
-    "--force\n--help\n--install\n-h\n");
+    "--help\n--install\n--overwrite\n-h\n");
 }
 
 // `convert` has no parent-level flags; the `format` subcommand owns
@@ -1054,7 +1054,7 @@ TEST_F(InstallScriptTest, WritesScriptAndCreatesParentDirectories)
   EXPECT_EQ(read_text_file(target), *expected);
 }
 
-TEST_F(InstallScriptTest, RefusesToOverwriteExistingFileWithoutForce)
+TEST_F(InstallScriptTest, RefusesToOverwriteExistingFileWithoutOverwriteFlag)
 {
   const auto target = tmp_dir_ / "bagwiz";
   {
@@ -1066,7 +1066,7 @@ TEST_F(InstallScriptTest, RefusesToOverwriteExistingFileWithoutForce)
   EXPECT_EQ(read_text_file(target), "previous");
 }
 
-TEST_F(InstallScriptTest, OverwritesExistingFileWhenForceIsTrue)
+TEST_F(InstallScriptTest, OverwritesExistingFileWhenOverwriteIsTrue)
 {
   const auto target = tmp_dir_ / "bagwiz";
   {

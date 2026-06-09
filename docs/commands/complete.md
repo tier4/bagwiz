@@ -5,7 +5,7 @@ Generate a shell completion script for `bagwiz`.
 ## Usage
 
 ```text
-bagwiz complete <shell> [--install] [--force]
+bagwiz complete <shell> [--install] [--overwrite]
 ```
 
 ## Positional arguments
@@ -16,10 +16,10 @@ bagwiz complete <shell> [--install] [--force]
 
 ## Options
 
-| Flag        | Description                                                                               |
-| ----------- | ----------------------------------------------------------------------------------------- |
-| `--install` | Write the script to the shell's standard completion directory instead of stdout.          |
-| `--force`   | Overwrite an existing file when used with `--install`. Has no effect without `--install`. |
+| Flag          | Description                                                                               |
+| ------------- | ----------------------------------------------------------------------------------------- |
+| `--install`   | Write the script to the shell's standard completion directory instead of stdout.          |
+| `--overwrite` | Overwrite an existing file when used with `--install`. Has no effect without `--install`. |
 
 ## Supported shells
 
@@ -52,7 +52,7 @@ Default targets (XDG variables are honored when set):
 | `zsh`  | `~/.zsh/completions/_bagwiz`                                          |
 | `fish` | `${XDG_CONFIG_HOME:-~/.config}/fish/completions/bagwiz.fish`          |
 
-Re-running `--install` against an existing file fails unless `--force` is
+Re-running `--install` against an existing file fails unless `--overwrite` is
 passed.
 
 ## Installing bash completion manually

@@ -235,12 +235,12 @@ std::optional<std::filesystem::path> install_path_for(CompletionShell shell)
 }
 
 bool write_script_to(
-  const std::filesystem::path & target, const std::string_view & contents, bool force)
+  const std::filesystem::path & target, const std::string_view & contents, bool overwrite)
 {
   std::error_code ec;
-  if (std::filesystem::exists(target, ec) && !force) {
+  if (std::filesystem::exists(target, ec) && !overwrite) {
     std::cerr << "refusing to overwrite existing file: " << target
-              << " (pass --force to overwrite)\n";
+              << " (pass --overwrite to replace it)\n";
     return false;
   }
 
@@ -589,7 +589,7 @@ std::vector<std::string> complete_complete_command(const CompletionRequest & req
 {
   const auto current = current_word(request);
   if (current.starts_with("-")) {
-    return matching(with_help({"--force", "--install"}), current);
+    return matching(with_help({"--install", "--overwrite"}), current);
   }
   if (request.cursor_word == kFirstCommandArgWord) {
     return matching(supported_shell_names(), current);
@@ -1006,7 +1006,7 @@ public:
     app.add_flag(
       "--install", install_,
       "Write the script to the shell's standard completion directory instead of stdout");
-    app.add_flag("--force", force_, "Overwrite an existing file when used with --install");
+    app.add_flag("--overwrite", overwrite_, "Overwrite an existing file when used with --install");
   }
 
   int run() override
@@ -1028,7 +1028,7 @@ public:
       return 1;
     }
 
-    if (!write_script_to(*target, completion_script(*shell), force_)) {
+    if (!write_script_to(*target, completion_script(*shell), overwrite_)) {
       return 1;
     }
     std::cout << "installed: " << target->string() << '\n';
@@ -1038,7 +1038,7 @@ public:
 private:
   std::string shell_;
   bool install_ = false;
-  bool force_ = false;
+  bool overwrite_ = false;
 };
 
 }  // namespace
@@ -1067,14 +1067,14 @@ std::optional<std::filesystem::path> default_install_path_for(const std::string_
 }
 
 bool install_completion_script(
-  const std::string_view & shell, const std::filesystem::path & target, bool force)
+  const std::string_view & shell, const std::filesystem::path & target, bool overwrite)
 {
   const auto parsed = parse_shell(shell);
   if (!parsed) {
     std::cerr << "unsupported shell: " << shell << '\n';
     return false;
   }
-  return write_script_to(target, completion_script(*parsed), force);
+  return write_script_to(target, completion_script(*parsed), overwrite);
 }
 
 bool is_completion_request(int argc, char * const * argv)

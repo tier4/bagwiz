@@ -31,9 +31,9 @@ std::optional<std::filesystem::path> default_install_path_for(const std::string_
 
 // Writes the completion script for `shell` to `target`, creating parent
 // directories as needed. Refuses to overwrite an existing file unless
-// `force` is true. Returns true on success.
+// `overwrite` is true. Returns true on success.
 bool install_completion_script(
-  const std::string_view & shell, const std::filesystem::path & target, bool force);
+  const std::string_view & shell, const std::filesystem::path & target, bool overwrite);
 
 }  // namespace bagwiz::commands
 
