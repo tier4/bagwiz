@@ -149,6 +149,7 @@ add_library(bagwiz_core
   src/core/bag_copy.cpp
   src/core/bag_inplace.cpp
   src/core/bag_topic_plan.cpp
+  src/core/broken_bag.cpp
   src/core/tf_chain.cpp
   src/core/tf_merge_check.cpp
   src/core/tf_message_wire.cpp
@@ -230,6 +231,7 @@ target_include_directories(bagwiz_core PRIVATE $<TARGET_PROPERTY:fmt::fmt,INTERF
 # ---------------------------------------------------------------------------
 add_executable(bagwiz
   src/main.cpp
+  src/commands/check.cpp
   src/commands/completion.cpp
   src/commands/convert.cpp
   src/commands/convert_msgtype_geo.cpp
@@ -301,6 +303,9 @@ if(BUILD_TESTING)
   target_link_libraries(bagwiz_yaml_msg_stamp_sync_test bagwiz_core)
 
   target_link_libraries(bagwiz_smoke_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_broken_bag_test test/core/broken_bag_test.cpp)
+  target_link_libraries(bagwiz_broken_bag_test bagwiz_core)
 
   ament_add_gtest(bagwiz_message_formatter_test test/core/message_formatter_test.cpp)
   target_link_libraries(bagwiz_message_formatter_test bagwiz_core)
