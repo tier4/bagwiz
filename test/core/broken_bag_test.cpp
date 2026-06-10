@@ -226,7 +226,7 @@ TEST_F(BrokenBagTest, DiscoverRecursesAndDoesNotDescendIntoDirectoryBags)
 {
   const auto file_a = tmp_dir_ / "a.mcap";
   const auto file_b = tmp_dir_ / "sub" / "b.db3";
-  const auto dir_bag = tmp_dir_ / "dirbag";
+  const auto dir_bag = tmp_dir_ / "dir_bag";
   fs::create_directories(tmp_dir_ / "sub");
   write_mcap_file(file_a);
   write_sqlite3_file(file_b);
@@ -235,7 +235,7 @@ TEST_F(BrokenBagTest, DiscoverRecursesAndDoesNotDescendIntoDirectoryBags)
   const auto units = bagwiz::core::discover_bags(tmp_dir_);
 
   ASSERT_EQ(units.size(), 3U);
-  // Sorted by path: a.mcap, dirbag, sub/b.db3.
+  // Sorted by path: a.mcap, dir_bag, sub/b.db3.
   EXPECT_EQ(units[0].path, file_a);
   EXPECT_FALSE(units[0].is_directory_bag);
   EXPECT_EQ(units[1].path, dir_bag);

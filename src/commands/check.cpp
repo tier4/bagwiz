@@ -46,7 +46,7 @@ std::string normalize_answer(std::string s)
 }
 
 // Ask the user once whether to delete the broken bags. The prompt goes to
-// stderr so stdout stays a clean, pipeable list of paths. When stdin is not a
+// stderr so stdout stays a clean, one-path-per-line list. When stdin is not a
 // TTY (piped / redirected), returns false without prompting so a pipeline
 // never deletes anything without an explicit --rm.
 bool confirm_delete(std::size_t count)
