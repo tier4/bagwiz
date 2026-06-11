@@ -24,6 +24,7 @@
 #include <span>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -1007,6 +1008,23 @@ TEST(InstallPathStandaloneTest, UnknownShellReturnsNullopt)
 {
   EXPECT_FALSE(bagwiz::commands::default_install_path_for("powershell").has_value());
   EXPECT_FALSE(bagwiz::commands::default_install_path_for("").has_value());
+}
+
+TEST(ActivateCommandTest, SourcesTargetForEveryShell)
+{
+  const std::filesystem::path target{"/tmp/bagwiz/completions/bagwiz"};
+  for (const std::string_view shell : {"bash", "zsh", "fish"}) {
+    const auto command = bagwiz::commands::activate_command_for(shell, target);
+    ASSERT_TRUE(command.has_value()) << "shell: " << shell;
+    EXPECT_EQ(*command, "source " + target.string()) << "shell: " << shell;
+  }
+}
+
+TEST(ActivateCommandTest, UnknownShellReturnsNullopt)
+{
+  const std::filesystem::path target{"/tmp/bagwiz/completions/bagwiz"};
+  EXPECT_FALSE(bagwiz::commands::activate_command_for("powershell", target).has_value());
+  EXPECT_FALSE(bagwiz::commands::activate_command_for("", target).has_value());
 }
 
 namespace

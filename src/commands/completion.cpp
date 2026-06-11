@@ -989,6 +989,21 @@ const char * completion_script(CompletionShell shell)
   return "";
 }
 
+// The command that loads `target` into the current shell session. All three
+// shells autoload the script from the standard completion directory on the next
+// startup, so the only thing needed to activate it immediately is to source the
+// file we just wrote.
+std::string activate_command(CompletionShell shell, const std::filesystem::path & target)
+{
+  switch (shell) {
+    case CompletionShell::Bash:
+    case CompletionShell::Zsh:
+    case CompletionShell::Fish:
+      return "source " + target.string();
+  }
+  return {};
+}
+
 class CompleteCommand : public Command
 {
 public:
@@ -1031,7 +1046,10 @@ public:
     if (!write_script_to(*target, completion_script(*shell), overwrite_)) {
       return 1;
     }
-    std::cout << "installed: " << target->string() << '\n';
+    std::cout << "installed: " << target->string() << '\n'
+              << "Completion will be active in new terminal sessions.\n"
+              << "To enable it in the current shell now, run:\n"
+              << "  " << activate_command(*shell, *target) << '\n';
     return 0;
   }
 
@@ -1064,6 +1082,16 @@ std::optional<std::filesystem::path> default_install_path_for(const std::string_
     return std::nullopt;
   }
   return install_path_for(*parsed);
+}
+
+std::optional<std::string> activate_command_for(
+  const std::string_view & shell, const std::filesystem::path & target)
+{
+  const auto parsed = parse_shell(shell);
+  if (!parsed) {
+    return std::nullopt;
+  }
+  return activate_command(*parsed, target);
 }
 
 bool install_completion_script(

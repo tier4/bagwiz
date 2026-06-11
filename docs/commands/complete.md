@@ -44,6 +44,17 @@ bagwiz complete zsh  --install
 bagwiz complete fish --install
 ```
 
+On success it prints the installed path, notes that completion becomes active in
+new terminal sessions, and shows the command to enable it in the current shell
+right away:
+
+```text
+installed: /home/you/.local/share/bash-completion/completions/bagwiz
+Completion will be active in new terminal sessions.
+To enable it in the current shell now, run:
+  source /home/you/.local/share/bash-completion/completions/bagwiz
+```
+
 Default targets (XDG variables are honored when set):
 
 | Shell  | Path                                                                  |

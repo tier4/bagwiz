@@ -29,6 +29,12 @@ std::optional<std::string> completion_script_for(const std::string_view & shell)
 // std::nullopt for an unknown shell or when no usable HOME is available.
 std::optional<std::filesystem::path> default_install_path_for(const std::string_view & shell);
 
+// Returns the shell command that activates the just-installed completion script
+// in the *current* shell session (so the user need not open a new terminal),
+// e.g. "source <target>". Returns std::nullopt for an unknown shell.
+std::optional<std::string> activate_command_for(
+  const std::string_view & shell, const std::filesystem::path & target);
+
 // Writes the completion script for `shell` to `target`, creating parent
 // directories as needed. Refuses to overwrite an existing file unless
 // `overwrite` is true. Returns true on success.
