@@ -43,5 +43,12 @@ jobs:
       - name: Install pre-commit
         run: pip install pre-commit
 
+      # The cppcheck pre-commit hook (pocc/pre-commit-hooks) is a thin wrapper
+      # that execs the system `cppcheck` binary rather than bundling it, so it
+      # must be on PATH. clang-tidy/clang-format/cpplint come from the hooks' own
+      # pip envs, but cppcheck is a native binary with no pip distribution.
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cppcheck
+
       - name: Run pre-commit
         run: pre-commit run --all-files --show-diff-on-failure
