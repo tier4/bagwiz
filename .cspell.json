@@ -38,6 +38,7 @@
     "relaxable",
     "relwithdebinfo",
     "RIHS",
+    "robostack",
     "rosbag",
     "rosdep",
     "semver",
