@@ -7,69 +7,28 @@ on:
       - main
 
 jobs:
-  colcon:
+  pixi:
     strategy:
       fail-fast: false
       matrix:
-        distro: [humble, jazzy, lyrical]
+        distro: [humble, jazzy, kilted, lyrical]
     runs-on: ubuntu-latest
-    container:
-      image: ros:${{ matrix.distro }}-ros-base
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # pixi provisions ROS 2 (RoboStack) + the C/C++ toolchain (conda-forge)
+      # from the committed pixi.lock, so no system ROS install or rosdep is
+      # needed. `environments` installs only the distro under test; the lockfile
+      # is cached keyed on its hash.
+      - name: Set up pixi
+        uses: prefix-dev/setup-pixi@v0.9.6
         with:
-          path: src/bagwiz
+          pixi-version: v0.70.2
+          environments: ${{ matrix.distro }}
 
-      - name: Install dependencies via setup.sh
-        shell: bash
-        run: |
-          # Run the same setup.sh users run, so CI exercises the real install
-          # path. Source ROS first: setup.sh requires a sourced environment
-          # (ROS_DISTRO and AMENT_PREFIX_PATH), and the base image sets only
-          # ROS_DISTRO. apt-get update populates the package cache and rosdep
-          # update refreshes the rosdep database that setup.sh's `rosdep install`
-          # reads to resolve the latest available dependency versions.
-          source /opt/ros/${{ matrix.distro }}/setup.bash
-          apt-get update
-          rosdep update --rosdistro ${{ matrix.distro }}
-          ./src/bagwiz/setup.sh
+      - name: Build
+        run: pixi run -e ${{ matrix.distro }} build
 
-      - name: colcon build
-        shell: bash
-        run: |
-          source /opt/ros/${{ matrix.distro }}/setup.bash
-          colcon build \
-            --event-handlers console_direct+ \
-            --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-
-      - name: colcon test
-        shell: bash
-        env:
-          RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
-        run: |
-          source /opt/ros/${{ matrix.distro }}/setup.bash
-          source install/setup.bash
-          colcon test --event-handlers console_direct+
-          colcon test-result --verbose
-
-      - name: Install cppcheck and pre-commit (jazzy)
-        if: matrix.distro == 'jazzy'
-        shell: bash
-        run: |
-          apt-get install -y --no-install-recommends cppcheck python3-pip git
-          pip install --break-system-packages pre-commit
-
-      - name: Run cppcheck and clang-tidy via pre-commit (jazzy)
-        if: matrix.distro == 'jazzy'
-        shell: bash
-        working-directory: src/bagwiz
-        run: |
-          source /opt/ros/${{ matrix.distro }}/setup.bash
-          git config --global --add safe.directory "$GITHUB_WORKSPACE/src/bagwiz"
-          # The pre-commit hook expects build/compile_commands.json relative to
-          # the repo root. colcon places it at the workspace root, so expose it
-          # under the package's expected path via a symlink.
-          ln -s "$GITHUB_WORKSPACE/build" build
-          pre-commit run cppcheck --all-files --show-diff-on-failure
-          pre-commit run clang-tidy --all-files --show-diff-on-failure
+      - name: Test
+        run: pixi run -e ${{ matrix.distro }} test

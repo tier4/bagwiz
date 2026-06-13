@@ -22,9 +22,10 @@ find_package(SQLite3 REQUIRED)
 # zstd is used by message_decompressor.cpp to handle rosbag2 MESSAGE-mode
 # (per-message zstd) bags transparently. The vendor/module package below wires
 # up CMAKE_MODULE_PATH so the inner find_package(zstd) can locate the imported
-# `zstd::zstd` target. Humble/Jazzy ship zstd_vendor; Lyrical and newer replaced
-# it with zstd_cmake_module (a thin module over the system libzstd). Both expose
-# the same zstd::zstd target, so try zstd_vendor first and fall back.
+# `zstd::zstd` target. Humble, Jazzy, and Kilted ship zstd_vendor; Lyrical and
+# newer replaced it with zstd_cmake_module (a thin module over the system
+# libzstd). Both expose the same zstd::zstd target, so try zstd_vendor first and
+# fall back.
 find_package(zstd_vendor QUIET)
 if(NOT zstd_vendor_FOUND)
   find_package(zstd_cmake_module REQUIRED)
@@ -59,14 +60,32 @@ find_package(tf2_msgs REQUIRED)
 find_package(nlohmann_json REQUIRED)
 
 # GeographicLib provides the WGS84 -> ENU / UTM projections used by
-# `convert msgtype geo` (geo_pose_convert.cpp). The system package ships a
-# classic Find module (no imported target) rather than a config package, so
-# add its module dir to CMAKE_MODULE_PATH and consume the
-# GeographicLib_LIBRARIES / _INCLUDE_DIRS variables it sets. Linked PRIVATE —
-# it is an implementation detail behind the GeoPoseConverter pimpl and must
-# not leak into bagwiz_core's export set.
-list(APPEND CMAKE_MODULE_PATH "/usr/share/cmake/geographiclib")
-find_package(GeographicLib REQUIRED)
+# `convert msgtype geo` (geo_pose_convert.cpp). It is consumed PRIVATE — an
+# implementation detail behind the GeoPoseConverter pimpl that must not leak
+# into bagwiz_core's export set. Two packagings exist and both are supported:
+#   - a CMake CONFIG package (e.g. conda-forge `geographiclib-cpp`, used by the
+#     pixi/RoboStack build) that exports the GeographicLib::GeographicLib target;
+#   - the classic Debian/Ubuntu find-module that ships no imported target, only
+#     sets GeographicLib_LIBRARIES / _INCLUDE_DIRS, and lives under
+#     /usr/share/cmake/geographiclib.
+# Try CONFIG mode first; fall back to MODULE mode, appending the Debian module
+# directory to CMAKE_MODULE_PATH only when it exists so the path is harmless
+# inside a conda prefix (which has no /usr/share/cmake/geographiclib).
+find_package(GeographicLib CONFIG QUIET)
+if(NOT GeographicLib_FOUND)
+  if(EXISTS "/usr/share/cmake/geographiclib")
+    list(APPEND CMAKE_MODULE_PATH "/usr/share/cmake/geographiclib")
+  endif()
+  find_package(GeographicLib MODULE REQUIRED)
+endif()
+# Normalise both packagings onto the variables the consumers below use: when the
+# CONFIG package exported only the imported target, point GeographicLib_LIBRARIES
+# at it (a target is a valid link item, and linking it propagates its include
+# dirs — same approach as the PRIVATE nlohmann_json::nlohmann_json link). The
+# classic find-module already populates these variables itself.
+if(TARGET GeographicLib::GeographicLib AND NOT GeographicLib_LIBRARIES)
+  set(GeographicLib_LIBRARIES GeographicLib::GeographicLib)
+endif()
 
 # CLI11 and fmt are not available as rosdep keys on all supported distros, so
 # fetch them at configure time. Both are small, header-light libraries.

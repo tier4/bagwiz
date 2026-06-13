@@ -9,6 +9,9 @@ log/
 COLCON_IGNORE
 AMENT_IGNORE
 
+# pixi solved environments (pixi.toml and pixi.lock are tracked; .pixi/ is not)
+.pixi/
+
 # ROS bag files
 *.bag
 *.db3

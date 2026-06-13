@@ -1,0 +1,207 @@
+# pixi manifest for bagwiz.
+#
+# bagwiz is a single-package ament_cmake / colcon C++ workspace (package.xml is
+# at the repo root). This manifest lets anyone build, test, and run bagwiz with
+# NO system ROS 2 install: the ROS toolchain and message packages come from
+# RoboStack conda channels (one per ROS 2 distro), and the C/C++ toolchain comes
+# from conda-forge. Pick a distro per invocation, e.g.:
+#
+#   pixi run -e jazzy build        # build against ROS 2 Jazzy (the default env)
+#   pixi run -e kilted test        # build + test against Kilted
+#   pixi run -e lyrical run -- --help
+#   pixi shell -e humble           # interactive shell with `bagwiz` on PATH
+#
+# To layer your own message packages on top of any distro, point BAGWIZ_OVERLAY
+# at one or more (colon-separated) external colcon workspaces before running:
+#
+#   BAGWIZ_OVERLAY=/path/to/my_msgs_ws pixi run -e jazzy run -- ls my.mcap
+#
+# See scripts/pixi-activate.sh for how the overlay is sourced.
+
+[workspace]
+name = "bagwiz"
+version = "0.1.0"
+# conda-forge supplies the C/C++ toolchain and the few non-ROS libraries
+# (GeographicLib, SQLite, nlohmann_json). Each distro feature adds its own
+# higher-priority robostack-<distro> channel so the ROS packages come from
+# RoboStack and win ties over conda-forge.
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+# ---------------------------------------------------------------------------
+# Default feature: distro-agnostic build toolchain + non-ROS libraries. It is
+# included in every environment below, so each distro env inherits it.
+# ---------------------------------------------------------------------------
+[dependencies]
+cmake = ">=3.27,<4"            # ament_cmake breaks under CMake 4; keep it pinned <4
+ninja = "*"
+make = "*"
+c-compiler = "*"              # conda-forge gcc; sets CC on activation
+cxx-compiler = "*"            # conda-forge g++; sets CXX on activation
+pkg-config = "*"
+colcon-common-extensions = "*"
+git = "*"                     # CMake FetchContent (CLI11/fmt/rang) clones at configure time
+geographiclib-cpp = "*"       # GeographicLib C++ library (conda-forge); NOT the python `geographiclib`
+nlohmann_json = "*"
+sqlite = "*"
+
+# Activation applies to every environment: select Cyclone DDS (bagwiz depends on
+# rmw_cyclonedds_cpp; Fast DDS is the distro default since Jazzy) and source the
+# built workspace + any external overlay.
+[activation.env]
+RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp"
+
+[target.unix.activation]
+scripts = ["scripts/pixi-activate.sh"]
+
+# ---------------------------------------------------------------------------
+# Tasks (shared by all distro environments; run with `-e <distro>`).
+# ---------------------------------------------------------------------------
+# Each distro builds into its OWN base (build/<distro>, install/<distro>) keyed on
+# $PIXI_ENVIRONMENT_NAME, so switching `-e <distro>` never reuses another distro's
+# colcon/CMake cache (which would silently link the wrong ROS libraries). The
+# trailing symlink keeps a stable build/compile_commands.json pointing at the
+# last-built distro, which the clang-tidy pre-commit hook reads via `-p=build`.
+[tasks.build]
+args = [{ arg = "build_type", default = "Release" }]
+cmd = 'colcon build --symlink-install --packages-up-to bagwiz --build-base "build/$PIXI_ENVIRONMENT_NAME" --install-base "install/$PIXI_ENVIRONMENT_NAME" --cmake-args -DCMAKE_BUILD_TYPE={{ build_type }} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && ln -sfn "$PIXI_ENVIRONMENT_NAME/compile_commands.json" build/compile_commands.json'
+inputs = ["src", "include", "test", "CMakeLists.txt", "package.xml"]
+
+[tasks.test]
+cmd = 'colcon test --packages-select bagwiz --build-base "build/$PIXI_ENVIRONMENT_NAME" --install-base "install/$PIXI_ENVIRONMENT_NAME" --event-handlers console_direct+ && colcon test-result --test-result-base "build/$PIXI_ENVIRONMENT_NAME" --verbose'
+depends-on = ["build"]
+
+# Run the freshly built binary by explicit (per-distro) path: RoboStack activation
+# already put $CONDA_PREFIX/lib on the loader path and $CONDA_PREFIX on
+# AMENT_PREFIX_PATH, so the dynamic links, the runtime dlopen of introspection
+# typesupport, and the .msg lookup all resolve. Pass arguments after `--`,
+# e.g. `pixi run -e jazzy run -- ls x.mcap`.
+[tasks.run]
+cmd = 'install/$PIXI_ENVIRONMENT_NAME/bagwiz/bin/bagwiz'
+depends-on = ["build"]
+
+[tasks.clean]
+cmd = "rm -rf build install log"
+
+# ---------------------------------------------------------------------------
+# One feature per ROS 2 distro. Each adds its own robostack channel (higher
+# priority than conda-forge) and the ros-<distro>-* packages bagwiz needs.
+# The package set mirrors the find_package() calls in CMakeLists.txt plus the
+# runtime rmw, the test message packages, and the per-distro zstd provider.
+# ---------------------------------------------------------------------------
+[feature.humble]
+channels = [{ channel = "https://prefix.dev/robostack-humble", priority = 1 }]
+[feature.humble.dependencies]
+ros-humble-ros-base = "*"
+ros-humble-ament-cmake = "*"
+ros-humble-ament-index-cpp = "*"
+ros-humble-rcutils = "*"
+ros-humble-rmw = "*"
+ros-humble-rmw-implementation = "*"
+ros-humble-rmw-cyclonedds-cpp = "*"
+ros-humble-rosidl-runtime-c = "*"
+ros-humble-rosidl-runtime-cpp = "*"
+ros-humble-rosidl-typesupport-introspection-cpp = "*"
+ros-humble-geometry-msgs = "*"
+ros-humble-nav-msgs = "*"
+ros-humble-std-msgs = "*"
+ros-humble-tf2 = "*"
+ros-humble-tf2-msgs = "*"
+ros-humble-mcap-vendor = "*"
+ros-humble-yaml-cpp-vendor = "*"
+ros-humble-zstd-vendor = "*"
+ros-humble-ament-cmake-gtest = "*"
+ros-humble-sensor-msgs = "*"
+ros-humble-diagnostic-msgs = "*"
+ros-humble-builtin-interfaces = "*"
+
+[feature.jazzy]
+channels = [{ channel = "https://prefix.dev/robostack-jazzy", priority = 1 }]
+[feature.jazzy.dependencies]
+ros-jazzy-ros-base = "*"
+ros-jazzy-ament-cmake = "*"
+ros-jazzy-ament-index-cpp = "*"
+ros-jazzy-rcutils = "*"
+ros-jazzy-rmw = "*"
+ros-jazzy-rmw-implementation = "*"
+ros-jazzy-rmw-cyclonedds-cpp = "*"
+ros-jazzy-rosidl-runtime-c = "*"
+ros-jazzy-rosidl-runtime-cpp = "*"
+ros-jazzy-rosidl-typesupport-introspection-cpp = "*"
+ros-jazzy-geometry-msgs = "*"
+ros-jazzy-nav-msgs = "*"
+ros-jazzy-std-msgs = "*"
+ros-jazzy-tf2 = "*"
+ros-jazzy-tf2-msgs = "*"
+ros-jazzy-mcap-vendor = "*"
+ros-jazzy-yaml-cpp-vendor = "*"
+ros-jazzy-zstd-vendor = "*"
+ros-jazzy-ament-cmake-gtest = "*"
+ros-jazzy-sensor-msgs = "*"
+ros-jazzy-diagnostic-msgs = "*"
+ros-jazzy-builtin-interfaces = "*"
+
+[feature.kilted]
+channels = [{ channel = "https://prefix.dev/robostack-kilted", priority = 1 }]
+[feature.kilted.dependencies]
+ros-kilted-ros-base = "*"
+ros-kilted-ament-cmake = "*"
+ros-kilted-ament-index-cpp = "*"
+ros-kilted-rcutils = "*"
+ros-kilted-rmw = "*"
+ros-kilted-rmw-implementation = "*"
+ros-kilted-rmw-cyclonedds-cpp = "*"
+ros-kilted-rosidl-runtime-c = "*"
+ros-kilted-rosidl-runtime-cpp = "*"
+ros-kilted-rosidl-typesupport-introspection-cpp = "*"
+ros-kilted-geometry-msgs = "*"
+ros-kilted-nav-msgs = "*"
+ros-kilted-std-msgs = "*"
+ros-kilted-tf2 = "*"
+ros-kilted-tf2-msgs = "*"
+ros-kilted-mcap-vendor = "*"
+ros-kilted-yaml-cpp-vendor = "*"
+ros-kilted-zstd-vendor = "*"   # Kilted still ships zstd_vendor (NOT zstd_cmake_module)
+ros-kilted-ament-cmake-gtest = "*"
+ros-kilted-sensor-msgs = "*"
+ros-kilted-diagnostic-msgs = "*"
+ros-kilted-builtin-interfaces = "*"
+
+[feature.lyrical]
+channels = [{ channel = "https://prefix.dev/robostack-lyrical", priority = 1 }]
+[feature.lyrical.dependencies]
+ros-lyrical-ros-base = "*"
+ros-lyrical-ament-cmake = "*"
+ros-lyrical-ament-index-cpp = "*"
+ros-lyrical-rcutils = "*"
+ros-lyrical-rmw = "*"
+ros-lyrical-rmw-implementation = "*"
+ros-lyrical-rmw-cyclonedds-cpp = "*"
+ros-lyrical-rosidl-runtime-c = "*"
+ros-lyrical-rosidl-runtime-cpp = "*"
+ros-lyrical-rosidl-typesupport-introspection-cpp = "*"
+ros-lyrical-geometry-msgs = "*"
+ros-lyrical-nav-msgs = "*"
+ros-lyrical-std-msgs = "*"
+ros-lyrical-tf2 = "*"
+ros-lyrical-tf2-msgs = "*"
+ros-lyrical-mcap-vendor = "*"
+ros-lyrical-yaml-cpp-vendor = "*"
+ros-lyrical-zstd-cmake-module = "*"   # Lyrical replaced zstd_vendor with zstd_cmake_module
+zstd = "*"                            # the cmake module finds conda-forge libzstd
+ros-lyrical-ament-cmake-gtest = "*"
+ros-lyrical-sensor-msgs = "*"
+ros-lyrical-diagnostic-msgs = "*"
+ros-lyrical-builtin-interfaces = "*"
+
+# ---------------------------------------------------------------------------
+# One environment per distro. Each solves independently against its own
+# robostack channel (no shared solve-group). `default` aliases jazzy so a bare
+# `pixi run build` targets Jazzy.
+# ---------------------------------------------------------------------------
+[environments]
+default = ["jazzy"]
+humble = ["humble"]
+jazzy = ["jazzy"]
+kilted = ["kilted"]
+lyrical = ["lyrical"]

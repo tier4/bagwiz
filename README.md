@@ -21,67 +21,77 @@ happens without spinning up a ROS graph.
 
 ## Installation
 
-bagwiz is **tested in CI on ROS 2 Humble, Jazzy, and Lyrical**. Other ROS 2
-distros are not exercised in CI but should work — bagwiz builds against
-whichever distro you have sourced.
+bagwiz runs through [pixi](https://pixi.sh), so you do not need a system ROS 2
+install. pixi provisions the ROS 2 toolchain and message packages from
+[RoboStack](https://robostack.github.io/) (one conda channel per distro) and the
+C/C++ build toolchain from conda-forge into a project-local environment, and you
+pick the ROS 2 distro per command.
 
-You need ROS 2 installed (Ubuntu packages under `/opt/ros/<distro>` are
-typical). Install [rosdep](https://docs.ros.org/en/independent/api/rosdep/html/)
-if you do not have it yet (`sudo apt install python3-rosdep`). Run
-`sudo rosdep init && rosdep update` once if rosdep has never been set up on
-the machine.
+bagwiz is tested in CI on ROS 2 Humble, Jazzy, Kilted, and Lyrical; `pixi.toml`
+exposes one environment per distro.
 
-From the repository root:
-
-1. Load ROS 2 into your shell (replace `<distro>` with your installed ROS 2 distro, e.g. `humble` or `jazzy`):
+1. Install pixi once, then reopen your shell so `pixi` is on `PATH`:
 
    ```bash
-   source /opt/ros/<distro>/setup.bash
+   curl -fsSL https://pixi.sh/install.sh | bash
    ```
 
-   `./setup.sh` and `./build.sh` require a sourced ROS 2 environment. If you
-   forget, they stop and print the exact `source .../setup.bash` command for
-   each ROS 2 distro installed under `/opt/ros` (and tell you to install ROS 2
-   if none is found). There is no distro allow-list — they use whichever distro
-   you source.
-
-2. Install build dependencies declared in `package.xml` (run from the repo root):
+2. Build bagwiz against a distro. The first build downloads that distro's
+   packages and compiles bagwiz; later builds are incremental:
 
    ```bash
-   ./setup.sh
+   pixi run -e jazzy build      # or: humble | kilted | lyrical
    ```
 
-   Optional message packages (e.g. for bags that use types beyond the
-   standard stack) are not vendored in this repository: install them with
-   `apt` or build them in a separate workspace and `source` that install
-   space so they appear on `AMENT_PREFIX_PATH` when you run bagwiz.
+   `pixi run build` (no `-e`) targets Jazzy, the default environment. Each distro
+   builds into its own `build/<distro>` and `install/<distro>`, so builds for
+   several distros can coexist.
 
-3. Build:
+3. Run bagwiz, either one command at a time:
 
    ```bash
-   ./build.sh
+   pixi run -e jazzy run -- ls path/to/bag.mcap
    ```
 
-   The freshly built binary lives at `install/bagwiz/bin/bagwiz`.
-
-4. (Optional) Install the binary onto your `PATH`. `install.sh` copies it to
-   `~/.local/bin/bagwiz` (override the destination with `--install-dir <dir>`):
+   or from an interactive shell with `bagwiz` on `PATH`:
 
    ```bash
-   ./install.sh
+   pixi shell -e jazzy
+   bagwiz ls path/to/bag.mcap
    ```
 
-   `install.sh` creates the target directory if needed and warns when it is not
-   on your `PATH`. If a `bagwiz` is already installed at the destination, it
-   refuses to overwrite it and exits with an error; pass `--overwrite` to
-   replace (update) the existing binary. The binary is dynamically linked
-   against ROS, so source ROS 2 (as in step 1) in any shell where you run
-   `bagwiz`.
+4. (Optional) Install a `bagwiz` launcher on your `PATH` so you can run it from
+   anywhere without typing `pixi run`. The launcher delegates to the pixi
+   environment, so the binary still runs with ROS correctly set up:
 
-Optional flags for `./build.sh` (build type, parallelism, clean rebuild) are
-described in `./build.sh --help`; `./install.sh --help` covers the install
-destination. `CLI11`, `fmt`, and `rang` are pulled in automatically when you
-build; no extra install step for those.
+   ```bash
+   pixi run -e jazzy build      # build the distro the launcher targets first
+   ./install.sh                 # installs ~/.local/bin/bagwiz (targets Jazzy)
+   ```
+
+   `./install.sh --help` covers the install destination (`--install-dir`), the
+   target distro (`--distro`), and `--overwrite`. At run time, set
+   `BAGWIZ_DISTRO=<distro>` to switch which built distro the launcher uses.
+
+### Using your own message packages (overlays)
+
+Bags whose topics use message types beyond the standard stack need the matching
+ROS 2 message packages available at run time. Build those packages in your own
+colcon workspace, then point `BAGWIZ_OVERLAY` at it (colon-separated for several
+workspaces) before running bagwiz:
+
+```bash
+BAGWIZ_OVERLAY=/path/to/my_msgs_ws pixi run -e jazzy run -- walk my.mcap /topic
+```
+
+The overlay's `install/setup.bash` is layered on top of the distro, so bagwiz
+finds your custom message definitions and typesupport at run time without a
+rebuild. Build overlays against the same distro so their libraries stay ABI
+compatible with bagwiz.
+
+`pixi task list` and the comments in `pixi.toml` describe the available build
+options. `CLI11`, `fmt`, and `rang` are fetched automatically at build time; no
+extra install step for those.
 
 ## Subcommands
 

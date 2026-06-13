@@ -1,12 +1,18 @@
-#!/bin/bash
-# install.sh - Copy the built bagwiz binary onto your PATH.
+#!/usr/bin/env bash
+# install.sh - Install a `bagwiz` launcher onto your PATH that runs bagwiz inside
+# its pixi-managed ROS 2 environment.
 #
-# Run after ./build.sh has produced install/bagwiz/bin/bagwiz. colcon's
-# --symlink-install leaves that path as a symlink into build/, so this copies
-# the dereferenced binary: the installed copy keeps working after a clean
-# rebuild removes build/.
+# bagwiz is built and run through pixi (see pixi.toml). The built binary is
+# dynamically linked against the ROS libraries that live inside the pixi
+# environment and resolves its message schemas (introspection typesupport and
+# `.msg` text) through that environment at runtime, so it only works with the
+# environment activated. Copying the bare binary onto PATH would break those
+# lookups. Instead this installs a small launcher that delegates to
+# `pixi run`, which activates the right environment first.
 #
-# Requires: a successful ./build.sh first.
+# Prerequisites:
+#   - pixi (https://pixi.sh)
+#   - a build for the chosen distro, e.g. `pixi run -e jazzy build`
 
 set -euo pipefail
 
@@ -16,21 +22,30 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # default login shells and needs no root privileges.
 BAGWIZ_INSTALL_DIR="${HOME}/.local/bin"
 
-# Whether to replace an already-installed bagwiz. Off by default so a re-run
-# never silently clobbers an existing binary; pass --overwrite to update it.
+# The pixi environment (ROS distro) the launcher targets by default. Overridable
+# per invocation through the BAGWIZ_DISTRO environment variable.
+BAGWIZ_LAUNCH_DISTRO="jazzy"
+
+# Whether to replace an already-installed launcher. Off by default so a re-run
+# never silently clobbers an existing one; pass --overwrite to update it.
 OVERWRITE=false
 
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [options]
 
-Copy the built bagwiz binary onto your PATH. Run ./build.sh first.
+Install a 'bagwiz' launcher that runs bagwiz through its pixi environment.
+Build first, e.g. 'pixi run -e jazzy build'.
 
 Options:
-  -d, --install-dir <D>    Directory to install the binary into.
+  -d, --install-dir <D>    Directory to install the launcher into.
                            Default: ${BAGWIZ_INSTALL_DIR}.
-      --overwrite          Replace an existing bagwiz at the destination.
-                           Without it, an already-installed binary is left
+      --distro <D>         pixi environment (ROS distro) the launcher targets by
+                           default: humble, jazzy, kilted, or lyrical.
+                           Default: ${BAGWIZ_LAUNCH_DISTRO}. Overridable at run
+                           time via the BAGWIZ_DISTRO environment variable.
+      --overwrite          Replace an existing launcher at the destination.
+                           Without it, an already-installed launcher is left
                            untouched and the script exits with an error.
   -h, --help               Show this help message and exit.
 EOF
@@ -55,6 +70,19 @@ while [[ $# -gt 0 ]]; do
         BAGWIZ_INSTALL_DIR="${1#-d}"
         shift
         ;;
+    --distro)
+        shift
+        if [[ $# -eq 0 ]]; then
+            echo "[install.sh] --distro requires a value (humble, jazzy, kilted, lyrical)." >&2
+            exit 1
+        fi
+        BAGWIZ_LAUNCH_DISTRO="${1}"
+        shift
+        ;;
+    --distro=*)
+        BAGWIZ_LAUNCH_DISTRO="${1#*=}"
+        shift
+        ;;
     --overwrite)
         OVERWRITE=true
         shift
@@ -71,11 +99,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-src="${SCRIPT_DIR}/install/bagwiz/bin/bagwiz"
-if [[ ! -e ${src} ]]; then
-    echo "[install.sh] Built binary not found at ${src}" >&2
-    echo "[install.sh] Run ./build.sh first." >&2
-    exit 1
+# Warn (don't fail) if the targeted distro has not been built yet: the launcher
+# runs the per-distro binary, so it only works once that build exists.
+built_binary="${SCRIPT_DIR}/install/${BAGWIZ_LAUNCH_DISTRO}/bagwiz/bin/bagwiz"
+if [[ ! -e ${built_binary} ]]; then
+    echo "[install.sh] Note: no build found for '${BAGWIZ_LAUNCH_DISTRO}' at" >&2
+    echo "[install.sh]       ${built_binary}" >&2
+    echo "[install.sh]       Build it before running bagwiz: pixi run -e ${BAGWIZ_LAUNCH_DISTRO} build" >&2
 fi
 
 # Create the destination directory if it does not exist yet. mkdir -p is
@@ -87,18 +117,43 @@ fi
 
 dest="${BAGWIZ_INSTALL_DIR}/bagwiz"
 
-# Refuse to clobber an existing install unless --overwrite was given, so a
-# re-run never silently replaces a binary the user may not want changed.
+# Refuse to clobber an existing install unless --overwrite was given, so a re-run
+# never silently replaces a launcher the user may not want changed.
 if [[ -e ${dest} && ${OVERWRITE} != true ]]; then
     echo "[install.sh] bagwiz is already installed at ${dest}." >&2
     echo "[install.sh] Pass --overwrite to replace (update) it." >&2
     exit 1
 fi
 
-echo "[install.sh] Installing bagwiz to ${dest}"
-# install(1) dereferences the symlink and sets the executable mode in one
-# step. -D also creates any leading directories as a safety net.
-install -D -m 0755 "${src}" "${dest}"
+echo "[install.sh] Installing bagwiz launcher to ${dest} (distro: ${BAGWIZ_LAUNCH_DISTRO})"
+
+# Write the launcher. It delegates to `pixi run` so the ROS environment is
+# activated (loader path, AMENT_PREFIX_PATH, RMW selection) before the binary
+# runs, and it runs the per-distro binary by absolute path while leaving the
+# caller's working directory intact so relative bag paths resolve.
+cat >"${dest}" <<EOF
+#!/usr/bin/env bash
+# bagwiz launcher (generated by bagwiz/install.sh). Runs bagwiz inside its
+# pixi-managed ROS 2 environment.
+#   - Set BAGWIZ_DISTRO to target a different built distro (humble/jazzy/kilted/
+#     lyrical); it must be built first: pixi run -e <distro> build.
+#   - Set BAGWIZ_OVERLAY (colon-separated workspace paths) to layer your own
+#     ROS 2 message packages on top.
+set -euo pipefail
+BAGWIZ_REPO="${SCRIPT_DIR}"
+distro="\${BAGWIZ_DISTRO:-${BAGWIZ_LAUNCH_DISTRO}}"
+if ! command -v pixi >/dev/null 2>&1; then
+    if [[ -x "\${HOME}/.pixi/bin/pixi" ]]; then
+        PATH="\${HOME}/.pixi/bin:\${PATH}"
+    else
+        echo "bagwiz: pixi not found on PATH. Install it from https://pixi.sh" >&2
+        exit 127
+    fi
+fi
+exec pixi run --manifest-path "\${BAGWIZ_REPO}/pixi.toml" -e "\${distro}" -- \\
+    "\${BAGWIZ_REPO}/install/\${distro}/bagwiz/bin/bagwiz" "\$@"
+EOF
+chmod 0755 "${dest}"
 
 case ":${PATH}:" in
 *":${BAGWIZ_INSTALL_DIR}:"*)

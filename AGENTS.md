@@ -133,15 +133,21 @@ CLI.
 Applies when building bagwiz from this repository. Does not
 govern source code or CLI behavior.
 
-- Build this package with `./build.sh` from the repository root, after
-  sourcing the ROS 2 underlay (same prerequisite as in `README.md`
-  Installation). The script wraps `colcon` with the expected workspace
-  layout and flags; use `./build.sh --help` for clean rebuilds, build type,
-  and parallelism. To copy the built binary onto `PATH`, run `./install.sh`
-  afterwards (`./install.sh --help` covers the install destination).
-- Prefer `./build.sh` over ad-hoc `colcon build` invocations when
+- bagwiz is built and run through [pixi](https://pixi.sh); no system ROS 2
+  install is required. pixi provisions ROS 2 from RoboStack (one conda channel
+  per distro) and the C/C++ toolchain from conda-forge. Build with
+  `pixi run -e <distro> build` from the repository root, where `<distro>` is one
+  of `humble`, `jazzy`, `kilted`, or `lyrical`; a bare `pixi run build` targets
+  the default environment (Jazzy). Each distro builds into its own
+  `build/<distro>` and `install/<distro>`, so switching distros never reuses
+  another distro's CMake cache.
+- Run the tests with `pixi run -e <distro> test` and the built binary with
+  `pixi run -e <distro> run -- <args>` (or `pixi shell -e <distro>` then
+  `bagwiz`). `./install.sh` installs an optional `bagwiz` launcher on `PATH`
+  that delegates to pixi (`./install.sh --help` covers its options).
+- Prefer the `pixi run` tasks over ad-hoc `colcon build` invocations when
   verifying changes, unless you are reproducing a CI or tooling issue that
-  requires a different command line.
+  requires a different command line. The task definitions live in `pixi.toml`.
 
 ### 2. bagwiz CLI
 
