@@ -61,7 +61,7 @@ scripts = ["scripts/pixi-activate.sh"]
 # $PIXI_ENVIRONMENT_NAME, so switching `-e <distro>` never reuses another distro's
 # colcon/CMake cache (which would silently link the wrong ROS libraries). The
 # trailing symlink keeps a stable build/compile_commands.json pointing at the
-# last-built distro, which the clang-tidy pre-commit hook reads via `-p=build`.
+# last-built distro for editor tooling and manual analysis.
 [tasks.build]
 args = [{ arg = "build_type", default = "Release" }]
 cmd = 'colcon build --symlink-install --packages-up-to bagwiz --build-base "build/$PIXI_ENVIRONMENT_NAME" --install-base "install/$PIXI_ENVIRONMENT_NAME" --cmake-args -DCMAKE_BUILD_TYPE={{ build_type }} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && ln -sfn "$PIXI_ENVIRONMENT_NAME/compile_commands.json" build/compile_commands.json'

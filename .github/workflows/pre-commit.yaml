@@ -15,21 +15,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # pixi provides the ROS 2 + C/C++ toolchain so the colcon build can
-      # generate compile_commands.json for clang-tidy. No system ROS / rosdep.
-      - name: Set up pixi (jazzy)
-        uses: prefix-dev/setup-pixi@v0.9.6
-        with:
-          pixi-version: v0.70.2
-          environments: jazzy
-
-      # Builds into build/jazzy and links build/compile_commands.json -> that
-      # tree, which the clang-tidy hook reads via `-p=build`. The compile DB
-      # carries absolute paths into the pixi environment, so clang-tidy resolves
-      # the ROS and standard headers without the environment being activated.
-      - name: Build (generates compile_commands.json for clang-tidy)
-        run: pixi run -e jazzy build
-
       - name: Set up Python (pre-commit + python-based hooks)
         uses: actions/setup-python@v5
         with:
@@ -45,8 +30,8 @@ jobs:
 
       # The cppcheck pre-commit hook is a thin wrapper that execs the system
       # `cppcheck` binary rather than bundling it, so it must be on PATH.
-      # clang-tidy/clang-format/cpplint come from the hooks' own pip envs, but
-      # cppcheck is a native binary with no pip distribution.
+      # clang-format/cpplint come from the hooks' own pip envs, but cppcheck is a
+      # native binary with no pip distribution.
       - name: Install cppcheck
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cppcheck
 
