@@ -2,22 +2,17 @@
 
 Fast CLI for analyzing, processing, and extracting data from ROS 2
 rosbags. The inspection and export subcommands (`ls`, `walk`, `tf`,
-`traj`) read rosbag2 inputs — directory layouts and single-file `*.mcap`
-/ `*.db3` — through a unified backend. zstd-compressed inputs are
-accepted transparently: rosbag2 `compression_mode: MESSAGE` bags, MCAP
-chunk compression, and whole-database `compression_mode: FILE` SQLite3
-envelopes (`*.db3.zstd`, including the bare single file). The `convert`
-subcommand repacks rosbag2 between MCAP and SQLite3 storage. All of this
-happens without spinning up a ROS graph.
+`traj`) read rosbag2 inputs through a unified backend, and zstd-compressed
+inputs are accepted transparently. The supported input formats are:
 
-> **Note on `*.db3.zstd` (FILE-mode) inputs.** Because SQLite must open a
-> real file, bagwiz stream-decompresses each `.db3.zstd` shard to a
-> temporary `.db3` (in the system temp directory) the first time it is read, and removes
-> it when the reader closes — so reading needs free temp space roughly the
-> size of the decompressed database. Metadata-only commands (`ls`) answer
-> from `metadata.yaml` and never decompress. bagwiz's writers always emit
-> uncompressed bags, so in-place rewrites of a FILE-compressed bag are
-> refused; pass an explicit `-o` output instead.
+- directory layouts and single-file `*.mcap` / `*.db3`
+- rosbag2 `compression_mode: MESSAGE` bags
+- MCAP chunk compression
+- whole-database `compression_mode: FILE` SQLite3 envelopes (`*.db3.zstd`,
+  including the bare single file)
+
+The `convert` subcommand repacks rosbag2 between MCAP and SQLite3 storage.
+All of this happens without spinning up a ROS graph.
 
 ## Installation
 
@@ -62,10 +57,10 @@ exposes one environment per distro.
 
 4. (Optional) Install a `bagwiz` launcher on your `PATH` so you can run it from
    anywhere without typing `pixi run`. The launcher delegates to the pixi
-   environment, so the binary still runs with ROS correctly set up:
+   environment, so the binary still runs with ROS correctly set up. Build the
+   launcher's target distro first (step 2), then run the installer:
 
    ```bash
-   pixi run -e jazzy build      # build the distro the launcher targets first
    ./install.sh                 # installs ~/.local/bin/bagwiz (targets Jazzy)
    ```
 
@@ -88,10 +83,6 @@ The overlay's `install/setup.bash` is layered on top of the distro, so bagwiz
 finds your custom message definitions and typesupport at run time without a
 rebuild. Build overlays against the same distro so their libraries stay ABI
 compatible with bagwiz.
-
-`pixi task list` and the comments in `pixi.toml` describe the available build
-options. `CLI11`, `fmt`, and `rang` are fetched automatically at build time; no
-extra install step for those.
 
 ## Subcommands
 
@@ -130,14 +121,7 @@ anywhere:
 bagwiz complete bash > ~/.local/share/bash-completion/completions/bagwiz
 ```
 
-Open a new shell, or source the generated file in the current shell. The
-completion hook suggests command names, nested subcommands, selected option
-values, and topics for `bagwiz walk <input> <topic>` once `<input>` points to
-a readable ROS 2 rosbag, including paths written with `~/`. The shared
-completion engine is independent of the shell script format — all shells
-delegate to the same hidden candidate-generation protocol. See
-[`docs/commands/complete.md`](docs/commands/complete.md) for per-shell
-install instructions and troubleshooting.
+Open a new shell, or source the generated file in the current shell.
 
 ## Contributing
 
