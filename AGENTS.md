@@ -143,9 +143,10 @@ govern source code or CLI behavior.
   another distro's CMake cache.
 - Run the tests with `pixi run -e <distro> test` and the built binary with
   `pixi run -e <distro> run -- <args>` (or `pixi shell -e <distro>` then
-  `bagwiz`). `./install.sh` installs an optional `bagwiz` launcher on `PATH`
-  that runs the binary in its pixi-managed ROS environment (`./install.sh --help`
-  covers its options).
+  `bagwiz`). `pixi run install` builds, then installs an optional `bagwiz`
+  launcher on `PATH` plus shell completion for your current shell, in one step
+  (always overwriting existing copies); it runs the binary in its pixi-managed
+  ROS environment. See `scripts/bagwiz-install.sh`.
 - Prefer the `pixi run` tasks over ad-hoc `colcon build` invocations when
   verifying changes, unless you are reproducing a CI or tooling issue that
   requires a different command line. The task definitions live in `pixi.toml`.

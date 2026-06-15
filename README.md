@@ -1,31 +1,25 @@
 # bagwiz
 
-Fast CLI for analyzing, processing, and extracting data from ROS 2
-rosbags. The inspection and export subcommands (`ls`, `walk`, `tf`,
-`traj`) read rosbag2 inputs through a unified backend, and zstd-compressed
-inputs are accepted transparently. The supported input formats are:
+A fast CLI for analyzing, processing, and extracting data from ROS 2 rosbags
+entirely offline — without spinning up a ROS graph. rosbag2 inputs are read
+through a unified backend that spans three independent dimensions:
 
-- directory layouts and single-file `*.mcap` / `*.db3`
-- rosbag2 `compression_mode: MESSAGE` bags
-- MCAP chunk compression
-- whole-database `compression_mode: FILE` SQLite3 envelopes (`*.db3.zstd`,
-  including the bare single file)
+- **Storage format** — MCAP (`*.mcap`) or SQLite3 (`*.db3`)
+- **Layout** — a rosbag2 directory or a bare single file
+- **Compression** — uncompressed, rosbag2 `compression_mode: MESSAGE`, MCAP
+  per-chunk compression, or whole-database `compression_mode: FILE` zstd
+  envelopes (`*.db3.zstd`)
 
-The `convert` subcommand repacks rosbag2 between MCAP and SQLite3 storage, and
-`topic omit` / `topic keep` drop or retain selected topics in a bag (by literal
-name or `*` glob). All of this happens without spinning up a ROS graph.
+Any combination of these is accepted transparently.
 
 ## Installation
 
-bagwiz runs through [pixi](https://pixi.sh), so you do not need a system ROS 2
-install. pixi provisions the ROS 2 toolchain and message packages from
-[RoboStack](https://robostack.github.io/) (one conda channel per distro) and the
-C/C++ build toolchain from conda-forge into a project-local environment, and you
-pick the ROS 2 distro per command.
+bagwiz is built and run through [pixi](https://pixi.sh) — no system ROS 2
+install needed.
 
 bagwiz provides first-class support for the long-term-support (LTS) ROS 2
-distributions — Humble, Jazzy, and Lyrical — and is tested in CI on each;
-`pixi.toml` exposes one environment per distro.
+distributions — Humble, Jazzy, and Lyrical; `pixi.toml` exposes one environment
+per distro.
 
 1. Install pixi once, then reopen your shell so `pixi` is on `PATH`:
 
@@ -44,30 +38,28 @@ distributions — Humble, Jazzy, and Lyrical — and is tested in CI on each;
    builds into its own `build/<distro>` and `install/<distro>`, so builds for
    several distros can coexist.
 
-3. Run bagwiz, either one command at a time:
+3. Install a `bagwiz` launcher on your `PATH` — plus tab completion — so you can
+   run it from anywhere without typing `pixi run`:
 
    ```bash
-   pixi run -e humble run -- ls path/to/bag.mcap
+   pixi run -e humble install   # builds, then installs ~/.local/bin/bagwiz + completion
    ```
 
-   or from an interactive shell with `bagwiz` on `PATH`:
+   This installs the launcher and shell completion for your current shell in one
+   step, always overwriting any existing copies. Use the same `-e <distro>` you
+   built with (a bare `pixi run install` targets Humble, the default
+   environment). Set `BAGWIZ_INSTALL_DIR` to change the destination, or
+   `BAGWIZ_DISTRO` to target a different built distro. At run time,
+   `BAGWIZ_DISTRO=<distro>` still switches which built distro the launcher uses.
+
+4. Verify the install — `bagwiz` should now be on your `PATH`:
 
    ```bash
-   pixi shell -e humble
-   bagwiz ls path/to/bag.mcap
+   bagwiz --help
    ```
 
-4. (Optional) Install a `bagwiz` launcher on your `PATH` so you can run it from
-   anywhere without typing `pixi run`. Build the launcher's target distro first
-   (step 2), then run the installer:
-
-   ```bash
-   ./install.sh                 # installs ~/.local/bin/bagwiz (targets Humble)
-   ```
-
-   `./install.sh --help` covers the install destination (`--install-dir`), the
-   target distro (`--distro`), and `--overwrite`. At run time, set
-   `BAGWIZ_DISTRO=<distro>` to switch which built distro the launcher uses.
+   If the command is not found, make sure the install directory (default
+   `~/.local/bin`) is on your `PATH`.
 
 ### Using your own message packages (overlays)
 
@@ -106,8 +98,10 @@ options documented in the per-command pages.
 
 ## Shell completion
 
-`bagwiz complete <shell>` generates a completion script for `bash`, `zsh`, or
-`fish`. Pass `--install` to write it to the shell's standard location
+`pixi run install` already installs completion for your current shell (see step 3
+of [Installation](#installation)). To install it manually, or for a different
+shell, `bagwiz complete <shell>` generates a completion script for `bash`, `zsh`,
+or `fish`. Pass `--install` to write it to the shell's standard location
 automatically (parent directories are created):
 
 ```bash
@@ -123,13 +117,11 @@ anywhere:
 bagwiz complete bash > ~/.local/share/bash-completion/completions/bagwiz
 ```
 
-Open a new shell, or source the generated file in the current shell.
+Open a new shell, or source the generated file in the current shell:
 
-## Contributing
-
-See [`AGENTS.md`](AGENTS.md) for repository-wide contribution
-conventions (commit message format, branch naming, pre-commit hooks,
-CI etiquette).
+```bash
+source ~/.local/share/bash-completion/completions/bagwiz
+```
 
 ## License
 
