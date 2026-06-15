@@ -934,10 +934,10 @@ TEST_F(CompletionTest, TopicOmitTopicSlotSuppressedWhenInputSlotIsFlag)
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "topic", "omit", "--unknown-flag"}), "");
 }
 
-// `bagwiz topic <TAB>` lists the command group's single action verb.
-TEST(FlagCompletionTest, TopicSubcommandListsOmit)
+// `bagwiz topic <TAB>` lists the command group's action verbs, sorted.
+TEST(FlagCompletionTest, TopicSubcommandListsKeepAndOmit)
 {
-  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "topic", ""}), "omit\n");
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "topic", ""}), "keep\nomit\n");
 }
 
 // `bagwiz topic -` is the command-group slot; only the implicit help flags
@@ -953,6 +953,56 @@ TEST(FlagCompletionTest, TopicOmitDashListsOmitFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "topic", "omit", "-"}),
+    "--help\n--output\n--overwrite\n-h\n-o\n");
+}
+
+// `topic keep <bag> <TAB>` (the first <topics> slot) lists every topic in the
+// bag — keep can target any topic, so no type filter applies.
+TEST_F(CompletionTest, TopicKeepTopicSlotListsAllTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "topic", "keep", "~/fixture.mcap"}),
+    "/bar\n/foo\n");
+}
+
+// `topic keep` takes one-or-more selectors, so the SECOND slot (and beyond)
+// also completes topics — the variadic binding fires at every positional slot
+// from the first topic onward.
+TEST_F(CompletionTest, TopicKeepSecondTopicSlotListsTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "topic", "keep", "~/fixture.mcap", "/foo"}),
+    "/bar\n/foo\n");
+}
+
+// A typed prefix narrows the selector candidates.
+TEST_F(CompletionTest, TopicKeepTopicSlotRespectsPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "4", "bagwiz", "topic", "keep", "~/fixture.mcap", "/f"}),
+    "/foo\n");
+}
+
+// `topic keep -` surfaces the action's flags (--output/-o, --overwrite) plus
+// the implicit help flags, sorted.
+TEST(FlagCompletionTest, TopicKeepDashListsKeepFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "topic", "keep", "-"}),
     "--help\n--output\n--overwrite\n-h\n-o\n");
 }
 

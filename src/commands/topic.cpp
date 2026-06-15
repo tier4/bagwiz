@@ -8,6 +8,7 @@
 
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
+#include "bagwiz/commands/topic_keep.hpp"
 #include "bagwiz/commands/topic_omit.hpp"
 #include "bagwiz/core/logging.hpp"
 
@@ -22,7 +23,8 @@ constexpr const char * kLogger = "bagwiz.cmd.topic";
 }  // namespace
 
 // `bagwiz topic` is a command group for topic-level bag surgery. Ships `omit`
-// (drop selected topics); the group leaves room for further topic operations.
+// (drop selected topics) and `keep` (its inverse — keep only selected topics);
+// the group leaves room for further topic operations.
 class TopicCommand : public Command
 {
 public:
@@ -36,6 +38,7 @@ public:
   {
     app.require_subcommand(1);
     configure_omit(app);
+    configure_keep(app);
   }
 
   int run() override
@@ -43,6 +46,8 @@ public:
     switch (selected_) {
       case Subcommand::kOmit:
         return run_topic_omit(omit_args_);
+      case Subcommand::kKeep:
+        return run_topic_keep(keep_args_);
       case Subcommand::kNone:
         BAGWIZ_LOG_ERROR(kLogger, "no subcommand selected");
         return 1;
@@ -51,10 +56,11 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kOmit };
+  enum class Subcommand { kNone, kOmit, kKeep };
   Subcommand selected_ = Subcommand::kNone;
 
   TopicOmitArgs omit_args_;
+  TopicKeepArgs keep_args_;
 
   void configure_omit(CLI::App & app)
   {
@@ -85,6 +91,38 @@ private:
       "storage format and layout (input is both source and destination); with -o, <input>\n"
       "is left untouched.");
     sub->callback([this]() { selected_ = Subcommand::kOmit; });
+  }
+
+  void configure_keep(CLI::App & app)
+  {
+    auto * sub = app.add_subcommand(
+      "keep",
+      "Keep only the selected topics, dropping every other topic. Each "
+      "<topic> is a literal name or a '*' glob (e.g. /sensing/*); '*' matches any "
+      "run of characters, including '/'.");
+    sub->add_option("input", keep_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+      ->required()
+      ->check(CLI::ExistingPath);
+    sub
+      ->add_option(
+        "topics", keep_args_.topics,
+        "Topic selector(s) to keep. A literal topic name or a '*' glob. Repeat for several.")
+      ->required();
+    sub->add_option(
+      "-o,--output", keep_args_.output_path,
+      "Write the result to this new bag instead of rewriting <input> in place.");
+    sub->add_flag(
+      "--overwrite", keep_args_.overwrite,
+      "Replace an existing -o/--output path. Without it, an existing output path stops the run.");
+    sub->footer(
+      "Only the selected topics survive; every other topic disappears entirely from the\n"
+      "output — both its messages and its topic declarations. Messages are copied verbatim;\n"
+      "no deserialization is performed.\n"
+      "A selector that matches no topic stops the run before anything is written.\n"
+      "Without -o, <input> is rewritten in place via an atomic tmp-swap that preserves its\n"
+      "storage format and layout (input is both source and destination); with -o, <input>\n"
+      "is left untouched.");
+    sub->callback([this]() { selected_ = Subcommand::kKeep; });
   }
 };
 

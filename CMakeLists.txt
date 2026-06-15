@@ -264,6 +264,7 @@ add_executable(bagwiz
   src/commands/tf_static_cp.cpp
   src/commands/topic.cpp
   src/commands/topic_omit.cpp
+  src/commands/topic_keep.cpp
 )
 target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang)
 
@@ -400,6 +401,11 @@ if(BUILD_TESTING)
     test/commands/topic_omit_test.cpp
     src/commands/topic_omit.cpp)
   target_link_libraries(bagwiz_topic_omit_test bagwiz_core fmt::fmt)
+
+  ament_add_gtest(bagwiz_topic_keep_test
+    test/commands/topic_keep_test.cpp
+    src/commands/topic_keep.cpp)
+  target_link_libraries(bagwiz_topic_keep_test bagwiz_core fmt::fmt)
 
   ament_add_gtest(bagwiz_output_path_test test/core/output_path_test.cpp)
   target_link_libraries(bagwiz_output_path_test bagwiz_core)
