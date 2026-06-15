@@ -36,23 +36,23 @@ distributions — Humble, Jazzy, and Lyrical — and is tested in CI on each;
    packages and compiles bagwiz; later builds are incremental:
 
    ```bash
-   pixi run -e jazzy build      # or: humble | lyrical
+   pixi run -e humble build     # or: jazzy | lyrical
    ```
 
-   `pixi run build` (no `-e`) targets Jazzy, the default environment. Each distro
+   `pixi run build` (no `-e`) targets Humble, the default environment. Each distro
    builds into its own `build/<distro>` and `install/<distro>`, so builds for
    several distros can coexist.
 
 3. Run bagwiz, either one command at a time:
 
    ```bash
-   pixi run -e jazzy run -- ls path/to/bag.mcap
+   pixi run -e humble run -- ls path/to/bag.mcap
    ```
 
    or from an interactive shell with `bagwiz` on `PATH`:
 
    ```bash
-   pixi shell -e jazzy
+   pixi shell -e humble
    bagwiz ls path/to/bag.mcap
    ```
 
@@ -62,7 +62,7 @@ distributions — Humble, Jazzy, and Lyrical — and is tested in CI on each;
    launcher's target distro first (step 2), then run the installer:
 
    ```bash
-   ./install.sh                 # installs ~/.local/bin/bagwiz (targets Jazzy)
+   ./install.sh                 # installs ~/.local/bin/bagwiz (targets Humble)
    ```
 
    `./install.sh --help` covers the install destination (`--install-dir`), the
@@ -77,7 +77,7 @@ colcon workspace, then point `BAGWIZ_OVERLAY` at it (colon-separated for several
 workspaces) before running bagwiz:
 
 ```bash
-BAGWIZ_OVERLAY=/path/to/my_msgs_ws pixi run -e jazzy run -- walk my.mcap /topic
+BAGWIZ_OVERLAY=/path/to/my_msgs_ws pixi run -e humble run -- walk my.mcap /topic
 ```
 
 The overlay's `install/setup.bash` is layered on top of the distro, so bagwiz

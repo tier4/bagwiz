@@ -138,7 +138,7 @@ govern source code or CLI behavior.
   per distro) and the C/C++ toolchain from conda-forge. Build with
   `pixi run -e <distro> build` from the repository root, where `<distro>` is one
   of `humble`, `jazzy`, or `lyrical`; a bare `pixi run build` targets
-  the default environment (Jazzy). Each distro builds into its own
+  the default environment (Humble). Each distro builds into its own
   `build/<distro>` and `install/<distro>`, so switching distros never reuses
   another distro's CMake cache.
 - Run the tests with `pixi run -e <distro> test` and the built binary with

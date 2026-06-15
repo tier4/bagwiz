@@ -12,7 +12,7 @@
 #
 # Prerequisites:
 #   - pixi (https://pixi.sh)
-#   - a build for the chosen distro, e.g. `pixi run -e jazzy build`
+#   - a build for the chosen distro, e.g. `pixi run -e humble build`
 
 set -euo pipefail
 
@@ -22,9 +22,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # default login shells and needs no root privileges.
 BAGWIZ_INSTALL_DIR="${HOME}/.local/bin"
 
-# The pixi environment (ROS distro) the launcher targets by default. Overridable
-# per invocation through the BAGWIZ_DISTRO environment variable.
-BAGWIZ_LAUNCH_DISTRO="jazzy"
+# The pixi environment (ROS distro) the launcher targets by default. Matches
+# pixi.toml's default environment (humble). Overridable per invocation through
+# the BAGWIZ_DISTRO environment variable.
+BAGWIZ_LAUNCH_DISTRO="humble"
 
 # Whether to replace an already-installed launcher. Off by default so a re-run
 # never silently clobbers an existing one; pass --overwrite to update it.
@@ -35,7 +36,7 @@ usage() {
 Usage: $(basename "$0") [options]
 
 Install a 'bagwiz' launcher that runs bagwiz through its pixi environment.
-Build first, e.g. 'pixi run -e jazzy build'.
+Build first, e.g. 'pixi run -e humble build'.
 
 Options:
   -d, --install-dir <D>    Directory to install the launcher into.
