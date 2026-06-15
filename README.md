@@ -22,8 +22,9 @@ install. pixi provisions the ROS 2 toolchain and message packages from
 C/C++ build toolchain from conda-forge into a project-local environment, and you
 pick the ROS 2 distro per command.
 
-bagwiz is tested in CI on ROS 2 Humble, Jazzy, Kilted, and Lyrical; `pixi.toml`
-exposes one environment per distro.
+bagwiz provides first-class support for the long-term-support (LTS) ROS 2
+distributions — Humble, Jazzy, and Lyrical — and is tested in CI on each;
+`pixi.toml` exposes one environment per distro.
 
 1. Install pixi once, then reopen your shell so `pixi` is on `PATH`:
 
@@ -35,7 +36,7 @@ exposes one environment per distro.
    packages and compiles bagwiz; later builds are incremental:
 
    ```bash
-   pixi run -e jazzy build      # or: humble | kilted | lyrical
+   pixi run -e jazzy build      # or: humble | lyrical
    ```
 
    `pixi run build` (no `-e`) targets Jazzy, the default environment. Each distro

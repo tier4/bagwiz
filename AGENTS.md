@@ -137,7 +137,7 @@ govern source code or CLI behavior.
   install is required. pixi provisions ROS 2 from RoboStack (one conda channel
   per distro) and the C/C++ toolchain from conda-forge. Build with
   `pixi run -e <distro> build` from the repository root, where `<distro>` is one
-  of `humble`, `jazzy`, `kilted`, or `lyrical`; a bare `pixi run build` targets
+  of `humble`, `jazzy`, or `lyrical`; a bare `pixi run build` targets
   the default environment (Jazzy). Each distro builds into its own
   `build/<distro>` and `install/<distro>`, so switching distros never reuses
   another distro's CMake cache.

@@ -22,7 +22,7 @@ find_package(SQLite3 REQUIRED)
 # zstd is used by message_decompressor.cpp to handle rosbag2 MESSAGE-mode
 # (per-message zstd) bags transparently. The vendor/module package below wires
 # up CMAKE_MODULE_PATH so the inner find_package(zstd) can locate the imported
-# `zstd::zstd` target. Humble, Jazzy, and Kilted ship zstd_vendor; Lyrical and
+# `zstd::zstd` target. Humble and Jazzy ship zstd_vendor; Lyrical and
 # newer replaced it with zstd_cmake_module (a thin module over the system
 # libzstd). Both expose the same zstd::zstd target, so try zstd_vendor first and
 # fall back.

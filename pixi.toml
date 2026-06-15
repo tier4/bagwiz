@@ -7,7 +7,7 @@
 # from conda-forge. Pick a distro per invocation, e.g.:
 #
 #   pixi run -e jazzy build        # build against ROS 2 Jazzy (the default env)
-#   pixi run -e kilted test        # build + test against Kilted
+#   pixi run -e jazzy test         # build + test against Jazzy
 #   pixi run -e lyrical run -- --help
 #   pixi shell -e humble           # interactive shell with `bagwiz` on PATH
 #
@@ -141,32 +141,6 @@ ros-jazzy-sensor-msgs = "*"
 ros-jazzy-diagnostic-msgs = "*"
 ros-jazzy-builtin-interfaces = "*"
 
-[feature.kilted]
-channels = [{ channel = "https://prefix.dev/robostack-kilted", priority = 1 }]
-[feature.kilted.dependencies]
-ros-kilted-ros-base = "*"
-ros-kilted-ament-cmake = "*"
-ros-kilted-ament-index-cpp = "*"
-ros-kilted-rcutils = "*"
-ros-kilted-rmw = "*"
-ros-kilted-rmw-implementation = "*"
-ros-kilted-rmw-cyclonedds-cpp = "*"
-ros-kilted-rosidl-runtime-c = "*"
-ros-kilted-rosidl-runtime-cpp = "*"
-ros-kilted-rosidl-typesupport-introspection-cpp = "*"
-ros-kilted-geometry-msgs = "*"
-ros-kilted-nav-msgs = "*"
-ros-kilted-std-msgs = "*"
-ros-kilted-tf2 = "*"
-ros-kilted-tf2-msgs = "*"
-ros-kilted-mcap-vendor = "*"
-ros-kilted-yaml-cpp-vendor = "*"
-ros-kilted-zstd-vendor = "*"   # Kilted still ships zstd_vendor (NOT zstd_cmake_module)
-ros-kilted-ament-cmake-gtest = "*"
-ros-kilted-sensor-msgs = "*"
-ros-kilted-diagnostic-msgs = "*"
-ros-kilted-builtin-interfaces = "*"
-
 [feature.lyrical]
 channels = [{ channel = "https://prefix.dev/robostack-lyrical", priority = 1 }]
 [feature.lyrical.dependencies]
@@ -203,5 +177,4 @@ ros-lyrical-builtin-interfaces = "*"
 default = ["jazzy"]
 humble = ["humble"]
 jazzy = ["jazzy"]
-kilted = ["kilted"]
 lyrical = ["lyrical"]
