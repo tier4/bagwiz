@@ -80,6 +80,16 @@ depends-on = ["build"]
 cmd = 'install/$PIXI_ENVIRONMENT_NAME/bagwiz/bin/bagwiz'
 depends-on = ["build"]
 
+# Install, in one step, a `bagwiz` launcher on PATH (default ~/.local/bin) AND
+# tab completion for your current shell. Both are ALWAYS overwritten if they
+# already exist, so re-running after a rebuild just refreshes them. The launcher
+# targets this env's build (install/$PIXI_ENVIRONMENT_NAME); set BAGWIZ_INSTALL_DIR
+# or BAGWIZ_DISTRO to override the destination or targeted distro. See
+# scripts/bagwiz-install.sh for the details.
+[tasks.install]
+cmd = 'bash scripts/bagwiz-install.sh'
+depends-on = ["build"]
+
 [tasks.clean]
 cmd = "rm -rf build install log"
 
