@@ -6,10 +6,10 @@
 # RoboStack conda channels (one per ROS 2 distro), and the C/C++ toolchain comes
 # from conda-forge. Pick a distro per invocation, e.g.:
 #
-#   pixi run -e jazzy build        # build against ROS 2 Jazzy (the default env)
+#   pixi run -e humble build       # build against ROS 2 Humble (the default env)
 #   pixi run -e kilted test        # build + test against Kilted
 #   pixi run -e lyrical run -- --help
-#   pixi shell -e humble           # interactive shell with `bagwiz` on PATH
+#   pixi shell -e jazzy            # interactive shell with `bagwiz` on PATH
 #
 # To layer your own message packages on top of any distro, point BAGWIZ_OVERLAY
 # at one or more (colon-separated) external colcon workspaces before running:
@@ -196,11 +196,11 @@ ros-lyrical-builtin-interfaces = "*"
 
 # ---------------------------------------------------------------------------
 # One environment per distro. Each solves independently against its own
-# robostack channel (no shared solve-group). `default` aliases jazzy so a bare
-# `pixi run build` targets Jazzy.
+# robostack channel (no shared solve-group). `default` aliases humble so a bare
+# `pixi run build` targets Humble.
 # ---------------------------------------------------------------------------
 [environments]
-default = ["jazzy"]
+default = ["humble"]
 humble = ["humble"]
 jazzy = ["jazzy"]
 kilted = ["kilted"]
