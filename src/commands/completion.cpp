@@ -89,11 +89,12 @@ struct TopicArgBinding
   bool variadic{false};
 };
 
-constexpr std::array<TopicArgBinding, 4> kTopicBindings{{
+constexpr std::array<TopicArgBinding, 5> kTopicBindings{{
   {"walk", "", kFirstCommandArgWord, kSecondCommandArgWord, {}, false},
   {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord, kTrajDumpSupportedTypes, false},
   {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord, {}, false},
   {"tf", "tree", kSecondCommandArgWord, kThirdCommandArgWord, kTfTreeSupportedTypes, true},
+  {"topic", "omit", kSecondCommandArgWord, kThirdCommandArgWord, {}, true},
 }};
 
 enum class CompletionShell { Bash, Zsh, Fish };
@@ -840,6 +841,30 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
   return {};
 }
 
+// `topic` is a command group with one action verb, `omit`. At the action slot
+// (word 1) the only candidate is `omit`. Topic-name completion for omit's
+// positional <topics>... slots is handled earlier by try_topic_completion via
+// kTopicBindings; here we surface omit's own flags for any `-` word.
+//
+//   omit: `topic`(0) `omit`(1) `<input>`(2) `<topics>...`(3+) [-o <out>] [--overwrite]
+std::vector<std::string> complete_topic(const CompletionRequest & request)
+{
+  const auto current = current_word(request);
+  if (request.cursor_word == kFirstCommandArgWord) {
+    if (current.starts_with("-")) {
+      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
+    }
+    return matching({"omit"}, current);
+  }
+
+  if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
+    if (request.words[kFirstCommandArgWord] == "omit") {
+      return matching(with_help({"--output", "--overwrite", "-o"}), current);
+    }
+  }
+  return {};
+}
+
 std::vector<std::string> complete_request(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -863,6 +888,9 @@ std::vector<std::string> complete_request(const CompletionRequest & request)
   }
   if (command == "tf") {
     return complete_tf(request);
+  }
+  if (command == "topic") {
+    return complete_topic(request);
   }
   if (command == "ls" || command == "walk") {
     return complete_help_only(request);

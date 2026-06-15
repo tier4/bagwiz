@@ -168,6 +168,7 @@ add_library(bagwiz_core
   src/core/bag_copy.cpp
   src/core/bag_inplace.cpp
   src/core/bag_topic_plan.cpp
+  src/core/topic_match.cpp
   src/core/broken_bag.cpp
   src/core/tf_chain.cpp
   src/core/tf_merge_check.cpp
@@ -261,6 +262,8 @@ add_executable(bagwiz
   src/commands/tf.cpp
   src/commands/tf_walk.cpp
   src/commands/tf_static_cp.cpp
+  src/commands/topic.cpp
+  src/commands/topic_omit.cpp
 )
 target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang)
 
@@ -389,6 +392,14 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_bag_inplace_test test/core/bag_inplace_test.cpp)
   target_link_libraries(bagwiz_bag_inplace_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_topic_match_test test/core/topic_match_test.cpp)
+  target_link_libraries(bagwiz_topic_match_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_topic_omit_test
+    test/commands/topic_omit_test.cpp
+    src/commands/topic_omit.cpp)
+  target_link_libraries(bagwiz_topic_omit_test bagwiz_core fmt::fmt)
 
   ament_add_gtest(bagwiz_output_path_test test/core/output_path_test.cpp)
   target_link_libraries(bagwiz_output_path_test bagwiz_core)
