@@ -18,7 +18,7 @@
 // Glob matching for topic-name selectors. The only wildcard is '*', which
 // matches any run of characters — including '/' and the empty string; every
 // other character matches literally. A pattern without '*' is therefore an
-// exact topic-name match. Used by `bagwiz topic omit` to expand the
+// exact topic-name match. Used by `bagwiz topic drop` to expand the
 // user-supplied selectors (e.g. "/sensing/*", "*/image_raw", "*") against a
 // bag's topic list.
 //

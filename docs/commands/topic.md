@@ -4,12 +4,12 @@ Topic-level bag surgery. Subcommands:
 
 | Subcommand                   | What it does                                          |
 | ---------------------------- | ----------------------------------------------------- |
-| [`omit`](#bagwiz-topic-omit) | Remove selected topics, copying every other verbatim. |
+| [`drop`](#bagwiz-topic-drop) | Remove selected topics, copying every other verbatim. |
 | [`keep`](#bagwiz-topic-keep) | Keep only the selected topics, dropping every other.  |
 
 ---
 
-## `bagwiz topic omit`
+## `bagwiz topic drop`
 
 Remove one or more topics from a rosbag. Every removed topic disappears
 entirely from the output — both its messages and its topic declaration /
@@ -19,7 +19,7 @@ conversion is performed.
 ### Usage
 
 ```text
-bagwiz topic omit [OPTIONS] <input> <topics>...
+bagwiz topic drop [OPTIONS] <input> <topics>...
 ```
 
 ### Positional arguments
@@ -79,13 +79,13 @@ Because `*` spans `/`, `/sensing/*` removes the entire `/sensing` subtree.
 
 ```bash
 # Drop a single topic, rewriting the bag in place.
-bagwiz topic omit drive.mcap /sensing/lidar
+bagwiz topic drop drive.mcap /sensing/lidar
 
 # Drop an entire subtree to a new bag, leaving the input untouched.
-bagwiz topic omit drive.mcap '/sensing/*' -o drive_trimmed.mcap
+bagwiz topic drop drive.mcap '/sensing/*' -o drive_trimmed.mcap
 
 # Drop several topics at once (mix literals and globs).
-bagwiz topic omit drive_dir/ /tf_static '*/image_raw' -o trimmed_dir/
+bagwiz topic drop drive_dir/ /tf_static '*/image_raw' -o trimmed_dir/
 ```
 
 Quote globs (e.g. `'/sensing/*'`) so the shell does not expand them as
@@ -95,14 +95,14 @@ filename patterns before bagwiz sees them.
 
 ## `bagwiz topic keep`
 
-The inverse of [`omit`](#bagwiz-topic-omit): keep **only** the selected topics
+The inverse of [`drop`](#bagwiz-topic-drop): keep **only** the selected topics
 and drop every other one. Each dropped topic disappears entirely from the output
 — both its messages and its topic declaration / metadata. The kept topics are
 copied verbatim; no deserialization or type conversion is performed.
 
-The interface is identical to `omit` — same positional arguments, same options,
+The interface is identical to `drop` — same positional arguments, same options,
 same selector syntax, same in-place / `-o` behavior. Only the sense of the
-selection is flipped: `omit` removes what matches; `keep` removes what does not.
+selection is flipped: `drop` removes what matches; `keep` removes what does not.
 
 ### Usage
 
@@ -126,7 +126,7 @@ bagwiz topic keep [OPTIONS] <input> <topics>...
 
 ### Selectors
 
-Identical to `omit` — see [Selectors](#selectors) above. A selector matches the
+Identical to `drop` — see [Selectors](#selectors) above. A selector matches the
 topics to **keep**; everything else is dropped. For example, `/sensing/*` keeps
 the entire `/sensing` subtree and drops all other topics.
 
@@ -139,7 +139,7 @@ the entire `/sensing` subtree and drops all other topics.
 - When the selectors together match every topic, the run still succeeds and
   keeps every topic (nothing is removed), after logging a warning.
 - In-place vs `-o`, embedded-schema preservation, and `compression=none` output
-  all behave exactly as documented for `omit` above.
+  all behave exactly as documented for `drop` above.
 
 ### Example
 
@@ -161,5 +161,5 @@ filename patterns before bagwiz sees them.
 
 | Code | Meaning                                                                                                                                                                                                                        |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | The bag was rewritten successfully, including the all-topics-matched edge case (an empty bag for `omit`, an unchanged topic set for `keep`), which logs a warning.                                                             |
+| `0`  | The bag was rewritten successfully, including the all-topics-matched edge case (an empty bag for `drop`, an unchanged topic set for `keep`), which logs a warning.                                                             |
 | `1`  | The input could not be opened, a selector matched no topic, the `-o` output path collided without `--overwrite`, the input storage format could not be detected for an in-place rewrite, or a read/write/close error occurred. |

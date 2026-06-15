@@ -263,7 +263,7 @@ add_executable(bagwiz
   src/commands/tf_walk.cpp
   src/commands/tf_static_cp.cpp
   src/commands/topic.cpp
-  src/commands/topic_omit.cpp
+  src/commands/topic_drop.cpp
   src/commands/topic_keep.cpp
 )
 target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang)
@@ -397,10 +397,10 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_topic_match_test test/core/topic_match_test.cpp)
   target_link_libraries(bagwiz_topic_match_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_topic_omit_test
-    test/commands/topic_omit_test.cpp
-    src/commands/topic_omit.cpp)
-  target_link_libraries(bagwiz_topic_omit_test bagwiz_core fmt::fmt)
+  ament_add_gtest(bagwiz_topic_drop_test
+    test/commands/topic_drop_test.cpp
+    src/commands/topic_drop.cpp)
+  target_link_libraries(bagwiz_topic_drop_test bagwiz_core fmt::fmt)
 
   ament_add_gtest(bagwiz_topic_keep_test
     test/commands/topic_keep_test.cpp

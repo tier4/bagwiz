@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/commands/topic_omit.hpp"
+#include "bagwiz/commands/topic_drop.hpp"
 
 #include "bagwiz/core/bag_copy.hpp"
 #include "bagwiz/core/bag_inplace.hpp"
@@ -35,12 +35,12 @@ namespace
 
 constexpr const char * kLogger = "bagwiz.cmd.topic";
 
-// Declare every input topic except those in `omit`, then stream-copy the bag
+// Declare every input topic except those in `drop`, then stream-copy the bag
 // with the same set suppressed (dropped messages). Shared by the in-place and
 // -o modes; the writer factory is injected so write_bag_inplace can supply a
 // tmp path. Returns a process exit code.
-int execute_omit_pass(
-  const TopicOmitArgs & args, const std::unordered_set<std::string> & omit,
+int execute_drop_pass(
+  const TopicDropArgs & args, const std::unordered_set<std::string> & drop,
   const std::function<std::unique_ptr<io::BagWriter>()> & open_writer)
 {
   std::unique_ptr<io::BagReader> reader;
@@ -66,7 +66,7 @@ int execute_omit_pass(
   // nor carries any message. Every other topic is declared verbatim.
   std::size_t kept = 0;
   for (const auto & t : reader->topics()) {
-    if (omit.count(t.name) != 0) {
+    if (drop.count(t.name) != 0) {
       continue;
     }
     try {
@@ -80,7 +80,7 @@ int execute_omit_pass(
 
   core::BagCopyCounts counts;
   try {
-    counts = core::bag_copy_filtered(*reader, *writer, omit);
+    counts = core::bag_copy_filtered(*reader, *writer, drop);
   } catch (const std::exception & e) {
     BAGWIZ_LOG_ERROR(kLogger, "Stream copy from %s failed: %s", args.input_path.c_str(), e.what());
     return 1;
@@ -95,22 +95,22 @@ int execute_omit_pass(
 
   BAGWIZ_LOG_INFO(
     kLogger,
-    "topic omit: kept %zu topic(s), dropped %zu; copied %" PRIu64 " message(s), suppressed %" PRIu64
+    "topic drop: kept %zu topic(s), dropped %zu; copied %" PRIu64 " message(s), suppressed %" PRIu64
     ".",
-    kept, omit.size(), counts.copied, counts.suppressed);
+    kept, drop.size(), counts.copied, counts.suppressed);
   return 0;
 }
 
 }  // namespace
 
-int run_topic_omit(const TopicOmitArgs & args)
+int run_topic_drop(const TopicDropArgs & args)
 {
   // 0. Guard the public entry point. The CLI marks <topics> ->required(), but
-  //    run_topic_omit is also called directly from tests; an empty selector
+  //    run_topic_drop is also called directly from tests; an empty selector
   //    list would otherwise slip past the unmatched-pattern check below and
   //    silently copy the bag unchanged. Fail fast instead.
   if (args.topics.empty()) {
-    BAGWIZ_LOG_ERROR(kLogger, "topic omit: no topic selector given; nothing to remove.");
+    BAGWIZ_LOG_ERROR(kLogger, "topic drop: no topic selector given; nothing to remove.");
     return 1;
   }
 
@@ -142,9 +142,9 @@ int run_topic_omit(const TopicOmitArgs & args)
   }
 
   // The empty-selector guard and the unmatched-pattern return above together
-  // ensure every selector matched at least one topic, so `omit` is non-empty.
-  const auto & omit = resolution.matched;
-  if (omit.size() == topic_names.size()) {
+  // ensure every selector matched at least one topic, so `drop` is non-empty.
+  const auto & drop = resolution.matched;
+  if (drop.size() == topic_names.size()) {
     BAGWIZ_LOG_WARN(
       kLogger, "all %zu topic(s) matched; the output bag will contain no topics.",
       topic_names.size());
@@ -165,7 +165,7 @@ int run_topic_omit(const TopicOmitArgs & args)
       copts.mcap_compression = "none";
       return io::open_write(output, copts);
     };
-    return execute_omit_pass(args, omit, make_writer);
+    return execute_drop_pass(args, drop, make_writer);
   }
 
   // 2b. In-place mode: rewrite <input> atomically via a sibling tmp, preserving
@@ -174,7 +174,7 @@ int run_topic_omit(const TopicOmitArgs & args)
   const auto inplace_copts = io::create_options_preserving_storage(args.input_path);
   if (inplace_copts.format == io::Format::Auto) {
     BAGWIZ_LOG_ERROR(
-      kLogger, "topic omit: could not detect storage format of input bag '%s'.",
+      kLogger, "topic drop: could not detect storage format of input bag '%s'.",
       args.input_path.string().c_str());
     return 1;
   }
@@ -184,16 +184,16 @@ int run_topic_omit(const TopicOmitArgs & args)
     return io::open_write(tmp, copts);
   };
 
-  // execute_omit_pass reports command-level failures via its return value
+  // execute_drop_pass reports command-level failures via its return value
   // rather than throwing, so capture the status and translate a non-zero exit
   // into a runtime_error to make write_bag_inplace abort the swap (leaving
   // <input> untouched).
   int pass_status = 0;
   try {
     core::write_bag_inplace(args.input_path, [&](const std::filesystem::path & tmp) {
-      pass_status = execute_omit_pass(args, omit, [&]() { return make_inplace_writer(tmp); });
+      pass_status = execute_drop_pass(args, drop, [&]() { return make_inplace_writer(tmp); });
       if (pass_status != 0) {
-        throw std::runtime_error("topic omit: pass failed; aborting in-place swap");
+        throw std::runtime_error("topic drop: pass failed; aborting in-place swap");
       }
     });
   } catch (const std::exception & e) {

@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/commands/topic_omit.hpp"
+#include "bagwiz/commands/topic_drop.hpp"
 
 #include "bagwiz/io/bag_io.hpp"
 
@@ -92,14 +92,14 @@ std::map<std::string, int> collect(const std::filesystem::path & path)
   return counts;
 }
 
-class TopicOmitTest : public ::testing::Test
+class TopicDropTest : public ::testing::Test
 {
 protected:
   void SetUp() override
   {
     tmp_dir_ =
       std::filesystem::temp_directory_path() /
-      ("bagwiz_topic_omit_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()) +
+      ("bagwiz_topic_drop_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()) +
        "_" +
        std::to_string(
          reinterpret_cast<std::uintptr_t>(  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
@@ -116,17 +116,17 @@ protected:
   std::filesystem::path tmp_dir_;
 };
 
-TEST_F(TopicOmitTest, OmitExactTopicToOutput)
+TEST_F(TopicDropTest, DropExactTopicToOutput)
 {
   const auto in_path = build_input(tmp_dir_);
   const auto out_path = tmp_dir_ / "out";
 
-  bagwiz::commands::TopicOmitArgs args;
+  bagwiz::commands::TopicDropArgs args;
   args.input_path = in_path;
   args.topics = {"/sensing/lidar"};
   args.output_path = out_path;
 
-  ASSERT_EQ(bagwiz::commands::run_topic_omit(args), 0);
+  ASSERT_EQ(bagwiz::commands::run_topic_drop(args), 0);
 
   const auto out = collect(out_path);
   EXPECT_EQ(out.count("/sensing/lidar"), 0U);  // dropped: not even declared
@@ -139,17 +139,17 @@ TEST_F(TopicOmitTest, OmitExactTopicToOutput)
   EXPECT_EQ(in.at("/sensing/lidar"), 1);
 }
 
-TEST_F(TopicOmitTest, OmitWildcardDropsMatchingSubtree)
+TEST_F(TopicDropTest, DropWildcardDropsMatchingSubtree)
 {
   const auto in_path = build_input(tmp_dir_);
   const auto out_path = tmp_dir_ / "out";
 
-  bagwiz::commands::TopicOmitArgs args;
+  bagwiz::commands::TopicDropArgs args;
   args.input_path = in_path;
   args.topics = {"/sensing/*"};
   args.output_path = out_path;
 
-  ASSERT_EQ(bagwiz::commands::run_topic_omit(args), 0);
+  ASSERT_EQ(bagwiz::commands::run_topic_drop(args), 0);
 
   const auto out = collect(out_path);
   EXPECT_EQ(out.count("/sensing/camera"), 0U);
@@ -158,17 +158,17 @@ TEST_F(TopicOmitTest, OmitWildcardDropsMatchingSubtree)
   EXPECT_EQ(out.at("/perception/objects"), 1);
 }
 
-TEST_F(TopicOmitTest, OmitMultipleSelectors)
+TEST_F(TopicDropTest, DropMultipleSelectors)
 {
   const auto in_path = build_input(tmp_dir_);
   const auto out_path = tmp_dir_ / "out";
 
-  bagwiz::commands::TopicOmitArgs args;
+  bagwiz::commands::TopicDropArgs args;
   args.input_path = in_path;
   args.topics = {"/sensing/camera", "*/objects"};
   args.output_path = out_path;
 
-  ASSERT_EQ(bagwiz::commands::run_topic_omit(args), 0);
+  ASSERT_EQ(bagwiz::commands::run_topic_drop(args), 0);
 
   const auto out = collect(out_path);
   EXPECT_EQ(out.count("/sensing/camera"), 0U);
@@ -177,16 +177,16 @@ TEST_F(TopicOmitTest, OmitMultipleSelectors)
   EXPECT_EQ(out.at("/sensing/lidar"), 1);
 }
 
-TEST_F(TopicOmitTest, OmitInPlaceRewritesInput)
+TEST_F(TopicDropTest, DropInPlaceRewritesInput)
 {
   const auto in_path = build_input(tmp_dir_);
 
-  bagwiz::commands::TopicOmitArgs args;
+  bagwiz::commands::TopicDropArgs args;
   args.input_path = in_path;
   args.topics = {"/sensing/lidar"};
   // No output_path -> in-place.
 
-  ASSERT_EQ(bagwiz::commands::run_topic_omit(args), 0);
+  ASSERT_EQ(bagwiz::commands::run_topic_drop(args), 0);
 
   const auto result = collect(in_path);
   EXPECT_EQ(result.count("/sensing/lidar"), 0U);
@@ -194,17 +194,17 @@ TEST_F(TopicOmitTest, OmitInPlaceRewritesInput)
   EXPECT_EQ(result.at("/perception/objects"), 1);
 }
 
-TEST_F(TopicOmitTest, UnmatchedSelectorFailsWithoutWriting)
+TEST_F(TopicDropTest, UnmatchedSelectorFailsWithoutWriting)
 {
   const auto in_path = build_input(tmp_dir_);
   const auto out_path = tmp_dir_ / "out";
 
-  bagwiz::commands::TopicOmitArgs args;
+  bagwiz::commands::TopicDropArgs args;
   args.input_path = in_path;
   args.topics = {"/does/not/exist"};
   args.output_path = out_path;
 
-  EXPECT_EQ(bagwiz::commands::run_topic_omit(args), 1);
+  EXPECT_EQ(bagwiz::commands::run_topic_drop(args), 1);
   EXPECT_FALSE(std::filesystem::exists(out_path));
 
   // The input is left fully intact.
@@ -212,17 +212,17 @@ TEST_F(TopicOmitTest, UnmatchedSelectorFailsWithoutWriting)
   EXPECT_EQ(in.size(), 3U);
 }
 
-TEST_F(TopicOmitTest, EmptySelectorListFailsWithoutWriting)
+TEST_F(TopicDropTest, EmptySelectorListFailsWithoutWriting)
 {
   const auto in_path = build_input(tmp_dir_);
   const auto out_path = tmp_dir_ / "out";
 
-  bagwiz::commands::TopicOmitArgs args;
+  bagwiz::commands::TopicDropArgs args;
   args.input_path = in_path;
   args.topics = {};  // the CLI forbids this, but the API must not silently no-op
   args.output_path = out_path;
 
-  EXPECT_EQ(bagwiz::commands::run_topic_omit(args), 1);
+  EXPECT_EQ(bagwiz::commands::run_topic_drop(args), 1);
   EXPECT_FALSE(std::filesystem::exists(out_path));
 
   // The input is left fully intact.
@@ -230,50 +230,50 @@ TEST_F(TopicOmitTest, EmptySelectorListFailsWithoutWriting)
   EXPECT_EQ(in.size(), 3U);
 }
 
-TEST_F(TopicOmitTest, OmitAllTopicsProducesEmptyBag)
+TEST_F(TopicDropTest, DropAllTopicsProducesEmptyBag)
 {
   const auto in_path = build_input(tmp_dir_);
   const auto out_path = tmp_dir_ / "out";
 
-  bagwiz::commands::TopicOmitArgs args;
+  bagwiz::commands::TopicDropArgs args;
   args.input_path = in_path;
   args.topics = {"*"};
   args.output_path = out_path;
 
-  ASSERT_EQ(bagwiz::commands::run_topic_omit(args), 0);
+  ASSERT_EQ(bagwiz::commands::run_topic_drop(args), 0);
 
   const auto out = collect(out_path);
   EXPECT_TRUE(out.empty());
 }
 
-TEST_F(TopicOmitTest, ExistingOutputWithoutOverwriteFails)
+TEST_F(TopicDropTest, ExistingOutputWithoutOverwriteFails)
 {
   const auto in_path = build_input(tmp_dir_);
   const auto out_path = tmp_dir_ / "out";
   std::filesystem::create_directories(out_path);  // pre-existing collision
 
-  bagwiz::commands::TopicOmitArgs args;
+  bagwiz::commands::TopicDropArgs args;
   args.input_path = in_path;
   args.topics = {"/sensing/lidar"};
   args.output_path = out_path;
   args.overwrite = false;
 
-  EXPECT_EQ(bagwiz::commands::run_topic_omit(args), 1);
+  EXPECT_EQ(bagwiz::commands::run_topic_drop(args), 1);
 }
 
-TEST_F(TopicOmitTest, OverwriteReplacesExistingOutput)
+TEST_F(TopicDropTest, OverwriteReplacesExistingOutput)
 {
   const auto in_path = build_input(tmp_dir_);
   const auto out_path = tmp_dir_ / "out";
   std::filesystem::create_directories(out_path);
 
-  bagwiz::commands::TopicOmitArgs args;
+  bagwiz::commands::TopicDropArgs args;
   args.input_path = in_path;
   args.topics = {"/sensing/lidar"};
   args.output_path = out_path;
   args.overwrite = true;
 
-  ASSERT_EQ(bagwiz::commands::run_topic_omit(args), 0);
+  ASSERT_EQ(bagwiz::commands::run_topic_drop(args), 0);
 
   const auto out = collect(out_path);
   EXPECT_EQ(out.count("/sensing/lidar"), 0U);

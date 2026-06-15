@@ -94,7 +94,7 @@ constexpr std::array<TopicArgBinding, 6> kTopicBindings{{
   {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord, kTrajDumpSupportedTypes, false},
   {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord, {}, false},
   {"tf", "tree", kSecondCommandArgWord, kThirdCommandArgWord, kTfTreeSupportedTypes, true},
-  {"topic", "omit", kSecondCommandArgWord, kThirdCommandArgWord, {}, true},
+  {"topic", "drop", kSecondCommandArgWord, kThirdCommandArgWord, {}, true},
   {"topic", "keep", kSecondCommandArgWord, kThirdCommandArgWord, {}, true},
 }};
 
@@ -842,12 +842,12 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
   return {};
 }
 
-// `topic` is a command group with two action verbs, `omit` and `keep`. At the
+// `topic` is a command group with two action verbs, `drop` and `keep`. At the
 // action slot (word 1) the candidates are those verbs. Topic-name completion for
 // their positional <topics>... slots is handled earlier by try_topic_completion
 // via kTopicBindings; here we surface each verb's own flags for any `-` word.
 //
-//   omit: `topic`(0) `omit`(1) `<input>`(2) `<topics>...`(3+) [-o <out>] [--overwrite]
+//   drop: `topic`(0) `drop`(1) `<input>`(2) `<topics>...`(3+) [-o <out>] [--overwrite]
 //   keep: `topic`(0) `keep`(1) `<input>`(2) `<topics>...`(3+) [-o <out>] [--overwrite]
 std::vector<std::string> complete_topic(const CompletionRequest & request)
 {
@@ -856,12 +856,12 @@ std::vector<std::string> complete_topic(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"keep", "omit"}, current);
+    return matching({"drop", "keep"}, current);
   }
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & verb = request.words[kFirstCommandArgWord];
-    if (verb == "omit" || verb == "keep") {
+    if (verb == "drop" || verb == "keep") {
       return matching(with_help({"--output", "--overwrite", "-o"}), current);
     }
   }

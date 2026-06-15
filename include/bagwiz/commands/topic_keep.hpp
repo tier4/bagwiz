@@ -20,8 +20,8 @@ namespace bagwiz::commands
 // Arguments for `bagwiz topic keep`. Populated by TopicCommand's CLI wiring
 // (src/commands/topic.cpp) and consumed by run_topic_keep. Kept in a header so
 // the run function can be exercised directly from tests without driving the
-// CLI parser. Mirrors TopicOmitArgs field-for-field; `keep` is the inverse
-// selection of `omit`.
+// CLI parser. Mirrors TopicDropArgs field-for-field; `keep` is the inverse
+// selection of `drop`.
 struct TopicKeepArgs
 {
   std::filesystem::path input_path;

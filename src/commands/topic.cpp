@@ -8,8 +8,8 @@
 
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
+#include "bagwiz/commands/topic_drop.hpp"
 #include "bagwiz/commands/topic_keep.hpp"
-#include "bagwiz/commands/topic_omit.hpp"
 #include "bagwiz/core/logging.hpp"
 
 #include <string_view>
@@ -22,7 +22,7 @@ namespace
 constexpr const char * kLogger = "bagwiz.cmd.topic";
 }  // namespace
 
-// `bagwiz topic` is a command group for topic-level bag surgery. Ships `omit`
+// `bagwiz topic` is a command group for topic-level bag surgery. Ships `drop`
 // (drop selected topics) and `keep` (its inverse — keep only selected topics);
 // the group leaves room for further topic operations.
 class TopicCommand : public Command
@@ -37,15 +37,15 @@ public:
   void configure(CLI::App & app) override
   {
     app.require_subcommand(1);
-    configure_omit(app);
+    configure_drop(app);
     configure_keep(app);
   }
 
   int run() override
   {
     switch (selected_) {
-      case Subcommand::kOmit:
-        return run_topic_omit(omit_args_);
+      case Subcommand::kDrop:
+        return run_topic_drop(drop_args_);
       case Subcommand::kKeep:
         return run_topic_keep(keep_args_);
       case Subcommand::kNone:
@@ -56,32 +56,32 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kOmit, kKeep };
+  enum class Subcommand { kNone, kDrop, kKeep };
   Subcommand selected_ = Subcommand::kNone;
 
-  TopicOmitArgs omit_args_;
+  TopicDropArgs drop_args_;
   TopicKeepArgs keep_args_;
 
-  void configure_omit(CLI::App & app)
+  void configure_drop(CLI::App & app)
   {
     auto * sub = app.add_subcommand(
-      "omit",
+      "drop",
       "Remove topics from a rosbag, copying every other topic verbatim. Each "
       "<topic> is a literal name or a '*' glob (e.g. /sensing/*); '*' matches any "
       "run of characters, including '/'.");
-    sub->add_option("input", omit_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+    sub->add_option("input", drop_args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     sub
       ->add_option(
-        "topics", omit_args_.topics,
+        "topics", drop_args_.topics,
         "Topic selector(s) to remove. A literal topic name or a '*' glob. Repeat for several.")
       ->required();
     sub->add_option(
-      "-o,--output", omit_args_.output_path,
+      "-o,--output", drop_args_.output_path,
       "Write the result to this new bag instead of rewriting <input> in place.");
     sub->add_flag(
-      "--overwrite", omit_args_.overwrite,
+      "--overwrite", drop_args_.overwrite,
       "Replace an existing -o/--output path. Without it, an existing output path stops the run.");
     sub->footer(
       "Removed topics disappear entirely from the output — both their messages and their\n"
@@ -90,7 +90,7 @@ private:
       "Without -o, <input> is rewritten in place via an atomic tmp-swap that preserves its\n"
       "storage format and layout (input is both source and destination); with -o, <input>\n"
       "is left untouched.");
-    sub->callback([this]() { selected_ = Subcommand::kOmit; });
+    sub->callback([this]() { selected_ = Subcommand::kDrop; });
   }
 
   void configure_keep(CLI::App & app)

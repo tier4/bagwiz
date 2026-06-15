@@ -6,8 +6,8 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#ifndef BAGWIZ__COMMANDS__TOPIC_OMIT_HPP_
-#define BAGWIZ__COMMANDS__TOPIC_OMIT_HPP_
+#ifndef BAGWIZ__COMMANDS__TOPIC_DROP_HPP_
+#define BAGWIZ__COMMANDS__TOPIC_DROP_HPP_
 
 #include <filesystem>
 #include <optional>
@@ -17,11 +17,11 @@
 namespace bagwiz::commands
 {
 
-// Arguments for `bagwiz topic omit`. Populated by TopicCommand's CLI wiring
-// (src/commands/topic.cpp) and consumed by run_topic_omit. Kept in a header so
+// Arguments for `bagwiz topic drop`. Populated by TopicCommand's CLI wiring
+// (src/commands/topic.cpp) and consumed by run_topic_drop. Kept in a header so
 // the run function can be exercised directly from tests without driving the
 // CLI parser.
-struct TopicOmitArgs
+struct TopicDropArgs
 {
   std::filesystem::path input_path;
   // Topic selectors to remove. Each is a literal topic name or a '*' glob;
@@ -38,8 +38,8 @@ struct TopicOmitArgs
 // copying all other topics verbatim. Returns a process exit code: 0 on success,
 // 1 on any error (input open failure, a selector matching no topic, output
 // collision, or a read/write/close error).
-int run_topic_omit(const TopicOmitArgs & args);
+int run_topic_drop(const TopicDropArgs & args);
 
 }  // namespace bagwiz::commands
 
-#endif  // BAGWIZ__COMMANDS__TOPIC_OMIT_HPP_
+#endif  // BAGWIZ__COMMANDS__TOPIC_DROP_HPP_
