@@ -144,7 +144,8 @@ govern source code or CLI behavior.
 - Run the tests with `pixi run -e <distro> test` and the built binary with
   `pixi run -e <distro> run -- <args>` (or `pixi shell -e <distro>` then
   `bagwiz`). `./install.sh` installs an optional `bagwiz` launcher on `PATH`
-  that delegates to pixi (`./install.sh --help` covers its options).
+  that runs the binary in its pixi-managed ROS environment (`./install.sh --help`
+  covers its options).
 - Prefer the `pixi run` tasks over ad-hoc `colcon build` invocations when
   verifying changes, unless you are reproducing a CI or tooling issue that
   requires a different command line. The task definitions live in `pixi.toml`.

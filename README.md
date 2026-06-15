@@ -58,9 +58,8 @@ distributions — Humble, Jazzy, and Lyrical — and is tested in CI on each;
    ```
 
 4. (Optional) Install a `bagwiz` launcher on your `PATH` so you can run it from
-   anywhere without typing `pixi run`. The launcher delegates to the pixi
-   environment, so the binary still runs with ROS correctly set up. Build the
-   launcher's target distro first (step 2), then run the installer:
+   anywhere without typing `pixi run`. Build the launcher's target distro first
+   (step 2), then run the installer:
 
    ```bash
    ./install.sh                 # installs ~/.local/bin/bagwiz (targets Humble)
