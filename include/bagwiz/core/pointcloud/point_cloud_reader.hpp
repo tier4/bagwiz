@@ -38,30 +38,33 @@ struct PointCloudView {
   std::span<const std::byte> data;
 };
 
-// Outcome of extract_point_cloud(). On success `ok` is true and `view` holds
-// the decoded metadata and a non-owning view of the point data; on failure
-// `ok` is false and `error` carries a human-readable reason. Never throws.
+// Outcome of extract_point_cloud(). On success `view` holds the decoded
+// metadata and a non-owning view of the point data; on failure `view` is empty
+// and `error` carries a human-readable reason. Never throws.
 struct PointCloudResult {
-  bool ok = false;
+  std::optional<PointCloudView> view;
   std::string error;
-  PointCloudView view;
+
+  [[nodiscard]] bool ok() const noexcept { return view.has_value() && error.empty(); }
 };
 
 // Parse a CDR-serialized sensor_msgs/msg/PointCloud2 payload and extract the
 // x/y/z field offsets and an optional intensity field. Requires x/y/z to be
-// present and of type FLOAT32 (datatype 7).
+// present, of type FLOAT32 (datatype 7), and have count == 1.
 [[nodiscard]] PointCloudResult extract_point_cloud(std::span<const std::byte> payload);
 
-// Read a FLOAT32 field from `view.data` for the given point index.
-[[nodiscard]] float read_float_field(
+// Read a FLOAT32 field from `view.data` for the given point index. Returns
+// std::nullopt if the read would be out of bounds.
+[[nodiscard]] std::optional<float> read_float_field(
   const PointCloudView & view, std::size_t point_index, std::size_t offset);
 
 // Read the intensity field for the given point index and normalize integer
-// types (UINT8 / UINT16 in the task's datatype convention) to [0, 1].
+// types (UINT8 / UINT16 in the task's datatype convention) to [0, 1]. Returns
+// std::nullopt if the field is missing or the read would be out of bounds.
 [[nodiscard]] std::optional<float> read_intensity(
   const PointCloudView & view, std::size_t point_index);
 
-// Return true if x/y/z for the given point index are all finite floats.
+// Return true if x/y/z for the given point index are all present and finite.
 [[nodiscard]] bool is_valid_point(const PointCloudView & view, std::size_t point_index);
 
 }  // namespace bagwiz::core::pointcloud

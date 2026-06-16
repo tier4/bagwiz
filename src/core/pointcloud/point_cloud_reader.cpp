@@ -10,15 +10,15 @@
 
 #include "bagwiz/core/cdr_walker/cdr_reader.hpp"
 
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <exception>
-#include <limits>
-#include <span>
 #include <string>
+#include <type_traits>
 
 namespace bagwiz::core::pointcloud
 {
@@ -61,14 +61,15 @@ T load_pod(const std::byte * src, bool big_endian)
 
 }  // namespace
 
-float read_float_field(const PointCloudView & view, std::size_t point_index, std::size_t offset)
+std::optional<float> read_float_field(
+  const PointCloudView & view, std::size_t point_index, std::size_t offset)
 {
   if (view.point_step == 0) {
-    return 0.0f;
+    return std::nullopt;
   }
   const std::size_t base = point_index * static_cast<std::size_t>(view.point_step);
   if (base + offset + sizeof(float) > view.data.size()) {
-    return 0.0f;
+    return std::nullopt;
   }
   return load_pod<float>(view.data.data() + base + offset, view.is_bigendian);
 }
@@ -76,6 +77,9 @@ float read_float_field(const PointCloudView & view, std::size_t point_index, std
 std::optional<float> read_intensity(const PointCloudView & view, std::size_t point_index)
 {
   if (!view.intensity_offset.has_value()) {
+    return std::nullopt;
+  }
+  if (view.point_step == 0) {
     return std::nullopt;
   }
   const std::size_t base = point_index * static_cast<std::size_t>(view.point_step);
@@ -100,8 +104,7 @@ std::optional<float> read_intensity(const PointCloudView & view, std::size_t poi
       return static_cast<float>(raw) / 65535.0f;
     }
     case kFloat32: {
-      const float v = read_float_field(view, point_index, offset);
-      return v;
+      return read_float_field(view, point_index, offset);
     }
     default:
       return std::nullopt;
@@ -113,10 +116,11 @@ bool is_valid_point(const PointCloudView & view, std::size_t point_index)
   if (!view.x_offset.has_value() || !view.y_offset.has_value() || !view.z_offset.has_value()) {
     return false;
   }
-  const float x = read_float_field(view, point_index, *view.x_offset);
-  const float y = read_float_field(view, point_index, *view.y_offset);
-  const float z = read_float_field(view, point_index, *view.z_offset);
-  return std::isfinite(x) && std::isfinite(y) && std::isfinite(z);
+  const auto x = read_float_field(view, point_index, *view.x_offset);
+  const auto y = read_float_field(view, point_index, *view.y_offset);
+  const auto z = read_float_field(view, point_index, *view.z_offset);
+  return x.has_value() && y.has_value() && z.has_value() && std::isfinite(*x) &&
+         std::isfinite(*y) && std::isfinite(*z);
 }
 
 PointCloudResult extract_point_cloud(std::span<const std::byte> payload)
@@ -127,10 +131,11 @@ PointCloudResult extract_point_cloud(std::span<const std::byte> payload)
 
     (void)reader.read_i32();   // header.stamp.sec
     (void)reader.read_u32();   // header.stamp.nanosec
-    result.view.frame_id = reader.read_string();
+    PointCloudView view;
+    view.frame_id = reader.read_string();
 
-    result.view.height = reader.read_u32();
-    result.view.width = reader.read_u32();
+    view.height = reader.read_u32();
+    view.width = reader.read_u32();
 
     const std::uint32_t field_count = reader.read_sequence_length();
     std::optional<std::size_t> x_offset;
@@ -143,59 +148,71 @@ PointCloudResult extract_point_cloud(std::span<const std::byte> payload)
       const std::string name = reader.read_string();
       const std::uint32_t offset = reader.read_u32();
       const std::uint8_t datatype = reader.read_u8();
-      (void)reader.read_u32();  // count
+      const std::uint32_t count = reader.read_u32();
 
       if (name == "x") {
-        x_offset = offset;
         if (datatype != kFloat32) {
           result.error = "field 'x' must be FLOAT32 (datatype 7), got " + std::to_string(datatype);
           return result;
         }
+        if (count != 1) {
+          result.error = "field 'x' must have count == 1, got " + std::to_string(count);
+          return result;
+        }
+        x_offset = offset;
       } else if (name == "y") {
-        y_offset = offset;
         if (datatype != kFloat32) {
           result.error = "field 'y' must be FLOAT32 (datatype 7), got " + std::to_string(datatype);
           return result;
         }
+        if (count != 1) {
+          result.error = "field 'y' must have count == 1, got " + std::to_string(count);
+          return result;
+        }
+        y_offset = offset;
       } else if (name == "z") {
-        z_offset = offset;
         if (datatype != kFloat32) {
           result.error = "field 'z' must be FLOAT32 (datatype 7), got " + std::to_string(datatype);
           return result;
         }
+        if (count != 1) {
+          result.error = "field 'z' must have count == 1, got " + std::to_string(count);
+          return result;
+        }
+        z_offset = offset;
       } else if (name == "intensity") {
         intensity_offset = offset;
         intensity_datatype = datatype;
       }
     }
 
-    result.view.is_bigendian = reader.read_bool();
-    result.view.point_step = reader.read_u32();
-    result.view.row_step = reader.read_u32();
+    view.is_bigendian = reader.read_bool();
+    view.point_step = reader.read_u32();
+    view.row_step = reader.read_u32();
 
     const std::uint32_t data_length = reader.read_sequence_length();
-    result.view.data = reader.read_bytes(data_length);
-    result.view.is_dense = reader.read_bool();
+    view.data = reader.read_bytes(data_length);
+    view.is_dense = reader.read_bool();
 
     if (!x_offset || !y_offset || !z_offset) {
       result.error = "missing required point fields";
       return result;
     }
 
-    if (result.view.point_step == 0 && result.view.width > 0) {
+    if (view.point_step == 0 && view.width > 0) {
       result.error = "point_step is zero but width is non-zero";
       return result;
     }
 
     const std::size_t expected_data_size =
-      static_cast<std::size_t>(result.view.row_step) * result.view.height;
-    if (result.view.data.size() != expected_data_size) {
+      static_cast<std::size_t>(view.row_step) * view.height;
+    if (view.data.size() != expected_data_size) {
       result.error = "data size does not match row_step * height";
       return result;
     }
 
     const auto field_fits = [&](std::size_t offset, std::size_t size) {
-      return offset + size <= static_cast<std::size_t>(result.view.point_step);
+      return offset + size <= static_cast<std::size_t>(view.point_step);
     };
     if (!field_fits(*x_offset, sizeof(float)) ||
         !field_fits(*y_offset, sizeof(float)) ||
@@ -214,7 +231,8 @@ PointCloudResult extract_point_cloud(std::span<const std::byte> payload)
       } else if (intensity_datatype == kFloat32) {
         intensity_size = sizeof(float);
       } else {
-        result.error = "field 'intensity' has unsupported datatype " + std::to_string(intensity_datatype);
+        result.error =
+          "field 'intensity' has unsupported datatype " + std::to_string(intensity_datatype);
         return result;
       }
       if (!field_fits(*intensity_offset, intensity_size)) {
@@ -223,14 +241,14 @@ PointCloudResult extract_point_cloud(std::span<const std::byte> payload)
       }
     }
 
-    result.view.x_offset = x_offset;
-    result.view.y_offset = y_offset;
-    result.view.z_offset = z_offset;
-    result.view.intensity_offset = intensity_offset;
-    result.view.intensity_datatype = intensity_datatype;
-    result.ok = true;
+    view.x_offset = x_offset;
+    view.y_offset = y_offset;
+    view.z_offset = z_offset;
+    view.intensity_offset = intensity_offset;
+    view.intensity_datatype = intensity_datatype;
+    result.view = std::move(view);
   } catch (const std::exception & e) {
-    result.ok = false;
+    result.view.reset();
     result.error = std::string("failed to parse sensor_msgs/msg/PointCloud2 payload: ") + e.what();
   }
 
