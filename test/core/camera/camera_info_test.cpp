@@ -153,7 +153,10 @@ TEST(CameraInfoTest, ExtractsDistortionModelFrameIdAndDP)
 {
   const auto K = std::array<double, 9>{600.0, 0.0, 300.0, 0.0, 600.0, 200.0, 0.0, 0.0, 1.0};
   const auto D = std::vector<double>{0.0, 0.0, 0.0};
-  const auto R = std::array<double, 9>{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  const auto R = std::array<double, 9>{
+    0.9999, 0.0012, -0.0034,
+    -0.0011, 1.0000, 0.0056,
+    0.0035, -0.0055, 0.9998};
   const auto P = std::array<double, 12>{
     600.0, 0.0, 300.0, 0.0, 0.0, 600.0, 200.0, 0.0, 0.0, 0.0, 1.0, 0.0};
   const auto payload = make_camera_info_payload(
@@ -167,12 +170,12 @@ TEST(CameraInfoTest, ExtractsDistortionModelFrameIdAndDP)
   EXPECT_EQ(result.image->distortion_model, "rational_polynomial");
   EXPECT_EQ(result.image->D.size(), 3U);
   EXPECT_DOUBLE_EQ(result.image->D[0], 0.0);
-  EXPECT_DOUBLE_EQ(result.image->R[0], 1.0);
-  EXPECT_DOUBLE_EQ(result.image->R[4], 1.0);
-  EXPECT_DOUBLE_EQ(result.image->R[8], 1.0);
-  EXPECT_DOUBLE_EQ(result.image->P[0], 600.0);
-  EXPECT_DOUBLE_EQ(result.image->P[5], 600.0);
-  EXPECT_DOUBLE_EQ(result.image->P[10], 1.0);
+  for (std::size_t i = 0; i < R.size(); ++i) {
+    EXPECT_DOUBLE_EQ(result.image->R[i], R[i]) << "R[" << i << "]";
+  }
+  for (std::size_t i = 0; i < P.size(); ++i) {
+    EXPECT_DOUBLE_EQ(result.image->P[i], P[i]) << "P[" << i << "]";
+  }
 }
 
 TEST(CameraInfoTest, RejectsZeroFx)
