@@ -10,6 +10,7 @@
 
 #include "bagwiz/core/cdr_walker/cdr_reader.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <span>

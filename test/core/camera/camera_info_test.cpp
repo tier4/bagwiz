@@ -101,6 +101,8 @@ private:
   std::vector<std::byte> buf_;
 };
 
+// Parameters follow the .msg declaration order, but height is serialized before
+// width on the CDR wire (matching sensor_msgs/msg/CameraInfo).
 std::vector<std::byte> make_camera_info_payload(
   std::uint32_t width, std::uint32_t height,
   const std::string & distortion_model,
