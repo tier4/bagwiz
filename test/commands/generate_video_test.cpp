@@ -24,9 +24,12 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <system_error>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -36,6 +39,8 @@ using bagwiz::commands::check_video_source;
 using bagwiz::commands::GenerateVideoArgs;
 using bagwiz::commands::run_generate_video;
 using bagwiz::commands::VideoSourceStatus;
+using bagwiz::core::color::ColorMapName;
+using bagwiz::core::pointcloud::ColorBy;
 
 // Little-endian CDR-1 builder, matching the wire format the production reader
 // consumes (see raw_image_test.cpp for the alignment rationale).
@@ -148,24 +153,22 @@ std::vector<std::byte> make_compressed_payload(
   return b.take();
 }
 
-// Serialize a sensor_msgs/msg/CameraInfo. K/R/P are the standard fixed arrays;
-// D is empty for simplicity.
+// Serialize a sensor_msgs/msg/CameraInfo with the full set of matrices.
 std::vector<std::byte> make_camera_info_payload(
   std::uint32_t width, std::uint32_t height, const std::array<double, 9> & K,
+  const std::vector<double> & D, const std::array<double, 9> & R,
+  const std::array<double, 12> & P, const std::string & distortion_model,
   const std::string & frame_id)
 {
-  const std::array<double, 9> R{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
-  const std::array<double, 12> P{
-    K[0], 0.0, K[2], 0.0, 0.0, K[4], K[5], 0.0, 0.0, 0.0, 1.0, 0.0};
   CdrBuilder b;
   b.i32(0);                // header.stamp.sec
   b.u32(0);                // header.stamp.nanosec
   b.str(frame_id);         // header.frame_id
   b.u32(height);           // height
   b.u32(width);            // width
-  b.str("plumb_bob");      // distortion_model
+  b.str(distortion_model); // distortion_model
   b.fixed_f64_array({K.data(), K.size()});
-  b.f64_seq({});           // D
+  b.f64_seq({D.data(), D.size()});
   b.fixed_f64_array({R.data(), R.size()});
   b.fixed_f64_array({P.data(), P.size()});
   b.u32(0);                // binning_x
@@ -178,19 +181,57 @@ std::vector<std::byte> make_camera_info_payload(
   return b.take();
 }
 
-// Serialize a sensor_msgs/msg/PointCloud2 carrying `points` as FLOAT32 x/y/z
-// fields. The cloud has frame_id `frame_id` and a single row.
-std::vector<std::byte> make_point_cloud_payload(
-  const std::string & frame_id, const std::vector<std::array<float, 3>> & points)
+// Convenience overload: identity rotation and a projection matrix that keeps
+// the principal point and focal lengths from K.
+std::vector<std::byte> make_camera_info_payload(
+  std::uint32_t width, std::uint32_t height, const std::array<double, 9> & K,
+  const std::string & frame_id)
 {
-  constexpr std::uint32_t kPointStep = 12U;
+  const std::array<double, 9> R{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  const std::array<double, 12> P{
+    K[0], 0.0, K[2], 0.0, 0.0, K[4], K[5], 0.0, 0.0, 0.0, 1.0, 0.0};
+  return make_camera_info_payload(width, height, K, {}, R, P, "plumb_bob", frame_id);
+}
+
+// Supported intensity channel types for synthetic point clouds.
+enum class PointCloudIntensityType { kNone, kUint8, kUint16, kFloat32 };
+
+// Serialize a sensor_msgs/msg/PointCloud2 carrying `points` as FLOAT32 x/y/z
+// fields. The cloud has frame_id `frame_id` and a single row. An optional
+// intensity field can be appended after z.
+std::vector<std::byte> make_point_cloud_payload(
+  const std::vector<std::array<float, 3>> & points, const std::string & frame_id,
+  PointCloudIntensityType intensity_type = PointCloudIntensityType::kNone)
+{
+  constexpr std::uint32_t kXyzStep = 12U;
+  std::uint32_t intensity_step = 0;
+  std::uint8_t intensity_datatype = 0;
+  switch (intensity_type) {
+    case PointCloudIntensityType::kUint8:
+      intensity_step = 1;
+      intensity_datatype = 2;
+      break;
+    case PointCloudIntensityType::kUint16:
+      intensity_step = 2;
+      intensity_datatype = 4;
+      break;
+    case PointCloudIntensityType::kFloat32:
+      intensity_step = 4;
+      intensity_datatype = 7;
+      break;
+    case PointCloudIntensityType::kNone:
+    default:
+      break;
+  }
+  const std::uint32_t point_step = kXyzStep + intensity_step;
+
   CdrBuilder b;
   b.i32(0);                         // header.stamp.sec
   b.u32(0);                         // header.stamp.nanosec
   b.str(frame_id);                  // header.frame_id
   b.u32(1);                         // height
   b.u32(static_cast<std::uint32_t>(points.size()));  // width
-  b.u32(3);                         // field count
+  b.u32(intensity_type == PointCloudIntensityType::kNone ? 3U : 4U);  // field count
   b.str("x");
   b.u32(0);
   b.u8(7);  // FLOAT32
@@ -203,11 +244,17 @@ std::vector<std::byte> make_point_cloud_payload(
   b.u32(8);
   b.u8(7);
   b.u32(1);
-  b.u8(0);                          // is_bigendian
-  b.u32(kPointStep);                // point_step
-  b.u32(kPointStep * static_cast<std::uint32_t>(points.size()));  // row_step
+  if (intensity_type != PointCloudIntensityType::kNone) {
+    b.str("intensity");
+    b.u32(12);
+    b.u8(intensity_datatype);
+    b.u32(1);
+  }
+  b.u8(0);                           // is_bigendian
+  b.u32(point_step);                 // point_step
+  b.u32(point_step * static_cast<std::uint32_t>(points.size()));  // row_step
   std::vector<std::byte> data;
-  data.reserve(points.size() * kPointStep);
+  data.reserve(points.size() * point_step);
   for (const auto & p : points) {
     std::array<std::byte, 4> bytes{};
     std::memcpy(bytes.data(), &p[0], sizeof(float));
@@ -216,10 +263,42 @@ std::vector<std::byte> make_point_cloud_payload(
     data.insert(data.end(), bytes.begin(), bytes.end());
     std::memcpy(bytes.data(), &p[2], sizeof(float));
     data.insert(data.end(), bytes.begin(), bytes.end());
+    if (intensity_type == PointCloudIntensityType::kUint8) {
+      data.push_back(static_cast<std::byte>(128U));
+    } else if (intensity_type == PointCloudIntensityType::kUint16) {
+      constexpr std::uint16_t kHalf = 32768U;
+      data.push_back(static_cast<std::byte>(kHalf & 0xFFU));
+      data.push_back(static_cast<std::byte>((kHalf >> 8) & 0xFFU));
+    } else if (intensity_type == PointCloudIntensityType::kFloat32) {
+      const float v = 0.5f;
+      std::memcpy(bytes.data(), &v, sizeof(v));
+      data.insert(data.end(), bytes.begin(), bytes.end());
+    }
   }
   b.byte_seq({data.data(), data.size()});
   b.bool_(true);  // is_dense
   return b.take();
+}
+
+// Serialize a single /tf_static message carrying one transform.
+std::vector<std::byte> make_tf_static_payload(
+  const std::string & parent, const std::string & child,
+  const std::array<double, 3> & translation, const std::array<double, 4> & rotation)
+{
+  geometry_msgs::msg::TransformStamped tf;
+  tf.header.frame_id = parent;
+  tf.header.stamp.sec = 1;
+  tf.header.stamp.nanosec = 0;
+  tf.child_frame_id = child;
+  tf.transform.translation.x = translation[0];
+  tf.transform.translation.y = translation[1];
+  tf.transform.translation.z = translation[2];
+  tf.transform.rotation.x = rotation[0];
+  tf.transform.rotation.y = rotation[1];
+  tf.transform.rotation.z = rotation[2];
+  tf.transform.rotation.w = rotation[3];
+  const std::vector<geometry_msgs::msg::TransformStamped> transforms{tf};
+  return bagwiz::core::serialize_tf_message(transforms);
 }
 
 bagwiz::io::TopicInfo make_topic(std::string name, std::string type)
@@ -287,61 +366,108 @@ std::filesystem::path build_compressed_bag(
   return path;
 }
 
-// Build an MCAP bag with an image topic, a CameraInfo topic, a PointCloud2
-// topic, and a /tf_static topic. The camera is aligned with the image so that
-// a lidar point at (0,0,z) projects to the image center. The static TF relates
-// the lidar frame to the camera frame with an identity transform.
-std::filesystem::path build_overlay_bag(
-  const std::filesystem::path & dir, int frames, std::uint32_t w, std::uint32_t h)
+// Infer the matching CameraInfo topic name from common image-topic suffixes.
+// Returns an empty string when no known suffix matches.
+std::string infer_camera_info_topic(const std::string & image_topic)
 {
-  const std::string image_topic = "/cam/image";
-  const std::string camera_info_topic = "/cam/camera_info";
-  const std::string pcd_topic = "/lidar/points";
-  const std::string tf_static_topic = "/tf_static";
+  static constexpr std::array<std::string_view, 6> kSuffixes{
+    "/image_raw/compressed",
+    "/image_rect/compressed",
+    "/image/compressed",
+    "/image_raw",
+    "/image_rect",
+    "/image",
+  };
+  for (const std::string_view suffix : kSuffixes) {
+    if (image_topic.size() < suffix.size()) {
+      continue;
+    }
+    if (image_topic.compare(image_topic.size() - suffix.size(), suffix.size(), suffix) != 0) {
+      continue;
+    }
+    return std::string(image_topic.substr(0, image_topic.size() - suffix.size())) + "/camera_info";
+  }
+  return {};
+}
+
+// Build an MCAP bag with an image topic, the matching CameraInfo topic, one or
+// more PointCloud2 topics, and an optional /tf_static topic. The camera is
+// aligned with the image so that a lidar point at (0,0,z) projects to the image
+// center. The static TF relates the lidar frame to the camera frame with an
+// identity transform.
+std::filesystem::path build_overlay_bag(
+  const std::filesystem::path & dir, const std::string & image_topic, bool compressed, int frames,
+  std::uint32_t w, std::uint32_t h, const std::vector<std::string> & pcd_topics,
+  bool include_tf_static)
+{
+  const std::string camera_info_topic = infer_camera_info_topic(image_topic);
   const std::string camera_frame = "cam";
   const std::string lidar_frame = "lidar";
 
   const auto path = dir / "input";
   auto writer = bagwiz::io::open_write(path, mcap_dir_opts());
-  writer->declare_topic(make_topic(image_topic, "sensor_msgs/msg/Image"));
-  writer->declare_topic(make_topic(camera_info_topic, "sensor_msgs/msg/CameraInfo"));
-  writer->declare_topic(make_topic(pcd_topic, "sensor_msgs/msg/PointCloud2"));
-  writer->declare_topic(bagwiz::core::make_tf_message_topic_info(tf_static_topic));
+  writer->declare_topic(make_topic(
+    image_topic, compressed ? "sensor_msgs/msg/CompressedImage" : "sensor_msgs/msg/Image"));
+  if (!camera_info_topic.empty()) {
+    writer->declare_topic(make_topic(camera_info_topic, "sensor_msgs/msg/CameraInfo"));
+  }
+  for (const auto & pcd_topic : pcd_topics) {
+    writer->declare_topic(make_topic(pcd_topic, "sensor_msgs/msg/PointCloud2"));
+  }
+  if (include_tf_static) {
+    writer->declare_topic(bagwiz::core::make_tf_message_topic_info("/tf_static"));
+  }
 
   // fx and fy chosen so the center of the image maps to (0,0,z) in camera frame.
   const std::array<double, 9> K{
     static_cast<double>(w) / 2.0, 0.0, static_cast<double>(w) / 2.0,
     0.0, static_cast<double>(h) / 2.0, static_cast<double>(h) / 2.0,
     0.0, 0.0, 1.0};
-  const auto camera_info_payload = make_camera_info_payload(w, h, K, camera_frame);
-  writer->write(
-    camera_info_topic, 1'000'000'000LL,
-    std::span<const std::byte>{camera_info_payload.data(), camera_info_payload.size()});
+  if (!camera_info_topic.empty()) {
+    const auto camera_info_payload = make_camera_info_payload(w, h, K, camera_frame);
+    writer->write(
+      camera_info_topic, 1'000'000'000LL,
+      std::span<const std::byte>{camera_info_payload.data(), camera_info_payload.size()});
+  }
 
-  geometry_msgs::msg::TransformStamped tf;
-  tf.header.frame_id = camera_frame;
-  tf.header.stamp.sec = 1;
-  tf.header.stamp.nanosec = 0;
-  tf.child_frame_id = lidar_frame;
-  tf.transform.rotation.w = 1.0;
-  const std::vector<geometry_msgs::msg::TransformStamped> transforms{tf};
-  const auto tf_payload = bagwiz::core::serialize_tf_message(transforms);
-  writer->write(
-    tf_static_topic, 1'000'000'000LL,
-    std::span<const std::byte>{tf_payload.data(), tf_payload.size()});
+  if (include_tf_static) {
+    const auto tf_payload =
+      make_tf_static_payload(camera_frame, lidar_frame, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 1.0});
+    writer->write(
+      "/tf_static", 1'000'000'000LL,
+      std::span<const std::byte>{tf_payload.data(), tf_payload.size()});
+  }
 
   for (int i = 0; i < frames; ++i) {
     const std::int64_t ts = 1'000'000'000LL + static_cast<std::int64_t>(i) * 100'000'000LL;
-    const auto image_payload = make_image_payload(w, h, "bgr8", 0);  // black frame
-    writer->write(
-      image_topic, ts, std::span<const std::byte>{image_payload.data(), image_payload.size()});
-    const auto pcd_payload = make_point_cloud_payload(lidar_frame, {{0.0f, 0.0f, 10.0f}});
-    writer->write(
-      pcd_topic, ts, std::span<const std::byte>{pcd_payload.data(), pcd_payload.size()});
+    if (compressed) {
+      const auto jpeg = bagwiz::test::encode_still_image("jpeg", w, h, 0, 0, 0);
+      const auto image_payload = make_compressed_payload("jpeg", {jpeg.data(), jpeg.size()});
+      writer->write(
+        image_topic, ts,
+        std::span<const std::byte>{image_payload.data(), image_payload.size()});
+    } else {
+      const auto image_payload = make_image_payload(w, h, "bgr8", 0);  // black frame
+      writer->write(
+        image_topic, ts,
+        std::span<const std::byte>{image_payload.data(), image_payload.size()});
+    }
+    for (const auto & pcd_topic : pcd_topics) {
+      const auto pcd_payload = make_point_cloud_payload({{0.0f, 0.0f, 10.0f}}, lidar_frame);
+      writer->write(
+        pcd_topic, ts,
+        std::span<const std::byte>{pcd_payload.data(), pcd_payload.size()});
+    }
   }
 
   writer->close();
   return path;
+}
+
+std::filesystem::path build_overlay_bag(
+  const std::filesystem::path & dir, const std::string & image_topic, bool compressed, int frames)
+{
+  return build_overlay_bag(dir, image_topic, compressed, frames, 16, 16, {"/lidar/points"}, true);
 }
 
 // True if any entry in `dir` looks like a leftover generate-video temp file.
@@ -616,10 +742,12 @@ TEST_F(GenerateVideoTest, RunOverwriteReplacesExistingOutput)
   EXPECT_EQ(probe.frame_count, kFrames);
 }
 
-TEST_F(GenerateVideoTest, RunEncodesPointcloudOverlayToVideo)
+// ---- run_generate_video: pointcloud overlay -------------------------------
+
+TEST_F(GenerateVideoTest, OverlaysSinglePointCloud)
 {
   constexpr int kFrames = 4;
-  const auto in = build_overlay_bag(tmp_dir_, kFrames, 16, 16);
+  const auto in = build_overlay_bag(tmp_dir_, "/cam/image", false, kFrames);
   const auto out = tmp_dir_ / "out.avi";
 
   GenerateVideoArgs args{in, "/cam/image", out, false};
@@ -633,6 +761,285 @@ TEST_F(GenerateVideoTest, RunEncodesPointcloudOverlayToVideo)
   ASSERT_TRUE(probe.ok()) << probe.error;
   EXPECT_EQ(probe.width, 16U);
   EXPECT_EQ(probe.height, 16U);
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+TEST_F(GenerateVideoTest, InfersCameraInfoFromImageRaw)
+{
+  constexpr int kFrames = 2;
+  const auto in = build_overlay_bag(tmp_dir_, "/cam/image_raw", false, kFrames);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image_raw", out, false};
+  args.pcd_topics = {"/lidar/points"};
+  ASSERT_EQ(run_generate_video(args), 0);
+  ASSERT_TRUE(std::filesystem::exists(out));
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+TEST_F(GenerateVideoTest, InfersCameraInfoFromImageRawCompressed)
+{
+  constexpr int kFrames = 2;
+  const auto in = build_overlay_bag(tmp_dir_, "/cam/image_raw/compressed", true, kFrames);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image_raw/compressed", out, false};
+  args.pcd_topics = {"/lidar/points"};
+  ASSERT_EQ(run_generate_video(args), 0);
+  ASSERT_TRUE(std::filesystem::exists(out));
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+TEST_F(GenerateVideoTest, InfersCameraInfoFromImageRect)
+{
+  constexpr int kFrames = 2;
+  const auto in = build_overlay_bag(tmp_dir_, "/cam/image_rect", false, kFrames);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image_rect", out, false};
+  args.pcd_topics = {"/lidar/points"};
+  ASSERT_EQ(run_generate_video(args), 0);
+  ASSERT_TRUE(std::filesystem::exists(out));
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+TEST_F(GenerateVideoTest, InfersCameraInfoFromImageRectCompressed)
+{
+  constexpr int kFrames = 2;
+  const auto in = build_overlay_bag(tmp_dir_, "/cam/image_rect/compressed", true, kFrames);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image_rect/compressed", out, false};
+  args.pcd_topics = {"/lidar/points"};
+  ASSERT_EQ(run_generate_video(args), 0);
+  ASSERT_TRUE(std::filesystem::exists(out));
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+TEST_F(GenerateVideoTest, InfersCameraInfoFromImage)
+{
+  constexpr int kFrames = 2;
+  const auto in = build_overlay_bag(tmp_dir_, "/cam/image", false, kFrames);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image", out, false};
+  args.pcd_topics = {"/lidar/points"};
+  ASSERT_EQ(run_generate_video(args), 0);
+  ASSERT_TRUE(std::filesystem::exists(out));
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+TEST_F(GenerateVideoTest, InfersCameraInfoFromImageCompressed)
+{
+  constexpr int kFrames = 2;
+  const auto in = build_overlay_bag(tmp_dir_, "/cam/image/compressed", true, kFrames);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image/compressed", out, false};
+  args.pcd_topics = {"/lidar/points"};
+  ASSERT_EQ(run_generate_video(args), 0);
+  ASSERT_TRUE(std::filesystem::exists(out));
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+TEST_F(GenerateVideoTest, ExplicitCameraInfoOverridesInference)
+{
+  constexpr int kFrames = 2;
+  const std::string image_topic = "/cam/image_raw";
+  const std::string inferred_topic = "/cam/camera_info";
+  const std::string explicit_topic = "/cam/explicit/camera_info";
+  const std::string pcd_topic = "/lidar/points";
+  const std::string camera_frame = "cam";
+  const std::string lidar_frame = "lidar";
+
+  const auto path = tmp_dir_ / "input";
+  auto writer = bagwiz::io::open_write(path, mcap_dir_opts());
+  writer->declare_topic(make_topic(image_topic, kImageType));
+  writer->declare_topic(make_topic(inferred_topic, "sensor_msgs/msg/CameraInfo"));
+  writer->declare_topic(make_topic(explicit_topic, "sensor_msgs/msg/CameraInfo"));
+  writer->declare_topic(make_topic(pcd_topic, "sensor_msgs/msg/PointCloud2"));
+  writer->declare_topic(bagwiz::core::make_tf_message_topic_info("/tf_static"));
+
+  const std::array<double, 9> K{
+    8.0, 0.0, 8.0,
+    0.0, 8.0, 8.0,
+    0.0, 0.0, 1.0};
+  const auto inferred_payload = make_camera_info_payload(16, 16, K, camera_frame);
+  writer->write(
+    inferred_topic, 1'000'000'000LL,
+    std::span<const std::byte>{inferred_payload.data(), inferred_payload.size()});
+  const auto explicit_payload = make_camera_info_payload(16, 16, K, camera_frame);
+  writer->write(
+    explicit_topic, 1'000'000'000LL,
+    std::span<const std::byte>{explicit_payload.data(), explicit_payload.size()});
+
+  const auto tf_payload =
+    make_tf_static_payload(camera_frame, lidar_frame, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 1.0});
+  writer->write(
+    "/tf_static", 1'000'000'000LL,
+    std::span<const std::byte>{tf_payload.data(), tf_payload.size()});
+
+  for (int i = 0; i < kFrames; ++i) {
+    const std::int64_t ts = 1'000'000'000LL + static_cast<std::int64_t>(i) * 100'000'000LL;
+    const auto image_payload = make_image_payload(16, 16, "bgr8", 0);
+    writer->write(
+      image_topic, ts,
+      std::span<const std::byte>{image_payload.data(), image_payload.size()});
+    const auto pcd_payload = make_point_cloud_payload({{0.0f, 0.0f, 10.0f}}, lidar_frame);
+    writer->write(
+      pcd_topic, ts,
+      std::span<const std::byte>{pcd_payload.data(), pcd_payload.size()});
+  }
+  writer->close();
+
+  const auto out = tmp_dir_ / "out.avi";
+  GenerateVideoArgs args{path, image_topic, out, false};
+  args.pcd_topics = {pcd_topic};
+  args.camera_info_topic = explicit_topic;
+
+  const auto check = check_video_source(path, args);
+  ASSERT_TRUE(check.ok()) << check.message;
+  ASSERT_TRUE(check.camera_info_topic.has_value());
+  EXPECT_EQ(*check.camera_info_topic, explicit_topic);
+
+  ASSERT_EQ(run_generate_video(args), 0);
+  ASSERT_TRUE(std::filesystem::exists(out));
+}
+
+TEST_F(GenerateVideoTest, FailsWhenCameraInfoCannotBeInferred)
+{
+  const auto in = build_bag_with_image_topic(tmp_dir_, "/other/image");
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/other/image", out, false};
+  args.pcd_topics = {"/sensing/lidar"};
+  EXPECT_EQ(run_generate_video(args), 1);
+  EXPECT_FALSE(std::filesystem::exists(out));
+}
+
+TEST_F(GenerateVideoTest, OverlaysMultiplePointCloudsWithColorMap)
+{
+  constexpr int kFrames = 2;
+  const std::vector<std::string> pcd_topics{"/pcd1", "/pcd2"};
+  const auto in = build_overlay_bag(tmp_dir_, "/cam/image", false, kFrames, 16, 16, pcd_topics, true);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image", out, false};
+  args.pcd_topics = pcd_topics;
+  args.color_by = ColorBy::kZ;
+  args.color_map = ColorMapName::kTurbo;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  ASSERT_TRUE(std::filesystem::exists(out));
+  EXPECT_FALSE(any_partial_left(tmp_dir_));
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+// Parameterized over every supported --color-by / --color-map combination for
+// pointcloud overlay (excluding intensity, which is covered separately).
+class ColorByColorMapTest : public ::testing::TestWithParam<std::tuple<ColorBy, ColorMapName>>
+{
+protected:
+  void SetUp() override
+  {
+    tmp_dir_ =
+      std::filesystem::temp_directory_path() /
+      ("bagwiz_generate_video_color_" +
+       std::to_string(::testing::UnitTest::GetInstance()->random_seed()) + "_" +
+       std::to_string(
+         reinterpret_cast<std::uintptr_t>(  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+           this)));
+    std::filesystem::create_directories(tmp_dir_);
+  }
+  void TearDown() override
+  {
+    std::error_code ec;
+    std::filesystem::remove_all(tmp_dir_, ec);
+  }
+  std::filesystem::path tmp_dir_;
+};
+
+TEST_P(ColorByColorMapTest, CombinesColorByAndColorMap)
+{
+  constexpr int kFrames = 2;
+  const auto [color_by, color_map] = GetParam();
+  const auto in = build_overlay_bag(tmp_dir_, "/cam/image", false, kFrames);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image", out, false};
+  args.pcd_topics = {"/lidar/points"};
+  args.color_by = color_by;
+  args.color_map = color_map;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  ASSERT_TRUE(std::filesystem::exists(out));
+  EXPECT_FALSE(any_partial_left(tmp_dir_));
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+  PointCloudOverlay,
+  ColorByColorMapTest,
+  ::testing::Combine(
+    ::testing::Values(ColorBy::kX, ColorBy::kY, ColorBy::kZ, ColorBy::kDistance),
+    ::testing::Values(
+      ColorMapName::kJet, ColorMapName::kTurbo, ColorMapName::kViridis,
+      ColorMapName::kGrayscale, ColorMapName::kRainbow)));
+
+TEST_F(GenerateVideoTest, FailsWhenIntensityFieldMissing)
+{
+  constexpr int kFrames = 2;
+  const auto in = build_overlay_bag(tmp_dir_, "/cam/image", false, kFrames);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image", out, false};
+  args.pcd_topics = {"/lidar/points"};
+  args.color_by = ColorBy::kIntensity;
+  EXPECT_EQ(run_generate_video(args), 1);
+  EXPECT_FALSE(std::filesystem::exists(out));
+  EXPECT_FALSE(any_partial_left(tmp_dir_));
+}
+
+TEST_F(GenerateVideoTest, WarnsAndSkipsWhenTfUnresolvable)
+{
+  constexpr int kFrames = 2;
+  const auto in =
+    build_overlay_bag(tmp_dir_, "/cam/image", false, kFrames, 16, 16, {"/lidar/points"}, false);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image", out, false};
+  args.pcd_topics = {"/lidar/points"};
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  ASSERT_TRUE(std::filesystem::exists(out));
+  EXPECT_FALSE(any_partial_left(tmp_dir_));
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
   EXPECT_EQ(probe.frame_count, kFrames);
 }
 
