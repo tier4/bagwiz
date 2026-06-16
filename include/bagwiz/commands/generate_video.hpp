@@ -37,6 +37,7 @@ struct GenerateVideoArgs
   std::optional<std::string> camera_info_topic{std::nullopt};
   core::pointcloud::ColorBy color_by = core::pointcloud::ColorBy::kDistance;
   core::color::ColorMapName color_map = core::color::ColorMapName::kJet;
+  std::uint8_t pcd_point_size = 1;
 };
 
 // Classification of whether a topic can be rendered to video.

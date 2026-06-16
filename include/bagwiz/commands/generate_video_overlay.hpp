@@ -57,7 +57,7 @@ private:
   const std::vector<std::string> & pcd_topics, std::vector<PcdOverlayState> & pcd_states,
   const core::camera::CameraInfo & camera_info, const tf2::BufferCore & tf_buffer,
   std::int64_t image_timestamp_ns, core::pointcloud::ColorBy color_by,
-  core::color::ColorMapName color_map);
+  core::color::ColorMapName color_map, std::uint8_t point_size);
 
 }  // namespace bagwiz::commands
 

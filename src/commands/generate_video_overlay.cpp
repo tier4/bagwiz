@@ -11,14 +11,16 @@
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/pointcloud/project.hpp"
 
-#include <tf2/exceptions.h>
 #include <tf2/time.hpp>
+
+#include <tf2/exceptions.h>
 
 #include <chrono>
 #include <cinttypes>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace bagwiz::commands
 {
@@ -29,26 +31,36 @@ constexpr const char * kLogger = "bagwiz.cmd.generate";
 
 void paint_projected_points(
   std::span<std::byte> mutable_pixels, std::uint32_t fw, std::uint32_t fh, std::uint32_t fstep,
-  core::video::SourcePixelFormat fsrc, const std::vector<core::pointcloud::ProjectedPoint> & points)
+  core::video::SourcePixelFormat fsrc, const std::vector<core::pointcloud::ProjectedPoint> & points,
+  std::uint8_t point_size)
 {
+  const std::int32_t radius = static_cast<std::int32_t>(point_size) / 2;
   for (const auto & p : points) {
-    if (p.u < 0 || p.v < 0 || static_cast<std::uint32_t>(p.u) >= fw ||
-        static_cast<std::uint32_t>(p.v) >= fh) {
-      continue;
-    }
-    const std::size_t idx =
-      static_cast<std::size_t>(p.v) * fstep + static_cast<std::size_t>(p.u) * 3U;
-    if (idx + 2 >= mutable_pixels.size()) {
-      continue;
-    }
-    if (fsrc == core::video::SourcePixelFormat::kBgr8) {
-      mutable_pixels[idx] = static_cast<std::byte>(p.rgb.b);
-      mutable_pixels[idx + 1] = static_cast<std::byte>(p.rgb.g);
-      mutable_pixels[idx + 2] = static_cast<std::byte>(p.rgb.r);
-    } else {
-      mutable_pixels[idx] = static_cast<std::byte>(p.rgb.r);
-      mutable_pixels[idx + 1] = static_cast<std::byte>(p.rgb.g);
-      mutable_pixels[idx + 2] = static_cast<std::byte>(p.rgb.b);
+    for (std::int32_t dy = -radius; dy <= radius; ++dy) {
+      const auto vy = static_cast<std::int32_t>(p.v) + dy;
+      if (vy < 0 || vy >= static_cast<std::int32_t>(fh)) {
+        continue;
+      }
+      for (std::int32_t dx = -radius; dx <= radius; ++dx) {
+        const auto vx = static_cast<std::int32_t>(p.u) + dx;
+        if (vx < 0 || vx >= static_cast<std::int32_t>(fw)) {
+          continue;
+        }
+        const std::size_t idx =
+          static_cast<std::size_t>(vy) * fstep + static_cast<std::size_t>(vx) * 3U;
+        if (idx + 2 >= mutable_pixels.size()) {
+          continue;
+        }
+        if (fsrc == core::video::SourcePixelFormat::kBgr8) {
+          mutable_pixels[idx] = static_cast<std::byte>(p.rgb.b);
+          mutable_pixels[idx + 1] = static_cast<std::byte>(p.rgb.g);
+          mutable_pixels[idx + 2] = static_cast<std::byte>(p.rgb.r);
+        } else {
+          mutable_pixels[idx] = static_cast<std::byte>(p.rgb.r);
+          mutable_pixels[idx + 1] = static_cast<std::byte>(p.rgb.g);
+          mutable_pixels[idx + 2] = static_cast<std::byte>(p.rgb.b);
+        }
+      }
     }
   }
 }
@@ -73,7 +85,8 @@ std::string paint_pointcloud_overlays(
   const std::uint64_t frame_index, const std::vector<std::string> & pcd_topics,
   std::vector<PcdOverlayState> & pcd_states, const core::camera::CameraInfo & camera_info,
   const tf2::BufferCore & tf_buffer, const std::int64_t image_timestamp_ns,
-  const core::pointcloud::ColorBy color_by, const core::color::ColorMapName color_map)
+  const core::pointcloud::ColorBy color_by, const core::color::ColorMapName color_map,
+  const std::uint8_t point_size)
 {
   const auto time_point = tf2::TimePoint(std::chrono::nanoseconds(image_timestamp_ns));
 
@@ -106,7 +119,7 @@ std::string paint_pointcloud_overlays(
     }
 
     // Points are already depth-sorted front-to-back by project_point_cloud.
-    paint_projected_points(mutable_pixels, fw, fh, fstep, fsrc, *projection.points);
+    paint_projected_points(mutable_pixels, fw, fh, fstep, fsrc, *projection.points, point_size);
   }
 
   return {};

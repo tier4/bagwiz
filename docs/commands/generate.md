@@ -32,13 +32,14 @@ bagwiz generate video [OPTIONS] <input> <topic> <output>
 
 ### Options
 
-| Flag                    | Description                                                                                                              |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `--pcd <topic>`         | PointCloud2 topic to overlay. Repeatable to overlay multiple topics.                                                     |
-| `--camera-info <topic>` | CameraInfo topic. Inferred from `<image_topic>` when omitted.                                                            |
+| Flag                    | Description                                                                                                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--pcd <topic>`         | PointCloud2 topic to overlay. Repeatable to overlay multiple topics.                                                                                                                             |
+| `--camera-info <topic>` | CameraInfo topic. Inferred from `<image_topic>` when omitted.                                                                                                                                    |
 | `--color-by <field>`    | Scalar used to color overlaid points. `distance`, `x`, `y`, and `z` are measured in the camera frame; `intensity` uses the pointcloud's intensity field. Only with `--pcd`. Default: `distance`. |
-| `--color-map <map>`     | Color map applied to the scalar: `jet`, `turbo`, `viridis`, `grayscale`, or `rainbow`. Only with `--pcd`. Default: `jet`. |
-| `-o, --overwrite`       | Replace an existing `<output>`. Without it, an existing output path stops the run.                                       |
+| `--color-map <map>`     | Color map applied to the scalar: `jet`, `turbo`, `viridis`, `grayscale`, or `rainbow`. Only with `--pcd`. Default: `jet`.                                                                        |
+| `--pcd-point-size <n>`  | Diameter of each overlaid point in pixels, from 1 to 10. Only with `--pcd`. Default: 1.                                                                                                          |
+| `-o, --overwrite`       | Replace an existing `<output>`. Without it, an existing output path stops the run.                                                                                                               |
 
 ### PointCloud overlay
 
@@ -129,7 +130,7 @@ bagwiz generate video drive.mcap /sensing/camera/image_raw out.mp4 \
 
 ## Exit status
 
-| Code | Meaning |
-| ---- | ------- |
-| `0`  | The video was written successfully. |
+| Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | The video was written successfully.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `1`  | The input could not be opened; the topic was not found or is an unsupported type; the topic has no messages; the image encoding is unsupported; the output extension is unsupported or its codec is unavailable; `<output>` exists without `--overwrite`; a frame changed geometry mid-stream; a `--pcd` topic was not found or has the wrong type; the CameraInfo topic could not be inferred or was not found; static TF is missing; or a read/encode/write error occurred. |

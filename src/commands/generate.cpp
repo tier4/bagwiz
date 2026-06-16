@@ -12,6 +12,7 @@
 #include "bagwiz/core/logging.hpp"
 
 #include <map>
+#include <string>
 #include <string_view>
 
 namespace bagwiz::commands
@@ -75,7 +76,8 @@ private:
         "Output video path. Its extension selects the output format: "
         ".mp4/.mkv/.mov -> H.264, .avi -> MJPEG.")
       ->required();
-    sub->add_option("--pcd", video_args_.pcd_topics, "PointCloud2 topics to overlay (may be repeated).");
+    sub->add_option(
+      "--pcd", video_args_.pcd_topics, "PointCloud2 topics to overlay (may be repeated).");
     sub->add_option(
       "--camera-info", video_args_.camera_info_topic,
       "CameraInfo topic. If omitted, inferred from <image_topic>.");
@@ -93,14 +95,18 @@ private:
 
     using core::color::ColorMapName;
     const std::map<std::string, ColorMapName> color_map_map{
-      {"jet", ColorMapName::kJet},
-      {"turbo", ColorMapName::kTurbo},
-      {"viridis", ColorMapName::kViridis},
-      {"grayscale", ColorMapName::kGrayscale},
+      {"jet", ColorMapName::kJet},         {"turbo", ColorMapName::kTurbo},
+      {"viridis", ColorMapName::kViridis}, {"grayscale", ColorMapName::kGrayscale},
       {"rainbow", ColorMapName::kRainbow},
     };
     sub->add_option("--color-map", video_args_.color_map, "Color map used to color points.")
       ->transform(CLI::CheckedTransformer(color_map_map, CLI::ignore_case));
+
+    sub
+      ->add_option(
+        "--pcd-point-size", video_args_.pcd_point_size,
+        "Diameter of each overlaid point in pixels (1-10).")
+      ->check(CLI::Range(1U, 10U));
 
     sub->add_flag(
       "-o,--overwrite", video_args_.overwrite,

@@ -89,12 +89,9 @@ std::optional<std::string> infer_camera_info_topic(
   const io::BagReader & reader, const std::string & image_topic)
 {
   static constexpr std::array<std::string_view, 6> kSuffixes{
-    "/image_raw/compressed",
-    "/image_rect/compressed",
-    "/image/compressed",
-    "/image_raw",
-    "/image_rect",
-    "/image",
+    "/image_raw/compressed", "/image_rect/compressed",
+    "/image/compressed",     "/image_raw",
+    "/image_rect",           "/image",
   };
 
   for (const std::string_view suffix : kSuffixes) {
@@ -140,10 +137,9 @@ VideoSourceCheck check_video_source(const std::filesystem::path & input, const s
   if (!check.ok()) {
     check.message = "topic '" + topic + "' not found in " + input.string();
     if (check.status == VideoSourceStatus::kUnsupportedType) {
-      check.message =
-        "topic '" + topic + "' has type '" + check.topic_type +
-        "', which generate video cannot render; supported types are " + kImageType + " and " +
-        kCompressedImageType;
+      check.message = "topic '" + topic + "' has type '" + check.topic_type +
+                      "', which generate video cannot render; supported types are " + kImageType +
+                      " and " + kCompressedImageType;
     }
     return check;
   }
@@ -151,7 +147,8 @@ VideoSourceCheck check_video_source(const std::filesystem::path & input, const s
   return check;
 }
 
-VideoSourceCheck check_video_source(const std::filesystem::path & input, const GenerateVideoArgs & args)
+VideoSourceCheck check_video_source(
+  const std::filesystem::path & input, const GenerateVideoArgs & args)
 {
   VideoSourceCheck check;
 
@@ -169,10 +166,9 @@ VideoSourceCheck check_video_source(const std::filesystem::path & input, const G
     if (check.status == VideoSourceStatus::kTopicNotFound) {
       check.message = "topic '" + args.topic + "' not found in " + input.string();
     } else if (check.status == VideoSourceStatus::kUnsupportedType) {
-      check.message =
-        "topic '" + args.topic + "' has type '" + check.topic_type +
-        "', which generate video cannot render; supported types are " + kImageType + " and " +
-        kCompressedImageType;
+      check.message = "topic '" + args.topic + "' has type '" + check.topic_type +
+                      "', which generate video cannot render; supported types are " + kImageType +
+                      " and " + kCompressedImageType;
     }
     return check;
   }
@@ -186,9 +182,8 @@ VideoSourceCheck check_video_source(const std::filesystem::path & input, const G
     }
     if (t->type != kPointCloud2Type) {
       check.status = VideoSourceStatus::kPcdTopicInvalid;
-      check.message =
-        "pointcloud topic '" + pcd_topic + "' has type '" + t->type +
-        "', expected " + kPointCloud2Type;
+      check.message = "pointcloud topic '" + pcd_topic + "' has type '" + t->type + "', expected " +
+                      kPointCloud2Type;
       return check;
     }
   }
@@ -202,9 +197,8 @@ VideoSourceCheck check_video_source(const std::filesystem::path & input, const G
 
     if (!check.camera_info_topic.has_value()) {
       check.status = VideoSourceStatus::kCameraInfoTopicInvalid;
-      check.message =
-        "could not infer CameraInfo topic from image topic '" + args.topic +
-        "'; pass --camera-info explicitly";
+      check.message = "could not infer CameraInfo topic from image topic '" + args.topic +
+                      "'; pass --camera-info explicitly";
       return check;
     }
 
@@ -216,9 +210,8 @@ VideoSourceCheck check_video_source(const std::filesystem::path & input, const G
     }
     if (ci->type != kCameraInfoType) {
       check.status = VideoSourceStatus::kCameraInfoTopicInvalid;
-      check.message =
-        "camera info topic '" + *check.camera_info_topic + "' has type '" + ci->type +
-        "', expected " + kCameraInfoType;
+      check.message = "camera info topic '" + *check.camera_info_topic + "' has type '" + ci->type +
+                      "', expected " + kCameraInfoType;
       return check;
     }
   }
@@ -510,7 +503,8 @@ int run_generate_video(const GenerateVideoArgs & args)
       if (overlay_pcd) {
         if (auto err = paint_pointcloud_overlays(
               mutable_pixels, fw, fh, fstep, fsrc, written, args.pcd_topics, latest_pcds,
-              *camera_info, *tf_buffer, raw.timestamp_ns, args.color_by, args.color_map);
+              *camera_info, *tf_buffer, raw.timestamp_ns, args.color_by, args.color_map,
+              args.pcd_point_size);
             !err.empty()) {
           BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, err.c_str());
           encoder.reset();
