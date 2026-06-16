@@ -31,8 +31,8 @@ protected:
   {
     tmp_dir_ =
       std::filesystem::temp_directory_path() /
-      ("bagwiz_video_encoder_" +
-       std::to_string(::testing::UnitTest::GetInstance()->random_seed()) + "_" +
+      ("bagwiz_video_encoder_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()) +
+       "_" +
        std::to_string(
          reinterpret_cast<std::uintptr_t>(  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
            this)));

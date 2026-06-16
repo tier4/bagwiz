@@ -313,8 +313,8 @@ int run_generate_video(const GenerateVideoArgs & args)
 
   const double fps_value = static_cast<double>(fps.num) / static_cast<double>(fps.den);
   BAGWIZ_LOG_INFO(
-    kLogger, "generate video: wrote %" PRIu64 " frame(s) to %s (%ux%u @ %.3g fps).", written,
-    args.output_path.string().c_str(), enc_w, enc_h, fps_value);
+    kLogger, "generate video: wrote %" PRIu64 " frame(s) to %s (%ux%u %s @ %.3g fps).", written,
+    args.output_path.string().c_str(), enc_w, enc_h, enc_encoding.c_str(), fps_value);
   return 0;
 }
 

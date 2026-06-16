@@ -4,9 +4,9 @@ Generate non-rosbag **media** from a rosbag. Unlike `convert` or `topic` (which
 read a bag and write another bag), `generate` reads a bag and produces a
 different kind of artifact. Subcommands:
 
-| Subcommand                         | What it does                                    |
-| ---------------------------------- | ----------------------------------------------- |
-| [`video`](#bagwiz-generate-video)  | Render an image topic to a video file.          |
+| Subcommand                        | What it does                           |
+| --------------------------------- | -------------------------------------- |
+| [`video`](#bagwiz-generate-video) | Render an image topic to a video file. |
 
 ---
 
@@ -24,24 +24,24 @@ bagwiz generate video [OPTIONS] <input> <topic> <output>
 
 ### Positional arguments
 
-| Name      | Description                                                          |
-| --------- | -------------------------------------------------------------------- |
-| `input`   | Input ROS 2 rosbag (directory or single-file). Must exist.           |
-| `topic`   | Image topic to render. Must exist in the bag and be a supported type.|
-| `output`  | Output video path. Its extension selects the container/codec.        |
+| Name     | Description                                                           |
+| -------- | --------------------------------------------------------------------- |
+| `input`  | Input ROS 2 rosbag (directory or single-file). Must exist.            |
+| `topic`  | Image topic to render. Must exist in the bag and be a supported type. |
+| `output` | Output video path. Its extension selects the container/codec.         |
 
 ### Options
 
-| Flag          | Description                                                                       |
-| ------------- | --------------------------------------------------------------------------------- |
+| Flag          | Description                                                                        |
+| ------------- | ---------------------------------------------------------------------------------- |
 | `--overwrite` | Replace an existing `<output>`. Without it, an existing output path stops the run. |
 
 ### Supported topic types
 
-| Message type                       | Status in this release                              |
-| ---------------------------------- | --------------------------------------------------- |
-| `sensor_msgs/msg/Image`            | Rendered. Pixel encodings: `bgr8`, `rgb8`.          |
-| `sensor_msgs/msg/CompressedImage`  | Recognized, but rendering is not yet implemented.   |
+| Message type                      | Status in this release                            |
+| --------------------------------- | ------------------------------------------------- |
+| `sensor_msgs/msg/Image`           | Rendered. Pixel encodings: `bgr8`, `rgb8`.        |
+| `sensor_msgs/msg/CompressedImage` | Recognized, but rendering is not yet implemented. |
 
 Other message types stop the run with a clear error.
 
@@ -86,7 +86,7 @@ bagwiz generate video drive_dir/ /sensing/camera/image_raw clip.avi --overwrite
 
 ## Exit status
 
-| Code | Meaning                                                                                                                                                                                                 |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | The video was written successfully.                                                                                                                                                                     |
+| Code | Meaning                                                                                                                                                                                                                                                                                                                               |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | The video was written successfully.                                                                                                                                                                                                                                                                                                   |
 | `1`  | The input could not be opened; the topic was not found or is an unsupported type; the topic has no messages; the image encoding is unsupported; the output extension is unsupported or its codec is unavailable; `<output>` exists without `--overwrite`; a frame changed geometry mid-stream; or a read/encode/write error occurred. |
