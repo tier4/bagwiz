@@ -190,6 +190,8 @@ add_library(bagwiz_core
   src/core/trajectory.cpp
   src/core/msgtype_convert/geo_pose_convert.cpp
   src/core/image/raw_image.cpp
+  src/core/image/compressed_image.cpp
+  src/core/image/image_decoder.cpp
   src/core/video/frame_rate.cpp
   src/core/video/video_encoder.cpp
   src/core/tui/layout.cpp
@@ -436,6 +438,18 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_raw_image_test test/core/image/raw_image_test.cpp)
   target_link_libraries(bagwiz_raw_image_test bagwiz_core)
 
+  ament_add_gtest(bagwiz_compressed_image_test test/core/image/compressed_image_test.cpp)
+  target_link_libraries(bagwiz_compressed_image_test bagwiz_core)
+
+  # image_decoder lives in bagwiz_core; libav is linked explicitly so the test
+  # can both drive the decoder and synthesize JPEG/PNG fixtures with libav
+  # (same reason video_encoder_test re-links it).
+  ament_add_gtest(bagwiz_image_decoder_test
+    test/core/image/image_decoder_test.cpp
+    test/core/image/image_fixture.cpp)
+  target_include_directories(bagwiz_image_decoder_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/test")
+  target_link_libraries(bagwiz_image_decoder_test bagwiz_core PkgConfig::LIBAV)
+
   ament_add_gtest(bagwiz_frame_rate_test test/core/video/frame_rate_test.cpp)
   target_link_libraries(bagwiz_frame_rate_test bagwiz_core)
 
@@ -447,7 +461,10 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_generate_video_test
     test/commands/generate_video_test.cpp
+    test/core/image/image_fixture.cpp
     src/commands/generate_video.cpp)
+  target_include_directories(bagwiz_generate_video_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/test")
   target_link_libraries(bagwiz_generate_video_test bagwiz_core fmt::fmt PkgConfig::LIBAV)
 
   ament_add_gtest(bagwiz_output_path_test test/core/output_path_test.cpp)

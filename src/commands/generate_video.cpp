@@ -8,6 +8,8 @@
 
 #include "bagwiz/commands/generate_video.hpp"
 
+#include "bagwiz/core/image/compressed_image.hpp"
+#include "bagwiz/core/image/image_decoder.hpp"
 #include "bagwiz/core/image/raw_image.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/output_path.hpp"
@@ -20,6 +22,7 @@
 #include <exception>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -132,17 +135,7 @@ int run_generate_video(const GenerateVideoArgs & args)
     return 1;
   }
 
-  // 2. This release renders raw Image only; CompressedImage is recognized but
-  //    not yet wired (Milestone 3).
-  if (check.topic_type == kCompressedImageType) {
-    BAGWIZ_LOG_ERROR(
-      kLogger,
-      "generate video does not yet support sensor_msgs/msg/CompressedImage (coming soon); "
-      "only sensor_msgs/msg/Image is supported in this release.");
-    return 1;
-  }
-
-  // 3. Fail fast on an output collision before the expensive encode. The actual
+  // 2. Fail fast on an output collision before the expensive encode. The actual
   //    removal happens just before the rename, so an existing file is only
   //    replaced once the new video is fully written.
   {
@@ -155,7 +148,7 @@ int run_generate_video(const GenerateVideoArgs & args)
     }
   }
 
-  // 4. Create the output's parent directory if needed.
+  // 3. Create the output's parent directory if needed.
   if (const auto parent = args.output_path.parent_path(); !parent.empty()) {
     std::error_code ec;
     std::filesystem::create_directories(parent, ec);
@@ -167,7 +160,7 @@ int run_generate_video(const GenerateVideoArgs & args)
     }
   }
 
-  // 5. Pass 1: derive the frame rate from the message timestamps.
+  // 4. Pass 1: derive the frame rate from the message timestamps.
   TopicSpan span;
   if (scan_topic_span(args.input_path, args.topic, span) != 0) {
     return 1;
@@ -178,7 +171,7 @@ int run_generate_video(const GenerateVideoArgs & args)
   }
   const auto fps = core::video::derive_frame_rate(span.first_ns, span.last_ns, span.count);
 
-  // 6. Pass 2: decode + encode to a sibling temp path, renamed on success and
+  // 5. Pass 2: decode + encode to a sibling temp path, renamed on success and
   //    removed on any failure (no partial output, no leftover temp).
   // Keep the real extension on the temp file: both the encoder's codec choice
   // and the libav muxer are selected from the extension, so a bare
@@ -204,41 +197,84 @@ int run_generate_video(const GenerateVideoArgs & args)
   filter.topics.push_back(args.topic);
   reader->set_filter(filter);
 
+  // A CompressedImage topic carries a JPEG/PNG bitstream per message; decode it
+  // to packed BGR before encoding. A raw Image topic is fed straight through.
+  const bool is_compressed = (check.topic_type == kCompressedImageType);
+
   std::unique_ptr<core::video::VideoEncoder> encoder;
   std::uint32_t enc_w = 0;
   std::uint32_t enc_h = 0;
   std::string enc_encoding;
-  auto src_fmt = core::video::SourcePixelFormat::kBgr8;
   std::uint64_t written = 0;
 
   io::RawMessage raw;
+  core::image::DecodedImage decoded;  // reused storage for the compressed path
   try {
     while (reader->next(raw)) {
-      const auto img = core::image::extract_raw_image(raw.payload);
-      if (!img.ok()) {
-        BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, img.error.c_str());
-        encoder.reset();
-        cleanup_tmp();
-        return 1;
-      }
-      const auto & v = *img.image;
+      // Normalize either message type to a packed 8-bit frame the encoder
+      // accepts: width, height, row stride, pixel layout, and the pixel bytes.
+      std::uint32_t fw = 0;
+      std::uint32_t fh = 0;
+      std::uint32_t fstep = 0;
+      auto fsrc = core::video::SourcePixelFormat::kBgr8;
+      std::string fenc;
+      std::span<const std::byte> fdata;
 
-      if (encoder == nullptr) {
-        // The first frame fixes the geometry and pixel encoding for the run.
+      if (is_compressed) {
+        const auto cimg = core::image::extract_compressed_image(raw.payload);
+        if (!cimg.ok()) {
+          BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, cimg.error.c_str());
+          encoder.reset();
+          cleanup_tmp();
+          return 1;
+        }
+        auto dec = core::image::decode_compressed_image(cimg.image->data, cimg.image->format);
+        if (!dec.ok()) {
+          BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, dec.error.c_str());
+          encoder.reset();
+          cleanup_tmp();
+          return 1;
+        }
+        decoded = std::move(*dec.image);
+        fw = decoded.width;
+        fh = decoded.height;
+        fstep = decoded.width * 3U;
+        fsrc = core::video::SourcePixelFormat::kBgr8;  // the decoder always emits BGR24
+        fenc = "bgr8";
+        fdata = {decoded.bgr.data(), decoded.bgr.size()};
+      } else {
+        const auto img = core::image::extract_raw_image(raw.payload);
+        if (!img.ok()) {
+          BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, img.error.c_str());
+          encoder.reset();
+          cleanup_tmp();
+          return 1;
+        }
+        const auto & v = *img.image;
         if (v.encoding == "bgr8") {
-          src_fmt = core::video::SourcePixelFormat::kBgr8;
+          fsrc = core::video::SourcePixelFormat::kBgr8;
         } else if (v.encoding == "rgb8") {
-          src_fmt = core::video::SourcePixelFormat::kRgb8;
+          fsrc = core::video::SourcePixelFormat::kRgb8;
         } else {
           BAGWIZ_LOG_ERROR(
             kLogger, "image encoding '%s' is not supported in this release; only bgr8 and rgb8.",
             v.encoding.c_str());
+          encoder.reset();
           cleanup_tmp();
           return 1;
         }
-        enc_w = v.width;
-        enc_h = v.height;
-        enc_encoding = v.encoding;
+        fw = v.width;
+        fh = v.height;
+        fstep = v.step;
+        fenc = v.encoding;
+        fdata = v.data;
+      }
+
+      if (encoder == nullptr) {
+        // The first frame fixes the geometry and pixel encoding for the run.
+        enc_w = fw;
+        enc_h = fh;
+        enc_encoding = fenc;
         auto opened = core::video::open_video_encoder(tmp_path, enc_w, enc_h, fps.num, fps.den);
         if (!opened.ok()) {
           BAGWIZ_LOG_ERROR(kLogger, "%s", opened.error.c_str());
@@ -246,17 +282,17 @@ int run_generate_video(const GenerateVideoArgs & args)
           return 1;
         }
         encoder = std::move(opened.encoder);
-      } else if (v.width != enc_w || v.height != enc_h || v.encoding != enc_encoding) {
+      } else if (fw != enc_w || fh != enc_h || fenc != enc_encoding) {
         BAGWIZ_LOG_ERROR(
           kLogger,
           "frame %" PRIu64 " changed to %ux%u %s from the first frame's %ux%u %s; aborting.",
-          written, v.width, v.height, v.encoding.c_str(), enc_w, enc_h, enc_encoding.c_str());
+          written, fw, fh, fenc.c_str(), enc_w, enc_h, enc_encoding.c_str());
         encoder.reset();
         cleanup_tmp();
         return 1;
       }
 
-      if (auto e = encoder->write_frame(v.data, v.step, src_fmt); !e.empty()) {
+      if (auto e = encoder->write_frame(fdata, fstep, fsrc); !e.empty()) {
         BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, e.c_str());
         encoder.reset();
         cleanup_tmp();
@@ -287,7 +323,7 @@ int run_generate_video(const GenerateVideoArgs & args)
   }
   encoder.reset();  // close the temp file before the rename/clobber
 
-  // 7. Now that the new video is complete, replace any existing output and move
+  // 6. Now that the new video is complete, replace any existing output and move
   //    the temp into place.
   if (const auto r = core::prepare_output_path(args.output_path, args.overwrite); !r.ok) {
     BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());

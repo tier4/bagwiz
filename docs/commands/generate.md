@@ -38,21 +38,23 @@ bagwiz generate video [OPTIONS] <input> <topic> <output>
 
 ### Supported topic types
 
-| Message type                      | Status in this release                            |
-| --------------------------------- | ------------------------------------------------- |
-| `sensor_msgs/msg/Image`           | Rendered. Pixel encodings: `bgr8`, `rgb8`.        |
-| `sensor_msgs/msg/CompressedImage` | Recognized, but rendering is not yet implemented. |
+| Message type                      | Status                                           |
+| --------------------------------- | ------------------------------------------------ |
+| `sensor_msgs/msg/Image`           | Rendered. Pixel encodings: `bgr8`, `rgb8`.       |
+| `sensor_msgs/msg/CompressedImage` | Rendered. JPEG / PNG, decoded to BGR internally. |
 
-Other message types stop the run with a clear error.
+Other message types stop the run with a clear error. A `CompressedImage` whose
+payload is neither JPEG nor PNG (by its leading magic bytes) is likewise
+rejected.
 
 ### Output format
 
 The container and codec are inferred from the `<output>` extension:
 
-| Extension      | Container      | Codec           |
-| -------------- | -------------- | --------------- |
-| `.mp4`, `.mkv` | MP4 / Matroska | H.264 (libx264) |
-| `.avi`         | AVI            | MJPEG           |
+| Extension              | Container            | Codec           |
+| ---------------------- | -------------------- | --------------- |
+| `.mp4`, `.mkv`, `.mov` | MP4 / Matroska / MOV | H.264 (libx264) |
+| `.avi`                 | AVI                  | MJPEG           |
 
 Any other extension stops the run. H.264 requires the FFmpeg build to ship the
 `libx264` encoder; if it is missing, use an `.avi` output (MJPEG is always

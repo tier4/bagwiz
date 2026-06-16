@@ -58,8 +58,8 @@ struct VideoSourceCheck
 // Render `args.topic` from `args.input_path` to a video at `args.output_path`,
 // inferring the container/codec from the output extension and the frame rate
 // from the message timestamps. Returns a process exit code: 0 on success, 1 on
-// any error. This release encodes raw sensor_msgs/msg/Image (bgr8 / rgb8);
-// sensor_msgs/msg/CompressedImage is recognized but not yet rendered.
+// any error. Renders raw sensor_msgs/msg/Image (bgr8 / rgb8) and
+// sensor_msgs/msg/CompressedImage (JPEG / PNG, decoded to BGR before encoding).
 int run_generate_video(const GenerateVideoArgs & args);
 
 }  // namespace bagwiz::commands

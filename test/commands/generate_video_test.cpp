@@ -10,6 +10,7 @@
 
 #include "bagwiz/core/video/video_encoder.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "core/image/image_fixture.hpp"
 
 #include <gtest/gtest.h>
 
@@ -95,6 +96,20 @@ std::vector<std::byte> make_image_payload(
   return b.take();
 }
 
+// Serialize a sensor_msgs/msg/CompressedImage carrying `format` and the given
+// compressed bytes.
+std::vector<std::byte> make_compressed_payload(
+  const std::string & format, std::span<const std::byte> data)
+{
+  CdrBuilder b;
+  b.i32(0);  // header.stamp.sec
+  b.u32(0);  // header.stamp.nanosec
+  b.str("cam");
+  b.str(format);
+  b.byte_seq(data);
+  return b.take();
+}
+
 bagwiz::io::TopicInfo make_topic(std::string name, std::string type)
 {
   bagwiz::io::TopicInfo t;
@@ -115,6 +130,8 @@ bagwiz::io::CreateOptions mcap_dir_opts()
 
 constexpr const char * kImageTopic = "/cam/image";
 constexpr const char * kImageType = "sensor_msgs/msg/Image";
+constexpr const char * kCompressedTopic = "/cam/image/compressed";
+constexpr const char * kCompressedType = "sensor_msgs/msg/CompressedImage";
 
 // Build an MCAP bag with an Image topic (`frames` messages at 100 ms spacing,
 // WxH, `encoding`) plus a CompressedImage topic and a lidar topic (declared so
@@ -132,6 +149,26 @@ std::filesystem::path build_bag(
     const auto payload = make_image_payload(w, h, encoding, static_cast<std::uint8_t>(i * 20));
     const std::int64_t ts = 1'000'000'000LL + static_cast<std::int64_t>(i) * 100'000'000LL;
     writer->write(kImageTopic, ts, {payload.data(), payload.size()});
+  }
+  writer->close();
+  return path;
+}
+
+// Build an MCAP bag whose CompressedImage topic carries `frames` JPEG messages
+// (WxH solid colors at 100 ms spacing). The per-frame fill varies so the encoded
+// frames differ.
+std::filesystem::path build_compressed_bag(
+  const std::filesystem::path & dir, int frames, std::uint32_t w, std::uint32_t h)
+{
+  const auto path = dir / "input";
+  auto writer = bagwiz::io::open_write(path, mcap_dir_opts());
+  writer->declare_topic(make_topic(kCompressedTopic, kCompressedType));
+  for (int i = 0; i < frames; ++i) {
+    const auto jpeg =
+      bagwiz::test::encode_still_image("jpeg", w, h, static_cast<std::uint8_t>(i * 20), 100, 50);
+    const auto payload = make_compressed_payload("jpeg", {jpeg.data(), jpeg.size()});
+    const std::int64_t ts = 1'000'000'000LL + static_cast<std::int64_t>(i) * 100'000'000LL;
+    writer->write(kCompressedTopic, ts, {payload.data(), payload.size()});
   }
   writer->close();
   return path;
@@ -227,13 +264,25 @@ TEST_F(GenerateVideoTest, RunUnsupportedTypeFails)
   EXPECT_FALSE(std::filesystem::exists(out));
 }
 
-TEST_F(GenerateVideoTest, RunCompressedImageNotYetSupported)
+// A CompressedImage topic carrying a payload that is neither JPEG nor PNG (by
+// its magic bytes) stops the run with no output and no leftover temp.
+TEST_F(GenerateVideoTest, RunCompressedImageUnrecognizedFormatFails)
 {
-  const auto in = build_bag(tmp_dir_, 2, 16, 16, "bgr8");
+  const auto path = tmp_dir_ / "input";
+  {
+    auto writer = bagwiz::io::open_write(path, mcap_dir_opts());
+    writer->declare_topic(make_topic(kCompressedTopic, kCompressedType));
+    const std::vector<std::byte> garbage(8, std::byte{0x01});
+    const auto payload = make_compressed_payload("weird", {garbage.data(), garbage.size()});
+    writer->write(kCompressedTopic, 1'000'000'000LL, {payload.data(), payload.size()});
+    writer->write(kCompressedTopic, 1'100'000'000LL, {payload.data(), payload.size()});
+    writer->close();
+  }
   const auto out = tmp_dir_ / "out.avi";
-  const GenerateVideoArgs args{in, "/cam/image/compressed", out, false};
+  const GenerateVideoArgs args{path, kCompressedTopic, out, false};
   EXPECT_EQ(run_generate_video(args), 1);
   EXPECT_FALSE(std::filesystem::exists(out));
+  EXPECT_FALSE(any_partial_left(tmp_dir_));
 }
 
 TEST_F(GenerateVideoTest, RunUnsupportedEncodingFailsAndLeavesNothing)
@@ -269,6 +318,27 @@ TEST_F(GenerateVideoTest, RunEncodesImageTopicToVideo)
 
   ASSERT_TRUE(std::filesystem::exists(out));
   EXPECT_FALSE(any_partial_left(tmp_dir_));  // no temp left behind
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.width, 16U);
+  EXPECT_EQ(probe.height, 16U);
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+// A CompressedImage (JPEG) topic decodes frame-by-frame and encodes to a video
+// with the decoded geometry and frame count — the headline new capability.
+TEST_F(GenerateVideoTest, RunEncodesCompressedImageTopicToVideo)
+{
+  constexpr int kFrames = 4;
+  const auto in = build_compressed_bag(tmp_dir_, kFrames, 16, 16);
+  const auto out = tmp_dir_ / "out.avi";  // MJPEG: no libx264 dependency
+
+  const GenerateVideoArgs args{in, kCompressedTopic, out, false};
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  ASSERT_TRUE(std::filesystem::exists(out));
+  EXPECT_FALSE(any_partial_left(tmp_dir_));
 
   const auto probe = bagwiz::core::video::probe_video(out);
   ASSERT_TRUE(probe.ok()) << probe.error;

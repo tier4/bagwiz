@@ -62,7 +62,7 @@ private:
     auto * sub = app.add_subcommand(
       "video",
       "Render an image topic to a video file. <output>'s extension picks the container/codec "
-      "(.mp4/.mkv -> H.264, .avi -> MJPEG); the frame rate is derived from the message "
+      "(.mp4/.mkv/.mov -> H.264, .avi -> MJPEG); the frame rate is derived from the message "
       "timestamps.");
     sub->add_option("input", video_args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
@@ -70,14 +70,16 @@ private:
     sub->add_option("topic", video_args_.topic, "Image topic to render.")->required();
     sub
       ->add_option(
-        "output", video_args_.output_path, "Output video path; its extension picks the format.")
+        "output", video_args_.output_path,
+        "Output video path. Its extension selects the output format: "
+        ".mp4/.mkv/.mov -> H.264, .avi -> MJPEG.")
       ->required();
     sub->add_flag(
       "--overwrite", video_args_.overwrite,
       "Replace an existing <output>. Without it, an existing output path stops the run.");
     sub->footer(
-      "Supported topic types: sensor_msgs/msg/Image (bgr8, rgb8). "
-      "sensor_msgs/msg/CompressedImage is recognized but not yet rendered.\n"
+      "Supported topic types: sensor_msgs/msg/Image (bgr8, rgb8) and "
+      "sensor_msgs/msg/CompressedImage (JPEG/PNG, decoded to BGR before encoding).\n"
       "Frames stream straight to the encoder (no large temp files); the output is written\n"
       "atomically and a failed run leaves no partial file behind.");
     sub->callback([this]() { selected_ = Subcommand::kVideo; });
