@@ -9,21 +9,28 @@
 #include "bagwiz/commands/generate_video.hpp"
 
 #include "bagwiz/core/camera/camera_info.hpp"
+#include "bagwiz/core/image/image_decoder.hpp"
 #include "bagwiz/core/tf_message_wire.hpp"
 #include "bagwiz/core/video/video_encoder.hpp"
 #include "bagwiz/io/bag_io.hpp"
 #include "core/image/image_fixture.hpp"
 
-#include <gtest/gtest.h>
-
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
+#include <gtest/gtest.h>
+
+extern "C" {
+#include <libavformat/avformat.h>
+}
+
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -153,44 +160,34 @@ std::vector<std::byte> make_compressed_payload(
   return b.take();
 }
 
-// Serialize a sensor_msgs/msg/CameraInfo with the full set of matrices.
-std::vector<std::byte> make_camera_info_payload(
-  std::uint32_t width, std::uint32_t height, const std::array<double, 9> & K,
-  const std::vector<double> & D, const std::array<double, 9> & R,
-  const std::array<double, 12> & P, const std::string & distortion_model,
-  const std::string & frame_id)
-{
-  CdrBuilder b;
-  b.i32(0);                // header.stamp.sec
-  b.u32(0);                // header.stamp.nanosec
-  b.str(frame_id);         // header.frame_id
-  b.u32(height);           // height
-  b.u32(width);            // width
-  b.str(distortion_model); // distortion_model
-  b.fixed_f64_array({K.data(), K.size()});
-  b.f64_seq({D.data(), D.size()});
-  b.fixed_f64_array({R.data(), R.size()});
-  b.fixed_f64_array({P.data(), P.size()});
-  b.u32(0);                // binning_x
-  b.u32(0);                // binning_y
-  b.u32(0);                // roi.x_offset
-  b.u32(0);                // roi.y_offset
-  b.u32(0);                // roi.height
-  b.u32(0);                // roi.width
-  b.bool_(false);          // roi.do_rectify
-  return b.take();
-}
-
-// Convenience overload: identity rotation and a projection matrix that keeps
-// the principal point and focal lengths from K.
+// Serialize a sensor_msgs/msg/CameraInfo. Identity rotation and a projection
+// matrix that preserves the focal lengths and principal point from K.
 std::vector<std::byte> make_camera_info_payload(
   std::uint32_t width, std::uint32_t height, const std::array<double, 9> & K,
   const std::string & frame_id)
 {
   const std::array<double, 9> R{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
-  const std::array<double, 12> P{
-    K[0], 0.0, K[2], 0.0, 0.0, K[4], K[5], 0.0, 0.0, 0.0, 1.0, 0.0};
-  return make_camera_info_payload(width, height, K, {}, R, P, "plumb_bob", frame_id);
+  const std::array<double, 12> P{K[0], 0.0, K[2], 0.0, 0.0, K[4], K[5], 0.0, 0.0, 0.0, 1.0, 0.0};
+
+  CdrBuilder b;
+  b.i32(0);            // header.stamp.sec
+  b.u32(0);            // header.stamp.nanosec
+  b.str(frame_id);     // header.frame_id
+  b.u32(height);       // height
+  b.u32(width);        // width
+  b.str("plumb_bob");  // distortion_model
+  b.fixed_f64_array({K.data(), K.size()});
+  b.f64_seq({});  // D (empty)
+  b.fixed_f64_array({R.data(), R.size()});
+  b.fixed_f64_array({P.data(), P.size()});
+  b.u32(0);        // binning_x
+  b.u32(0);        // binning_y
+  b.u32(0);        // roi.x_offset
+  b.u32(0);        // roi.y_offset
+  b.u32(0);        // roi.height
+  b.u32(0);        // roi.width
+  b.bool_(false);  // roi.do_rectify
+  return b.take();
 }
 
 // Supported intensity channel types for synthetic point clouds.
@@ -226,11 +223,11 @@ std::vector<std::byte> make_point_cloud_payload(
   const std::uint32_t point_step = kXyzStep + intensity_step;
 
   CdrBuilder b;
-  b.i32(0);                         // header.stamp.sec
-  b.u32(0);                         // header.stamp.nanosec
-  b.str(frame_id);                  // header.frame_id
-  b.u32(1);                         // height
-  b.u32(static_cast<std::uint32_t>(points.size()));  // width
+  b.i32(0);                                                           // header.stamp.sec
+  b.u32(0);                                                           // header.stamp.nanosec
+  b.str(frame_id);                                                    // header.frame_id
+  b.u32(1);                                                           // height
+  b.u32(static_cast<std::uint32_t>(points.size()));                   // width
   b.u32(intensity_type == PointCloudIntensityType::kNone ? 3U : 4U);  // field count
   b.str("x");
   b.u32(0);
@@ -250,8 +247,8 @@ std::vector<std::byte> make_point_cloud_payload(
     b.u8(intensity_datatype);
     b.u32(1);
   }
-  b.u8(0);                           // is_bigendian
-  b.u32(point_step);                 // point_step
+  b.u8(0);                                                        // is_bigendian
+  b.u32(point_step);                                              // point_step
   b.u32(point_step * static_cast<std::uint32_t>(points.size()));  // row_step
   std::vector<std::byte> data;
   data.reserve(points.size() * point_step);
@@ -282,8 +279,8 @@ std::vector<std::byte> make_point_cloud_payload(
 
 // Serialize a single /tf_static message carrying one transform.
 std::vector<std::byte> make_tf_static_payload(
-  const std::string & parent, const std::string & child,
-  const std::array<double, 3> & translation, const std::array<double, 4> & rotation)
+  const std::string & parent, const std::string & child, const std::array<double, 3> & translation,
+  const std::array<double, 4> & rotation)
 {
   geometry_msgs::msg::TransformStamped tf;
   tf.header.frame_id = parent;
@@ -299,6 +296,73 @@ std::vector<std::byte> make_tf_static_payload(
   tf.transform.rotation.w = rotation[3];
   const std::vector<geometry_msgs::msg::TransformStamped> transforms{tf};
   return bagwiz::core::serialize_tf_message(transforms);
+}
+
+// Decode the first video frame at `path` to packed BGR24. Returns an empty
+// buffer if decoding fails for any reason.
+std::vector<std::uint8_t> decode_first_frame_bgr24(
+  const std::filesystem::path & path, std::uint32_t & out_w, std::uint32_t & out_h)
+{
+  struct FormatContextDeleter
+  {
+    void operator()(AVFormatContext * p) const { avformat_close_input(&p); }
+  };
+  struct PacketDeleter
+  {
+    void operator()(AVPacket * p) const { av_packet_free(&p); }
+  };
+
+  AVFormatContext * raw_fmt = nullptr;
+  if (avformat_open_input(&raw_fmt, path.string().c_str(), nullptr, nullptr) < 0) {
+    return {};
+  }
+  std::unique_ptr<AVFormatContext, FormatContextDeleter> fmt_ctx(raw_fmt);
+
+  if (avformat_find_stream_info(fmt_ctx.get(), nullptr) < 0) {
+    return {};
+  }
+
+  int video_stream = -1;
+  for (unsigned i = 0; i < fmt_ctx->nb_streams; ++i) {
+    if (fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+      video_stream = static_cast<int>(i);
+      break;
+    }
+  }
+  if (video_stream < 0) {
+    return {};
+  }
+
+  std::unique_ptr<AVPacket, PacketDeleter> pkt(av_packet_alloc());
+  std::vector<std::byte> jpeg_bytes;
+  while (av_read_frame(fmt_ctx.get(), pkt.get()) >= 0) {
+    if (pkt->stream_index != video_stream) {
+      av_packet_unref(pkt.get());
+      continue;
+    }
+    jpeg_bytes.assign(
+      reinterpret_cast<const std::byte *>(pkt->data),
+      reinterpret_cast<const std::byte *>(pkt->data + pkt->size));
+    av_packet_unref(pkt.get());
+    break;
+  }
+  if (jpeg_bytes.empty()) {
+    return {};
+  }
+
+  const auto result = bagwiz::core::image::decode_compressed_image(jpeg_bytes, "jpeg");
+  if (!result.ok()) {
+    return {};
+  }
+
+  out_w = result.image->width;
+  out_h = result.image->height;
+  std::vector<std::uint8_t> out;
+  out.reserve(result.image->bgr.size());
+  for (const auto b : result.image->bgr) {
+    out.push_back(static_cast<std::uint8_t>(b));
+  }
+  return out;
 }
 
 bagwiz::io::TopicInfo make_topic(std::string name, std::string type)
@@ -371,12 +435,9 @@ std::filesystem::path build_compressed_bag(
 std::string infer_camera_info_topic(const std::string & image_topic)
 {
   static constexpr std::array<std::string_view, 6> kSuffixes{
-    "/image_raw/compressed",
-    "/image_rect/compressed",
-    "/image/compressed",
-    "/image_raw",
-    "/image_rect",
-    "/image",
+    "/image_raw/compressed", "/image_rect/compressed",
+    "/image/compressed",     "/image_raw",
+    "/image_rect",           "/image",
   };
   for (const std::string_view suffix : kSuffixes) {
     if (image_topic.size() < suffix.size()) {
@@ -398,7 +459,7 @@ std::string infer_camera_info_topic(const std::string & image_topic)
 std::filesystem::path build_overlay_bag(
   const std::filesystem::path & dir, const std::string & image_topic, bool compressed, int frames,
   std::uint32_t w, std::uint32_t h, const std::vector<std::string> & pcd_topics,
-  bool include_tf_static)
+  bool include_tf_static, PointCloudIntensityType pcd_intensity)
 {
   const std::string camera_info_topic = infer_camera_info_topic(image_topic);
   const std::string camera_frame = "cam";
@@ -420,9 +481,15 @@ std::filesystem::path build_overlay_bag(
 
   // fx and fy chosen so the center of the image maps to (0,0,z) in camera frame.
   const std::array<double, 9> K{
-    static_cast<double>(w) / 2.0, 0.0, static_cast<double>(w) / 2.0,
-    0.0, static_cast<double>(h) / 2.0, static_cast<double>(h) / 2.0,
-    0.0, 0.0, 1.0};
+    static_cast<double>(w) / 2.0,
+    0.0,
+    static_cast<double>(w) / 2.0,
+    0.0,
+    static_cast<double>(h) / 2.0,
+    static_cast<double>(h) / 2.0,
+    0.0,
+    0.0,
+    1.0};
   if (!camera_info_topic.empty()) {
     const auto camera_info_payload = make_camera_info_payload(w, h, K, camera_frame);
     writer->write(
@@ -440,23 +507,23 @@ std::filesystem::path build_overlay_bag(
 
   for (int i = 0; i < frames; ++i) {
     const std::int64_t ts = 1'000'000'000LL + static_cast<std::int64_t>(i) * 100'000'000LL;
+    // Write the pointcloud(s) before the image so the first image already has
+    // a matching cloud in the overlay cache.
+    for (const auto & pcd_topic : pcd_topics) {
+      const auto pcd_payload =
+        make_point_cloud_payload({{0.0f, 0.0f, 10.0f}}, lidar_frame, pcd_intensity);
+      writer->write(
+        pcd_topic, ts, std::span<const std::byte>{pcd_payload.data(), pcd_payload.size()});
+    }
     if (compressed) {
       const auto jpeg = bagwiz::test::encode_still_image("jpeg", w, h, 0, 0, 0);
       const auto image_payload = make_compressed_payload("jpeg", {jpeg.data(), jpeg.size()});
       writer->write(
-        image_topic, ts,
-        std::span<const std::byte>{image_payload.data(), image_payload.size()});
+        image_topic, ts, std::span<const std::byte>{image_payload.data(), image_payload.size()});
     } else {
       const auto image_payload = make_image_payload(w, h, "bgr8", 0);  // black frame
       writer->write(
-        image_topic, ts,
-        std::span<const std::byte>{image_payload.data(), image_payload.size()});
-    }
-    for (const auto & pcd_topic : pcd_topics) {
-      const auto pcd_payload = make_point_cloud_payload({{0.0f, 0.0f, 10.0f}}, lidar_frame);
-      writer->write(
-        pcd_topic, ts,
-        std::span<const std::byte>{pcd_payload.data(), pcd_payload.size()});
+        image_topic, ts, std::span<const std::byte>{image_payload.data(), image_payload.size()});
     }
   }
 
@@ -467,7 +534,19 @@ std::filesystem::path build_overlay_bag(
 std::filesystem::path build_overlay_bag(
   const std::filesystem::path & dir, const std::string & image_topic, bool compressed, int frames)
 {
-  return build_overlay_bag(dir, image_topic, compressed, frames, 16, 16, {"/lidar/points"}, true);
+  return build_overlay_bag(
+    dir, image_topic, compressed, frames, 16, 16, std::vector<std::string>{"/lidar/points"}, true,
+    PointCloudIntensityType::kNone);
+}
+
+std::filesystem::path build_overlay_bag(
+  const std::filesystem::path & dir, const std::string & image_topic, bool compressed, int frames,
+  std::uint32_t w, std::uint32_t h, const std::vector<std::string> & pcd_topics,
+  bool include_tf_static)
+{
+  return build_overlay_bag(
+    dir, image_topic, compressed, frames, w, h, pcd_topics, include_tf_static,
+    PointCloudIntensityType::kNone);
 }
 
 // True if any entry in `dir` looks like a leftover generate-video temp file.
@@ -762,6 +841,27 @@ TEST_F(GenerateVideoTest, OverlaysSinglePointCloud)
   EXPECT_EQ(probe.width, 16U);
   EXPECT_EQ(probe.height, 16U);
   EXPECT_EQ(probe.frame_count, kFrames);
+
+  // Decode the first frame and verify the projected point changed the center
+  // region from the black background.
+  std::uint32_t fw = 0;
+  std::uint32_t fh = 0;
+  const auto first_frame = decode_first_frame_bgr24(out, fw, fh);
+  ASSERT_FALSE(first_frame.empty());
+  EXPECT_EQ(fw, 16U);
+  EXPECT_EQ(fh, 16U);
+
+  bool center_colored = false;
+  for (std::uint32_t y = 7; y <= 9 && !center_colored; ++y) {
+    for (std::uint32_t x = 7; x <= 9; ++x) {
+      const std::size_t idx = (static_cast<std::size_t>(y) * fw + x) * 3;
+      if (first_frame[idx] != 0 || first_frame[idx + 1] != 0 || first_frame[idx + 2] != 0) {
+        center_colored = true;
+        break;
+      }
+    }
+  }
+  EXPECT_TRUE(center_colored);
 }
 
 TEST_F(GenerateVideoTest, InfersCameraInfoFromImageRaw)
@@ -878,10 +978,7 @@ TEST_F(GenerateVideoTest, ExplicitCameraInfoOverridesInference)
   writer->declare_topic(make_topic(pcd_topic, "sensor_msgs/msg/PointCloud2"));
   writer->declare_topic(bagwiz::core::make_tf_message_topic_info("/tf_static"));
 
-  const std::array<double, 9> K{
-    8.0, 0.0, 8.0,
-    0.0, 8.0, 8.0,
-    0.0, 0.0, 1.0};
+  const std::array<double, 9> K{8.0, 0.0, 8.0, 0.0, 8.0, 8.0, 0.0, 0.0, 1.0};
   const auto inferred_payload = make_camera_info_payload(16, 16, K, camera_frame);
   writer->write(
     inferred_topic, 1'000'000'000LL,
@@ -901,12 +998,10 @@ TEST_F(GenerateVideoTest, ExplicitCameraInfoOverridesInference)
     const std::int64_t ts = 1'000'000'000LL + static_cast<std::int64_t>(i) * 100'000'000LL;
     const auto image_payload = make_image_payload(16, 16, "bgr8", 0);
     writer->write(
-      image_topic, ts,
-      std::span<const std::byte>{image_payload.data(), image_payload.size()});
+      image_topic, ts, std::span<const std::byte>{image_payload.data(), image_payload.size()});
     const auto pcd_payload = make_point_cloud_payload({{0.0f, 0.0f, 10.0f}}, lidar_frame);
     writer->write(
-      pcd_topic, ts,
-      std::span<const std::byte>{pcd_payload.data(), pcd_payload.size()});
+      pcd_topic, ts, std::span<const std::byte>{pcd_payload.data(), pcd_payload.size()});
   }
   writer->close();
 
@@ -939,7 +1034,8 @@ TEST_F(GenerateVideoTest, OverlaysMultiplePointCloudsWithColorMap)
 {
   constexpr int kFrames = 2;
   const std::vector<std::string> pcd_topics{"/pcd1", "/pcd2"};
-  const auto in = build_overlay_bag(tmp_dir_, "/cam/image", false, kFrames, 16, 16, pcd_topics, true);
+  const auto in =
+    build_overlay_bag(tmp_dir_, "/cam/image", false, kFrames, 16, 16, pcd_topics, true);
   const auto out = tmp_dir_ / "out.avi";
 
   GenerateVideoArgs args{in, "/cam/image", out, false};
@@ -1002,13 +1098,63 @@ TEST_P(ColorByColorMapTest, CombinesColorByAndColorMap)
 }
 
 INSTANTIATE_TEST_SUITE_P(
-  PointCloudOverlay,
-  ColorByColorMapTest,
+  PointCloudOverlay, ColorByColorMapTest,
   ::testing::Combine(
     ::testing::Values(ColorBy::kX, ColorBy::kY, ColorBy::kZ, ColorBy::kDistance),
     ::testing::Values(
-      ColorMapName::kJet, ColorMapName::kTurbo, ColorMapName::kViridis,
-      ColorMapName::kGrayscale, ColorMapName::kRainbow)));
+      ColorMapName::kJet, ColorMapName::kTurbo, ColorMapName::kViridis, ColorMapName::kGrayscale,
+      ColorMapName::kRainbow)));
+
+// Point clouds that carry a supported intensity datatype can be colored by
+// intensity.
+class IntensityTypeTest : public ::testing::TestWithParam<PointCloudIntensityType>
+{
+protected:
+  void SetUp() override
+  {
+    tmp_dir_ =
+      std::filesystem::temp_directory_path() /
+      ("bagwiz_generate_video_intensity_" +
+       std::to_string(::testing::UnitTest::GetInstance()->random_seed()) + "_" +
+       std::to_string(
+         reinterpret_cast<std::uintptr_t>(  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+           this)));
+    std::filesystem::create_directories(tmp_dir_);
+  }
+  void TearDown() override
+  {
+    std::error_code ec;
+    std::filesystem::remove_all(tmp_dir_, ec);
+  }
+  std::filesystem::path tmp_dir_;
+};
+
+TEST_P(IntensityTypeTest, OverlaysWithIntensityField)
+{
+  constexpr int kFrames = 2;
+  const auto intensity_type = GetParam();
+  const auto in = build_overlay_bag(
+    tmp_dir_, "/cam/image", false, kFrames, 16, 16, {"/lidar/points"}, true, intensity_type);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image", out, false};
+  args.pcd_topics = {"/lidar/points"};
+  args.color_by = ColorBy::kIntensity;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  ASSERT_TRUE(std::filesystem::exists(out));
+  EXPECT_FALSE(any_partial_left(tmp_dir_));
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+  PointCloudOverlay, IntensityTypeTest,
+  ::testing::Values(
+    PointCloudIntensityType::kUint8, PointCloudIntensityType::kUint16,
+    PointCloudIntensityType::kFloat32));
 
 TEST_F(GenerateVideoTest, FailsWhenIntensityFieldMissing)
 {
