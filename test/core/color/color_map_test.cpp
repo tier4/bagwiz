@@ -10,6 +10,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
+#include <cstdint>
+
 namespace
 {
 using bagwiz::core::color::apply;
@@ -41,6 +44,12 @@ TEST(ColorMapTest, GrayscaleIsMonotonic)
   EXPECT_EQ(white.r, 255);
   EXPECT_EQ(black.r, black.g);
   EXPECT_EQ(black.r, black.b);
+
+  for (std::size_t i = 0; i < 255; ++i) {
+    const auto lower = apply(map, static_cast<std::uint8_t>(i));
+    const auto upper = apply(map, static_cast<std::uint8_t>(i + 1));
+    EXPECT_LE(lower.r, upper.r);
+  }
 }
 
 }  // namespace
