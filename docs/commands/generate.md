@@ -32,9 +32,45 @@ bagwiz generate video [OPTIONS] <input> <topic> <output>
 
 ### Options
 
-| Flag          | Description                                                                        |
-| ------------- | ---------------------------------------------------------------------------------- |
-| `--overwrite` | Replace an existing `<output>`. Without it, an existing output path stops the run. |
+| Flag                    | Description                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `--pcd <topic>`         | PointCloud2 topic to overlay. Repeatable to overlay multiple topics.                                                     |
+| `--camera-info <topic>` | CameraInfo topic. Inferred from `<image_topic>` when omitted.                                                            |
+| `--color-by <scalar>`   | Scalar used to color overlaid points: `distance`, `x`, `y`, `z`, or `intensity`. Only with `--pcd`. Default: `distance`. |
+| `--color-map <map>`     | Color map applied to the scalar: `jet`, `turbo`, `viridis`, `grayscale`, or `rainbow`. Only with `--pcd`. Default: `jet`. |
+| `-o, --overwrite`       | Replace an existing `<output>`. Without it, an existing output path stops the run.                                       |
+
+### PointCloud overlay
+
+When one or more `--pcd` topics are given, each image frame is overlaid with the
+latest pointcloud points projected into the camera image plane.
+
+#### CameraInfo inference
+
+If `--camera-info` is omitted, the matching CameraInfo topic is inferred from
+`<image_topic>` by stripping a recognized image suffix and appending
+`/camera_info`:
+
+| Image topic suffix               | Inferred CameraInfo topic |
+| -------------------------------- | ------------------------- |
+| `<prefix>/image_raw/compressed`  | `<prefix>/camera_info`    |
+| `<prefix>/image_rect/compressed` | `<prefix>/camera_info`    |
+| `<prefix>/image/compressed`      | `<prefix>/camera_info`    |
+| `<prefix>/image_raw`             | `<prefix>/camera_info`    |
+| `<prefix>/image_rect`            | `<prefix>/camera_info`    |
+| `<prefix>/image`                 | `<prefix>/camera_info`    |
+
+If no matching CameraInfo topic exists in the bag, the run stops with an error.
+
+#### Overlay behavior
+
+- Requires static TF from the bag. Points are transformed into the camera frame
+  before projection.
+- Projects PointCloud2 points into the camera frame using the CameraInfo
+  intrinsics.
+- Ignores distortion in the initial implementation.
+- Multiple `--pcd` topics can be overlaid. Points are sorted by depth and
+  painted front-to-back.
 
 ### Supported topic types
 
@@ -74,7 +110,7 @@ available) or rebuild FFmpeg with libx264.
   are written. The video is encoded to a sibling temporary file and atomically
   moved into place on success; a failed run leaves **no** partial output and
   **no** leftover temporary file.
-- Dimensions must be even (the 4:2:0 pixel formats these codecs use require it).
+- Dimensions must be even (the 4:2:0 pixel formats these codecs require it).
 
 ### Examples
 
@@ -84,11 +120,15 @@ bagwiz generate video drive.mcap /sensing/camera/image_raw out.mp4
 
 # Render to MJPEG AVI (no libx264 needed), replacing an existing file.
 bagwiz generate video drive_dir/ /sensing/camera/image_raw clip.avi --overwrite
+
+# Overlay a LiDAR pointcloud onto the camera image, coloring by height.
+bagwiz generate video drive.mcap /sensing/camera/image_raw out.mp4 \
+  --pcd /sensing/lidar/points --color-by z --color-map turbo -o
 ```
 
 ## Exit status
 
-| Code | Meaning                                                                                                                                                                                                                                                                                                                               |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | The video was written successfully.                                                                                                                                                                                                                                                                                                   |
-| `1`  | The input could not be opened; the topic was not found or is an unsupported type; the topic has no messages; the image encoding is unsupported; the output extension is unsupported or its codec is unavailable; `<output>` exists without `--overwrite`; a frame changed geometry mid-stream; or a read/encode/write error occurred. |
+| Code | Meaning |
+| ---- | ------- |
+| `0`  | The video was written successfully. |
+| `1`  | The input could not be opened; the topic was not found or is an unsupported type; the topic has no messages; the image encoding is unsupported; the output extension is unsupported or its codec is unavailable; `<output>` exists without `--overwrite`; a frame changed geometry mid-stream; a `--pcd` topic was not found or has the wrong type; the CameraInfo topic could not be inferred or was not found; static TF is missing; or a read/encode/write error occurred. |
