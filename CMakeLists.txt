@@ -192,6 +192,7 @@ add_library(bagwiz_core
   src/core/image/raw_image.cpp
   src/core/image/compressed_image.cpp
   src/core/image/image_decoder.cpp
+  src/core/color/color_map.cpp
   src/core/camera/camera_info.cpp
   src/core/pointcloud/point_cloud_reader.cpp
   src/core/video/frame_rate.cpp
@@ -439,6 +440,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_raw_image_test test/core/image/raw_image_test.cpp)
   target_link_libraries(bagwiz_raw_image_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_color_map_test test/core/color/color_map_test.cpp)
+  target_link_libraries(bagwiz_color_map_test bagwiz_core)
 
   ament_add_gtest(bagwiz_compressed_image_test test/core/image/compressed_image_test.cpp)
   target_link_libraries(bagwiz_compressed_image_test bagwiz_core)
