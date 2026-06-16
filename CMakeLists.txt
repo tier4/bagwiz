@@ -179,6 +179,7 @@ add_library(bagwiz_core
   src/core/bag_copy.cpp
   src/core/bag_inplace.cpp
   src/core/bag_topic_plan.cpp
+  src/core/pipeline/stage_profiler.cpp
   src/core/topic_match.cpp
   src/core/broken_bag.cpp
   src/core/tf_chain.cpp
@@ -413,6 +414,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_bag_copy_test test/core/bag_copy_test.cpp)
   target_link_libraries(bagwiz_bag_copy_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_stage_profiler_test test/core/pipeline/stage_profiler_test.cpp)
+  target_link_libraries(bagwiz_stage_profiler_test bagwiz_core)
 
   ament_add_gtest(bagwiz_bag_inplace_test test/core/bag_inplace_test.cpp)
   target_link_libraries(bagwiz_bag_inplace_test bagwiz_core)

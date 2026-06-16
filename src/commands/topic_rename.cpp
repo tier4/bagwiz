@@ -85,7 +85,7 @@ int execute_rename_pass(
   core::BagCopyRenameCounts counts;
   try {
     const std::unordered_map<std::string, std::string> rename{{args.src_topic, args.dst_topic}};
-    counts = core::bag_copy_renamed(*reader, *writer, rename);
+    counts = core::bag_copy_renamed(*reader, *writer, rename, "topic rename");
   } catch (const std::exception & e) {
     BAGWIZ_LOG_ERROR(kLogger, "Stream copy from %s failed: %s", args.input_path.c_str(), e.what());
     return 1;

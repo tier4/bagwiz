@@ -83,7 +83,7 @@ int execute_keep_pass(
 
   core::BagCopyCounts counts;
   try {
-    counts = core::bag_copy_filtered(*reader, *writer, suppress);
+    counts = core::bag_copy_filtered(*reader, *writer, suppress, "topic keep");
   } catch (const std::exception & e) {
     BAGWIZ_LOG_ERROR(kLogger, "Stream copy from %s failed: %s", args.input_path.c_str(), e.what());
     return 1;

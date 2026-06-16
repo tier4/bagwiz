@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -40,11 +41,17 @@ struct BagCopyCounts
 // in `suppress` are dropped; the rest are forwarded to `writer` with
 // the original `timestamp_ns` and payload preserved.
 //
+// When `profile_label` is non-empty AND the BAGWIZ_PROFILE environment
+// variable is set, the loop times the read and write stages and logs a
+// per-stage bottleneck report under that label on completion. The
+// instrumentation is off the hot path otherwise (no clock reads).
+//
 // Throws whatever the underlying reader / writer throws on I/O error;
 // partial progress is visible through the returned counters when an
 // exception propagates.
 BagCopyCounts bag_copy_filtered(
-  io::BagReader & reader, io::BagWriter & writer, const std::unordered_set<std::string> & suppress);
+  io::BagReader & reader, io::BagWriter & writer, const std::unordered_set<std::string> & suppress,
+  std::string_view profile_label = "");
 
 struct BagCopyRenameCounts
 {
@@ -61,13 +68,16 @@ struct BagCopyRenameCounts
 // which supplies a single old->new entry; the map form keeps the helper general
 // and trivially testable.
 //
+// `profile_label` behaves as in bag_copy_filtered: a non-empty label plus
+// BAGWIZ_PROFILE enables a per-stage timing report.
+//
 // The caller is responsible for declaring the destination topic(s) on `writer`
 // before calling this (writers reject a write to an undeclared topic). Throws
 // whatever the underlying reader / writer throws on I/O error; partial progress
 // is visible through the returned counters when an exception propagates.
 BagCopyRenameCounts bag_copy_renamed(
   io::BagReader & reader, io::BagWriter & writer,
-  const std::unordered_map<std::string, std::string> & rename);
+  const std::unordered_map<std::string, std::string> & rename, std::string_view profile_label = "");
 
 }  // namespace bagwiz::core
 
