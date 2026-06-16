@@ -109,9 +109,9 @@ constexpr std::array<TopicArgBinding, 8> kTopicBindings{{
   // bag; <dst_topic> is a new name with nothing to suggest, so the binding is
   // non-variadic and fires at the single topic_word.
   {"topic", "rename", kSecondCommandArgWord, kThirdCommandArgWord, {}, false},
-  // `generate video <input> <topic> <output>`: complete the single <topic> slot
-  // from the bag's image topics (kGenerateVideoSupportedTypes). <input> and
-  // <output> are paths that fall through to the shell's file completion.
+  // `generate video <input> <image_topic> <output>`: complete the single
+  // <image_topic> slot from the bag's image topics (kGenerateVideoSupportedTypes).
+  // <input> and <output> are paths that fall through to the shell's file completion.
   {"generate", "video", kSecondCommandArgWord, kThirdCommandArgWord, kGenerateVideoSupportedTypes,
    false},
 }};
@@ -892,12 +892,14 @@ std::vector<std::string> complete_topic(const CompletionRequest & request)
 
 // `generate` is a command group for producing media from a rosbag; its sole
 // subcommand is `video`. At the subcommand slot (word 1) the only candidate is
-// `video`. The <topic> positional is completed earlier by try_topic_completion
+// `video`. The <image_topic> positional is completed earlier by try_topic_completion
 // via kTopicBindings (image topics only); <input>/<output> are paths that fall
 // through to the shell's file completion. Here we surface `video` plus its own
 // flags for any `-` word.
 //
-//   video: `generate`(0) `video`(1) `<input>`(2) `<topic>`(3) `<output>`(4) [--overwrite]
+//   video: `generate`(0) `video`(1) `<input>`(2) `<image_topic>`(3) `<output>`(4)
+//          [--pcd ...] [--camera-info <topic>] [--color-by <scalar>] [--color-map <map>]
+//          [-o|--overwrite]
 std::vector<std::string> complete_generate(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -911,7 +913,10 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & sub = request.words[kFirstCommandArgWord];
     if (sub == "video") {
-      return matching(with_help({"--overwrite"}), current);
+      return matching(
+        with_help(
+          {"--camera-info", "--color-by", "--color-map", "--overwrite", "--pcd", "-o"}),
+        current);
     }
   }
   return {};

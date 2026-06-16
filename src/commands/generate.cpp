@@ -9,14 +9,10 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/generate_video.hpp"
-#include "bagwiz/core/color/color_map.hpp"
 #include "bagwiz/core/logging.hpp"
-#include "bagwiz/core/pointcloud/types.hpp"
 
 #include <map>
-#include <optional>
 #include <string_view>
-#include <vector>
 
 namespace bagwiz::commands
 {
@@ -79,8 +75,7 @@ private:
         "Output video path. Its extension selects the output format: "
         ".mp4/.mkv/.mov -> H.264, .avi -> MJPEG.")
       ->required();
-    sub->add_option("--pcd", video_args_.pcd_topics, "PointCloud2 topics to overlay (may be repeated).")
-      ->expected(0, -1);
+    sub->add_option("--pcd", video_args_.pcd_topics, "PointCloud2 topics to overlay (may be repeated).");
     sub->add_option(
       "--camera-info", video_args_.camera_info_topic,
       "CameraInfo topic. If omitted, inferred from <image_topic>.");

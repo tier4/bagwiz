@@ -1086,13 +1086,13 @@ TEST(FlagCompletionTest, GenerateParentDashListsHelpFlags)
     run_completion({"bagwiz", "__complete", "2", "bagwiz", "generate", "-"}), "--help\n-h\n");
 }
 
-// `generate video -` surfaces the action's --overwrite flag plus the implicit
-// help flags, sorted.
+// `generate video -` surfaces the action's flags plus the implicit help flags,
+// sorted.
 TEST(FlagCompletionTest, GenerateVideoDashListsVideoFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "generate", "video", "-"}),
-    "--help\n--overwrite\n-h\n");
+    "--camera-info\n--color-by\n--color-map\n--help\n--overwrite\n--pcd\n-h\n-o\n");
 }
 
 // `generate video <bag> <TAB>` (the <topic> slot) lists only the bag's image
