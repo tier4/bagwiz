@@ -41,20 +41,24 @@ struct GenerateVideoArgs
 
 // Classification of whether a topic can be rendered to video.
 enum class VideoSourceStatus {
-  kOk,               // topic present and a supported message type
-  kInputUnopenable,  // the bag could not be opened
-  kTopicNotFound,    // no topic by that name in the bag
-  kUnsupportedType,  // topic present but its message type is not renderable
+  kOk,                     // topic present and a supported message type
+  kInputUnopenable,        // the bag could not be opened
+  kTopicNotFound,          // no topic by that name in the bag
+  kUnsupportedType,        // topic present but its message type is not renderable
+  kPcdTopicInvalid,        // a --pcd topic is missing or not sensor_msgs/msg/PointCloud2
+  kCameraInfoTopicInvalid  // the CameraInfo topic is missing or not sensor_msgs/msg/CameraInfo
 };
 
 // Outcome of check_video_source(). `topic_type` is set whenever the topic was
-// found (kOk or kUnsupportedType); `message` is a human-readable, log-verbatim
-// explanation on any non-kOk status. Never throws.
+// found (kOk or kUnsupportedType); `camera_info_topic` is set when the check
+// resolved a CameraInfo topic for pointcloud overlay; `message` is a
+// human-readable, log-verbatim explanation on any non-kOk status. Never throws.
 struct VideoSourceCheck
 {
   VideoSourceStatus status = VideoSourceStatus::kInputUnopenable;
   std::string topic_type;
   std::string message;
+  std::optional<std::string> camera_info_topic;
 
   [[nodiscard]] bool ok() const noexcept { return status == VideoSourceStatus::kOk; }
 };
@@ -64,6 +68,13 @@ struct VideoSourceCheck
 // sensor_msgs/msg/CompressedImage. Reads only the topic list, never payloads.
 [[nodiscard]] VideoSourceCheck check_video_source(
   const std::filesystem::path & input, const std::string & topic);
+
+// Extended source check used when pointcloud overlay is requested. Validates
+// the image topic, each --pcd topic, and resolves the CameraInfo topic (from
+// --camera-info if provided, otherwise inferred from the image topic). The
+// resolved CameraInfo topic is returned in `camera_info_topic` on success.
+[[nodiscard]] VideoSourceCheck check_video_source(
+  const std::filesystem::path & input, const GenerateVideoArgs & args);
 
 // Render `args.topic` from `args.input_path` to a video at `args.output_path`,
 // inferring the container/codec from the output extension and the frame rate

@@ -134,8 +134,8 @@ constexpr const char * kCompressedTopic = "/cam/image/compressed";
 constexpr const char * kCompressedType = "sensor_msgs/msg/CompressedImage";
 
 // Build an MCAP bag with an Image topic (`frames` messages at 100 ms spacing,
-// WxH, `encoding`) plus a CompressedImage topic and a lidar topic (declared so
-// type-based validation can be exercised).
+// WxH, `encoding`) plus a CompressedImage topic, a lidar topic, and a
+// CameraInfo topic (declared so overlay validation can be exercised).
 std::filesystem::path build_bag(
   const std::filesystem::path & dir, int frames, std::uint32_t w, std::uint32_t h,
   const std::string & encoding)
@@ -145,6 +145,7 @@ std::filesystem::path build_bag(
   writer->declare_topic(make_topic(kImageTopic, kImageType));
   writer->declare_topic(make_topic("/cam/image/compressed", "sensor_msgs/msg/CompressedImage"));
   writer->declare_topic(make_topic("/sensing/lidar", "sensor_msgs/msg/PointCloud2"));
+  writer->declare_topic(make_topic("/cam/camera_info", "sensor_msgs/msg/CameraInfo"));
   for (int i = 0; i < frames; ++i) {
     const auto payload = make_image_payload(w, h, encoding, static_cast<std::uint8_t>(i * 20));
     const std::int64_t ts = 1'000'000'000LL + static_cast<std::int64_t>(i) * 100'000'000LL;
@@ -242,6 +243,69 @@ TEST_F(GenerateVideoTest, CheckInputUnopenable)
   EXPECT_EQ(
     check_video_source(tmp_dir_ / "does_not_exist", kImageTopic).status,
     VideoSourceStatus::kInputUnopenable);
+}
+
+TEST_F(GenerateVideoTest, CheckInfersCameraInfoFromImageRaw)
+{
+  const auto in = build_bag(tmp_dir_, 2, 16, 16, "bgr8");
+  GenerateVideoArgs args{in, kImageTopic, tmp_dir_ / "out.avi", false};
+  args.pcd_topics = {"/sensing/lidar"};
+  const auto c = check_video_source(in, args);
+  EXPECT_EQ(c.status, VideoSourceStatus::kOk);
+  ASSERT_TRUE(c.camera_info_topic.has_value());
+  EXPECT_EQ(*c.camera_info_topic, "/cam/camera_info");
+}
+
+TEST_F(GenerateVideoTest, CheckInfersCameraInfoFromCompressedImage)
+{
+  const auto in = build_bag(tmp_dir_, 2, 16, 16, "bgr8");
+  GenerateVideoArgs args{in, "/cam/image/compressed", tmp_dir_ / "out.avi", false};
+  args.pcd_topics = {"/sensing/lidar"};
+  const auto c = check_video_source(in, args);
+  EXPECT_EQ(c.status, VideoSourceStatus::kOk);
+  ASSERT_TRUE(c.camera_info_topic.has_value());
+  EXPECT_EQ(*c.camera_info_topic, "/cam/camera_info");
+}
+
+TEST_F(GenerateVideoTest, CheckExplicitCameraInfoTopic)
+{
+  const auto in = build_bag(tmp_dir_, 2, 16, 16, "bgr8");
+  GenerateVideoArgs args{in, kImageTopic, tmp_dir_ / "out.avi", false};
+  args.pcd_topics = {"/sensing/lidar"};
+  args.camera_info_topic = "/cam/camera_info";
+  const auto c = check_video_source(in, args);
+  EXPECT_EQ(c.status, VideoSourceStatus::kOk);
+  ASSERT_TRUE(c.camera_info_topic.has_value());
+  EXPECT_EQ(*c.camera_info_topic, "/cam/camera_info");
+}
+
+std::filesystem::path build_bag_with_image_topic(
+  const std::filesystem::path & dir, const std::string & image_topic)
+{
+  const auto path = dir / "input";
+  auto writer = bagwiz::io::open_write(path, mcap_dir_opts());
+  writer->declare_topic(make_topic(image_topic, kImageType));
+  writer->declare_topic(make_topic("/sensing/lidar", "sensor_msgs/msg/PointCloud2"));
+  writer->close();
+  return path;
+}
+
+TEST_F(GenerateVideoTest, CheckRejectsMissingCameraInfoInference)
+{
+  // Image topic name does not match any CameraInfo inference suffix and no
+  // explicit --camera-info is given, so overlay validation must fail.
+  const auto in = build_bag_with_image_topic(tmp_dir_, "/other/image");
+  GenerateVideoArgs args{in, "/other/image", tmp_dir_ / "out.avi", false};
+  args.pcd_topics = {"/sensing/lidar"};
+  EXPECT_EQ(check_video_source(in, args).status, VideoSourceStatus::kCameraInfoTopicInvalid);
+}
+
+TEST_F(GenerateVideoTest, CheckRejectsInvalidPcdTopicType)
+{
+  const auto in = build_bag(tmp_dir_, 2, 16, 16, "bgr8");
+  GenerateVideoArgs args{in, kImageTopic, tmp_dir_ / "out.avi", false};
+  args.pcd_topics = {kImageTopic};  // not a PointCloud2
+  EXPECT_EQ(check_video_source(in, args).status, VideoSourceStatus::kPcdTopicInvalid);
 }
 
 // ---- run_generate_video: failure paths ------------------------------------
