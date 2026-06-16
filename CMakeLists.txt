@@ -185,6 +185,7 @@ add_library(bagwiz_core
   src/core/tf_merge_check.cpp
   src/core/tf_message_wire.cpp
   src/core/tf_transform_format.cpp
+  src/core/tf_static_loader.cpp
   src/core/tf_value_extract.cpp
   src/core/tf_walk_timeline.cpp
   src/core/trajectory.cpp
