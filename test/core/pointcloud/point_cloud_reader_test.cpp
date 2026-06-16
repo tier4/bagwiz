@@ -50,8 +50,7 @@ std::array<std::byte, 4> f32_bytes(float v, bool big_endian = false)
 std::array<std::byte, 2> u16_bytes(std::uint16_t v, bool big_endian = false)
 {
   std::array<std::byte, 2> bytes{
-    static_cast<std::byte>(v & 0xFFU),
-    static_cast<std::byte>((v >> 8) & 0xFFU)};
+    static_cast<std::byte>(v & 0xFFU), static_cast<std::byte>((v >> 8) & 0xFFU)};
   if (big_endian) {
     std::reverse(bytes.begin(), bytes.end());
   }
@@ -162,12 +161,8 @@ private:
 };
 
 std::vector<std::byte> make_payload(
-  const std::vector<FieldDesc> & fields,
-  std::uint32_t width,
-  std::uint32_t height,
-  std::uint32_t point_step,
-  std::span<const std::byte> data,
-  bool big_endian = false,
+  const std::vector<FieldDesc> & fields, std::uint32_t width, std::uint32_t height,
+  std::uint32_t point_step, std::span<const std::byte> data, bool big_endian = false,
   std::uint32_t row_step = 0)
 {
   CdrBuilder b(big_endian);
@@ -180,16 +175,17 @@ std::vector<std::byte> make_payload(
   for (const auto & f : fields) {
     b.field(f.name, f.offset, f.datatype, f.count);
   }
-  b.bool_(big_endian);                               // is_bigendian
-  b.u32(point_step);                                 // point_step
+  b.bool_(big_endian);                                   // is_bigendian
+  b.u32(point_step);                                     // point_step
   b.u32(row_step == 0 ? point_step * width : row_step);  // row_step
   b.byte_seq(data);
-  b.bool_(true);                                     // is_dense
+  b.bool_(true);  // is_dense
   return std::vector<std::byte>(b.view().begin(), b.view().end());
 }
 
 std::vector<std::byte> make_xyz_uint8_points(
-  const std::vector<std::tuple<float, float, float, std::uint8_t>> & points, bool big_endian = false)
+  const std::vector<std::tuple<float, float, float, std::uint8_t>> & points,
+  bool big_endian = false)
 {
   std::vector<std::byte> data;
   for (const auto & p : points) {
@@ -216,7 +212,7 @@ TEST(PointCloudReaderTest, ExtractsXYZIntensityUint8)
       {"x", 0, 7},
       {"y", 4, 7},
       {"z", 8, 7},
-      {"intensity", 12, 1},
+      {"intensity", 12, 2},
     },
     2, 1, 16, data);
 
@@ -234,7 +230,7 @@ TEST(PointCloudReaderTest, ExtractsXYZIntensityUint8)
   EXPECT_EQ(*result.view->y_offset, 4U);
   EXPECT_EQ(*result.view->z_offset, 8U);
   EXPECT_EQ(*result.view->intensity_offset, 12U);
-  EXPECT_EQ(result.view->intensity_datatype, 1U);
+  EXPECT_EQ(result.view->intensity_datatype, 2U);
 
   const auto x0 = read_float_field(*result.view, 0, *result.view->x_offset);
   ASSERT_TRUE(x0.has_value());
@@ -274,14 +270,52 @@ TEST(PointCloudReaderTest, ExtractsXYZIntensityUint16)
       {"x", 0, 7},
       {"y", 4, 7},
       {"z", 8, 7},
-      {"intensity", 12, 2},
+      {"intensity", 12, 4},
     },
     2, 1, 16, data);
 
   const auto result = extract_point_cloud(payload);
   ASSERT_TRUE(result.ok()) << result.error;
   ASSERT_TRUE(result.view->intensity_offset.has_value());
-  EXPECT_EQ(result.view->intensity_datatype, 2U);
+  EXPECT_EQ(result.view->intensity_datatype, 4U);
+  const auto i0 = read_intensity(*result.view, 0);
+  ASSERT_TRUE(i0.has_value());
+  EXPECT_FLOAT_EQ(*i0, 0.0f);
+  const auto i1 = read_intensity(*result.view, 1);
+  ASSERT_TRUE(i1.has_value());
+  EXPECT_FLOAT_EQ(*i1, 1.0f);
+}
+
+TEST(PointCloudReaderTest, ExtractsXYZIntensityUint16BigEndian)
+{
+  constexpr bool big_endian = true;
+  // 2 points: x/y/z float32 (12 bytes) + big-endian uint16 intensity + 2 pad = 16 bytes.
+  std::vector<std::byte> data;
+  const auto append_point = [&](float x, float y, float z, std::uint16_t intensity) {
+    append_bytes(data, f32_bytes(x, big_endian));
+    append_bytes(data, f32_bytes(y, big_endian));
+    append_bytes(data, f32_bytes(z, big_endian));
+    append_bytes(data, u16_bytes(intensity, big_endian));
+    data.push_back(std::byte{0});
+    data.push_back(std::byte{0});
+  };
+  append_point(1.0f, 2.0f, 3.0f, 0);
+  append_point(4.0f, 5.0f, 6.0f, 65535);
+
+  const auto payload = make_payload(
+    {
+      {"x", 0, 7},
+      {"y", 4, 7},
+      {"z", 8, 7},
+      {"intensity", 12, 4},
+    },
+    2, 1, 16, data, big_endian);
+
+  const auto result = extract_point_cloud(payload);
+  ASSERT_TRUE(result.ok()) << result.error;
+  EXPECT_TRUE(result.view->is_bigendian);
+  ASSERT_TRUE(result.view->intensity_offset.has_value());
+  EXPECT_EQ(result.view->intensity_datatype, 4U);
   const auto i0 = read_intensity(*result.view, 0);
   ASSERT_TRUE(i0.has_value());
   EXPECT_FLOAT_EQ(*i0, 0.0f);
@@ -417,7 +451,7 @@ TEST(PointCloudReaderTest, RejectsWrongXDatatype)
   }
   const auto payload = make_payload(
     {
-      {"x", 0, 1},  // UINT8 in the task's convention, not FLOAT32.
+      {"x", 0, 2},  // UINT8, not FLOAT32.
       {"y", 4, 7},
       {"z", 8, 7},
     },

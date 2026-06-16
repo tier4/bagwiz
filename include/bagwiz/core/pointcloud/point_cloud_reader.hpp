@@ -20,7 +20,8 @@ namespace bagwiz::core::pointcloud
 
 // A view into a decoded sensor_msgs/msg/PointCloud2 payload. The `data` span
 // references the original payload buffer and is not owned by this struct.
-struct PointCloudView {
+struct PointCloudView
+{
   std::uint32_t width = 0;
   std::uint32_t height = 0;
   std::string frame_id;
@@ -41,7 +42,8 @@ struct PointCloudView {
 // Outcome of extract_point_cloud(). On success `view` holds the decoded
 // metadata and a non-owning view of the point data; on failure `view` is empty
 // and `error` carries a human-readable reason. Never throws.
-struct PointCloudResult {
+struct PointCloudResult
+{
   std::optional<PointCloudView> view;
   std::string error;
 

@@ -26,8 +26,8 @@ namespace bagwiz::core::pointcloud
 namespace
 {
 
-constexpr std::uint8_t kUint8 = 1;
-constexpr std::uint8_t kUint16 = 2;
+constexpr std::uint8_t kUint8 = 2;
+constexpr std::uint8_t kUint16 = 4;
 constexpr std::uint8_t kFloat32 = 7;
 
 template <typename T>
@@ -84,9 +84,6 @@ std::optional<float> read_intensity(const PointCloudView & view, std::size_t poi
   }
   const std::size_t base = point_index * static_cast<std::size_t>(view.point_step);
   const std::size_t offset = *view.intensity_offset;
-  if (base + offset >= view.data.size()) {
-    return std::nullopt;
-  }
 
   switch (view.intensity_datatype) {
     case kUint8: {
@@ -129,8 +126,8 @@ PointCloudResult extract_point_cloud(std::span<const std::byte> payload)
   try {
     cdr_walker::CdrReader reader(payload);
 
-    (void)reader.read_i32();   // header.stamp.sec
-    (void)reader.read_u32();   // header.stamp.nanosec
+    (void)reader.read_i32();  // header.stamp.sec
+    (void)reader.read_u32();  // header.stamp.nanosec
     PointCloudView view;
     view.frame_id = reader.read_string();
 
@@ -204,8 +201,7 @@ PointCloudResult extract_point_cloud(std::span<const std::byte> payload)
       return result;
     }
 
-    const std::size_t expected_data_size =
-      static_cast<std::size_t>(view.row_step) * view.height;
+    const std::size_t expected_data_size = static_cast<std::size_t>(view.row_step) * view.height;
     if (view.data.size() != expected_data_size) {
       result.error = "data size does not match row_step * height";
       return result;
@@ -214,10 +210,9 @@ PointCloudResult extract_point_cloud(std::span<const std::byte> payload)
     const auto field_fits = [&](std::size_t offset, std::size_t size) {
       return offset + size <= static_cast<std::size_t>(view.point_step);
     };
-    if (!field_fits(*x_offset, sizeof(float)) ||
-        !field_fits(*y_offset, sizeof(float)) ||
-        !field_fits(*z_offset, sizeof(float)))
-    {
+    if (
+      !field_fits(*x_offset, sizeof(float)) || !field_fits(*y_offset, sizeof(float)) ||
+      !field_fits(*z_offset, sizeof(float))) {
       result.error = "x/y/z offset exceeds point_step";
       return result;
     }
