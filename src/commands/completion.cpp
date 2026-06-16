@@ -68,6 +68,15 @@ constexpr std::array<std::string_view, 4> kTrajDumpSupportedTypes{{
 // `tf tree` renders only tf2_msgs/msg/TFMessage topics.
 constexpr std::array<std::string_view, 1> kTfTreeSupportedTypes{{kTfMessageType}};
 
+// Image topic types `generate video` operates on. This MUST mirror
+// is_supported_type() in src/commands/generate_video.cpp; keep the two in sync.
+// As with `traj dump` / `tf tree`, a topic typed as anything outside this set is
+// rejected by the command, so completion never offers it.
+constexpr std::array<std::string_view, 2> kGenerateVideoSupportedTypes{{
+  "sensor_msgs/msg/Image",
+  "sensor_msgs/msg/CompressedImage",
+}};
+
 // Declarative table of commands that take a positional <topic> argument.
 // `subcommand` is empty when the command has no subcommand level (e.g.
 // `bagwiz walk <input> <topic>`). `input_word` and `topic_word` are
@@ -89,7 +98,7 @@ struct TopicArgBinding
   bool variadic{false};
 };
 
-constexpr std::array<TopicArgBinding, 7> kTopicBindings{{
+constexpr std::array<TopicArgBinding, 8> kTopicBindings{{
   {"walk", "", kFirstCommandArgWord, kSecondCommandArgWord, {}, false},
   {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord, kTrajDumpSupportedTypes, false},
   {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord, {}, false},
@@ -100,6 +109,11 @@ constexpr std::array<TopicArgBinding, 7> kTopicBindings{{
   // bag; <dst_topic> is a new name with nothing to suggest, so the binding is
   // non-variadic and fires at the single topic_word.
   {"topic", "rename", kSecondCommandArgWord, kThirdCommandArgWord, {}, false},
+  // `generate video <input> <topic> <output>`: complete the single <topic> slot
+  // from the bag's image topics (kGenerateVideoSupportedTypes). <input> and
+  // <output> are paths that fall through to the shell's file completion.
+  {"generate", "video", kSecondCommandArgWord, kThirdCommandArgWord, kGenerateVideoSupportedTypes,
+   false},
 }};
 
 enum class CompletionShell { Bash, Zsh, Fish };
@@ -876,6 +890,33 @@ std::vector<std::string> complete_topic(const CompletionRequest & request)
   return {};
 }
 
+// `generate` is a command group for producing media from a rosbag; its sole
+// subcommand is `video`. At the subcommand slot (word 1) the only candidate is
+// `video`. The <topic> positional is completed earlier by try_topic_completion
+// via kTopicBindings (image topics only); <input>/<output> are paths that fall
+// through to the shell's file completion. Here we surface `video` plus its own
+// flags for any `-` word.
+//
+//   video: `generate`(0) `video`(1) `<input>`(2) `<topic>`(3) `<output>`(4) [--overwrite]
+std::vector<std::string> complete_generate(const CompletionRequest & request)
+{
+  const auto current = current_word(request);
+  if (request.cursor_word == kFirstCommandArgWord) {
+    if (current.starts_with("-")) {
+      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
+    }
+    return matching({"video"}, current);
+  }
+
+  if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
+    const auto & sub = request.words[kFirstCommandArgWord];
+    if (sub == "video") {
+      return matching(with_help({"--overwrite"}), current);
+    }
+  }
+  return {};
+}
+
 std::vector<std::string> complete_request(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -902,6 +943,9 @@ std::vector<std::string> complete_request(const CompletionRequest & request)
   }
   if (command == "topic") {
     return complete_topic(request);
+  }
+  if (command == "generate") {
+    return complete_generate(request);
   }
   if (command == "ls" || command == "walk") {
     return complete_help_only(request);

@@ -245,6 +245,34 @@ std::filesystem::path write_traj_dump_mixed_fixture(const std::filesystem::path 
   return path;
 }
 
+// MCAP carrying one raw image topic (/image), one compressed image topic
+// (/image/compressed), and one non-image topic (/points). Used to verify
+// `generate video` <topic> completion offers both image types it operates on
+// (sensor_msgs/msg/Image and sensor_msgs/msg/CompressedImage) while excluding
+// every non-image topic. Topic metadata alone drives completion, so the
+// payloads are arbitrary bytes.
+std::filesystem::path write_image_topics_fixture(const std::filesystem::path & path)
+{
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Mcap;
+  options.layout = bagwiz::io::Layout::SingleFile;
+  options.mcap_compression = "none";
+
+  constexpr std::array<std::byte, 4> kPayload{
+    std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}};
+  const auto bytes = std::span<const std::byte>(kPayload.data(), kPayload.size());
+
+  auto writer = bagwiz::io::open_write(path, options);
+  writer->declare_topic(make_topic("/image", "sensor_msgs/msg/Image"));
+  writer->declare_topic(make_topic("/image/compressed", "sensor_msgs/msg/CompressedImage"));
+  writer->declare_topic(make_topic("/points", "sensor_msgs/msg/PointCloud2"));
+  writer->write("/image", 1'000'000'000, bytes);
+  writer->write("/image/compressed", 2'000'000'000, bytes);
+  writer->write("/points", 3'000'000'000, bytes);
+  writer->close();
+  return path;
+}
+
 std::string run_completion(std::vector<std::string> args)
 {
   std::vector<char *> argv;
@@ -1042,6 +1070,96 @@ TEST(FlagCompletionTest, TopicKeepDashListsKeepFlags)
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "topic", "keep", "-"}),
     "--help\n--output\n--overwrite\n-h\n-o\n");
+}
+
+// `bagwiz generate <TAB>` lists the command group's single subcommand.
+TEST(FlagCompletionTest, GenerateSubcommandListsVideo)
+{
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "generate", ""}), "video\n");
+}
+
+// `bagwiz generate -` is the command-group slot; only the implicit help flags
+// appear (video's own flags live one slot deeper).
+TEST(FlagCompletionTest, GenerateParentDashListsHelpFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "generate", "-"}), "--help\n-h\n");
+}
+
+// `generate video -` surfaces the action's --overwrite flag plus the implicit
+// help flags, sorted.
+TEST(FlagCompletionTest, GenerateVideoDashListsVideoFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "generate", "video", "-"}),
+    "--help\n--overwrite\n-h\n");
+}
+
+// `generate video <bag> <TAB>` (the <topic> slot) lists only the bag's image
+// topics — /image (Image) and /image/compressed (CompressedImage) here —
+// excluding the non-image /points, sorted.
+TEST_F(CompletionTest, GenerateVideoTopicSlotListsOnlyImageTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_image_topics_fixture(tmp_dir_ / "images.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "~/images.mcap"}),
+    "/image\n/image/compressed\n");
+}
+
+// A typed prefix narrows the <topic> candidates within the image-type set.
+TEST_F(CompletionTest, GenerateVideoTopicSlotRespectsPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_image_topics_fixture(tmp_dir_ / "images.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "~/images.mcap", "/image/"}),
+    "/image/compressed\n");
+}
+
+// A prefix that matches only a non-image topic (/points) yields nothing: the
+// type filter excludes it even though the name matches.
+TEST_F(CompletionTest, GenerateVideoTopicSlotExcludesUnsupportedTypeOnPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_image_topics_fixture(tmp_dir_ / "images.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "~/images.mcap", "/p"}),
+    "");
+}
+
+// A bag with no image topic yields no <topic> candidates, so the shell's default
+// file completion takes over (matches walk/traj/tf behavior).
+TEST_F(CompletionTest, GenerateVideoTopicSlotEmptyWhenNoImageTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "no_image.mcap");  // String + Int32, no image
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "~/no_image.mcap"}),
+    "");
+}
+
+// A flag in the input slot must not cause the topic binding to call the bag
+// reader on a flag-shaped path; the binding's earlier-slot guard bails out.
+TEST_F(CompletionTest, GenerateVideoTopicSlotSuppressedWhenInputSlotIsFlag)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_image_topics_fixture(tmp_dir_ / "images.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "--unknown-flag"}),
+    "");
 }
 
 TEST(SupportedShellsTest, ListsBashZshAndFish)

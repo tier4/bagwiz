@@ -138,13 +138,16 @@ source ~/.config/fish/completions/bagwiz.fish
   `-<TAB>` also surfaces `--version`. The covered positions are:
   - `bagwiz -<TAB>` → `--help`, `--version`, `-h`
   - `bagwiz <cmd> -<TAB>` for every registered command (including
-    `complete`, `convert`, `ls`, `tf`, `traj`, `walk`)
+    `complete`, `convert`, `generate`, `ls`, `tf`, `topic`, `traj`, `walk`)
   - `bagwiz <cmd> <subcommand> -<TAB>` for every nested subcommand
-    (`convert format`, `tf static calc`, `tf static cp`, `tf tree`, `tf walk`,
+    (`convert format`, `generate video`, `tf static calc`, `tf static cp`,
+    `tf tree`, `tf walk`, `topic drop`, `topic keep`, `topic rename`,
     `traj dump`, `traj join`); `tf static calc -<TAB>` also surfaces `--json`,
     and `tf static cp -<TAB>` surfaces `--output`/`-o` and `--overwrite`.
     `tf static` is itself a command group, so `tf static <TAB>` completes its
-    actions (`calc`, `cp`) and `tf static -<TAB>` lists just the help flags
+    actions (`calc`, `cp`) and `tf static -<TAB>` lists just the help flags.
+    `generate` and `topic` are likewise command groups: `generate <TAB>`
+    completes `video`, and `topic <TAB>` completes `drop`, `keep`, `rename`
 - Selected option values are completed where bagwiz has a closed set, such as
   `--storage <mcap|sqlite3>`.
 - Commands that take a `<topic>` positional argument complete it by opening
@@ -160,6 +163,13 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz tf tree <input> <topic>...` — restricted to `tf2_msgs/msg/TFMessage`
     topics (the only type `tf tree` can render) and offered at every topic slot,
     since `tf tree` accepts one or more topics
+  - `bagwiz topic drop <input> <topics>...` / `bagwiz topic keep <input> <topics>...`
+    — every topic in the bag, offered at every selector slot (variadic)
+  - `bagwiz topic rename <input> <src_topic> <dst_topic>` — every topic in the bag
+    at the `<src_topic>` slot only; `<dst_topic>` is a new name with nothing to suggest
+  - `bagwiz generate video <input> <topic> <output>` — restricted to the image
+    types `generate video` operates on (`sensor_msgs/msg/Image`,
+    `sensor_msgs/msg/CompressedImage`); topics of any other type are omitted
 
   Paths beginning with `~/` are expanded against the current user's home
   directory before opening the bag. Topic completion is suppressed when the
