@@ -76,6 +76,7 @@ repos:
           - --language=c++
           - --std=c++20
           - --suppressions-list=.cppcheck_suppressions
+          - --suppress=unmatchedSuppression
           - --inline-suppr
           - --quiet
           - --error-exitcode=1

@@ -9,7 +9,6 @@ checkersReport
 missingInclude
 missingIncludeSystem
 normalCheckLevelMaxBranches
-unmatchedSuppression
 unusedFunction
 unusedStructMember
 useStlAlgorithm
