@@ -17,6 +17,7 @@
 #include <tf2/LinearMath/Transform.h>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,30 +25,35 @@ namespace bagwiz::core::pointcloud
 {
 
 // A single point projected from a point cloud into image space.
-struct ProjectedPoint {
+struct ProjectedPoint
+{
   std::int32_t u = 0;
   std::int32_t v = 0;
   float depth = 0.0f;
   color::Rgb rgb;
 };
 
-// Outcome of project_point_cloud(). On success `ok` is true and `points`
-// contains the projected, colored, depth-sorted pixels. On failure `ok` is
-// false and `error` carries a human-readable reason.
-struct ProjectionResult {
-  bool ok = false;
+// Outcome of project_point_cloud(). On success `points` holds the projected,
+// colored, depth-sorted pixels and `error` is empty. On failure `points` is
+// empty and `error` carries a human-readable reason.
+struct ProjectionResult
+{
+  std::optional<std::vector<ProjectedPoint>> points;
   std::string error;
-  std::vector<ProjectedPoint> points;
+
+  [[nodiscard]] bool ok() const noexcept { return points.has_value() && error.empty(); }
 };
 
 // Project a point cloud into a camera image, color each projected point by the
 // requested scalar, and sort the result front-to-back by depth.
+//
+// The projection uses camera_info.K directly (fx, fy, cx, cy) and ignores
+// distortion coefficients (D), rectification (R), and the projection matrix
+// (P). Callers are expected to supply a camera_info that has been pre-rectified
+// if necessary.
 ProjectionResult project_point_cloud(
-  const PointCloudView & cloud,
-  const camera::CameraInfo & camera_info,
-  const tf2::Transform & cloud_to_camera,
-  ColorBy color_by,
-  color::ColorMapName color_map_name);
+  const PointCloudView & cloud, const camera::CameraInfo & camera_info,
+  const tf2::Transform & cloud_to_camera, ColorBy color_by, color::ColorMapName color_map_name);
 
 }  // namespace bagwiz::core::pointcloud
 

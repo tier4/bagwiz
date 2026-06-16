@@ -9,7 +9,6 @@
 #include "bagwiz/core/pointcloud/project.hpp"
 
 #include <gtest/gtest.h>
-
 #include <tf2/LinearMath/Transform.h>
 
 #include <algorithm>
@@ -17,8 +16,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <span>
+#include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace
@@ -93,13 +95,14 @@ TEST(ProjectTest, ProjectsKnownPoints)
   identity.setIdentity();
 
   const auto cloud = make_simple_cloud({{0.0f, 0.0f, 10.0f, 0.0f}});
-  const auto result = project_point_cloud(cloud.view, cam, identity, ColorBy::kZ, ColorMapName::kJet);
+  const auto result =
+    project_point_cloud(cloud.view, cam, identity, ColorBy::kZ, ColorMapName::kJet);
 
-  ASSERT_TRUE(result.ok) << result.error;
-  ASSERT_EQ(result.points.size(), 1u);
-  EXPECT_EQ(result.points[0].u, 320);
-  EXPECT_EQ(result.points[0].v, 240);
-  EXPECT_FLOAT_EQ(result.points[0].depth, 10.0f);
+  ASSERT_TRUE(result.ok()) << result.error;
+  ASSERT_EQ(result.points->size(), 1u);
+  EXPECT_EQ((*result.points)[0].u, 320);
+  EXPECT_EQ((*result.points)[0].v, 240);
+  EXPECT_FLOAT_EQ((*result.points)[0].depth, 10.0f);
 }
 
 TEST(ProjectTest, DropsPointsBehindCamera)
@@ -109,10 +112,11 @@ TEST(ProjectTest, DropsPointsBehindCamera)
   identity.setIdentity();
 
   const auto cloud = make_simple_cloud({{0.0f, 0.0f, -5.0f, 0.0f}});
-  const auto result = project_point_cloud(cloud.view, cam, identity, ColorBy::kZ, ColorMapName::kJet);
+  const auto result =
+    project_point_cloud(cloud.view, cam, identity, ColorBy::kZ, ColorMapName::kJet);
 
-  ASSERT_TRUE(result.ok) << result.error;
-  EXPECT_TRUE(result.points.empty());
+  ASSERT_TRUE(result.ok()) << result.error;
+  EXPECT_TRUE(result.points->empty());
 }
 
 TEST(ProjectTest, DropsPointsAtZeroDepth)
@@ -122,10 +126,11 @@ TEST(ProjectTest, DropsPointsAtZeroDepth)
   identity.setIdentity();
 
   const auto cloud = make_simple_cloud({{0.0f, 0.0f, 0.0f, 0.0f}});
-  const auto result = project_point_cloud(cloud.view, cam, identity, ColorBy::kZ, ColorMapName::kJet);
+  const auto result =
+    project_point_cloud(cloud.view, cam, identity, ColorBy::kZ, ColorMapName::kJet);
 
-  ASSERT_TRUE(result.ok) << result.error;
-  EXPECT_TRUE(result.points.empty());
+  ASSERT_TRUE(result.ok()) << result.error;
+  EXPECT_TRUE(result.points->empty());
 }
 
 TEST(ProjectTest, DropsOutOfImagePoints)
@@ -136,10 +141,47 @@ TEST(ProjectTest, DropsOutOfImagePoints)
 
   // Far to the right; u would exceed image width.
   const auto cloud = make_simple_cloud({{20.0f, 0.0f, 10.0f, 0.0f}});
-  const auto result = project_point_cloud(cloud.view, cam, identity, ColorBy::kZ, ColorMapName::kJet);
+  const auto result =
+    project_point_cloud(cloud.view, cam, identity, ColorBy::kZ, ColorMapName::kJet);
 
-  ASSERT_TRUE(result.ok) << result.error;
-  EXPECT_TRUE(result.points.empty());
+  ASSERT_TRUE(result.ok()) << result.error;
+  EXPECT_TRUE(result.points->empty());
+}
+
+TEST(ProjectTest, EmptyCloudReturnsOkWithNoPoints)
+{
+  const auto cam = make_camera();
+  tf2::Transform identity;
+  identity.setIdentity();
+
+  const auto cloud = make_simple_cloud({});
+  const auto result =
+    project_point_cloud(cloud.view, cam, identity, ColorBy::kZ, ColorMapName::kJet);
+
+  ASSERT_TRUE(result.ok()) << result.error;
+  ASSERT_TRUE(result.points.has_value());
+  EXPECT_TRUE(result.points->empty());
+}
+
+TEST(ProjectTest, NonIdentityTransformMovesPixel)
+{
+  const auto cam = make_camera();
+
+  // Translate the cloud 1 m to the right in camera frame.
+  tf2::Transform cloud_to_camera;
+  cloud_to_camera.setIdentity();
+  cloud_to_camera.setOrigin(tf2::Vector3(1.0, 0.0, 0.0));
+
+  const auto cloud = make_simple_cloud({{0.0f, 0.0f, 10.0f, 0.0f}});
+  const auto result =
+    project_point_cloud(cloud.view, cam, cloud_to_camera, ColorBy::kZ, ColorMapName::kJet);
+
+  ASSERT_TRUE(result.ok()) << result.error;
+  ASSERT_EQ(result.points->size(), 1u);
+  // u shifts by fx * dx / z = 500 * 1 / 10 = 50 pixels.
+  EXPECT_EQ((*result.points)[0].u, 370);
+  EXPECT_EQ((*result.points)[0].v, 240);
+  EXPECT_FLOAT_EQ((*result.points)[0].depth, 10.0f);
 }
 
 TEST(ProjectTest, DifferentDepthsProduceDifferentColors)
@@ -149,11 +191,14 @@ TEST(ProjectTest, DifferentDepthsProduceDifferentColors)
   identity.setIdentity();
 
   const auto cloud = make_simple_cloud({{0.0f, 0.0f, 5.0f, 0.0f}, {0.0f, 0.0f, 15.0f, 0.0f}});
-  const auto result = project_point_cloud(cloud.view, cam, identity, ColorBy::kZ, ColorMapName::kJet);
+  const auto result =
+    project_point_cloud(cloud.view, cam, identity, ColorBy::kZ, ColorMapName::kJet);
 
-  ASSERT_TRUE(result.ok) << result.error;
-  ASSERT_EQ(result.points.size(), 2u);
-  EXPECT_NE(result.points[0].rgb.r, result.points[1].rgb.r);
+  ASSERT_TRUE(result.ok()) << result.error;
+  ASSERT_EQ(result.points->size(), 2u);
+  const auto & color0 = (*result.points)[0].rgb;
+  const auto & color1 = (*result.points)[1].rgb;
+  EXPECT_TRUE(color0.r != color1.r || color0.g != color1.g || color0.b != color1.b);
 }
 
 TEST(ProjectTest, SortsByDepthFrontToBack)
@@ -167,13 +212,14 @@ TEST(ProjectTest, SortsByDepthFrontToBack)
     {0.0f, 0.0f, 5.0f, 0.0f},
     {0.0f, 0.0f, 15.0f, 0.0f},
   });
-  const auto result = project_point_cloud(cloud.view, cam, identity, ColorBy::kZ, ColorMapName::kJet);
+  const auto result =
+    project_point_cloud(cloud.view, cam, identity, ColorBy::kZ, ColorMapName::kJet);
 
-  ASSERT_TRUE(result.ok) << result.error;
-  ASSERT_EQ(result.points.size(), 3u);
-  EXPECT_FLOAT_EQ(result.points[0].depth, 5.0f);
-  EXPECT_FLOAT_EQ(result.points[1].depth, 15.0f);
-  EXPECT_FLOAT_EQ(result.points[2].depth, 20.0f);
+  ASSERT_TRUE(result.ok()) << result.error;
+  ASSERT_EQ(result.points->size(), 3u);
+  EXPECT_FLOAT_EQ((*result.points)[0].depth, 5.0f);
+  EXPECT_FLOAT_EQ((*result.points)[1].depth, 15.0f);
+  EXPECT_FLOAT_EQ((*result.points)[2].depth, 20.0f);
 }
 
 TEST(ProjectTest, IntensityMissingReturnsError)
@@ -183,11 +229,12 @@ TEST(ProjectTest, IntensityMissingReturnsError)
   identity.setIdentity();
 
   const auto cloud = make_simple_cloud({{0.0f, 0.0f, 10.0f, 0.0f}});
-  const auto result = project_point_cloud(cloud.view, cam, identity, ColorBy::kIntensity, ColorMapName::kJet);
+  const auto result =
+    project_point_cloud(cloud.view, cam, identity, ColorBy::kIntensity, ColorMapName::kJet);
 
-  EXPECT_FALSE(result.ok);
+  EXPECT_FALSE(result.ok());
   EXPECT_NE(result.error.find("intensity field missing"), std::string::npos);
-  EXPECT_TRUE(result.points.empty());
+  EXPECT_TRUE(result.points->empty());
 }
 
 TEST(ProjectTest, IntensityPresentProducesColors)
@@ -197,12 +244,13 @@ TEST(ProjectTest, IntensityPresentProducesColors)
   identity.setIdentity();
 
   const auto cloud = make_simple_cloud({{0.0f, 0.0f, 10.0f, 0.25f}}, true);
-  const auto result = project_point_cloud(cloud.view, cam, identity, ColorBy::kIntensity, ColorMapName::kJet);
+  const auto result =
+    project_point_cloud(cloud.view, cam, identity, ColorBy::kIntensity, ColorMapName::kJet);
 
-  ASSERT_TRUE(result.ok) << result.error;
-  ASSERT_EQ(result.points.size(), 1u);
-  EXPECT_EQ(result.points[0].u, 320);
-  EXPECT_EQ(result.points[0].v, 240);
+  ASSERT_TRUE(result.ok()) << result.error;
+  ASSERT_EQ(result.points->size(), 1u);
+  EXPECT_EQ((*result.points)[0].u, 320);
+  EXPECT_EQ((*result.points)[0].v, 240);
 }
 
 TEST(ProjectTest, ColorByDistanceUsesCameraFrameDistance)
@@ -214,12 +262,13 @@ TEST(ProjectTest, ColorByDistanceUsesCameraFrameDistance)
   // A point away from the optical axis but still inside the image; the scalar
   // is the full camera-frame distance, not just z.
   const auto cloud = make_simple_cloud({{0.3f, 0.4f, 5.0f, 0.0f}});
-  const auto result = project_point_cloud(cloud.view, cam, identity, ColorBy::kDistance, ColorMapName::kJet);
+  const auto result =
+    project_point_cloud(cloud.view, cam, identity, ColorBy::kDistance, ColorMapName::kJet);
 
-  ASSERT_TRUE(result.ok) << result.error;
-  ASSERT_EQ(result.points.size(), 1u);
-  EXPECT_EQ(result.points[0].u, 350);
-  EXPECT_EQ(result.points[0].v, 280);
+  ASSERT_TRUE(result.ok()) << result.error;
+  ASSERT_EQ(result.points->size(), 1u);
+  EXPECT_EQ((*result.points)[0].u, 350);
+  EXPECT_EQ((*result.points)[0].v, 280);
 }
 
 }  // namespace

@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <vector>
 
 namespace bagwiz::core::pointcloud
@@ -35,9 +36,7 @@ struct RawProjectedPoint
 };
 
 std::optional<float> compute_scalar(
-  const PointCloudView & cloud,
-  const tf2::Vector3 & point_camera,
-  std::size_t point_index,
+  const PointCloudView & cloud, const tf2::Vector3 & point_camera, std::size_t point_index,
   ColorBy color_by)
 {
   switch (color_by) {
@@ -60,20 +59,17 @@ std::optional<float> compute_scalar(
 }  // namespace
 
 ProjectionResult project_point_cloud(
-  const PointCloudView & cloud,
-  const camera::CameraInfo & camera_info,
-  const tf2::Transform & cloud_to_camera,
-  ColorBy color_by,
-  color::ColorMapName color_map_name)
+  const PointCloudView & cloud, const camera::CameraInfo & camera_info,
+  const tf2::Transform & cloud_to_camera, ColorBy color_by, color::ColorMapName color_map_name)
 {
   if (color_by == ColorBy::kIntensity && !cloud.intensity_offset.has_value()) {
-    return ProjectionResult{false, "intensity field missing", {}};
+    return ProjectionResult{std::nullopt, "intensity field missing"};
   }
 
   const auto color_map = color::make_color_map(color_map_name);
 
   std::vector<RawProjectedPoint> raw_points;
-  raw_points.reserve(cloud.width * cloud.height);
+  raw_points.reserve(static_cast<std::size_t>(cloud.width) * cloud.height);
 
   const std::size_t point_count = static_cast<std::size_t>(cloud.width) * cloud.height;
   for (std::size_t i = 0; i < point_count; ++i) {
@@ -88,17 +84,16 @@ ProjectionResult project_point_cloud(
       continue;
     }
 
-    const tf2::Vector3 point_camera = cloud_to_camera * tf2::Vector3{x.value(), y.value(), z.value()};
+    const tf2::Vector3 point_camera =
+      cloud_to_camera * tf2::Vector3{x.value(), y.value(), z.value()};
     if (point_camera.z() <= 0.0f) {
       continue;
     }
 
-    const float u_f =
-      static_cast<float>(camera_info.K[0]) * point_camera.x() / point_camera.z() +
-      static_cast<float>(camera_info.K[2]);
-    const float v_f =
-      static_cast<float>(camera_info.K[4]) * point_camera.y() / point_camera.z() +
-      static_cast<float>(camera_info.K[5]);
+    const float u_f = static_cast<float>(camera_info.K[0]) * point_camera.x() / point_camera.z() +
+                      static_cast<float>(camera_info.K[2]);
+    const float v_f = static_cast<float>(camera_info.K[4]) * point_camera.y() / point_camera.z() +
+                      static_cast<float>(camera_info.K[5]);
 
     const auto u = static_cast<std::int32_t>(std::lroundf(u_f));
     const auto v = static_cast<std::int32_t>(std::lroundf(v_f));
@@ -114,7 +109,8 @@ ProjectionResult project_point_cloud(
       continue;
     }
 
-    raw_points.push_back(RawProjectedPoint{u, v, static_cast<float>(point_camera.z()), scalar.value()});
+    raw_points.push_back(
+      RawProjectedPoint{u, v, static_cast<float>(point_camera.z()), scalar.value()});
   }
 
   float scalar_min = std::numeric_limits<float>::max();
@@ -125,15 +121,15 @@ ProjectionResult project_point_cloud(
   }
 
   ProjectionResult result;
-  result.ok = true;
-  result.points.reserve(raw_points.size());
+  result.points = std::vector<ProjectedPoint>{};
+  result.points->reserve(raw_points.size());
   for (const auto & p : raw_points) {
     const auto index = color::normalize(p.scalar, scalar_min, scalar_max);
-    result.points.push_back(ProjectedPoint{p.u, p.v, p.depth, color::apply(color_map, index)});
+    result.points->push_back(ProjectedPoint{p.u, p.v, p.depth, color::apply(color_map, index)});
   }
 
   std::sort(
-    result.points.begin(), result.points.end(),
+    result.points->begin(), result.points->end(),
     [](const ProjectedPoint & a, const ProjectedPoint & b) { return a.depth < b.depth; });
 
   return result;
