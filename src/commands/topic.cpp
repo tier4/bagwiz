@@ -87,7 +87,7 @@ private:
       "-o,--output", drop_args_.output_path,
       "Write the result to this new bag instead of rewriting <input> in place.");
     sub->add_flag(
-      "--overwrite", drop_args_.overwrite,
+      "-w,--overwrite", drop_args_.overwrite,
       "Replace an existing -o/--output path. Without it, an existing output path stops the run.");
     sub->footer(
       "Removed topics disappear entirely from the output — both their messages and their\n"
@@ -118,7 +118,7 @@ private:
       "-o,--output", keep_args_.output_path,
       "Write the result to this new bag instead of rewriting <input> in place.");
     sub->add_flag(
-      "--overwrite", keep_args_.overwrite,
+      "-w,--overwrite", keep_args_.overwrite,
       "Replace an existing -o/--output path. Without it, an existing output path stops the run.");
     sub->footer(
       "Only the selected topics survive; every other topic disappears entirely from the\n"
@@ -149,7 +149,7 @@ private:
       "-o,--output", rename_args_.output_path,
       "Write the result to this new bag instead of rewriting <input> in place.");
     sub->add_flag(
-      "--overwrite", rename_args_.overwrite,
+      "-w,--overwrite", rename_args_.overwrite,
       "Replace an existing -o/--output path. Without it, an existing output path stops the run.");
     sub->footer(
       "Only the topic's name changes; its type, QoS, and embedded schema are preserved, and all\n"

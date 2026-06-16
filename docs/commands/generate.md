@@ -32,9 +32,9 @@ bagwiz generate video [OPTIONS] <input> <topic> <output>
 
 ### Options
 
-| Flag          | Description                                                                        |
-| ------------- | ---------------------------------------------------------------------------------- |
-| `--overwrite` | Replace an existing `<output>`. Without it, an existing output path stops the run. |
+| Flag                | Description                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------- |
+| `-w`, `--overwrite` | Replace an existing `<output>`. Without it, an existing output path stops the run. |
 
 ### Supported topic types
 
@@ -83,12 +83,12 @@ available) or rebuild FFmpeg with libx264.
 bagwiz generate video drive.mcap /sensing/camera/image_raw out.mp4
 
 # Render to MJPEG AVI (no libx264 needed), replacing an existing file.
-bagwiz generate video drive_dir/ /sensing/camera/image_raw clip.avi --overwrite
+bagwiz generate video drive_dir/ /sensing/camera/image_raw clip.avi -w
 ```
 
 ## Exit status
 
-| Code | Meaning                                                                                                                                                                                                                                                                                                                               |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | The video was written successfully.                                                                                                                                                                                                                                                                                                   |
-| `1`  | The input could not be opened; the topic was not found or is an unsupported type; the topic has no messages; the image encoding is unsupported; the output extension is unsupported or its codec is unavailable; `<output>` exists without `--overwrite`; a frame changed geometry mid-stream; or a read/encode/write error occurred. |
+| Code | Meaning                                                                                                                                                                                                                                                                                                                                    |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | The video was written successfully.                                                                                                                                                                                                                                                                                                        |
+| `1`  | The input could not be opened; the topic was not found or is an unsupported type; the topic has no messages; the image encoding is unsupported; the output extension is unsupported or its codec is unavailable; `<output>` exists without `-w`/`--overwrite`; a frame changed geometry mid-stream; or a read/encode/write error occurred. |

@@ -142,7 +142,7 @@ int run_generate_video(const GenerateVideoArgs & args)
     std::error_code ec;
     if (std::filesystem::exists(args.output_path, ec) && !args.overwrite) {
       BAGWIZ_LOG_ERROR(
-        kLogger, "output '%s' already exists; pass --overwrite to replace it.",
+        kLogger, "output '%s' already exists; pass -w/--overwrite to replace it.",
         args.output_path.string().c_str());
       return 1;
     }

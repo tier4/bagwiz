@@ -5,7 +5,7 @@ Generate a shell completion script for `bagwiz`.
 ## Usage
 
 ```text
-bagwiz complete <shell> [--install] [--overwrite]
+bagwiz complete <shell> [--install] [-w|--overwrite]
 ```
 
 ## Positional arguments
@@ -16,10 +16,10 @@ bagwiz complete <shell> [--install] [--overwrite]
 
 ## Options
 
-| Flag          | Description                                                                               |
-| ------------- | ----------------------------------------------------------------------------------------- |
-| `--install`   | Write the script to the shell's standard completion directory instead of stdout.          |
-| `--overwrite` | Overwrite an existing file when used with `--install`. Has no effect without `--install`. |
+| Flag                | Description                                                                               |
+| ------------------- | ----------------------------------------------------------------------------------------- |
+| `--install`         | Write the script to the shell's standard completion directory instead of stdout.          |
+| `-w`, `--overwrite` | Overwrite an existing file when used with `--install`. Has no effect without `--install`. |
 
 ## Supported shells
 
@@ -63,8 +63,8 @@ Default targets (XDG variables are honored when set):
 | `zsh`  | `~/.zsh/completions/_bagwiz`                                          |
 | `fish` | `${XDG_CONFIG_HOME:-~/.config}/fish/completions/bagwiz.fish`          |
 
-Re-running `--install` against an existing file fails unless `--overwrite` is
-passed.
+Re-running `--install` against an existing file fails unless `-w`/`--overwrite`
+is passed.
 
 ## Installing bash completion manually
 
@@ -143,7 +143,7 @@ source ~/.config/fish/completions/bagwiz.fish
     (`convert format`, `generate video`, `tf static calc`, `tf static cp`,
     `tf tree`, `tf walk`, `topic drop`, `topic keep`, `topic rename`,
     `traj dump`, `traj join`); `tf static calc -<TAB>` also surfaces `--json`,
-    and `tf static cp -<TAB>` surfaces `--output`/`-o` and `--overwrite`.
+    and `tf static cp -<TAB>` surfaces `--output`/`-o` and `-w`/`--overwrite`.
     `tf static` is itself a command group, so `tf static <TAB>` completes its
     actions (`calc`, `cp`) and `tf static -<TAB>` lists just the help flags.
     `generate` and `topic` are likewise command groups: `generate <TAB>`

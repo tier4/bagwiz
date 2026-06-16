@@ -136,7 +136,7 @@ private:
         "is .mcap or .db3; otherwise the input bag's storage backend is reused)")
       ->check(CLI::IsMember({"mcap", "sqlite3"}));
     sub->add_flag(
-      "--overwrite", format_args_.overwrite,
+      "-w,--overwrite", format_args_.overwrite,
       "Replace <output> if it already exists. Without this flag, an "
       "existing output path stops the run.");
     sub->footer(
@@ -204,7 +204,7 @@ private:
       "-o,--output", msgtype_geo_args_.output_path,
       "Write the result to this new bag instead of rewriting <input> in place.");
     sub->add_flag(
-      "--overwrite", msgtype_geo_args_.overwrite,
+      "-w,--overwrite", msgtype_geo_args_.overwrite,
       "Replace an existing -o/--output path. Without it, an existing output path stops the run.");
     sub->footer(
       "Only the selected topics are re-typed; every other topic is copied verbatim. The source "

@@ -37,7 +37,7 @@ PrepareOutputResult prepare_output_path(const std::filesystem::path & path, bool
 
   if (!overwrite) {
     result.error =
-      "output path '" + path.string() + "' already exists; pass --overwrite to replace it";
+      "output path '" + path.string() + "' already exists; pass -w/--overwrite to replace it";
     return result;
   }
 
@@ -48,7 +48,7 @@ PrepareOutputResult prepare_output_path(const std::filesystem::path & path, bool
   std::filesystem::remove_all(path, rm_ec);
   if (rm_ec) {
     result.error = "could not remove existing output path '" + path.string() +
-                   "' for --overwrite: " + rm_ec.message();
+                   "' for -w/--overwrite: " + rm_ec.message();
     return result;
   }
   result.ok = true;

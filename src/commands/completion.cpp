@@ -260,7 +260,7 @@ bool write_script_to(
   std::error_code ec;
   if (std::filesystem::exists(target, ec) && !overwrite) {
     std::cerr << "refusing to overwrite existing file: " << target
-              << " (pass --overwrite to replace it)\n";
+              << " (pass -w/--overwrite to replace it)\n";
     return false;
   }
 
@@ -609,7 +609,7 @@ std::vector<std::string> complete_complete_command(const CompletionRequest & req
 {
   const auto current = current_word(request);
   if (current.starts_with("-")) {
-    return matching(with_help({"--install", "--overwrite"}), current);
+    return matching(with_help({"--install", "--overwrite", "-w"}), current);
   }
   if (request.cursor_word == kFirstCommandArgWord) {
     return matching(supported_shell_names(), current);
@@ -635,7 +635,7 @@ std::vector<std::string> complete_help_only(const CompletionRequest & request)
 //
 //   geo: `convert`(0) `msgtype`(1) `geo`(2) `<input>`(3) [--src V] [--dst V]
 //        [--topic ...] [--crs V] [--origin V] [--frame-id V] [-o <out>]
-//        [--overwrite]
+//        [-w|--overwrite]
 //
 // At the action slot (word 2) the only candidate is `geo`. Past it, `-` words
 // surface the geo flags, and the `--src` / `--dst` / `--crs` slots complete from
@@ -663,7 +663,7 @@ std::vector<std::string> complete_convert_msgtype(
     return matching(
       with_help(
         {"--crs", "--dst", "--frame-id", "--origin", "--output", "--overwrite", "--src", "--topic",
-         "-o"}),
+         "-o", "-w"}),
       current);
   }
 
@@ -702,7 +702,7 @@ std::vector<std::string> complete_convert(const CompletionRequest & request)
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     if (mode == "format") {
-      return matching(with_help({"--overwrite", "--storage", "-s"}), current);
+      return matching(with_help({"--overwrite", "--storage", "-s", "-w"}), current);
     }
   }
 
@@ -750,13 +750,14 @@ std::vector<std::string> complete_traj(const CompletionRequest & request)
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & mode = request.words[kFirstCommandArgWord];
     if (mode == "dump") {
-      return matching(with_help({"--format", "--from", "--overwrite", "--to", "-f"}), current);
+      return matching(
+        with_help({"--format", "--from", "--overwrite", "--to", "-f", "-w"}), current);
     }
     if (mode == "join") {
       return matching(
         with_help(
           {"--force", "--format", "--from", "--msg-type", "--output", "--overwrite", "--to", "-f",
-           "-o", "-t"}),
+           "-o", "-t", "-w"}),
         current);
     }
   }
@@ -781,7 +782,7 @@ std::vector<std::string> complete_traj(const CompletionRequest & request)
 // of the flat `tf` subcommands.
 //
 //   calc: `tf`(0) `static`(1) `calc`(2) `<input>`(3) `<from>`(4) `<to>`(5) [--json]
-//   cp:   `tf`(0) `static`(1) `cp`(2)   `<src>`(3)   `<dst>`(4)  [-o <out>] [--overwrite]
+//   cp:   `tf`(0) `static`(1) `cp`(2)   `<src>`(3)   `<dst>`(4)  [-o <out>] [-w|--overwrite]
 //
 // At the action slot (word 2) the candidates are `calc` / `cp`. For `calc`,
 // `--json` is offered for any `-` word and the <from>/<to> slots complete from
@@ -816,7 +817,7 @@ std::vector<std::string> complete_tf_static(
 
   if (action == "cp") {
     if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
-      return matching(with_help({"--output", "--overwrite", "-o"}), current);
+      return matching(with_help({"--output", "--overwrite", "-o", "-w"}), current);
     }
     return {};
   }
@@ -867,10 +868,11 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
 // slot; rename completes only its <src_topic> slot); here we surface each verb's
 // own flags for any `-` word.
 //
-//   drop:   `topic`(0) `drop`(1)   `<input>`(2) `<topics>...`(3+)        [-o <out>] [--overwrite]
-//   keep:   `topic`(0) `keep`(1)   `<input>`(2) `<topics>...`(3+)        [-o <out>] [--overwrite]
-//   rename: `topic`(0) `rename`(1) `<input>`(2) `<src_topic>`(3) `<dst_topic>`(4) [-o <out>]
-//   [--overwrite]
+//   drop:   `topic`(0) `drop`(1)   `<input>`(2) `<topics>...`(3+)        [-o <out>]
+//   [-w|--overwrite] keep:   `topic`(0) `keep`(1)   `<input>`(2) `<topics>...`(3+)        [-o
+//   <out>] [-w|--overwrite] rename: `topic`(0) `rename`(1) `<input>`(2) `<src_topic>`(3)
+//   `<dst_topic>`(4) [-o <out>]
+//   [-w|--overwrite]
 std::vector<std::string> complete_topic(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -884,7 +886,7 @@ std::vector<std::string> complete_topic(const CompletionRequest & request)
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & verb = request.words[kFirstCommandArgWord];
     if (verb == "drop" || verb == "keep" || verb == "rename") {
-      return matching(with_help({"--output", "--overwrite", "-o"}), current);
+      return matching(with_help({"--output", "--overwrite", "-o", "-w"}), current);
     }
   }
   return {};
@@ -897,7 +899,7 @@ std::vector<std::string> complete_topic(const CompletionRequest & request)
 // through to the shell's file completion. Here we surface `video` plus its own
 // flags for any `-` word.
 //
-//   video: `generate`(0) `video`(1) `<input>`(2) `<topic>`(3) `<output>`(4) [--overwrite]
+//   video: `generate`(0) `video`(1) `<input>`(2) `<topic>`(3) `<output>`(4) [-w|--overwrite]
 std::vector<std::string> complete_generate(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -911,7 +913,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & sub = request.words[kFirstCommandArgWord];
     if (sub == "video") {
-      return matching(with_help({"--overwrite"}), current);
+      return matching(with_help({"--overwrite", "-w"}), current);
     }
   }
   return {};
@@ -1104,7 +1106,8 @@ public:
     app.add_flag(
       "--install", install_,
       "Write the script to the shell's standard completion directory instead of stdout");
-    app.add_flag("--overwrite", overwrite_, "Overwrite an existing file when used with --install");
+    app.add_flag(
+      "-w,--overwrite", overwrite_, "Overwrite an existing file when used with --install");
   }
 
   int run() override

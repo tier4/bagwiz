@@ -565,16 +565,16 @@ TEST(FlagCompletionTest, WalkDashListsHelpFlags)
 }
 
 // The `complete` subcommand defines two flags of its own; with help merged
-// in they sort as: --help, --install, --overwrite, -h.
+// in they sort as: --help, --install, --overwrite, -h, -w.
 TEST(FlagCompletionTest, CompleteDashListsCompleteFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "2", "bagwiz", "complete", "-"}),
-    "--help\n--install\n--overwrite\n-h\n");
+    "--help\n--install\n--overwrite\n-h\n-w\n");
 }
 
 // `convert` has no parent-level flags; the `format` subcommand owns
-// --overwrite/--storage/-s. Both contexts must respond to `-`.
+// -w/--overwrite/--storage/-s. Both contexts must respond to `-`.
 TEST(FlagCompletionTest, ConvertParentDashListsHelpFlags)
 {
   EXPECT_EQ(
@@ -585,7 +585,7 @@ TEST(FlagCompletionTest, ConvertFormatDashListsFormatFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "convert", "format", "-"}),
-    "--help\n--overwrite\n--storage\n-h\n-s\n");
+    "--help\n--overwrite\n--storage\n-h\n-s\n-w\n");
 }
 
 // `bagwiz convert <TAB>` lists both subcommands, sorted.
@@ -607,7 +607,8 @@ TEST(FlagCompletionTest, ConvertMsgtypeGeoDashListsGeoFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "convert", "msgtype", "geo", "-"}),
-    "--crs\n--dst\n--frame-id\n--help\n--origin\n--output\n--overwrite\n--src\n--topic\n-h\n-o\n");
+    "--crs\n--dst\n--frame-id\n--help\n--origin\n--output\n--overwrite\n--src\n--topic\n-h\n-o\n-"
+    "w\n");
 }
 
 // `--src` completes from the source snake_case choice set (no bag access).
@@ -647,14 +648,15 @@ TEST(FlagCompletionTest, TrajDumpDashListsDumpFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "traj", "dump", "-"}),
-    "--format\n--from\n--help\n--overwrite\n--to\n-f\n-h\n");
+    "--format\n--from\n--help\n--overwrite\n--to\n-f\n-h\n-w\n");
 }
 
 TEST(FlagCompletionTest, TrajJoinDashListsJoinFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "traj", "join", "-"}),
-    "--force\n--format\n--from\n--help\n--msg-type\n--output\n--overwrite\n--to\n-f\n-h\n-o\n-t\n");
+    "--force\n--format\n--from\n--help\n--msg-type\n--output\n--overwrite\n--to\n-f\n-h\n-o\n-t\n-"
+    "w\n");
 }
 
 TEST(FlagCompletionTest, TfParentDashListsHelpFlags)
@@ -700,14 +702,14 @@ TEST(FlagCompletionTest, TfStaticCalcDashListsStaticFlags)
     "--help\n--json\n-h\n");
 }
 
-// `tf static cp -` surfaces the copy action's flags (--output/-o, --overwrite)
+// `tf static cp -` surfaces the copy action's flags (--output/-o, -w/--overwrite)
 // alongside the implicit help flags, sorted. <src>/<dst> are bag paths, so they
 // carry no bagwiz candidates and fall through to the shell's file completion.
 TEST(FlagCompletionTest, TfStaticCpDashListsCpFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "cp", "-"}),
-    "--help\n--output\n--overwrite\n-h\n-o\n");
+    "--help\n--output\n--overwrite\n-h\n-o\n-w\n");
 }
 
 // `tf walk -` has no user flags, so only the implicit help flags appear.
@@ -982,7 +984,7 @@ TEST(FlagCompletionTest, TopicDropDashListsDropFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "topic", "drop", "-"}),
-    "--help\n--output\n--overwrite\n-h\n-o\n");
+    "--help\n--output\n--overwrite\n-h\n-o\n-w\n");
 }
 
 // `topic keep <bag> <TAB>` (the first <topics> slot) lists every topic in the
@@ -1060,7 +1062,7 @@ TEST(FlagCompletionTest, TopicRenameDashListsRenameFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "topic", "rename", "-"}),
-    "--help\n--output\n--overwrite\n-h\n-o\n");
+    "--help\n--output\n--overwrite\n-h\n-o\n-w\n");
 }
 
 // `topic keep -` surfaces the action's flags (--output/-o, --overwrite) plus
@@ -1069,7 +1071,7 @@ TEST(FlagCompletionTest, TopicKeepDashListsKeepFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "topic", "keep", "-"}),
-    "--help\n--output\n--overwrite\n-h\n-o\n");
+    "--help\n--output\n--overwrite\n-h\n-o\n-w\n");
 }
 
 // `bagwiz generate <TAB>` lists the command group's single subcommand.
@@ -1086,13 +1088,13 @@ TEST(FlagCompletionTest, GenerateParentDashListsHelpFlags)
     run_completion({"bagwiz", "__complete", "2", "bagwiz", "generate", "-"}), "--help\n-h\n");
 }
 
-// `generate video -` surfaces the action's --overwrite flag plus the implicit
+// `generate video -` surfaces the action's -w/--overwrite flag plus the implicit
 // help flags, sorted.
 TEST(FlagCompletionTest, GenerateVideoDashListsVideoFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "generate", "video", "-"}),
-    "--help\n--overwrite\n-h\n");
+    "--help\n--overwrite\n-h\n-w\n");
 }
 
 // `generate video <bag> <TAB>` (the <topic> slot) lists only the bag's image

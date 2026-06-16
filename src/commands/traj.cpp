@@ -397,7 +397,7 @@ private:
       "tree). For pose topics it names the body the pose reports. See SUPPORTED "
       "TOPIC TYPES below.");
     sub->add_flag(
-      "--overwrite", dump_args_.overwrite,
+      "-w,--overwrite", dump_args_.overwrite,
       "Replace <output> if it already exists. Without this flag, an "
       "existing output path stops the run.");
     sub->footer(
@@ -929,7 +929,7 @@ private:
         "aborts.")
       ->default_val(false);
     sub->add_flag(
-      "--overwrite", join_args_.overwrite,
+      "-w,--overwrite", join_args_.overwrite,
       "Replace -o/--output if it already exists. Has no effect in in-place "
       "mode (when -o is omitted, <input> is replaced atomically by design).");
     sub->callback([this]() { selected_ = Subcommand::kJoin; });

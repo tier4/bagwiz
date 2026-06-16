@@ -19,7 +19,7 @@ conversions lives under its own leaf (today: `geo` for position-related types).
      without `--storage` therefore inherit the input's backend — handy
      for a pure file ↔ directory layout change.
 - Any pre-existing entry at `<output>` (file or directory) stops the
-  run with a clear log line. Pass `--overwrite` to replace it instead.
+  run with a clear log line. Pass `-w`/`--overwrite` to replace it instead.
   The flag is supported by every `bagwiz` subcommand that writes a
   file or directory output (`convert format`, `traj dump`, `traj join -o`).
 - `mcap` outputs are written without chunk compression. Re-compress
@@ -53,7 +53,7 @@ bagwiz convert format [OPTIONS] <input> <output>
 | Flag                  | Description                                                                                                                                      |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `-s`, `--storage <S>` | Target storage backend. One of `mcap`, `sqlite3`. Default: inferred from the output extension; otherwise inherited from the input bag's storage. |
-| `--overwrite`         | Replace `<output>` if it already exists. Without this flag, an existing output path stops the run.                                               |
+| `-w`, `--overwrite`   | Replace `<output>` if it already exists. Without this flag, an existing output path stops the run.                                               |
 
 ### Behavior
 
@@ -154,7 +154,7 @@ bagwiz convert msgtype geo [OPTIONS] <input> --dst <type>
 | `--origin <lat,lon,alt>` | WGS84 datum. Required for ENU unless it can be derived from the first `NavSatFix`; an optional offset for UTM.        |
 | `--frame-id <name>`      | `frame_id` written onto the converted messages. Defaults to `map` (enu) or `utm` (utm).                               |
 | `-o`, `--output <p>`     | Write the result to a new bag instead of rewriting `<input>` in place.                                                |
-| `--overwrite`            | Replace an existing `-o` path. Without it, an existing output path stops the run.                                     |
+| `-w`, `--overwrite`      | Replace an existing `-o` path. Without it, an existing output path stops the run.                                     |
 
 ### Behavior
 

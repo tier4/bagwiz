@@ -188,7 +188,7 @@ struct TopicWritePlan
 
 // Decide, for every source static topic, whether it is declared fresh, kept,
 // replaced (suppress + re-append), or aborts the run. `force` is the user's
-// --overwrite. Returns false (after logging) on an unresolved conflict.
+// -w/--overwrite. Returns false (after logging) on an unresolved conflict.
 bool plan_topic_writes(
   std::span<const io::TopicInfo> dst_topics,
   const std::unordered_map<std::string, std::int64_t> & dst_counts,

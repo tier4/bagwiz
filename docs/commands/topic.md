@@ -35,7 +35,7 @@ bagwiz topic drop [OPTIONS] <input> <topics>...
 | Flag                 | Description                                                                                           |
 | -------------------- | ----------------------------------------------------------------------------------------------------- |
 | `-o`, `--output <p>` | Write the result to a new bag instead of rewriting `<input>` in place.                                |
-| `--overwrite`        | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place. |
+| `-w`, `--overwrite`  | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place. |
 
 ### Selectors
 
@@ -123,7 +123,7 @@ bagwiz topic keep [OPTIONS] <input> <topics>...
 | Flag                 | Description                                                                                           |
 | -------------------- | ----------------------------------------------------------------------------------------------------- |
 | `-o`, `--output <p>` | Write the result to a new bag instead of rewriting `<input>` in place.                                |
-| `--overwrite`        | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place. |
+| `-w`, `--overwrite`  | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place. |
 
 ### Selectors
 
@@ -190,7 +190,7 @@ bagwiz topic rename [OPTIONS] <input> <src_topic> <dst_topic>
 | Flag                 | Description                                                                                           |
 | -------------------- | ----------------------------------------------------------------------------------------------------- |
 | `-o`, `--output <p>` | Write the result to a new bag instead of rewriting `<input>` in place.                                |
-| `--overwrite`        | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place. |
+| `-w`, `--overwrite`  | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place. |
 
 ### Behavior
 
@@ -219,7 +219,7 @@ bagwiz topic rename drive_dir/ /camera/image_raw /camera/front/image_raw
 
 ## Exit status
 
-| Code | Meaning                                                                                                                                                                                                                                                                                                                                                  |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | The bag was rewritten successfully, including the all-topics-matched edge case for `drop`/`keep` (an empty bag for `drop`, an unchanged topic set for `keep`), which logs a warning.                                                                                                                                                                     |
-| `1`  | The input could not be opened; a `drop`/`keep` selector matched no topic; `rename`'s `<src_topic>` was not found, its `<dst_topic>` already existed, or its two names were identical; the `-o` output path collided without `--overwrite`; the input storage format could not be detected for an in-place rewrite; or a read/write/close error occurred. |
+| Code | Meaning                                                                                                                                                                                                                                                                                                                                                       |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | The bag was rewritten successfully, including the all-topics-matched edge case for `drop`/`keep` (an empty bag for `drop`, an unchanged topic set for `keep`), which logs a warning.                                                                                                                                                                          |
+| `1`  | The input could not be opened; a `drop`/`keep` selector matched no topic; `rename`'s `<src_topic>` was not found, its `<dst_topic>` already existed, or its two names were identical; the `-o` output path collided without `-w`/`--overwrite`; the input storage format could not be detected for an in-place rewrite; or a read/write/close error occurred. |

@@ -75,7 +75,7 @@ private:
         ".mp4/.mkv/.mov -> H.264, .avi -> MJPEG.")
       ->required();
     sub->add_flag(
-      "--overwrite", video_args_.overwrite,
+      "-w,--overwrite", video_args_.overwrite,
       "Replace an existing <output>. Without it, an existing output path stops the run.");
     sub->footer(
       "Supported topic types: sensor_msgs/msg/Image (bgr8, rgb8) and "

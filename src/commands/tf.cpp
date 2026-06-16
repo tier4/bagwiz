@@ -847,7 +847,7 @@ private:
       "-o,--output", static_cp_args_.output_path,
       "Write the result to this new bag instead of rewriting <dst> in place.");
     sub->add_flag(
-      "--overwrite", static_cp_args_.overwrite,
+      "-w,--overwrite", static_cp_args_.overwrite,
       "Permit clobbering: replace an existing -o/--output path, and replace any static topic in "
       "<dst> whose name collides with one being copied. Without it, either conflict aborts.");
     sub->callback([this]() { selected_ = Subcommand::kStaticCp; });

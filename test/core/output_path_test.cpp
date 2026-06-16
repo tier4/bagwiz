@@ -66,9 +66,9 @@ TEST_F(OutputPathTest, ExistingFileWithoutOverwriteIsError)
 
   const auto r = bagwiz::core::prepare_output_path(target, /*overwrite=*/false);
   EXPECT_FALSE(r.ok);
-  // The error must point the user at --overwrite so the resolution path is
+  // The error must point the user at -w/--overwrite so the resolution path is
   // discoverable from the message alone.
-  EXPECT_NE(r.error.find("--overwrite"), std::string::npos);
+  EXPECT_NE(r.error.find("-w/--overwrite"), std::string::npos);
   EXPECT_NE(r.error.find(target.string()), std::string::npos);
   // The pre-existing file must be left intact when we refuse.
   EXPECT_TRUE(std::filesystem::exists(target));
