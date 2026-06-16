@@ -36,7 +36,7 @@ bagwiz generate video [OPTIONS] <input> <topic> <output>
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `--pcd <topic>`         | PointCloud2 topic to overlay. Repeatable to overlay multiple topics.                                                     |
 | `--camera-info <topic>` | CameraInfo topic. Inferred from `<image_topic>` when omitted.                                                            |
-| `--color-by <scalar>`   | Scalar used to color overlaid points in the camera frame. One of `distance`, `x`, `y`, `z`, or `intensity`. Only with `--pcd`. Default: `distance`. |
+| `--color-by <field>`    | Scalar used to color overlaid points. `distance`, `x`, `y`, and `z` are measured in the camera frame; `intensity` uses the pointcloud's intensity field. Only with `--pcd`. Default: `distance`. |
 | `--color-map <map>`     | Color map applied to the scalar: `jet`, `turbo`, `viridis`, `grayscale`, or `rainbow`. Only with `--pcd`. Default: `jet`. |
 | `-o, --overwrite`       | Replace an existing `<output>`. Without it, an existing output path stops the run.                                       |
 
@@ -64,14 +64,14 @@ If no matching CameraInfo topic exists in the bag, the run stops with an error.
 
 #### Overlay behavior
 
-- Requires static TF from the bag. Points are transformed into the camera frame
-  before projection.
+- Requires static TF data from the bag. Points are transformed into the camera
+  frame before projection.
 - Projects PointCloud2 points into the camera frame using the CameraInfo
   intrinsics.
 - Ignores distortion in the initial implementation.
 - Multiple `--pcd` topics can be overlaid. Within each topic, points are sorted
-  by depth and painted front-to-back. Topics are processed in the order they
-  appear on the command line.
+  by depth and painted front-to-back (ascending depth, nearer points first).
+  Topics are processed in the order they appear on the command line.
 
 ### Supported topic types
 
