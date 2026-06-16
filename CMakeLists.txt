@@ -282,6 +282,7 @@ add_executable(bagwiz
   src/commands/convert_msgtype_geo.cpp
   src/commands/generate.cpp
   src/commands/generate_video.cpp
+  src/commands/generate_video_overlay.cpp
   src/commands/joke.cpp
   src/commands/ls.cpp
   src/commands/walk.cpp
@@ -482,7 +483,8 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_generate_video_test
     test/commands/generate_video_test.cpp
     test/core/image/image_fixture.cpp
-    src/commands/generate_video.cpp)
+    src/commands/generate_video.cpp
+    src/commands/generate_video_overlay.cpp)
   target_include_directories(bagwiz_generate_video_test PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/test")
   target_link_libraries(bagwiz_generate_video_test bagwiz_core fmt::fmt PkgConfig::LIBAV)

@@ -8,24 +8,20 @@
 
 #include "bagwiz/commands/generate_video.hpp"
 
+#include "bagwiz/commands/generate_video_overlay.hpp"
 #include "bagwiz/core/camera/camera_info.hpp"
 #include "bagwiz/core/image/compressed_image.hpp"
 #include "bagwiz/core/image/image_decoder.hpp"
 #include "bagwiz/core/image/raw_image.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/output_path.hpp"
-#include "bagwiz/core/pointcloud/point_cloud_reader.hpp"
-#include "bagwiz/core/pointcloud/project.hpp"
 #include "bagwiz/core/tf_static_loader.hpp"
 #include "bagwiz/core/video/frame_rate.hpp"
 #include "bagwiz/core/video/video_encoder.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <tf2/buffer_core.hpp>
-#include <tf2/exceptions.h>
-#include <tf2/time.hpp>
 
-#include <chrono>
 #include <cinttypes>
 #include <cstdint>
 #include <exception>
@@ -296,12 +292,6 @@ std::optional<core::camera::CameraInfo> load_camera_info(
   return *result.image;
 }
 
-struct PcdState
-{
-  std::int64_t timestamp_ns = 0;
-  std::vector<std::byte> payload;
-};
-
 }  // namespace
 
 int run_generate_video(const GenerateVideoArgs & args)
@@ -409,9 +399,9 @@ int run_generate_video(const GenerateVideoArgs & args)
   std::uint64_t written = 0;
 
   io::RawMessage raw;
-  core::image::DecodedImage decoded;   // reused storage for the compressed path
-  std::vector<std::byte> raw_buffer;   // mutable copy for the raw-image path
-  std::vector<PcdState> latest_pcds(args.pcd_topics.size());
+  core::image::DecodedImage decoded;  // reused storage for the compressed path
+  std::vector<std::byte> raw_buffer;  // mutable copy for the raw-image path
+  std::vector<PcdOverlayState> latest_pcds(args.pcd_topics.size());
 
   try {
     while (reader->next(raw)) {
@@ -421,8 +411,14 @@ int run_generate_video(const GenerateVideoArgs & args)
       if (raw.topic->name != args.topic) {
         for (std::size_t i = 0; i < args.pcd_topics.size(); ++i) {
           if (raw.topic->name == args.pcd_topics[i]) {
-            latest_pcds[i].timestamp_ns = raw.timestamp_ns;
-            latest_pcds[i].payload.assign(raw.payload.begin(), raw.payload.end());
+            if (auto err = latest_pcds[i].update(raw.payload); !err.empty()) {
+              BAGWIZ_LOG_ERROR(
+                kLogger, "frame %" PRIu64 ", topic '%s': %s", written, args.pcd_topics[i].c_str(),
+                err.c_str());
+              encoder.reset();
+              cleanup_tmp();
+              return 1;
+            }
             break;
           }
         }
@@ -512,72 +508,14 @@ int run_generate_video(const GenerateVideoArgs & args)
       }
 
       if (overlay_pcd) {
-        const auto time_point = tf2::TimePoint(std::chrono::nanoseconds(raw.timestamp_ns));
-
-        for (std::size_t i = 0; i < args.pcd_topics.size(); ++i) {
-          if (latest_pcds[i].payload.empty()) {
-            continue;
-          }
-
-          const auto cloud_result = core::pointcloud::extract_point_cloud(latest_pcds[i].payload);
-          if (!cloud_result.ok()) {
-            BAGWIZ_LOG_ERROR(
-              kLogger, "frame %" PRIu64 ", topic '%s': %s", written, args.pcd_topics[i].c_str(),
-              cloud_result.error.c_str());
-            encoder.reset();
-            cleanup_tmp();
-            return 1;
-          }
-          const auto & cloud_view = *cloud_result.view;
-
-          tf2::Transform cloud_to_camera;
-          try {
-            const auto stamped = tf_buffer->lookupTransform(
-              camera_info->frame_id, cloud_view.frame_id, time_point);
-            const auto & t = stamped.transform;
-            cloud_to_camera.setOrigin(tf2::Vector3(t.translation.x, t.translation.y, t.translation.z));
-            cloud_to_camera.setRotation(
-              tf2::Quaternion(t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w));
-          } catch (const tf2::TransformException & e) {
-            BAGWIZ_LOG_WARN(
-              kLogger, "frame %" PRIu64 ", topic '%s': TF lookup failed: %s", written,
-              args.pcd_topics[i].c_str(), e.what());
-            continue;
-          }
-
-          const auto projection = core::pointcloud::project_point_cloud(
-            cloud_view, *camera_info, cloud_to_camera, args.color_by, args.color_map);
-          if (!projection.ok()) {
-            BAGWIZ_LOG_ERROR(
-              kLogger, "frame %" PRIu64 ", topic '%s': projection failed: %s", written,
-              args.pcd_topics[i].c_str(), projection.error.c_str());
-            encoder.reset();
-            cleanup_tmp();
-            return 1;
-          }
-
-          // Paint the projected points front-to-back (project_point_cloud already
-          // depth-sorts). Use the pixel layout determined from the source image.
-          for (const auto & p : *projection.points) {
-            if (p.u < 0 || p.v < 0 || static_cast<std::uint32_t>(p.u) >= fw ||
-                static_cast<std::uint32_t>(p.v) >= fh) {
-              continue;
-            }
-            const std::size_t idx = static_cast<std::size_t>(p.v) * fstep +
-                                    static_cast<std::size_t>(p.u) * 3U;
-            if (idx + 2 >= mutable_pixels.size()) {
-              continue;
-            }
-            if (fsrc == core::video::SourcePixelFormat::kBgr8) {
-              mutable_pixels[idx] = static_cast<std::byte>(p.rgb.b);
-              mutable_pixels[idx + 1] = static_cast<std::byte>(p.rgb.g);
-              mutable_pixels[idx + 2] = static_cast<std::byte>(p.rgb.r);
-            } else {
-              mutable_pixels[idx] = static_cast<std::byte>(p.rgb.r);
-              mutable_pixels[idx + 1] = static_cast<std::byte>(p.rgb.g);
-              mutable_pixels[idx + 2] = static_cast<std::byte>(p.rgb.b);
-            }
-          }
+        if (auto err = paint_pointcloud_overlays(
+              mutable_pixels, fw, fh, fstep, fsrc, written, args.pcd_topics, latest_pcds,
+              *camera_info, *tf_buffer, raw.timestamp_ns, args.color_by, args.color_map);
+            !err.empty()) {
+          BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, err.c_str());
+          encoder.reset();
+          cleanup_tmp();
+          return 1;
         }
       }
 
