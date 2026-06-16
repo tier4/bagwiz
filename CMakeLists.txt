@@ -193,6 +193,7 @@ add_library(bagwiz_core
   src/core/image/compressed_image.cpp
   src/core/image/image_decoder.cpp
   src/core/camera/camera_info.cpp
+  src/core/pointcloud/point_cloud_reader.cpp
   src/core/video/frame_rate.cpp
   src/core/video/video_encoder.cpp
   src/core/tui/layout.cpp
@@ -444,6 +445,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_camera_info_test test/core/camera/camera_info_test.cpp)
   target_link_libraries(bagwiz_camera_info_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_point_cloud_reader_test test/core/pointcloud/point_cloud_reader_test.cpp)
+  target_link_libraries(bagwiz_point_cloud_reader_test bagwiz_core)
 
   # image_decoder lives in bagwiz_core; libav is linked explicitly so the test
   # can both drive the decoder and synthesize JPEG/PNG fixtures with libav
