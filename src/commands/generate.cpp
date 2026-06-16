@@ -9,9 +9,14 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/generate_video.hpp"
+#include "bagwiz/core/color/color_map.hpp"
 #include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/pointcloud/types.hpp"
 
+#include <map>
+#include <optional>
 #include <string_view>
+#include <vector>
 
 namespace bagwiz::commands
 {
@@ -67,15 +72,43 @@ private:
     sub->add_option("input", video_args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
-    sub->add_option("topic", video_args_.topic, "Image topic to render.")->required();
+    sub->add_option("image_topic", video_args_.topic, "Image topic to render.")->required();
     sub
       ->add_option(
         "output", video_args_.output_path,
         "Output video path. Its extension selects the output format: "
         ".mp4/.mkv/.mov -> H.264, .avi -> MJPEG.")
       ->required();
+    sub->add_option("--pcd", video_args_.pcd_topics, "PointCloud2 topics to overlay (may be repeated).")
+      ->expected(0, -1);
+    sub->add_option(
+      "--camera-info", video_args_.camera_info_topic,
+      "CameraInfo topic. If omitted, inferred from <image_topic>.");
+
+    using core::pointcloud::ColorBy;
+    const std::map<std::string, ColorBy> color_by_map{
+      {"distance", ColorBy::kDistance},
+      {"x", ColorBy::kX},
+      {"y", ColorBy::kY},
+      {"z", ColorBy::kZ},
+      {"intensity", ColorBy::kIntensity},
+    };
+    sub->add_option("--color-by", video_args_.color_by, "Scalar value to color points by.")
+      ->transform(CLI::CheckedTransformer(color_by_map, CLI::ignore_case));
+
+    using core::color::ColorMapName;
+    const std::map<std::string, ColorMapName> color_map_map{
+      {"jet", ColorMapName::kJet},
+      {"turbo", ColorMapName::kTurbo},
+      {"viridis", ColorMapName::kViridis},
+      {"grayscale", ColorMapName::kGrayscale},
+      {"rainbow", ColorMapName::kRainbow},
+    };
+    sub->add_option("--color-map", video_args_.color_map, "Color map used to color points.")
+      ->transform(CLI::CheckedTransformer(color_map_map, CLI::ignore_case));
+
     sub->add_flag(
-      "--overwrite", video_args_.overwrite,
+      "-o,--overwrite", video_args_.overwrite,
       "Replace an existing <output>. Without it, an existing output path stops the run.");
     sub->footer(
       "Supported topic types: sensor_msgs/msg/Image (bgr8, rgb8) and "

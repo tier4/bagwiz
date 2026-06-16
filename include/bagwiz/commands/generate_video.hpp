@@ -9,8 +9,13 @@
 #ifndef BAGWIZ__COMMANDS__GENERATE_VIDEO_HPP_
 #define BAGWIZ__COMMANDS__GENERATE_VIDEO_HPP_
 
+#include "bagwiz/core/color/color_map.hpp"
+#include "bagwiz/core/pointcloud/types.hpp"
+
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace bagwiz::commands
 {
@@ -27,6 +32,11 @@ struct GenerateVideoArgs
   // Replace a pre-existing <output>. Without it, an existing output path stops
   // the run before any work is done.
   bool overwrite = false;
+
+  std::vector<std::string> pcd_topics{};
+  std::optional<std::string> camera_info_topic{std::nullopt};
+  core::pointcloud::ColorBy color_by = core::pointcloud::ColorBy::kDistance;
+  core::color::ColorMapName color_map = core::color::ColorMapName::kJet;
 };
 
 // Classification of whether a topic can be rendered to video.
