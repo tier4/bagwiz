@@ -11,6 +11,7 @@
 #include "bagwiz/io/bag_io.hpp"
 
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace bagwiz::core
@@ -29,6 +30,27 @@ BagCopyCounts bag_copy_filtered(
       continue;
     }
     writer.write(raw.topic->name, raw.timestamp_ns, raw.payload);
+    ++counts.copied;
+  }
+  return counts;
+}
+
+BagCopyRenameCounts bag_copy_renamed(
+  io::BagReader & reader, io::BagWriter & writer,
+  const std::unordered_map<std::string, std::string> & rename)
+{
+  BagCopyRenameCounts counts;
+  io::RawMessage raw;
+  while (reader.next(raw)) {
+    // raw.topic is non-null when next() returns true (zero-copy view
+    // documented by BagReader::next).
+    const auto it = rename.find(raw.topic->name);
+    if (it != rename.end()) {
+      writer.write(it->second, raw.timestamp_ns, raw.payload);
+      ++counts.renamed;
+    } else {
+      writer.write(raw.topic->name, raw.timestamp_ns, raw.payload);
+    }
     ++counts.copied;
   }
   return counts;

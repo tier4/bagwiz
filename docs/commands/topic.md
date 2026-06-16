@@ -2,10 +2,11 @@
 
 Topic-level bag surgery. Subcommands:
 
-| Subcommand                   | What it does                                          |
-| ---------------------------- | ----------------------------------------------------- |
-| [`drop`](#bagwiz-topic-drop) | Remove selected topics, copying every other verbatim. |
-| [`keep`](#bagwiz-topic-keep) | Keep only the selected topics, dropping every other.  |
+| Subcommand                       | What it does                                          |
+| -------------------------------- | ----------------------------------------------------- |
+| [`drop`](#bagwiz-topic-drop)     | Remove selected topics, copying every other verbatim. |
+| [`keep`](#bagwiz-topic-keep)     | Keep only the selected topics, dropping every other.  |
+| [`rename`](#bagwiz-topic-rename) | Rename one topic, copying every other verbatim.       |
 
 ---
 
@@ -157,9 +158,68 @@ bagwiz topic keep drive_dir/ /tf_static '*/image_raw' -o trimmed_dir/
 Quote globs (e.g. `'/sensing/*'`) so the shell does not expand them as
 filename patterns before bagwiz sees them.
 
+---
+
+## `bagwiz topic rename`
+
+Rename a single topic. The topic named `<src_topic>` is re-declared as
+`<dst_topic>` and all of its messages move with it; every other topic is copied
+verbatim. Only the name string changes — the topic's message type, QoS, and
+embedded schema are preserved, and no deserialization or type conversion is
+performed.
+
+Unlike `drop` / `keep`, rename is a strict 1:1 operation: `<src_topic>` and
+`<dst_topic>` are **literal topic names, not globs**.
+
+### Usage
+
+```text
+bagwiz topic rename [OPTIONS] <input> <src_topic> <dst_topic>
+```
+
+### Positional arguments
+
+| Name        | Description                                                           |
+| ----------- | --------------------------------------------------------------------- |
+| `input`     | Input ROS 2 rosbag (directory or single-file). Must exist.            |
+| `src_topic` | Existing topic to rename. A literal name; must match a topic exactly. |
+| `dst_topic` | New name for the topic. A literal name; must not already exist.       |
+
+### Options
+
+| Flag                 | Description                                                                                           |
+| -------------------- | ----------------------------------------------------------------------------------------------------- |
+| `-o`, `--output <p>` | Write the result to a new bag instead of rewriting `<input>` in place.                                |
+| `--overwrite`        | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place. |
+
+### Behavior
+
+- The names are resolved against the bag's topic list before anything is
+  written. The run stops with a clear error and leaves the input untouched when:
+  - `<src_topic>` matches no topic in the bag (catches a typo'd source);
+  - `<dst_topic>` already names a topic in the bag — renaming onto it would
+    collide two distinct declarations onto one name (and a topic may have only
+    one type); or
+  - `<src_topic>` and `<dst_topic>` are identical (a no-op).
+- In-place vs `-o`, embedded-schema preservation, and `compression=none` output
+  all behave exactly as documented for [`drop`](#bagwiz-topic-drop) above.
+
+### Example
+
+```bash
+# Rename a topic, rewriting the bag in place.
+bagwiz topic rename drive.mcap /sensing/lidar /sensing/laser
+
+# Rename to a new bag, leaving the input untouched.
+bagwiz topic rename drive.mcap /old/name /new/name -o drive_renamed.mcap
+
+# Rename a topic in a directory bag.
+bagwiz topic rename drive_dir/ /camera/image_raw /camera/front/image_raw
+```
+
 ## Exit status
 
-| Code | Meaning                                                                                                                                                                                                                        |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | The bag was rewritten successfully, including the all-topics-matched edge case (an empty bag for `drop`, an unchanged topic set for `keep`), which logs a warning.                                                             |
-| `1`  | The input could not be opened, a selector matched no topic, the `-o` output path collided without `--overwrite`, the input storage format could not be detected for an in-place rewrite, or a read/write/close error occurred. |
+| Code | Meaning                                                                                                                                                                                                                                                                                                                                                  |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | The bag was rewritten successfully, including the all-topics-matched edge case for `drop`/`keep` (an empty bag for `drop`, an unchanged topic set for `keep`), which logs a warning.                                                                                                                                                                     |
+| `1`  | The input could not be opened; a `drop`/`keep` selector matched no topic; `rename`'s `<src_topic>` was not found, its `<dst_topic>` already existed, or its two names were identical; the `-o` output path collided without `--overwrite`; the input storage format could not be detected for an in-place rewrite; or a read/write/close error occurred. |

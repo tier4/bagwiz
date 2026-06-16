@@ -19,6 +19,7 @@
 #include <span>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -170,4 +171,87 @@ TEST_F(BagCopyFilteredTest, SuppressesAllWhenEveryTopicIsListed)
 
   EXPECT_EQ(counts.copied, 0U);
   EXPECT_EQ(counts.suppressed, 3U);
+}
+
+// Reuses the BagCopyFilteredTest fixture helpers (same tmp-dir setup and
+// build_input); the rename path is exercised against the same /foo + /bar bag.
+using BagCopyRenamedTest = BagCopyFilteredTest;
+
+TEST_F(BagCopyRenamedTest, RewritesMessagesUnderTheNewName)
+{
+  const auto in_path = build_input(tmp_dir_);
+  const auto out_path = tmp_dir_ / "output";
+
+  auto reader = bagwiz::io::open_read(in_path);
+  auto writer = bagwiz::io::open_write(out_path, mcap_dir_opts());
+  // Declare /foo under its new name; everything else verbatim. The writer
+  // rejects writes to undeclared topics, so the destination must be declared
+  // before bag_copy_renamed runs.
+  for (const auto & t : reader->topics()) {
+    if (t.name == "/foo") {
+      auto renamed = t;
+      renamed.name = "/renamed";
+      writer->declare_topic(renamed);
+    } else {
+      writer->declare_topic(t);
+    }
+  }
+
+  const std::unordered_map<std::string, std::string> rename{{"/foo", "/renamed"}};
+  const auto counts = bagwiz::core::bag_copy_renamed(*reader, *writer, rename);
+  writer->close();
+
+  EXPECT_EQ(counts.copied, 3U);
+  EXPECT_EQ(counts.renamed, 2U);
+
+  auto verify = bagwiz::io::open_read(out_path);
+  int foo = 0;
+  int renamed_count = 0;
+  int bar = 0;
+  bagwiz::io::RawMessage raw;
+  while (verify->next(raw)) {
+    if (raw.topic->name == "/foo") {
+      ++foo;
+    } else if (raw.topic->name == "/renamed") {
+      ++renamed_count;
+    } else if (raw.topic->name == "/bar") {
+      ++bar;
+    }
+  }
+  EXPECT_EQ(foo, 0);            // the old name is gone
+  EXPECT_EQ(renamed_count, 2);  // both /foo messages now carry the new name
+  EXPECT_EQ(bar, 1);            // untouched topic copied verbatim
+}
+
+TEST_F(BagCopyRenamedTest, LeavesNamesUnchangedWhenRenameIsEmpty)
+{
+  const auto in_path = build_input(tmp_dir_);
+  const auto out_path = tmp_dir_ / "output";
+
+  auto reader = bagwiz::io::open_read(in_path);
+  auto writer = bagwiz::io::open_write(out_path, mcap_dir_opts());
+  for (const auto & t : reader->topics()) {
+    writer->declare_topic(t);
+  }
+
+  const auto counts = bagwiz::core::bag_copy_renamed(
+    *reader, *writer, std::unordered_map<std::string, std::string>{});
+  writer->close();
+
+  EXPECT_EQ(counts.copied, 3U);
+  EXPECT_EQ(counts.renamed, 0U);
+
+  auto verify = bagwiz::io::open_read(out_path);
+  int foo = 0;
+  int bar = 0;
+  bagwiz::io::RawMessage raw;
+  while (verify->next(raw)) {
+    if (raw.topic->name == "/foo") {
+      ++foo;
+    } else if (raw.topic->name == "/bar") {
+      ++bar;
+    }
+  }
+  EXPECT_EQ(foo, 2);
+  EXPECT_EQ(bar, 1);
 }

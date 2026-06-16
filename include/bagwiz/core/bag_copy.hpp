@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 // Stream-copy a bag through an already-open reader / writer, optionally
@@ -44,6 +45,29 @@ struct BagCopyCounts
 // exception propagates.
 BagCopyCounts bag_copy_filtered(
   io::BagReader & reader, io::BagWriter & writer, const std::unordered_set<std::string> & suppress);
+
+struct BagCopyRenameCounts
+{
+  // Total messages forwarded to the writer.
+  std::uint64_t copied = 0;
+  // Subset of `copied` whose topic name was remapped via `rename`.
+  std::uint64_t renamed = 0;
+};
+
+// Iterate `reader` to exhaustion, forwarding every message to `writer`. A
+// message whose `topic->name` is a key in `rename` is written under the mapped
+// name (and counted in `renamed`); every other message keeps its original name.
+// Timestamps and payloads are preserved verbatim. Used by `bagwiz topic rename`,
+// which supplies a single old->new entry; the map form keeps the helper general
+// and trivially testable.
+//
+// The caller is responsible for declaring the destination topic(s) on `writer`
+// before calling this (writers reject a write to an undeclared topic). Throws
+// whatever the underlying reader / writer throws on I/O error; partial progress
+// is visible through the returned counters when an exception propagates.
+BagCopyRenameCounts bag_copy_renamed(
+  io::BagReader & reader, io::BagWriter & writer,
+  const std::unordered_map<std::string, std::string> & rename);
 
 }  // namespace bagwiz::core
 

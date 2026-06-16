@@ -935,9 +935,10 @@ TEST_F(CompletionTest, TopicDropTopicSlotSuppressedWhenInputSlotIsFlag)
 }
 
 // `bagwiz topic <TAB>` lists the command group's action verbs, sorted.
-TEST(FlagCompletionTest, TopicSubcommandListsDropAndKeep)
+TEST(FlagCompletionTest, TopicSubcommandListsDropKeepAndRename)
 {
-  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "topic", ""}), "drop\nkeep\n");
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "topic", ""}), "drop\nkeep\nrename\n");
 }
 
 // `bagwiz topic -` is the command-group slot; only the implicit help flags
@@ -995,6 +996,43 @@ TEST_F(CompletionTest, TopicKeepTopicSlotRespectsPrefix)
     run_completion(
       {"bagwiz", "__complete", "4", "bagwiz", "topic", "keep", "~/fixture.mcap", "/f"}),
     "/foo\n");
+}
+
+// `topic rename <bag> <TAB>` (the <src_topic> slot) lists every topic in the
+// bag — any existing topic can be the rename source.
+TEST_F(CompletionTest, TopicRenameSrcSlotListsAllTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "topic", "rename", "~/fixture.mcap"}),
+    "/bar\n/foo\n");
+}
+
+// `topic rename <bag> <src> <TAB>` is the <dst_topic> slot — a brand-new name,
+// so nothing is suggested (the binding is non-variadic and fires only at the
+// <src_topic> slot).
+TEST_F(CompletionTest, TopicRenameDstSlotOffersNothing)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "topic", "rename", "~/fixture.mcap", "/foo"}),
+    "");
+}
+
+// `topic rename -` surfaces the action's flags (--output/-o, --overwrite) plus
+// the implicit help flags, sorted.
+TEST(FlagCompletionTest, TopicRenameDashListsRenameFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "topic", "rename", "-"}),
+    "--help\n--output\n--overwrite\n-h\n-o\n");
 }
 
 // `topic keep -` surfaces the action's flags (--output/-o, --overwrite) plus

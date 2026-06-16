@@ -10,6 +10,7 @@
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/topic_drop.hpp"
 #include "bagwiz/commands/topic_keep.hpp"
+#include "bagwiz/commands/topic_rename.hpp"
 #include "bagwiz/core/logging.hpp"
 
 #include <string_view>
@@ -23,8 +24,9 @@ constexpr const char * kLogger = "bagwiz.cmd.topic";
 }  // namespace
 
 // `bagwiz topic` is a command group for topic-level bag surgery. Ships `drop`
-// (drop selected topics) and `keep` (its inverse — keep only selected topics);
-// the group leaves room for further topic operations.
+// (drop selected topics), `keep` (its inverse — keep only selected topics), and
+// `rename` (rename one topic); the group leaves room for further topic
+// operations.
 class TopicCommand : public Command
 {
 public:
@@ -39,6 +41,7 @@ public:
     app.require_subcommand(1);
     configure_drop(app);
     configure_keep(app);
+    configure_rename(app);
   }
 
   int run() override
@@ -48,6 +51,8 @@ public:
         return run_topic_drop(drop_args_);
       case Subcommand::kKeep:
         return run_topic_keep(keep_args_);
+      case Subcommand::kRename:
+        return run_topic_rename(rename_args_);
       case Subcommand::kNone:
         BAGWIZ_LOG_ERROR(kLogger, "no subcommand selected");
         return 1;
@@ -56,11 +61,12 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kDrop, kKeep };
+  enum class Subcommand { kNone, kDrop, kKeep, kRename };
   Subcommand selected_ = Subcommand::kNone;
 
   TopicDropArgs drop_args_;
   TopicKeepArgs keep_args_;
+  TopicRenameArgs rename_args_;
 
   void configure_drop(CLI::App & app)
   {
@@ -123,6 +129,39 @@ private:
       "storage format and layout (input is both source and destination); with -o, <input>\n"
       "is left untouched.");
     sub->callback([this]() { selected_ = Subcommand::kKeep; });
+  }
+
+  void configure_rename(CLI::App & app)
+  {
+    auto * sub = app.add_subcommand(
+      "rename",
+      "Rename one topic in a rosbag, copying every other topic verbatim. <src_topic> and "
+      "<dst_topic> are literal topic names (no globs): the topic named <src_topic> is "
+      "re-declared as <dst_topic> and its messages move with it.");
+    sub->add_option("input", rename_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+      ->required()
+      ->check(CLI::ExistingPath);
+    sub->add_option("src_topic", rename_args_.src_topic, "Existing topic to rename (literal name).")
+      ->required();
+    sub->add_option("dst_topic", rename_args_.dst_topic, "New name for the topic (literal name).")
+      ->required();
+    sub->add_option(
+      "-o,--output", rename_args_.output_path,
+      "Write the result to this new bag instead of rewriting <input> in place.");
+    sub->add_flag(
+      "--overwrite", rename_args_.overwrite,
+      "Replace an existing -o/--output path. Without it, an existing output path stops the run.");
+    sub->footer(
+      "Only the topic's name changes; its type, QoS, and embedded schema are preserved, and all\n"
+      "other topics are copied verbatim. Messages are copied verbatim; no deserialization is\n"
+      "performed.\n"
+      "The run stops before anything is written if <src_topic> is not found, if <dst_topic>\n"
+      "already names a topic in the bag (which would collide two topics into one), or if the\n"
+      "two names are identical.\n"
+      "Without -o, <input> is rewritten in place via an atomic tmp-swap that preserves its\n"
+      "storage format and layout (input is both source and destination); with -o, <input>\n"
+      "is left untouched.");
+    sub->callback([this]() { selected_ = Subcommand::kRename; });
   }
 };
 

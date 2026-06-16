@@ -265,6 +265,7 @@ add_executable(bagwiz
   src/commands/topic.cpp
   src/commands/topic_drop.cpp
   src/commands/topic_keep.cpp
+  src/commands/topic_rename.cpp
 )
 target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang)
 
@@ -406,6 +407,11 @@ if(BUILD_TESTING)
     test/commands/topic_keep_test.cpp
     src/commands/topic_keep.cpp)
   target_link_libraries(bagwiz_topic_keep_test bagwiz_core fmt::fmt)
+
+  ament_add_gtest(bagwiz_topic_rename_test
+    test/commands/topic_rename_test.cpp
+    src/commands/topic_rename.cpp)
+  target_link_libraries(bagwiz_topic_rename_test bagwiz_core fmt::fmt)
 
   ament_add_gtest(bagwiz_output_path_test test/core/output_path_test.cpp)
   target_link_libraries(bagwiz_output_path_test bagwiz_core)
