@@ -35,6 +35,47 @@ TEST(ColorMapTest, NormalizesRange)
   EXPECT_EQ(normalize(5.0f, 0.0f, 10.0f), 127);
 }
 
+TEST(ColorMapTest, JetMapsHighEndToRed)
+{
+  const auto map = make_color_map(ColorMapName::kJet);
+  const auto red = apply(map, 255);
+  EXPECT_GT(red.r, red.b);
+  EXPECT_GT(red.r, red.g);
+}
+
+TEST(ColorMapTest, NormalizesClamping)
+{
+  EXPECT_EQ(normalize(-1.0f, 0.0f, 10.0f), 0);
+  EXPECT_EQ(normalize(11.0f, 0.0f, 10.0f), 255);
+}
+
+TEST(ColorMapTest, NormalizeWithZeroRangeReturnsZero)
+{
+  EXPECT_EQ(normalize(5.0f, 10.0f, 10.0f), 0);
+  EXPECT_EQ(normalize(5.0f, 10.0f, 5.0f), 0);
+}
+
+TEST(ColorMapTest, TurboProducesColor)
+{
+  const auto map = make_color_map(ColorMapName::kTurbo);
+  const auto color = apply(map, 128);
+  EXPECT_FALSE(color.r == color.g && color.g == color.b);
+}
+
+TEST(ColorMapTest, ViridisProducesColor)
+{
+  const auto map = make_color_map(ColorMapName::kViridis);
+  const auto color = apply(map, 128);
+  EXPECT_FALSE(color.r == color.g && color.g == color.b);
+}
+
+TEST(ColorMapTest, RainbowProducesColor)
+{
+  const auto map = make_color_map(ColorMapName::kRainbow);
+  const auto color = apply(map, 128);
+  EXPECT_FALSE(color.r == color.g && color.g == color.b);
+}
+
 TEST(ColorMapTest, GrayscaleIsMonotonic)
 {
   const auto map = make_color_map(ColorMapName::kGrayscale);

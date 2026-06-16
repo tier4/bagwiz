@@ -17,18 +17,26 @@ namespace bagwiz::core::color
 
 enum class ColorMapName { kJet, kTurbo, kViridis, kGrayscale, kRainbow };
 
-struct RGB {
+struct Rgb
+{
   std::uint8_t r = 0;
   std::uint8_t g = 0;
   std::uint8_t b = 0;
 };
 
-struct ColorMap {
-  std::array<RGB, 256> table{};
+struct ColorMap
+{
+  std::array<Rgb, 256> table{};
 };
 
+/// Build a 256-entry lookup table for the requested colormap.
 ColorMap make_color_map(ColorMapName name);
-RGB apply(const ColorMap & map, std::uint8_t index);
+
+/// Return the colormap entry at `index`.
+Rgb apply(const ColorMap & map, std::uint8_t index);
+
+/// Linearly map `value` from [`min`, `max`] to [0, 255], clamping to the range.
+/// Returns 0 when `max <= min`.
 std::uint8_t normalize(float value, float min, float max);
 
 }  // namespace bagwiz::core::color
