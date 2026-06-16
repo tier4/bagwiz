@@ -36,7 +36,7 @@ bagwiz generate video [OPTIONS] <input> <topic> <output>
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `--pcd <topic>`         | PointCloud2 topic to overlay. Repeatable to overlay multiple topics.                                                     |
 | `--camera-info <topic>` | CameraInfo topic. Inferred from `<image_topic>` when omitted.                                                            |
-| `--color-by <scalar>`   | Scalar used to color overlaid points: `distance`, `x`, `y`, `z`, or `intensity`. Only with `--pcd`. Default: `distance`. |
+| `--color-by <scalar>`   | Scalar used to color overlaid points in the camera frame. One of `distance`, `x`, `y`, `z`, or `intensity`. Only with `--pcd`. Default: `distance`. |
 | `--color-map <map>`     | Color map applied to the scalar: `jet`, `turbo`, `viridis`, `grayscale`, or `rainbow`. Only with `--pcd`. Default: `jet`. |
 | `-o, --overwrite`       | Replace an existing `<output>`. Without it, an existing output path stops the run.                                       |
 
@@ -69,8 +69,9 @@ If no matching CameraInfo topic exists in the bag, the run stops with an error.
 - Projects PointCloud2 points into the camera frame using the CameraInfo
   intrinsics.
 - Ignores distortion in the initial implementation.
-- Multiple `--pcd` topics can be overlaid. Points are sorted by depth and
-  painted front-to-back.
+- Multiple `--pcd` topics can be overlaid. Within each topic, points are sorted
+  by depth and painted front-to-back. Topics are processed in the order they
+  appear on the command line.
 
 ### Supported topic types
 
@@ -110,7 +111,7 @@ available) or rebuild FFmpeg with libx264.
   are written. The video is encoded to a sibling temporary file and atomically
   moved into place on success; a failed run leaves **no** partial output and
   **no** leftover temporary file.
-- Dimensions must be even (the 4:2:0 pixel formats these codecs require it).
+- Dimensions must be even (the 4:2:0 pixel formats that these codecs use require it).
 
 ### Examples
 
@@ -121,7 +122,7 @@ bagwiz generate video drive.mcap /sensing/camera/image_raw out.mp4
 # Render to MJPEG AVI (no libx264 needed), replacing an existing file.
 bagwiz generate video drive_dir/ /sensing/camera/image_raw clip.avi --overwrite
 
-# Overlay a LiDAR pointcloud onto the camera image, coloring by height.
+# Overlay a LiDAR pointcloud onto the camera image, coloring by camera-frame depth (z).
 bagwiz generate video drive.mcap /sensing/camera/image_raw out.mp4 \
   --pcd /sensing/lidar/points --color-by z --color-map turbo -o
 ```
