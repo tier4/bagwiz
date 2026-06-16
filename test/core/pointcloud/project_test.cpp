@@ -234,7 +234,7 @@ TEST(ProjectTest, IntensityMissingReturnsError)
 
   EXPECT_FALSE(result.ok());
   EXPECT_NE(result.error.find("intensity field missing"), std::string::npos);
-  EXPECT_TRUE(result.points->empty());
+  EXPECT_FALSE(result.points.has_value());
 }
 
 TEST(ProjectTest, IntensityPresentProducesColors)
