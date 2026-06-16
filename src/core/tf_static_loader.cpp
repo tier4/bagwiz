@@ -15,8 +15,6 @@
 #include <tf2/buffer_core.hpp>
 #include <tf2/time.hpp>
 
-#include <geometry_msgs/msg/transform_stamped.hpp>
-
 #include <chrono>
 #include <memory>
 #include <stdexcept>
@@ -34,6 +32,10 @@ namespace
 
 constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
 constexpr std::string_view kTfStaticSuffix = "tf_static";
+
+// Static transforms are time-independent, but tf2::BufferCore still needs a
+// cache duration. One year dwarfs any realistic bag and matches the buffer
+// sizing used elsewhere in bagwiz.
 constexpr std::chrono::hours kTfStaticCacheTime{24 * 365};
 
 bool is_static_tf_topic(std::string_view topic_name)
@@ -55,6 +57,7 @@ TfStaticLoadResult load_static_tf(const std::filesystem::path & input)
 
   try {
     auto reader = io::open_read(input);
+    reader->populate_schemas();
 
     std::vector<std::string> static_tf_topics;
     for (const auto & topic : reader->topics()) {

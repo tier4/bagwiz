@@ -1,8 +1,15 @@
-#pragma once
+// Copyright 2026 TIER IV, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/io/bag_io.hpp"
+#ifndef BAGWIZ__CORE__TF_STATIC_LOADER_HPP_
+#define BAGWIZ__CORE__TF_STATIC_LOADER_HPP_
 
-#include <tf2/buffer_core.h>
+#include <tf2/buffer_core.hpp>
 
 #include <filesystem>
 #include <memory>
@@ -20,3 +27,5 @@ struct TfStaticLoadResult {
 TfStaticLoadResult load_static_tf(const std::filesystem::path & input);
 
 }  // namespace bagwiz::core
+
+#endif  // BAGWIZ__CORE__TF_STATIC_LOADER_HPP_

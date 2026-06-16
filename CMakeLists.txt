@@ -406,6 +406,9 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_tf_message_wire_test test/core/tf_message_wire_test.cpp)
   target_link_libraries(bagwiz_tf_message_wire_test bagwiz_core)
 
+  ament_add_gtest(bagwiz_tf_static_loader_test test/core/tf_static_loader_test.cpp)
+  target_link_libraries(bagwiz_tf_static_loader_test bagwiz_core)
+
   ament_add_gtest(bagwiz_tf_transform_format_test test/core/tf_transform_format_test.cpp)
   target_link_libraries(
     bagwiz_tf_transform_format_test bagwiz_core nlohmann_json::nlohmann_json)
