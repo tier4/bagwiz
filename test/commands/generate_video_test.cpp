@@ -176,8 +176,8 @@ std::vector<std::byte> make_camera_info_payload(
   b.u32(height);       // height
   b.u32(width);        // width
   b.str("plumb_bob");  // distortion_model
+  b.f64_seq({});       // D (empty)
   b.fixed_f64_array({K.data(), K.size()});
-  b.f64_seq({});  // D (empty)
   b.fixed_f64_array({R.data(), R.size()});
   b.fixed_f64_array({P.data(), P.size()});
   b.u32(0);        // binning_x
@@ -862,6 +862,45 @@ TEST_F(GenerateVideoTest, OverlaysSinglePointCloud)
     }
   }
   EXPECT_TRUE(center_colored);
+}
+
+TEST_F(GenerateVideoTest, OverlaysSinglePointCloudWithLargerPointSize)
+{
+  constexpr int kFrames = 4;
+  const auto in = build_overlay_bag(tmp_dir_, "/cam/image", false, kFrames);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image", out, false};
+  args.pcd_topics = {"/lidar/points"};
+  args.pcd_point_size = 3;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  ASSERT_TRUE(std::filesystem::exists(out));
+  EXPECT_FALSE(any_partial_left(tmp_dir_));
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.width, 16U);
+  EXPECT_EQ(probe.height, 16U);
+  EXPECT_EQ(probe.frame_count, kFrames);
+
+  std::uint32_t fw = 0;
+  std::uint32_t fh = 0;
+  const auto first_frame = decode_first_frame_bgr24(out, fw, fh);
+  ASSERT_FALSE(first_frame.empty());
+  EXPECT_EQ(fw, 16U);
+  EXPECT_EQ(fh, 16U);
+
+  std::size_t colored_pixels = 0;
+  for (std::uint32_t y = 6; y <= 10; ++y) {
+    for (std::uint32_t x = 6; x <= 10; ++x) {
+      const std::size_t idx = (static_cast<std::size_t>(y) * fw + x) * 3;
+      if (first_frame[idx] != 0 || first_frame[idx + 1] != 0 || first_frame[idx + 2] != 0) {
+        ++colored_pixels;
+      }
+    }
+  }
+  EXPECT_GE(colored_pixels, 9U);
 }
 
 TEST_F(GenerateVideoTest, InfersCameraInfoFromImageRaw)

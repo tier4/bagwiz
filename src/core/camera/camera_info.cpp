@@ -27,8 +27,8 @@ namespace bagwiz::core::camera
 //   uint32 height
 //   uint32 width
 //   string distortion_model
-//   float64[9]  K
 //   float64[]   D
+//   float64[9]  K
 //   float64[9]  R
 //   float64[12] P
 //   uint32 binning_x
@@ -48,8 +48,8 @@ CameraInfoResult extract_camera_info(std::span<const std::byte> payload)
   try {
     cdr_walker::CdrReader reader(payload);
 
-    (void)reader.read_i32();     // header.stamp.sec
-    (void)reader.read_u32();     // header.stamp.nanosec
+    (void)reader.read_i32();  // header.stamp.sec
+    (void)reader.read_u32();  // header.stamp.nanosec
 
     result.image.emplace();
     CameraInfo & info = *result.image;
@@ -59,14 +59,14 @@ CameraInfoResult extract_camera_info(std::span<const std::byte> payload)
     info.width = reader.read_u32();
     info.distortion_model = reader.read_string();
 
-    for (std::size_t i = 0; i < info.K.size(); ++i) {
-      info.K[i] = reader.read_f64();
-    }
-
     const std::uint32_t d_len = reader.read_sequence_length();
     info.D.resize(d_len);
     for (std::uint32_t i = 0; i < d_len; ++i) {
       info.D[i] = reader.read_f64();
+    }
+
+    for (std::size_t i = 0; i < info.K.size(); ++i) {
+      info.K[i] = reader.read_f64();
     }
 
     for (std::size_t i = 0; i < info.R.size(); ++i) {

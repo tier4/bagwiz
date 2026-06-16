@@ -914,8 +914,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
     const auto & sub = request.words[kFirstCommandArgWord];
     if (sub == "video") {
       return matching(
-        with_help(
-          {"--camera-info", "--color-by", "--color-map", "--overwrite", "--pcd", "-o"}),
+        with_help({"--camera-info", "--color-by", "--color-map", "--overwrite", "--pcd", "-o"}),
         current);
     }
   }

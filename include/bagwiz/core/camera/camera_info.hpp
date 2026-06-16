@@ -22,7 +22,8 @@ namespace bagwiz::core::camera
 // A decoded sensor_msgs/msg/CameraInfo. Width/height are in pixels, K/R/P are
 // the standard intrinsic, rectification, and projection matrices, and D holds
 // the distortion coefficients in the order defined by distortion_model.
-struct CameraInfo {
+struct CameraInfo
+{
   std::uint32_t width = 0;
   std::uint32_t height = 0;
   std::string frame_id;
@@ -36,7 +37,8 @@ struct CameraInfo {
 // Outcome of extract_camera_info(). On success `image` holds the decoded
 // CameraInfo and `error` is empty; on failure `image` is empty and `error`
 // carries a human-readable reason suitable for logging. Never throws.
-struct CameraInfoResult {
+struct CameraInfoResult
+{
   std::optional<CameraInfo> image;
   std::string error;
 

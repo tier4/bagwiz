@@ -18,7 +18,8 @@
 namespace bagwiz::core
 {
 
-struct TfStaticLoadResult {
+struct TfStaticLoadResult
+{
   bool ok = false;
   std::string error;
   std::unique_ptr<tf2::BufferCore> buffer;
