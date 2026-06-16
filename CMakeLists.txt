@@ -87,6 +87,17 @@ if(TARGET GeographicLib::GeographicLib AND NOT GeographicLib_LIBRARIES)
   set(GeographicLib_LIBRARIES GeographicLib::GeographicLib)
 endif()
 
+# FFmpeg/libav (conda-forge `ffmpeg`) backs `bagwiz generate video`
+# (src/core/video/video_encoder.cpp): muxing, H.264/MJPEG encoding, and pixel
+# conversion. No ament/CMake package exists for it, so locate the libraries via
+# pkg-config. It is consumed PRIVATE by bagwiz_core (the encoder is hidden behind
+# a pimpl), so libav never enters the export set — the same approach used for
+# GeographicLib above. pkg_check_modules creates the imported target
+# PkgConfig::LIBAV spanning all four component libraries.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
+  libavcodec libavformat libavutil libswscale)
+
 # CLI11 and fmt are not available as rosdep keys on all supported distros, so
 # fetch them at configure time. Both are small, header-light libraries.
 include(FetchContent)
@@ -178,6 +189,9 @@ add_library(bagwiz_core
   src/core/tf_walk_timeline.cpp
   src/core/trajectory.cpp
   src/core/msgtype_convert/geo_pose_convert.cpp
+  src/core/image/raw_image.cpp
+  src/core/video/frame_rate.cpp
+  src/core/video/video_encoder.cpp
   src/core/tui/layout.cpp
   src/core/tui/pager.cpp
   src/core/tui/renderer.cpp
@@ -239,6 +253,10 @@ target_link_libraries(bagwiz_core PRIVATE ${GeographicLib_LIBRARIES})
 # public header returns std::string), so keep it PRIVATE and out of the
 # export set.
 target_link_libraries(bagwiz_core PRIVATE nlohmann_json::nlohmann_json)
+# libav (FFmpeg) is an implementation detail of video_encoder.cpp (the public
+# header returns only std types behind a pimpl), so keep it PRIVATE and out of
+# the export set.
+target_link_libraries(bagwiz_core PRIVATE PkgConfig::LIBAV)
 # fmt is used header-only inside bagwiz_core (renderer.cpp). Linking fmt::fmt
 # would force it into the bagwiz_core export set, which fails because fmt is
 # fetched via FetchContent and not installable.
@@ -255,6 +273,8 @@ add_executable(bagwiz
   src/commands/completion.cpp
   src/commands/convert.cpp
   src/commands/convert_msgtype_geo.cpp
+  src/commands/generate.cpp
+  src/commands/generate_video.cpp
   src/commands/joke.cpp
   src/commands/ls.cpp
   src/commands/walk.cpp
@@ -412,6 +432,23 @@ if(BUILD_TESTING)
     test/commands/topic_rename_test.cpp
     src/commands/topic_rename.cpp)
   target_link_libraries(bagwiz_topic_rename_test bagwiz_core fmt::fmt)
+
+  ament_add_gtest(bagwiz_raw_image_test test/core/image/raw_image_test.cpp)
+  target_link_libraries(bagwiz_raw_image_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_frame_rate_test test/core/video/frame_rate_test.cpp)
+  target_link_libraries(bagwiz_frame_rate_test bagwiz_core)
+
+  # video_encoder lives in bagwiz_core; libav is linked explicitly so the test
+  # still resolves the encode/mux symbols under a static-lib build (same reason
+  # geo_pose_convert_test re-links GeographicLib).
+  ament_add_gtest(bagwiz_video_encoder_test test/core/video/video_encoder_test.cpp)
+  target_link_libraries(bagwiz_video_encoder_test bagwiz_core PkgConfig::LIBAV)
+
+  ament_add_gtest(bagwiz_generate_video_test
+    test/commands/generate_video_test.cpp
+    src/commands/generate_video.cpp)
+  target_link_libraries(bagwiz_generate_video_test bagwiz_core fmt::fmt PkgConfig::LIBAV)
 
   ament_add_gtest(bagwiz_output_path_test test/core/output_path_test.cpp)
   target_link_libraries(bagwiz_output_path_test bagwiz_core)
