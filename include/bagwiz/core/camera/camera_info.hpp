@@ -11,6 +11,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -25,13 +26,14 @@ struct CameraInfo {
   std::string distortion_model;
   std::array<double, 9> K{};
   std::vector<double> D;
+  std::array<double, 9> R{};
   std::array<double, 12> P{};
 };
 
 struct CameraInfoResult {
-  bool ok = false;
+  [[nodiscard]] bool ok() const noexcept { return image.has_value(); }
   std::string error;
-  CameraInfo info;
+  std::optional<CameraInfo> image;
 };
 
 CameraInfoResult extract_camera_info(std::span<const std::byte> payload);

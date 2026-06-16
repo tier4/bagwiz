@@ -10,7 +10,6 @@
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -106,6 +105,7 @@ std::vector<std::byte> make_camera_info_payload(
   const std::string & distortion_model,
   const std::array<double, 9> & K,
   const std::vector<double> & D,
+  const std::array<double, 9> & R,
   const std::array<double, 12> & P,
   const std::string & frame_id)
 {
@@ -118,6 +118,7 @@ std::vector<std::byte> make_camera_info_payload(
   b.str(distortion_model);        // distortion_model
   b.fixed_f64_array({K.data(), K.size()});
   b.f64_seq({D.data(), D.size()});
+  b.fixed_f64_array({R.data(), R.size()});
   b.fixed_f64_array({P.data(), P.size()});
   b.u32(0);                       // binning_x
   b.u32(0);                       // binning_y
@@ -131,66 +132,72 @@ std::vector<std::byte> make_camera_info_payload(
 
 TEST(CameraInfoTest, ExtractsKAndDimensions)
 {
+  const auto K = std::array<double, 9>{500.0, 0.0, 320.0, 0.0, 500.0, 240.0, 0.0, 0.0, 1.0};
+  const auto R = std::array<double, 9>{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  const auto P = std::array<double, 12>{
+    500.0, 0.0, 320.0, 0.0, 0.0, 500.0, 240.0, 0.0, 0.0, 0.0, 1.0, 0.0};
   const auto payload = make_camera_info_payload(
-    640, 480,
-    "plumb_bob",
-    std::array<double, 9>{500.0, 0.0, 320.0, 0.0, 500.0, 240.0, 0.0, 0.0, 1.0},
-    std::vector<double>{0.1, -0.05, 0.0, 0.0, 0.0},
-    std::array<double, 12>{500.0, 0.0, 320.0, 0.0, 0.0, 500.0, 240.0, 0.0, 0.0, 0.0, 1.0, 0.0},
-    "/camera");
+    640, 480, "plumb_bob", K, std::vector<double>{0.1, -0.05, 0.0, 0.0, 0.0}, R, P, "/camera");
 
   const auto result = extract_camera_info(payload);
-  ASSERT_TRUE(result.ok) << result.error;
-  EXPECT_EQ(result.info.width, 640U);
-  EXPECT_EQ(result.info.height, 480U);
-  EXPECT_DOUBLE_EQ(result.info.K[0], 500.0);
-  EXPECT_DOUBLE_EQ(result.info.K[2], 320.0);
-  EXPECT_DOUBLE_EQ(result.info.K[4], 500.0);
-  EXPECT_DOUBLE_EQ(result.info.K[5], 240.0);
+  ASSERT_TRUE(result.ok()) << result.error;
+  EXPECT_EQ(result.image->width, 640U);
+  EXPECT_EQ(result.image->height, 480U);
+  EXPECT_DOUBLE_EQ(result.image->K[0], 500.0);
+  EXPECT_DOUBLE_EQ(result.image->K[2], 320.0);
+  EXPECT_DOUBLE_EQ(result.image->K[4], 500.0);
+  EXPECT_DOUBLE_EQ(result.image->K[5], 240.0);
 }
 
 TEST(CameraInfoTest, ExtractsDistortionModelFrameIdAndDP)
 {
   const auto K = std::array<double, 9>{600.0, 0.0, 300.0, 0.0, 600.0, 200.0, 0.0, 0.0, 1.0};
   const auto D = std::vector<double>{0.0, 0.0, 0.0};
-  const auto P = std::array<double, 12>{600.0, 0.0, 300.0, 0.0, 0.0, 600.0, 200.0, 0.0, 0.0, 0.0, 1.0, 0.0};
+  const auto R = std::array<double, 9>{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  const auto P = std::array<double, 12>{
+    600.0, 0.0, 300.0, 0.0, 0.0, 600.0, 200.0, 0.0, 0.0, 0.0, 1.0, 0.0};
   const auto payload = make_camera_info_payload(
-    800, 600, "rational_polynomial", K, D, P, "camera_optical_link");
+    800, 600, "rational_polynomial", K, D, R, P, "camera_optical_link");
 
   const auto result = extract_camera_info(payload);
-  ASSERT_TRUE(result.ok) << result.error;
-  EXPECT_EQ(result.info.width, 800U);
-  EXPECT_EQ(result.info.height, 600U);
-  EXPECT_EQ(result.info.frame_id, "camera_optical_link");
-  EXPECT_EQ(result.info.distortion_model, "rational_polynomial");
-  EXPECT_EQ(result.info.D.size(), 3U);
-  EXPECT_DOUBLE_EQ(result.info.D[0], 0.0);
-  EXPECT_DOUBLE_EQ(result.info.P[0], 600.0);
-  EXPECT_DOUBLE_EQ(result.info.P[5], 600.0);
-  EXPECT_DOUBLE_EQ(result.info.P[10], 1.0);
+  ASSERT_TRUE(result.ok()) << result.error;
+  EXPECT_EQ(result.image->width, 800U);
+  EXPECT_EQ(result.image->height, 600U);
+  EXPECT_EQ(result.image->frame_id, "camera_optical_link");
+  EXPECT_EQ(result.image->distortion_model, "rational_polynomial");
+  EXPECT_EQ(result.image->D.size(), 3U);
+  EXPECT_DOUBLE_EQ(result.image->D[0], 0.0);
+  EXPECT_DOUBLE_EQ(result.image->R[0], 1.0);
+  EXPECT_DOUBLE_EQ(result.image->R[4], 1.0);
+  EXPECT_DOUBLE_EQ(result.image->R[8], 1.0);
+  EXPECT_DOUBLE_EQ(result.image->P[0], 600.0);
+  EXPECT_DOUBLE_EQ(result.image->P[5], 600.0);
+  EXPECT_DOUBLE_EQ(result.image->P[10], 1.0);
 }
 
 TEST(CameraInfoTest, RejectsZeroFx)
 {
+  const auto K = std::array<double, 9>{0.0, 0.0, 320.0, 0.0, 500.0, 240.0, 0.0, 0.0, 1.0};
+  const auto R = std::array<double, 9>{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  const auto P = std::array<double, 12>{};
   const auto payload = make_camera_info_payload(
-    640, 480, "plumb_bob",
-    std::array<double, 9>{0.0, 0.0, 320.0, 0.0, 500.0, 240.0, 0.0, 0.0, 1.0},
-    std::vector<double>{}, std::array<double, 12>{}, "/camera");
+    640, 480, "plumb_bob", K, std::vector<double>{}, R, P, "/camera");
 
   const auto result = extract_camera_info(payload);
-  EXPECT_FALSE(result.ok);
+  EXPECT_FALSE(result.ok());
   EXPECT_FALSE(result.error.empty());
 }
 
 TEST(CameraInfoTest, RejectsZeroFy)
 {
+  const auto K = std::array<double, 9>{500.0, 0.0, 320.0, 0.0, 0.0, 240.0, 0.0, 0.0, 1.0};
+  const auto R = std::array<double, 9>{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  const auto P = std::array<double, 12>{};
   const auto payload = make_camera_info_payload(
-    640, 480, "plumb_bob",
-    std::array<double, 9>{500.0, 0.0, 320.0, 0.0, 0.0, 240.0, 0.0, 0.0, 1.0},
-    std::vector<double>{}, std::array<double, 12>{}, "/camera");
+    640, 480, "plumb_bob", K, std::vector<double>{}, R, P, "/camera");
 
   const auto result = extract_camera_info(payload);
-  EXPECT_FALSE(result.ok);
+  EXPECT_FALSE(result.ok());
   EXPECT_FALSE(result.error.empty());
 }
 
@@ -205,7 +212,7 @@ TEST(CameraInfoTest, TruncatedPayloadYieldsError)
   b.str("plumb_bob");
   // Stop before K: payload is too short for the fixed K array.
   const auto result = extract_camera_info(b.view());
-  EXPECT_FALSE(result.ok);
+  EXPECT_FALSE(result.ok());
   EXPECT_FALSE(result.error.empty());
 }
 
