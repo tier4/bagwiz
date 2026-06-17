@@ -8,12 +8,14 @@
 
 #include "bagwiz/commands/generate_video.hpp"
 
+#include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/image/camera_info.hpp"
 #include "bagwiz/core/image/compressed_image.hpp"
 #include "bagwiz/core/image/image_decoder.hpp"
 #include "bagwiz/core/image/raw_image.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/output_path.hpp"
+#include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/core/video/frame_rate.hpp"
 #include "bagwiz/core/video/video_encoder.hpp"
 #include "bagwiz/io/bag_io.hpp"
@@ -21,6 +23,9 @@
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
+#include <tf2/buffer_core.hpp>
+#include <tf2/exceptions.hpp>
+#include <tf2/time.hpp>
 
 #include <cinttypes>
 #include <cstdint>
@@ -31,7 +36,9 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -182,6 +189,75 @@ core::image::CameraInfoResult load_camera_info(
   core::image::CameraInfoResult result;
   result.error = "camera-info topic '" + topic + "' has no messages";
   return result;
+}
+
+// Load /tf and /tf_static into a BufferCore. Returns an error string on failure.
+std::optional<std::string> load_tf_buffer(
+  const std::filesystem::path & input, tf2::BufferCore & buffer)
+{
+  constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
+  std::unique_ptr<io::BagReader> reader;
+  try {
+    reader = io::open_read(input);
+  } catch (const std::exception & e) {
+    return "failed to open '" + input.string() + "': " + e.what();
+  }
+
+  std::vector<std::string> tf_topics;
+  for (const auto & t : reader->topics()) {
+    if (t.type == kTfMessageType) {
+      tf_topics.push_back(t.name);
+    }
+  }
+  if (tf_topics.empty()) {
+    return "no tf2_msgs/msg/TFMessage topics found; cannot resolve point-cloud transform";
+  }
+
+  io::ReadFilter filter;
+  filter.topics = tf_topics;
+  reader->set_filter(filter);
+
+  std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> decoders;
+  for (const auto & t : reader->topics()) {
+    if (t.type != kTfMessageType) {
+      continue;
+    }
+    const bool wanted = std::find(tf_topics.begin(), tf_topics.end(), t.name) != tf_topics.end();
+    if (!wanted) {
+      continue;
+    }
+    auto open = core::decoder::open_decoder(t);
+    if (!open.ok()) {
+      return "could not open decoder for TF topic '" + t.name + "': " + open.error;
+    }
+    decoders.emplace(t.name, std::move(open.decoder));
+  }
+
+  const auto is_static_by_topic = [&](std::string_view name) -> bool {
+    return name.size() >= 10 && name.compare(name.size() - 10, 10, "tf_static") == 0;
+  };
+
+  io::RawMessage raw;
+  try {
+    while (reader->next(raw)) {
+      auto it = decoders.find(raw.topic->name);
+      if (it == decoders.end()) {
+        continue;
+      }
+      const auto decoded = it->second->decode(raw.payload);
+      if (!decoded.ok()) {
+        return "failed to decode TF message on '" + raw.topic->name + "': " + decoded.error;
+      }
+      const auto transforms = core::extract_tf_message(*decoded.value);
+      const bool is_static = is_static_by_topic(raw.topic->name);
+      for (const auto & t : transforms) {
+        buffer.setTransform(t, "bagwiz", is_static);
+      }
+    }
+  } catch (const std::exception & e) {
+    return "error reading TF topics: " + std::string(e.what());
+  }
+  return std::nullopt;
 }
 
 // OpenCV undistortion helper. Initializes distortion/rectification maps from
