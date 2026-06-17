@@ -101,6 +101,13 @@ private:
       "Requires a camera-info topic; use --cam-info if auto-resolution fails.");
     sub
       ->add_option(
+        "--resize", video_args_.resize_scale,
+        "Scale output width and height by this factor while preserving aspect ratio. "
+        "1.0 keeps the original size, 0.5 halves both dimensions, 2.0 doubles them.")
+      ->default_val(1.0f)
+      ->check(CLI::Range(0.01f, 10.0f));
+    sub
+      ->add_option(
         "--pcd", video_args_.pointcloud_topic,
         "PointCloud2 topic to project onto each frame. This implies distortion correction and "
         "requires a CameraInfo topic and a TF chain from the cloud frame to the camera frame.")

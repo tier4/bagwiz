@@ -49,6 +49,8 @@ struct GenerateVideoArgs
   std::optional<std::string> camera_info_topic;
   // Apply OpenCV undistortion using the resolved camera info.
   bool undistort = false;
+  // Scale output dimensions by this factor while preserving aspect ratio.
+  float resize_scale = 1.0f;
 
   // Point-cloud overlay options.
   std::optional<std::string> pointcloud_topic;

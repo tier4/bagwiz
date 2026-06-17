@@ -34,6 +34,7 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -704,6 +705,21 @@ ProjectionWorkResult run_projection_work(
   }
 }
 
+// Scale a CameraInfo by `scale`. The distortion coefficients stay unchanged,
+// but the intrinsics (k) and projection matrix (p) are scaled so that the
+// projection matches an image resized by the same factor.
+core::image::CameraInfo scale_camera_info(const core::image::CameraInfo & info, double scale)
+{
+  core::image::CameraInfo scaled = info;
+  for (auto & v : scaled.k) {
+    v *= scale;
+  }
+  for (auto & v : scaled.p) {
+    v *= scale;
+  }
+  return scaled;
+}
+
 // Draw projected points on top of a decoded frame. `step` is the source row
 // stride in bytes. The returned cv::Mat owns the drawn buffer.
 cv::Mat overlay_points(
@@ -938,7 +954,7 @@ int run_generate_video(const GenerateVideoArgs & args)
       BAGWIZ_LOG_ERROR(kLogger, "%s", ci.error.c_str());
       return 1;
     }
-    camera_info = std::move(*ci.info);
+    camera_info = scale_camera_info(*ci.info, static_cast<double>(args.resize_scale));
   }
 
   // 6b. Load TF data when a point-cloud overlay is requested so the cloud can be
@@ -1052,6 +1068,38 @@ int run_generate_video(const GenerateVideoArgs & args)
     return frame;
   };
 
+  // Resize a decoded frame in-place by `args.resize_scale`, preserving aspect ratio.
+  // Returns false and logs on failure.
+  auto resize_decoded_frame = [&](FrameBuffer & frame) -> bool {
+    const double scale = static_cast<double>(args.resize_scale);
+    if (scale == 1.0) {
+      return true;
+    }
+    const std::uint32_t out_w = static_cast<std::uint32_t>(std::lround(frame.width * scale));
+    const std::uint32_t out_h = static_cast<std::uint32_t>(std::lround(frame.height * scale));
+    if (out_w == 0 || out_h == 0) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "resize scale %.3f would produce a zero-size frame (%ux%u)", scale, out_w, out_h);
+      return false;
+    }
+
+    const cv::Mat in(
+      static_cast<int>(frame.height), static_cast<int>(frame.width), CV_8UC3, frame.data.data(),
+      frame.step);
+    cv::Mat out;
+    const int interpolation = (scale < 1.0) ? cv::INTER_AREA : cv::INTER_LINEAR;
+    cv::resize(
+      in, out, cv::Size{static_cast<int>(out_w), static_cast<int>(out_h)}, 0, 0, interpolation);
+
+    frame.width = out_w;
+    frame.height = out_h;
+    frame.step = out_w * 3U;
+    frame.data.assign(
+      reinterpret_cast<std::byte *>(out.data),
+      reinterpret_cast<std::byte *>(out.data) + out.total() * out.elemSize());
+    return true;
+  };
+
   auto encode_frame = [&](
                         FrameBuffer & frame,
                         const std::vector<core::pointcloud::ProjectedPoint> * projected) -> bool {
@@ -1147,6 +1195,10 @@ int run_generate_video(const GenerateVideoArgs & args)
         cleanup_tmp();
         return 1;
       }
+      if (!resize_decoded_frame(*current)) {
+        cleanup_tmp();
+        return 1;
+      }
       auto pending_projection =
         launch_projection(current->timestamp_ns, current->width, current->height);
 
@@ -1166,6 +1218,11 @@ int run_generate_video(const GenerateVideoArgs & args)
         if (has_next) {
           next_frame = decode_to_buffer(next_raw.timestamp_ns, next_raw.payload);
           if (!next_frame) {
+            encoder.reset();
+            cleanup_tmp();
+            return 1;
+          }
+          if (!resize_decoded_frame(*next_frame)) {
             encoder.reset();
             cleanup_tmp();
             return 1;
@@ -1193,6 +1250,11 @@ int run_generate_video(const GenerateVideoArgs & args)
       while (reader->next(raw)) {
         auto frame = decode_to_buffer(raw.timestamp_ns, raw.payload);
         if (!frame) {
+          encoder.reset();
+          cleanup_tmp();
+          return 1;
+        }
+        if (!resize_decoded_frame(*frame)) {
           encoder.reset();
           cleanup_tmp();
           return 1;

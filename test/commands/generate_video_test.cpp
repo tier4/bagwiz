@@ -842,6 +842,63 @@ TEST_F(GenerateVideoTest, ThreadedPointCloudOverlayMatchesSynchronous)
   EXPECT_EQ(threaded_bytes, sync_bytes);
 }
 
+// A raw image topic can be down-scaled while preserving aspect ratio.
+TEST_F(GenerateVideoTest, ResizeScalesRawImageDimensions)
+{
+  constexpr int kFrames = 3;
+  const auto in = build_bag(tmp_dir_, kFrames, 16, 16, "bgr8");
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, kImageTopic, out, false};
+  args.resize_scale = 0.5f;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.width, 8U);
+  EXPECT_EQ(probe.height, 8U);
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+// A compressed image topic can be up-scaled while preserving aspect ratio.
+TEST_F(GenerateVideoTest, ResizeScalesCompressedImageDimensions)
+{
+  constexpr int kFrames = 3;
+  const auto in = build_compressed_bag(tmp_dir_, kFrames, 16, 16);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, kCompressedTopic, out, false};
+  args.resize_scale = 2.0f;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.width, 32U);
+  EXPECT_EQ(probe.height, 32U);
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+// Resizing a point-cloud overlay produces output at the scaled resolution while
+// keeping the projected points aligned because the camera info is scaled too.
+TEST_F(GenerateVideoTest, ResizeScalesPointCloudOverlay)
+{
+  constexpr int kFrames = 3;
+  const auto in =
+    build_bag_with_pointcloud_overlay(tmp_dir_, "/cam/image_rect_color", false, kFrames, 16, 16);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image_rect_color", out, false};
+  args.pointcloud_topic = "/points";
+  args.resize_scale = 0.5f;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.width, 8U);
+  EXPECT_EQ(probe.height, 8U);
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
 // Command-level integration test for the point-cloud overlay path against a real
 // rosbag. Skips gracefully when the bag is not available (e.g. CI or another
 // developer's machine).
