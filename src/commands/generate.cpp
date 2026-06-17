@@ -11,6 +11,7 @@
 #include "bagwiz/commands/generate_video.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/pointcloud/color_scheme.hpp"
+#include "bagwiz/core/pointcloud/property.hpp"
 
 #include <map>
 #include <string>
@@ -104,18 +105,18 @@ private:
       "Apply distortion correction to each frame using the resolved CameraInfo. "
       "When this flag is set, a camera-info topic is required; use --cam-info if "
       "auto-resolution from the image topic fails.");
-    const std::map<std::string, PointCloudProperty> property_map = {
-      {"x", PointCloudProperty::kX},
-      {"y", PointCloudProperty::kY},
-      {"z", PointCloudProperty::kZ},
-      {"distance", PointCloudProperty::kDistance},
-      {"intensity", PointCloudProperty::kIntensity}};
+    const std::map<std::string, core::pointcloud::PointCloudProperty> property_map = {
+      {"x", core::pointcloud::PointCloudProperty::kX},
+      {"y", core::pointcloud::PointCloudProperty::kY},
+      {"z", core::pointcloud::PointCloudProperty::kZ},
+      {"distance", core::pointcloud::PointCloudProperty::kDistance},
+      {"intensity", core::pointcloud::PointCloudProperty::kIntensity}};
     sub
       ->add_option(
         "--field", video_args_.property,
         "Point field used for coloring: x, y, z, distance, intensity.")
       ->transform(CLI::CheckedTransformer{property_map})
-      ->default_val(PointCloudProperty::kDistance);
+      ->default_val(core::pointcloud::PointCloudProperty::kDistance);
     sub
       ->add_option(
         "--min", video_args_.property_min, "Manual minimum value for field normalization.")

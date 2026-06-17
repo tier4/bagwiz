@@ -10,6 +10,7 @@
 #define BAGWIZ__COMMANDS__GENERATE_VIDEO_HPP_
 
 #include "bagwiz/core/pointcloud/color_scheme.hpp"
+#include "bagwiz/core/pointcloud/property.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -19,14 +20,6 @@
 
 namespace bagwiz::commands
 {
-
-enum class PointCloudProperty {
-  kX,          // x coordinate
-  kY,          // y coordinate
-  kZ,          // z coordinate
-  kDistance,   // Euclidean distance from the sensor origin
-  kIntensity,  // point intensity/reflectivity
-};
 
 // Arguments for `bagwiz generate video`. Populated by GenerateCommand's CLI
 // wiring (src/commands/generate.cpp) and consumed by run_generate_video. Kept
@@ -59,7 +52,7 @@ struct GenerateVideoArgs
 
   // Point-cloud overlay options.
   std::optional<std::string> pointcloud_topic;
-  PointCloudProperty property = PointCloudProperty::kDistance;
+  core::pointcloud::PointCloudProperty property = core::pointcloud::PointCloudProperty::kDistance;
   std::optional<double> property_min;
   std::optional<double> property_max;
   core::pointcloud::ColorScheme colorscheme = core::pointcloud::ColorScheme::kViridis;

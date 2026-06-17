@@ -49,7 +49,7 @@ float read_field(
 ProjectionResult project_pointcloud(
   const PointCloud2 & cloud, const image::CameraInfo & camera_info,
   const std::array<double, 16> & transform, std::uint32_t image_width, std::uint32_t image_height,
-  commands::PointCloudProperty property)
+  PointCloudProperty property)
 {
   ProjectionResult result;
 
@@ -74,7 +74,7 @@ ProjectionResult project_pointcloud(
   const PointField * field_y = find_field("y");
   const PointField * field_z = find_field("z");
 
-  const bool need_intensity = (property == commands::PointCloudProperty::kIntensity);
+  const bool need_intensity = (property == PointCloudProperty::kIntensity);
   std::optional<std::uint32_t> off_intensity;
   const PointField * field_intensity = nullptr;
   if (need_intensity) {
@@ -116,19 +116,19 @@ ProjectionResult project_pointcloud(
 
     float value = 0.0f;
     switch (property) {
-      case commands::PointCloudProperty::kX:
+      case PointCloudProperty::kX:
         value = px;
         break;
-      case commands::PointCloudProperty::kY:
+      case PointCloudProperty::kY:
         value = py;
         break;
-      case commands::PointCloudProperty::kZ:
+      case PointCloudProperty::kZ:
         value = pz;
         break;
-      case commands::PointCloudProperty::kDistance:
+      case PointCloudProperty::kDistance:
         value = std::sqrt(px * px + py * py + pz * pz);
         break;
-      case commands::PointCloudProperty::kIntensity:
+      case PointCloudProperty::kIntensity:
         value = read_field(cloud, i, *off_intensity, field_intensity->datatype);
         break;
     }

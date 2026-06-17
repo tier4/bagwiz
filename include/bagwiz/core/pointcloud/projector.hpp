@@ -9,13 +9,12 @@
 #ifndef BAGWIZ__CORE__POINTCLOUD__PROJECTOR_HPP_
 #define BAGWIZ__CORE__POINTCLOUD__PROJECTOR_HPP_
 
-#include "bagwiz/commands/generate_video.hpp"
 #include "bagwiz/core/image/camera_info.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
+#include "bagwiz/core/pointcloud/property.hpp"
 
 #include <array>
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,7 +40,7 @@ struct ProjectionResult
 [[nodiscard]] ProjectionResult project_pointcloud(
   const PointCloud2 & cloud, const image::CameraInfo & camera_info,
   const std::array<double, 16> & transform, std::uint32_t image_width, std::uint32_t image_height,
-  commands::PointCloudProperty property);
+  PointCloudProperty property);
 
 }  // namespace bagwiz::core::pointcloud
 
