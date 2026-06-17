@@ -951,6 +951,13 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
   if (auto pcd = complete_topic_after_flag("--pcd", kPointCloud2Type); pcd) {
     return std::move(*pcd);
   }
+
+  if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--field") {
+    return matching({"distance", "intensity", "x", "y", "z"}, current);
+  }
+  if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--scheme") {
+    return matching({"inferno", "jet", "magma", "plasma", "rainbow", "turbo", "viridis"}, current);
+  }
   return {};
 }
 

@@ -1122,6 +1122,22 @@ TEST(FlagCompletionTest, GenerateVideoDashListsVideoFlags)
     "--cam-info\n--help\n--overwrite\n--pcd\n--undistort\n-h\n-w\n");
 }
 
+// `--field <TAB>` offers the valid point-cloud field choices, sorted.
+TEST(FlagCompletionTest, GenerateVideoFieldFlagListsChoices)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "--field"}),
+    "distance\nintensity\nx\ny\nz\n");
+}
+
+// `--scheme <TAB>` offers the valid color scheme choices, sorted.
+TEST(FlagCompletionTest, GenerateVideoSchemeFlagListsChoices)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "--scheme"}),
+    "inferno\njet\nmagma\nplasma\nrainbow\nturbo\nviridis\n");
+}
+
 // `generate video <bag> <TAB>` (the <image_topic> slot) lists only the bag's image
 // topics — /image (Image) and /image/compressed (CompressedImage) here —
 // excluding the non-image /points, sorted.
