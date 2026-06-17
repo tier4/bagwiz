@@ -53,12 +53,13 @@ CameraInfoResult extract_camera_info(std::span<const std::byte> payload)
   try {
     cdr_walker::CdrReader reader(payload);
 
-    // std_msgs/Header
-    (void)reader.read_i32();     // header.stamp.sec
-    (void)reader.read_u32();     // header.stamp.nanosec
-    (void)reader.read_string();  // header.frame_id
-
     CameraInfo info;
+
+    // std_msgs/Header
+    (void)reader.read_i32();               // header.stamp.sec
+    (void)reader.read_u32();               // header.stamp.nanosec
+    info.frame_id = reader.read_string();  // header.frame_id
+
     info.height = reader.read_u32();
     info.width = reader.read_u32();
     info.distortion_model = reader.read_string();

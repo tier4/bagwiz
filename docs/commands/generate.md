@@ -14,29 +14,37 @@ different kind of artifact. Subcommands:
 
 Render the frames of an image topic into a video file. The frame rate is
 derived from the messages' own timestamps, and the container/codec is chosen
-from the `<output>` file extension.
+from the `<output>` file extension. An optional PointCloud2 topic can be
+projected onto each frame and colored by a selected field.
 
 ### Usage
 
 ```text
-bagwiz generate video [OPTIONS] <input> <image_topic> <output>
+bagwiz generate video [OPTIONS] <input> <image_topic> <output> [<pcd_topic>]
 ```
 
 ### Positional arguments
 
-| Name            | Description                                                           |
-| --------------- | --------------------------------------------------------------------- |
-| `input`         | Input ROS 2 rosbag (directory or single-file). Must exist.            |
-| `<image_topic>` | Image topic to render. Must exist in the bag and be a supported type. |
-| `output`        | Output video path. Its extension selects the container/codec.         |
+| Name            | Description                                                                                                                                   |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input`         | Input ROS 2 rosbag (directory or single-file). Must exist.                                                                                    |
+| `<image_topic>` | Image topic to render. Must exist in the bag and be a supported type.                                                                         |
+| `output`        | Output video path. Its extension selects the container/codec.                                                                                 |
+| `<pcd_topic>`   | Optional PointCloud2 topic to project onto the video. Requires a CameraInfo topic and a TF chain linking the cloud frame to the camera frame. |
 
 ### Options
 
-| Flag                | Description                                                                                            |
-| ------------------- | ------------------------------------------------------------------------------------------------------ |
-| `--cam-info`        | CameraInfo topic to use for `--undistort`. When omitted, bagwiz derives it from `<image_topic>`.       |
-| `--undistort`       | Apply distortion correction to each frame using the resolved CameraInfo. Requires a camera-info topic. |
-| `-w`, `--overwrite` | Replace an existing `<output>`. Without it, an existing output path stops the run.                     |
+| Flag                | Description                                                                                                                 |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `--cam-info`        | CameraInfo topic to use for `--undistort` and point-cloud projection. When omitted, bagwiz derives it from `<image_topic>`. |
+| `--undistort`       | Apply distortion correction to each frame using the resolved CameraInfo. Requires a camera-info topic.                      |
+| `--field`           | Point field used for coloring when `<pcd_topic>` is given: `x`, `y`, `z`, `distance` (default), `intensity`.                |
+| `--min`             | Manual minimum value for field normalization (default: auto-computed from the point-cloud span).                            |
+| `--max`             | Manual maximum value for field normalization (default: auto-computed from the point-cloud span).                            |
+| `--scheme`          | Color scheme for point coloring: `viridis` (default), `turbo`, `jet`, `plasma`, `inferno`, `magma`, `rainbow`.              |
+| `--point-size`      | Diameter of drawn points in pixels (default: 2, range: 1-64).                                                               |
+| `--alpha`           | Point overlay opacity, 0.0-1.0 (default: 1.0).                                                                              |
+| `-w`, `--overwrite` | Replace an existing `<output>`. Without it, an existing output path stops the run.                                          |
 
 ### Supported topic types
 
@@ -62,8 +70,8 @@ When `--cam-info` is not given, `generate video` attempts to find a sibling
 
 If the resolved topic does not exist or is not a `sensor_msgs/msg/CameraInfo`,
 it is treated as unresolved. That is fine for plain rendering, but when
-`--undistort` is set a camera-info topic is required, so the run stops and asks
-you to pass `--cam-info` explicitly.
+`--undistort` is set or a `<pcd_topic>` is supplied, a camera-info topic is
+required, so the run stops and asks you to pass `--cam-info` explicitly.
 
 ### Output format
 
@@ -100,6 +108,12 @@ output. If mpv fails to play, try VLC or run `mpv --hwdec=no`. Use `.avi`
   message from the resolved camera-info topic and applies OpenCV distortion
   correction to every frame before encoding. This requires a camera-info topic;
   use `--cam-info` when auto-resolution fails.
+- **Point-cloud overlay** (`<pcd_topic>`) projects the nearest PointCloud2
+  message onto each image frame using the resolved CameraInfo and the TF chain
+  from the cloud frame to the camera frame. Points are colored by `--field`
+  (normalized with `--min`/`--max` or auto-computed across the bag) and drawn
+  with `--scheme`, `--point-size`, and `--alpha`. This requires a camera-info
+  topic and at least one `tf2_msgs/msg/TFMessage` topic (e.g. `/tf_static`).
 - Dimensions must be even (the 4:2:0 pixel formats these codecs use require it).
 
 ### Examples
@@ -117,6 +131,10 @@ bagwiz generate video drive.mcap /sensing/camera/image_raw/compressed out.mp4 --
 # Render with distortion correction using an explicit CameraInfo topic.
 bagwiz generate video drive.mcap /sensing/camera/image_raw out.mp4 \
   --undistort --cam-info /sensing/camera/camera_info
+
+# Render with a point-cloud overlay colored by distance.
+bagwiz generate video drive.mcap /sensing/camera/image_raw/compressed out.mp4 \
+  /sensing/lidar/front/points --field distance --scheme turbo --point-size 3 --alpha 0.8
 ```
 
 ## Exit status

@@ -20,7 +20,8 @@
 namespace bagwiz::core::image
 {
 
-// A subset of sensor_msgs/msg/CameraInfo fields needed for undistortion.
+// A subset of sensor_msgs/msg/CameraInfo fields needed for undistortion and
+// point-cloud overlay transform lookup.
 struct CameraInfo
 {
   std::uint32_t width = 0;
@@ -30,6 +31,7 @@ struct CameraInfo
   std::array<double, 9> k{};   // intrinsic camera matrix
   std::array<double, 9> r{};   // rectification matrix
   std::array<double, 12> p{};  // projection/camera matrix
+  std::string frame_id;        // header.frame_id
 };
 
 // Outcome of extract_camera_info(). On success `info` is set and `error` is
