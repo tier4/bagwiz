@@ -83,20 +83,25 @@ private:
         "Optional PointCloud2 topic to project onto the video. When omitted, generate video "
         "behaves as before and produces a plain video without point-cloud overlay.")
       ->required(false);
-    sub
-      ->add_option(
-        "<cam_info_topic>", video_args_.camera_info_topic,
-        "Optional CameraInfo topic. When omitted, bagwiz derives it from "
-        "<img_topic>: image topics ending in /image_raw/compressed, /image_rect_color, or "
-        "/image_rect_color/compressed resolve to the sibling /camera_info topic.")
-      ->required(false);
     sub->add_flag(
       "-w,--overwrite", video_args_.overwrite,
       "Replace an existing <output>. Without it, an existing output path stops the run.");
+    sub
+      ->add_option(
+        "--cam-info", video_args_.camera_info_topic,
+        "CameraInfo topic to use for --undistort. When omitted, bagwiz derives it from "
+        "<img_topic>: image topics ending in /image_raw/compressed, /image_rect_color, or "
+        "/image_rect_color/compressed resolve to the sibling /camera_info topic.")
+      ->check([](const std::string & topic) {
+        if (topic.empty()) {
+          return std::string{"cam-info topic must not be empty"};
+        }
+        return std::string{};
+      });
     sub->add_flag(
       "--undistort", video_args_.undistort,
       "Apply distortion correction to each frame using the resolved CameraInfo. "
-      "When this flag is set, a cam-info topic is required; use <cam_info_topic> if "
+      "When this flag is set, a camera-info topic is required; use --cam-info if "
       "auto-resolution from the image topic fails.");
     const std::map<std::string, PointCloudProperty> property_map = {
       {"x", PointCloudProperty::kX},
@@ -138,9 +143,9 @@ private:
       "Frames stream straight to the encoder (no large temp files); the output is written\n"
       "atomically and a failed run leaves no partial file behind.\n"
       "Backward compatibility: the original <input> <img_topic> <output> signature is "
-      "preserved by keeping <output> before the optional [<pcd_topic>] and "
-      "[<cam_info_topic>] positionals. Point-cloud overlays are controlled with --field, "
-      "--min, --max, --scheme, --point-size, and --alpha.\n"
+      "preserved by keeping <output> before the optional [<pcd_topic>] positional. "
+      "Point-cloud overlays are controlled with --field, --min, --max, --scheme, "
+      "--point-size, and --alpha; an explicit CameraInfo topic is supplied with --cam-info.\n"
       "CameraInfo auto-resolution: /image_raw/compressed, /image_rect_color, and "
       "/image_rect_color/compressed map their prefix to /camera_info.\n"
       "Playback note: H.264 outputs (.mp4/.mkv/.mov) can crash mpv's hardware decoder; "

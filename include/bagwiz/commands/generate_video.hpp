@@ -11,7 +11,6 @@
 
 #include <cstdint>
 #include <filesystem>
-#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -19,8 +18,23 @@
 namespace bagwiz::commands
 {
 
-enum class PointCloudProperty { kX, kY, kZ, kDistance, kIntensity };
-enum class ColorScheme { kViridis, kTurbo, kJet, kPlasma, kInferno, kMagma, kRainbow };
+enum class PointCloudProperty {
+  kX,          // x coordinate
+  kY,          // y coordinate
+  kZ,          // z coordinate
+  kDistance,   // Euclidean distance from the sensor origin
+  kIntensity,  // point intensity/reflectivity
+};
+
+enum class ColorScheme {
+  kViridis,  // perceptually uniform blue-green-yellow
+  kTurbo,    // high-saturation rainbow-like map
+  kJet,      // common blue-cyan-yellow-red map
+  kPlasma,   // perceptually uniform purple-orange
+  kInferno,  // perceptually uniform black-orange-white
+  kMagma,    // perceptually uniform black-purple-white
+  kRainbow,  // full-spectrum rainbow map
+};
 
 // Arguments for `bagwiz generate video`. Populated by GenerateCommand's CLI
 // wiring (src/commands/generate.cpp) and consumed by run_generate_video. Kept
