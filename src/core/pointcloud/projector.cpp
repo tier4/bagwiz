@@ -49,7 +49,7 @@ float read_field(
 ProjectionResult project_pointcloud(
   const PointCloud2 & cloud, const image::CameraInfo & camera_info,
   const std::array<double, 16> & transform, std::uint32_t image_width, std::uint32_t image_height,
-  PointCloudProperty property)
+  PointCloudProperty property, bool use_rectified)
 {
   ProjectionResult result;
 
@@ -86,10 +86,10 @@ ProjectionResult project_pointcloud(
     field_intensity = find_field("intensity");
   }
 
-  const double fx = camera_info.k[0];
-  const double fy = camera_info.k[4];
-  const double cx = camera_info.k[2];
-  const double cy = camera_info.k[5];
+  const double fx = use_rectified ? camera_info.p[0] : camera_info.k[0];
+  const double fy = use_rectified ? camera_info.p[5] : camera_info.k[4];
+  const double cx = use_rectified ? camera_info.p[2] : camera_info.k[2];
+  const double cy = use_rectified ? camera_info.p[6] : camera_info.k[5];
 
   const std::uint32_t n = cloud.height * cloud.width;
   result.points.reserve(n / 4);  // rough estimate

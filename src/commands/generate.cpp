@@ -102,8 +102,8 @@ private:
     sub
       ->add_option(
         "--pcd", video_args_.pointcloud_topic,
-        "PointCloud2 topic to project onto each frame (requires CameraInfo and a TF chain from "
-        "the cloud frame to the camera frame).")
+        "PointCloud2 topic to project onto each frame. This implies distortion correction and "
+        "requires a CameraInfo topic and a TF chain from the cloud frame to the camera frame.")
       ->check([](const std::string & topic) {
         if (topic.empty()) {
           return std::string{"pcd topic must not be empty"};

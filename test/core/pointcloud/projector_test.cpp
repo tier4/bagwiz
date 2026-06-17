@@ -96,6 +96,18 @@ CameraInfo make_pinhole_camera(
   return info;
 }
 
+CameraInfo make_pinhole_camera_with_p(
+  double fx, double fy, double cx, double cy, std::uint32_t width, std::uint32_t height,
+  double p_fx, double p_fy, double p_cx, double p_cy)
+{
+  CameraInfo info;
+  info.width = width;
+  info.height = height;
+  info.k = {fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0};
+  info.p = {p_fx, 0.0, p_cx, 0.0, 0.0, p_fy, p_cy, 0.0, 0.0, 0.0, 1.0, 0.0};
+  return info;
+}
+
 std::array<double, 16> identity_transform()
 {
   return {
@@ -237,4 +249,26 @@ TEST(Projector, TranslationTransformProjectsCorrectly)
   EXPECT_EQ(result.points[0].v, 240);
   EXPECT_FLOAT_EQ(result.points[0].depth, 5.0f);
   EXPECT_FLOAT_EQ(result.points[0].value, std::sqrt(1.0f + 0.0f + 16.0f));
+}
+
+TEST(Projector, UseRectifiedSelectsProjectionMatrix)
+{
+  // A camera whose k and p differ. With use_rectified=true the projection uses p.
+  const auto cloud = make_xyz_cloud({{0.0f, 0.0f, 5.0f}});
+  const auto camera =
+    make_pinhole_camera_with_p(100.0, 100.0, 320.0, 240.0, 640, 480, 200.0, 200.0, 160.0, 120.0);
+
+  const auto raw = project_pointcloud(
+    cloud, camera, identity_transform(), 640, 480, PointCloudProperty::kDistance, false);
+  const auto rectified = project_pointcloud(
+    cloud, camera, identity_transform(), 640, 480, PointCloudProperty::kDistance, true);
+
+  ASSERT_TRUE(raw.ok());
+  ASSERT_TRUE(rectified.ok());
+  ASSERT_EQ(raw.points.size(), 1u);
+  ASSERT_EQ(rectified.points.size(), 1u);
+  EXPECT_EQ(raw.points[0].u, 320);
+  EXPECT_EQ(raw.points[0].v, 240);
+  EXPECT_EQ(rectified.points[0].u, 160);
+  EXPECT_EQ(rectified.points[0].v, 120);
 }

@@ -646,10 +646,12 @@ struct ProjectionWorkResult
 
 // Transform the cloud into the camera frame and project it onto the image.
 // This helper is shared by the synchronous and the threaded overlay paths.
+// `use_rectified` should be true when the target image has been undistorted, so
+// the projection aligns with the rectified image using `camera_info.p`.
 ProjectionWorkResult project_cloud_for_frame(
   const core::pointcloud::PointCloud2 & cloud, const core::image::CameraInfo & camera_info,
   tf2::BufferCore & tf_buffer, std::uint32_t image_width, std::uint32_t image_height,
-  core::pointcloud::PointCloudProperty property)
+  core::pointcloud::PointCloudProperty property, bool use_rectified)
 {
   const std::string & image_frame = camera_info.frame_id;
   const std::string & cloud_frame = cloud.frame_id;
@@ -671,7 +673,7 @@ ProjectionWorkResult project_cloud_for_frame(
   transform[14] = tf.transform.translation.z;
 
   const auto projected = core::pointcloud::project_pointcloud(
-    cloud, camera_info, transform, image_width, image_height, property);
+    cloud, camera_info, transform, image_width, image_height, property, use_rectified);
   if (!projected.ok()) {
     return {{}, std::move(projected.error)};
   }
@@ -686,7 +688,7 @@ ProjectionWorkResult run_projection_work(
   const std::vector<PointCloudIndexEntry> & entries, std::int64_t target_ns,
   const core::image::CameraInfo & camera_info, tf2::BufferCore & tf_buffer,
   std::uint32_t image_width, std::uint32_t image_height,
-  core::pointcloud::PointCloudProperty property)
+  core::pointcloud::PointCloudProperty property, bool use_rectified)
 {
   try {
     PointCloudFetcher fetcher(input, pointcloud_topic, entries);
@@ -696,7 +698,7 @@ ProjectionWorkResult run_projection_work(
       return {{}, std::move(error)};
     }
     return project_cloud_for_frame(
-      *cloud, camera_info, tf_buffer, image_width, image_height, property);
+      *cloud, camera_info, tf_buffer, image_width, image_height, property, use_rectified);
   } catch (const std::exception & e) {
     return {{}, std::string("point-cloud projection failed: ") + e.what()};
   }
@@ -827,11 +829,12 @@ int run_generate_video(const GenerateVideoArgs & args)
     camera_info_topic = resolve_camera_info_topic(args.topic, reader->topics());
   }
 
-  if (args.undistort && !camera_info_topic.has_value()) {
+  const bool needs_camera_info = args.undistort || args.pointcloud_topic.has_value();
+  if (needs_camera_info && !camera_info_topic.has_value()) {
     BAGWIZ_LOG_ERROR(
       kLogger,
-      "--undistort requires a camera-info topic, but none could be derived from '%s'. "
-      "Pass it explicitly with --cam-info.",
+      "A camera-info topic is required for --undistort or --pcd, but none could be derived from "
+      "'%s'. Pass it explicitly with --cam-info.",
       args.topic.c_str());
     return 1;
   }
@@ -985,6 +988,7 @@ int run_generate_video(const GenerateVideoArgs & args)
   std::uint32_t enc_h = 0;
   std::string enc_encoding;
   std::uint64_t written = 0;
+  const bool use_rectified = args.undistort || pointcloud_topic.has_value();
 
   // Owned decode buffer that survives across BagReader::next() calls, which
   // invalidate raw payload spans. Used by both the synchronous and the threaded
@@ -1066,7 +1070,7 @@ int run_generate_video(const GenerateVideoArgs & args)
       }
       encoder = std::move(opened.encoder);
 
-      if (args.undistort) {
+      if (args.undistort || pointcloud_topic.has_value()) {
         undistort_helper = std::make_unique<UndistortHelper>(*camera_info, enc_w, enc_h);
       }
     } else if (frame.width != enc_w || frame.height != enc_h || frame.encoding != enc_encoding) {
@@ -1123,11 +1127,13 @@ int run_generate_video(const GenerateVideoArgs & args)
       auto launch_projection = [&](
                                  std::int64_t target_ns, std::uint32_t w,
                                  std::uint32_t h) -> std::future<ProjectionWorkResult> {
-        return std::async(std::launch::async, [&, target_ns, w, h, topic = *pointcloud_topic]() {
-          return run_projection_work(
-            args.input_path, topic, pcd_span.entries, target_ns, *camera_info, *tf_buffer, w, h,
-            args.property);
-        });
+        return std::async(
+          std::launch::async,
+          [&, target_ns, w, h, topic = *pointcloud_topic, rectified = use_rectified]() {
+            return run_projection_work(
+              args.input_path, topic, pcd_span.entries, target_ns, *camera_info, *tf_buffer, w, h,
+              args.property, rectified);
+          });
       };
 
       if (!reader->next(raw)) {
@@ -1205,7 +1211,8 @@ int run_generate_video(const GenerateVideoArgs & args)
           }
 
           const auto projected = project_cloud_for_frame(
-            *cloud, *camera_info, *tf_buffer, frame->width, frame->height, args.property);
+            *cloud, *camera_info, *tf_buffer, frame->width, frame->height, args.property,
+            use_rectified);
           if (!projected.ok()) {
             BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, projected.error.c_str());
             encoder.reset();
