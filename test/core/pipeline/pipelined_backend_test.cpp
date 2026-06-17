@@ -328,3 +328,88 @@ TEST_F(PipelinedBackendTest, WriterErrorPropagatesWithoutHanging)
 
   EXPECT_THROW(pipeline::run_pipeline(*reader, writer, router, pipe, ""), std::runtime_error);
 }
+
+namespace
+{
+
+// Appends a byte to every "/foo" message (kWrite) and forwards others verbatim
+// (kPassthrough): exercises the seam's transform path with no geo dependency.
+class AppendByteProcessor : public pipeline::Processor
+{
+public:
+  [[nodiscard]] pipeline::Emit route(const std::string & in_topic) const override
+  {
+    return pipeline::Emit{true, in_topic};
+  }
+  [[nodiscard]] bool transforms() const override { return true; }
+  [[nodiscard]] pipeline::TransformAction transform(
+    const std::string & in_topic, std::span<const std::byte> in,
+    std::vector<std::byte> & out) const override
+  {
+    if (in_topic == "/foo") {
+      out.assign(in.begin(), in.end());
+      out.push_back(std::byte{0xFF});
+      return pipeline::TransformAction::kWrite;
+    }
+    return pipeline::TransformAction::kPassthrough;
+  }
+};
+
+// Skips every "/bar" message (kSkip), forwards others verbatim (kPassthrough).
+class SkipBarProcessor : public pipeline::Processor
+{
+public:
+  [[nodiscard]] pipeline::Emit route(const std::string & in_topic) const override
+  {
+    return pipeline::Emit{true, in_topic};
+  }
+  [[nodiscard]] bool transforms() const override { return true; }
+  [[nodiscard]] pipeline::TransformAction transform(
+    const std::string & in_topic, std::span<const std::byte> /*in*/,
+    std::vector<std::byte> & /*out*/) const override
+  {
+    return in_topic == "/bar" ? pipeline::TransformAction::kSkip
+                              : pipeline::TransformAction::kPassthrough;
+  }
+};
+
+}  // namespace
+
+TEST_F(PipelinedBackendTest, TransformWriteAndPassthroughMatchSequential)
+{
+  const auto in = build_input(tmp_dir_, 3, 4);  // /foo, /bar, /foo
+  const auto seq_out = tmp_dir_ / "seq";
+  const auto pipe_out = tmp_dir_ / "pipe";
+  AppendByteProcessor proc;
+
+  pipeline::SequentialBackend seq;
+  pipeline::PipelinedBackend pipe;
+  const auto seq_counts = run_rewrite(seq, in, seq_out, proc, declare_all);
+  const auto pipe_counts = run_rewrite(pipe, in, pipe_out, proc, declare_all);
+
+  bagwiz::test::expect_bags_equal(seq_out, pipe_out);
+  EXPECT_EQ(seq_counts.copied, pipe_counts.copied);
+  EXPECT_EQ(seq_counts.transformed, pipe_counts.transformed);
+  EXPECT_EQ(pipe_counts.copied, 3U);
+  EXPECT_EQ(pipe_counts.transformed, 2U);  // two /foo messages rewritten
+  EXPECT_EQ(pipe_counts.skipped, 0U);
+}
+
+TEST_F(PipelinedBackendTest, TransformSkipMatchesSequential)
+{
+  const auto in = build_input(tmp_dir_, 3, 8);  // /foo, /bar, /foo
+  const auto seq_out = tmp_dir_ / "seq";
+  const auto pipe_out = tmp_dir_ / "pipe";
+  SkipBarProcessor proc;
+
+  pipeline::SequentialBackend seq;
+  pipeline::PipelinedBackend pipe;
+  const auto seq_counts = run_rewrite(seq, in, seq_out, proc, declare_all);
+  const auto pipe_counts = run_rewrite(pipe, in, pipe_out, proc, declare_all);
+
+  bagwiz::test::expect_bags_equal(seq_out, pipe_out);
+  EXPECT_EQ(seq_counts.copied, pipe_counts.copied);
+  EXPECT_EQ(seq_counts.skipped, pipe_counts.skipped);
+  EXPECT_EQ(pipe_counts.copied, 2U);   // two /foo forwarded
+  EXPECT_EQ(pipe_counts.skipped, 1U);  // one /bar skipped
+}

@@ -14,6 +14,8 @@
 #include "bagwiz/core/msg_definition_resolver.hpp"
 #include "bagwiz/core/msgtype_convert/geo_pose_convert.hpp"
 #include "bagwiz/core/output_path.hpp"
+#include "bagwiz/core/pipeline/backend_select.hpp"
+#include "bagwiz/core/pipeline/rewrite_backend.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <array>
@@ -258,6 +260,60 @@ io::TopicInfo make_target_topic_info(
   return info;
 }
 
+// Processor that drives geo message-type conversion through the shared rewrite
+// seam. route() never drops or renames (geo changes only the payload + the
+// declared type of selected topics); transform() decodes a selected topic's
+// message, extracts the NavSatFix, and re-encodes it to the target type.
+// Non-selected topics pass through verbatim; an undecodable / non-NavSatFix /
+// unconvertible message is skipped, matching the command's lenient semantics.
+// The decoders are stateful and thread-incompatible, but transform() runs only
+// on the single producer thread, so they are never shared across threads.
+class GeoTransformProcessor : public core::pipeline::Processor
+{
+public:
+  GeoTransformProcessor(
+    const std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> & decoders,
+    const mtc::GeoPoseConverter & converter)
+  : decoders_(decoders), converter_(converter)
+  {
+  }
+
+  [[nodiscard]] core::pipeline::Emit route(const std::string & in_topic) const override
+  {
+    return core::pipeline::Emit{true, in_topic};
+  }
+
+  [[nodiscard]] bool transforms() const override { return true; }
+
+  [[nodiscard]] core::pipeline::TransformAction transform(
+    const std::string & in_topic, std::span<const std::byte> in,
+    std::vector<std::byte> & out) const override
+  {
+    const auto dec_it = decoders_.find(in_topic);
+    if (dec_it == decoders_.end()) {
+      return core::pipeline::TransformAction::kPassthrough;  // not a converted topic
+    }
+    const auto decoded = dec_it->second->decode(in);
+    if (!decoded.ok()) {
+      return core::pipeline::TransformAction::kSkip;
+    }
+    const auto sample = mtc::extract_nav_sat_fix(*decoded.value);
+    if (!sample.has_value()) {
+      return core::pipeline::TransformAction::kSkip;
+    }
+    try {
+      out = converter_.convert(*sample);
+    } catch (const std::exception &) {
+      return core::pipeline::TransformAction::kSkip;
+    }
+    return core::pipeline::TransformAction::kWrite;
+  }
+
+private:
+  const std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> & decoders_;
+  const mtc::GeoPoseConverter & converter_;
+};
+
 // One full conversion pass: read `input_path`, declare every topic (converted
 // topics re-typed to `target_type`), then stream-copy — converting selected
 // topics' messages and forwarding the rest verbatim. The writer factory is
@@ -316,76 +372,20 @@ int execute_pass(
     }
   }
 
-  std::uint64_t total_in = 0;
-  std::uint64_t converted = 0;
-  std::uint64_t copied = 0;
-  std::uint64_t failed = 0;
-  io::RawMessage msg;
-  while (true) {
-    try {
-      if (!reader->next(msg)) {
-        break;
-      }
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "read error: %s", e.what());
-      return 1;
-    }
-    ++total_in;
-    if (msg.topic == nullptr) {
-      continue;
-    }
-
-    auto dec_it = decoders.find(msg.topic->name);
-    if (dec_it == decoders.end()) {
-      // Not a converted topic: forward verbatim.
-      try {
-        writer->write(msg.topic->name, msg.timestamp_ns, msg.payload);
-        ++copied;
-      } catch (const std::exception & e) {
-        ++failed;
-        if (failed <= 3) {
-          BAGWIZ_LOG_WARN(
-            kLogger, "writer->write failed on '%s': %s; skipping message", msg.topic->name.c_str(),
-            e.what());
-        }
-      }
-      continue;
-    }
-
-    const auto decoded = dec_it->second->decode(msg.payload);
-    if (!decoded.ok()) {
-      ++failed;
-      if (failed <= 3) {
-        BAGWIZ_LOG_WARN(
-          kLogger, "decode failed on '%s': %s; skipping message", msg.topic->name.c_str(),
-          decoded.error.c_str());
-      }
-      continue;
-    }
-    const auto sample = mtc::extract_nav_sat_fix(*decoded.value);
-    if (!sample.has_value()) {
-      ++failed;
-      if (failed <= 3) {
-        BAGWIZ_LOG_WARN(
-          kLogger, "message on '%s' is not a decodable NavSatFix; skipping",
-          msg.topic->name.c_str());
-      }
-      continue;
-    }
-    try {
-      const auto payload = converter.convert(*sample);
-      writer->write(
-        msg.topic->name, msg.timestamp_ns,
-        std::span<const std::byte>(payload.data(), payload.size()));
-      ++converted;
-    } catch (const std::exception & e) {
-      ++failed;
-      if (failed <= 3) {
-        BAGWIZ_LOG_WARN(
-          kLogger, "convert/write failed on '%s': %s; skipping message", msg.topic->name.c_str(),
-          e.what());
-      }
-    }
+  // Drive the conversion through the shared rewrite seam on the threaded
+  // backend: route() forwards every topic under its own name; transform()
+  // re-encodes selected topics and skips undecodable / non-NavSatFix /
+  // unconvertible messages (lenient, as before). A read/write I/O error now
+  // aborts the run (fail-fast).
+  GeoTransformProcessor processor(decoders, converter);
+  core::pipeline::RewriteCounts counts;
+  try {
+    auto backend = core::pipeline::make_backend(core::pipeline::BackendKind::Pipelined);
+    counts =
+      core::pipeline::run_pipeline(*reader, *writer, processor, *backend, "convert msgtype geo");
+  } catch (const std::exception & e) {
+    BAGWIZ_LOG_ERROR(kLogger, "convert msgtype geo read/write failed: %s", e.what());
+    return 1;
   }
 
   try {
@@ -395,13 +395,18 @@ int execute_pass(
     return 1;
   }
 
+  // `copied` counts every written message; `transformed` is the converted subset
+  // and the rest were forwarded verbatim. `skipped` were dropped by transform().
+  const std::uint64_t converted = counts.transformed;
+  const std::uint64_t forwarded = counts.copied - counts.transformed;
+  const std::uint64_t total_in = counts.copied + counts.skipped;
   BAGWIZ_LOG_INFO(
     kLogger,
     "convert msgtype geo: converted %" PRIu64 " message(s) to %s, copied %" PRIu64
     " other message(s) (of %" PRIu64 " read).",
-    converted, target_type.c_str(), copied, total_in);
-  if (failed > 0) {
-    BAGWIZ_LOG_WARN(kLogger, "%" PRIu64 " message(s) failed and were skipped.", failed);
+    converted, target_type.c_str(), forwarded, total_in);
+  if (counts.skipped > 0) {
+    BAGWIZ_LOG_WARN(kLogger, "%" PRIu64 " message(s) failed and were skipped.", counts.skipped);
   }
   return 0;
 }

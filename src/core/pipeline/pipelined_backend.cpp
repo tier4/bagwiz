@@ -15,12 +15,15 @@
 #include "bagwiz/io/bag_io.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <span>
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace bagwiz::core::pipeline
 {
@@ -28,15 +31,20 @@ namespace bagwiz::core::pipeline
 namespace
 {
 
-// Read stage: pull every message, route it, and copy each kept message into the
-// queue. Owns all the counters and the read/byte profiling so the write stage
-// stays a pure drain. The keep/drop/rename accounting mirrors SequentialBackend
-// line for line, so the counts are identical regardless of backend.
+// Read stage: pull every message, route it, optionally transform it, and copy
+// each kept message into the queue. Owns all the counters and the read/process
+// /byte profiling so the write stage stays a pure drain. The keep/drop/rename
+// /transform/skip accounting mirrors SequentialBackend line for line, so the
+// counts are identical regardless of backend. A transforming processor's
+// transform() runs only on this (single) producer thread, so a stateful decoder
+// it owns is never shared across threads.
 RewriteCounts read_loop(
   io::BagReader & reader, const Processor & processor, BoundedMessageQueue & queue,
   StageProfiler & prof)
 {
   RewriteCounts counts;
+  const bool transforming = processor.transforms();
+  std::vector<std::byte> xform_buf;
   io::RawMessage raw;
   while (true) {
     bool got = false;
@@ -49,29 +57,53 @@ RewriteCounts read_loop(
     }
     // raw.topic is non-null when next() returns true (zero-copy view documented
     // by BagReader::next).
-    const auto size = static_cast<std::uint64_t>(raw.payload.size());
+    const auto in_size = static_cast<std::uint64_t>(raw.payload.size());
     const Emit emit = processor.route(raw.topic->name);
     if (!emit.keep) {
-      prof.add_message(size, 0);  // read+decompressed but not written
+      prof.add_message(in_size, 0);  // read+decompressed but not written
       ++counts.dropped;
       continue;
     }
-    // Copy the payload and the resolved topic name into an owned record BEFORE
-    // the next next() invalidates the reader's zero-copy view, then hand it to
-    // the write thread. The rename test (out_topic != input name) must happen
-    // here too, while the input name is still valid.
+
+    // Build the owned hand-off record BEFORE the next next() invalidates the
+    // reader's zero-copy view. The rename test (out_topic != input name) must
+    // also happen here while the input name is still valid.
     const bool renamed = emit.out_topic != raw.topic->name;
     OwnedMessage msg;
     msg.out_topic = std::string(emit.out_topic);
     msg.timestamp_ns = raw.timestamp_ns;
-    msg.payload.assign(raw.payload.begin(), raw.payload.end());
+    bool transformed = false;
+    if (transforming) {
+      xform_buf.clear();
+      const TransformAction action = [&] {
+        auto s = prof.time(Stage::kProcess);
+        return processor.transform(raw.topic->name, raw.payload, xform_buf);
+      }();
+      if (action == TransformAction::kSkip) {
+        prof.add_message(in_size, 0);
+        ++counts.skipped;
+        continue;
+      }
+      if (action == TransformAction::kWrite) {
+        msg.payload = std::move(xform_buf);
+        transformed = true;
+      } else {
+        msg.payload.assign(raw.payload.begin(), raw.payload.end());
+      }
+    } else {
+      msg.payload.assign(raw.payload.begin(), raw.payload.end());
+    }
+    const auto out_size = static_cast<std::uint64_t>(msg.payload.size());
     if (!queue.push(std::move(msg))) {
       break;  // the writer failed; stop producing (its error is rethrown below)
     }
     if (renamed) {
       ++counts.renamed;
     }
-    prof.add_message(size, size);
+    if (transformed) {
+      ++counts.transformed;
+    }
+    prof.add_message(in_size, out_size);
     ++counts.copied;
   }
   return counts;
@@ -85,7 +117,8 @@ RewriteCounts PipelinedBackend::run(
 {
   // Resolve the profile flag once on this thread, then hand each stage its own
   // profiler — StageProfiler has no internal locking, so the two threads must
-  // not share one instance.
+  // not share one instance. The transform (process) stage runs on the read
+  // thread, so read_prof already carries it.
   const bool profiling = profile_value_enabled(std::getenv("BAGWIZ_PROFILE"));
   StageProfiler read_prof(profiling);
   StageProfiler write_prof(profiling);
@@ -121,9 +154,9 @@ RewriteCounts PipelinedBackend::run(
     std::rethrow_exception(err);
   }
 
-  // Merge the two per-thread profilers into a single report. read_ns and
-  // write_ns overlap in wall-clock (that overlap IS the speedup), so the
-  // reported "wall" sum exceeds the real elapsed time by design.
+  // Merge the writer thread's write time into the read profiler for one report.
+  // read_ns/process_ns and write_ns overlap in wall-clock (that overlap IS the
+  // speedup), so the reported "wall" sum exceeds the real elapsed time by design.
   read_prof.add(Stage::kWrite, std::chrono::nanoseconds(write_prof.totals().write_ns));
   read_prof.report(profile_label);
   return counts;
