@@ -119,14 +119,15 @@ public:
   }
 
   // The first latched exception, or nullptr if the run completed cleanly.
-  std::exception_ptr error()
+  // Const (Con.2): a pure observer that locks only to read; mutex_ is mutable.
+  std::exception_ptr error() const
   {
     const std::lock_guard<std::mutex> lock(mutex_);
     return error_;
   }
 
 private:
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   std::condition_variable not_full_;
   std::condition_variable not_empty_;
   std::deque<OwnedMessage> queue_;

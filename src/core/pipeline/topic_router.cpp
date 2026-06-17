@@ -17,7 +17,7 @@ namespace bagwiz::core::pipeline
 
 Emit SuppressRouter::route(const std::string & in_topic) const
 {
-  if (suppress_.count(in_topic) != 0) {
+  if (suppress_.contains(in_topic)) {
     return Emit{false, {}};
   }
   return Emit{true, in_topic};

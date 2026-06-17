@@ -24,9 +24,14 @@ namespace
 {
 constexpr const char * kLogger = "bagwiz.pipeline.profile";
 
+// Unit-conversion constants shared by the report helpers (ES.45: no repeated
+// magic numbers; the MiB divisor in particular appears in several formulas).
+constexpr double kNanosPerSecond = 1e9;
+constexpr double kBytesPerMiB = 1024.0 * 1024.0;
+
 double to_seconds(std::int64_t ns)
 {
-  return static_cast<double>(ns) / 1e9;
+  return static_cast<double>(ns) / kNanosPerSecond;
 }
 
 double percent(std::int64_t part, std::int64_t total)
@@ -40,7 +45,7 @@ double mib_per_s(std::uint64_t bytes, std::int64_t ns)
   if (ns <= 0) {
     return 0.0;
   }
-  const double mib = static_cast<double>(bytes) / (1024.0 * 1024.0);
+  const double mib = static_cast<double>(bytes) / kBytesPerMiB;
   return mib / to_seconds(ns);
 }
 
@@ -73,8 +78,8 @@ std::string format_stage_report(std::string_view command, const StageTotals & t)
   std::ostringstream os;
   os << "profile [" << command << "]: wall " << std::fixed << std::setprecision(3)
      << to_seconds(total_ns) << " s, " << t.messages << " msg, "
-     << (static_cast<double>(t.in_bytes) / (1024.0 * 1024.0)) << " MiB in / "
-     << (static_cast<double>(t.out_bytes) / (1024.0 * 1024.0)) << " MiB out\n";
+     << (static_cast<double>(t.in_bytes) / kBytesPerMiB) << " MiB in / "
+     << (static_cast<double>(t.out_bytes) / kBytesPerMiB) << " MiB out\n";
   emit_stage_line(os, "read", t.read_ns, total_ns);
   emit_stage_line(os, "process", t.process_ns, total_ns);
   emit_stage_line(os, "write", t.write_ns, total_ns);

@@ -80,11 +80,9 @@ public:
   // a stateful decoder it owns is never shared across threads. `out` is provided
   // cleared and may be grown/reused across calls.
   [[nodiscard]] virtual TransformAction transform(
-    const std::string & in_topic, std::span<const std::byte> in, std::vector<std::byte> & out) const
+    const std::string & /*in_topic*/, std::span<const std::byte> /*in*/,
+    std::vector<std::byte> & /*out*/) const
   {
-    (void)in_topic;
-    (void)in;
-    (void)out;
     return TransformAction::kPassthrough;
   }
 };
