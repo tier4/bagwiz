@@ -10,6 +10,7 @@
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/generate_video.hpp"
 #include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/pointcloud/color_scheme.hpp"
 
 #include <map>
 #include <string>
@@ -123,14 +124,17 @@ private:
       ->add_option(
         "--max", video_args_.property_max, "Manual maximum value for field normalization.")
       ->capture_default_str();
-    const std::map<std::string, ColorScheme> scheme_map = {
-      {"viridis", ColorScheme::kViridis}, {"turbo", ColorScheme::kTurbo},
-      {"jet", ColorScheme::kJet},         {"plasma", ColorScheme::kPlasma},
-      {"inferno", ColorScheme::kInferno}, {"magma", ColorScheme::kMagma},
-      {"rainbow", ColorScheme::kRainbow}};
+    const std::map<std::string, core::pointcloud::ColorScheme> scheme_map = {
+      {"viridis", core::pointcloud::ColorScheme::kViridis},
+      {"turbo", core::pointcloud::ColorScheme::kTurbo},
+      {"jet", core::pointcloud::ColorScheme::kJet},
+      {"plasma", core::pointcloud::ColorScheme::kPlasma},
+      {"inferno", core::pointcloud::ColorScheme::kInferno},
+      {"magma", core::pointcloud::ColorScheme::kMagma},
+      {"rainbow", core::pointcloud::ColorScheme::kRainbow}};
     sub->add_option("--scheme", video_args_.colorscheme, "Color scheme for point coloring.")
       ->transform(CLI::CheckedTransformer{scheme_map})
-      ->default_val(ColorScheme::kViridis);
+      ->default_val(core::pointcloud::ColorScheme::kViridis);
     sub->add_option("--point-size", video_args_.point_size, "Diameter of drawn points in pixels.")
       ->default_val(2U)
       ->check(CLI::Range(1U, 64U));

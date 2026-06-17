@@ -9,6 +9,8 @@
 #ifndef BAGWIZ__COMMANDS__GENERATE_VIDEO_HPP_
 #define BAGWIZ__COMMANDS__GENERATE_VIDEO_HPP_
 
+#include "bagwiz/core/pointcloud/color_scheme.hpp"
+
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -24,16 +26,6 @@ enum class PointCloudProperty {
   kZ,          // z coordinate
   kDistance,   // Euclidean distance from the sensor origin
   kIntensity,  // point intensity/reflectivity
-};
-
-enum class ColorScheme {
-  kViridis,  // perceptually uniform blue-green-yellow
-  kTurbo,    // high-saturation rainbow-like map
-  kJet,      // common blue-cyan-yellow-red map
-  kPlasma,   // perceptually uniform purple-orange
-  kInferno,  // perceptually uniform black-orange-white
-  kMagma,    // perceptually uniform black-purple-white
-  kRainbow,  // full-spectrum rainbow map
 };
 
 // Arguments for `bagwiz generate video`. Populated by GenerateCommand's CLI
@@ -70,7 +62,7 @@ struct GenerateVideoArgs
   PointCloudProperty property = PointCloudProperty::kDistance;
   std::optional<double> property_min;
   std::optional<double> property_max;
-  ColorScheme colorscheme = ColorScheme::kViridis;
+  core::pointcloud::ColorScheme colorscheme = core::pointcloud::ColorScheme::kViridis;
   std::uint32_t point_size = 2;
   float alpha = 1.0f;
 };

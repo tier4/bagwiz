@@ -8,12 +8,13 @@
 
 #include "bagwiz/core/pointcloud/color_mapper.hpp"
 
-#include "bagwiz/commands/generate_video.hpp"
+#include "bagwiz/core/pointcloud/color_scheme.hpp"
 
 #include <gtest/gtest.h>
 
-using bagwiz::commands::ColorScheme;
+using bagwiz::core::pointcloud::BgrColor;
 using bagwiz::core::pointcloud::ColorMapper;
+using bagwiz::core::pointcloud::ColorScheme;
 
 TEST(ColorMapper, MapsMinMaxToEnds)
 {
@@ -34,4 +35,29 @@ TEST(ColorMapper, ClampsOutOfRange)
   const auto max = mapper.map(1.0, 0.0, 1.0);
   EXPECT_EQ(below, min);
   EXPECT_EQ(above, max);
+}
+
+TEST(ColorMapper, MapsMidpointToExpectedIndex)
+{
+  ColorMapper mapper(ColorScheme::kViridis);
+  const auto actual = mapper.map(0.5, 0.0, 1.0);
+  // Viridis LUT index 128 in BGR order.
+  const BgrColor expected{140, 144, 32};
+  EXPECT_EQ(actual, expected);
+}
+
+TEST(ColorMapper, HandlesDegenerateRange)
+{
+  ColorMapper mapper(ColorScheme::kViridis);
+  const auto degenerate = mapper.map(5.0, 1.0, 1.0);
+  const auto min_value = mapper.map(0.0, 0.0, 1.0);
+  EXPECT_EQ(degenerate, min_value);
+}
+
+TEST(ColorMapper, ViridisStartIsDark)
+{
+  ColorMapper mapper(ColorScheme::kViridis);
+  const auto c = mapper.map(0.0, 0.0, 1.0);
+  EXPECT_GT(c[0], c[2]);  // B > R
+  EXPECT_GT(c[0], c[1]);  // B > G
 }

@@ -9,7 +9,7 @@
 #ifndef BAGWIZ__CORE__POINTCLOUD__COLOR_MAPPER_HPP_
 #define BAGWIZ__CORE__POINTCLOUD__COLOR_MAPPER_HPP_
 
-#include "bagwiz/commands/generate_video.hpp"
+#include "bagwiz/core/pointcloud/color_scheme.hpp"
 
 #include <array>
 #include <cstdint>
@@ -22,7 +22,7 @@ using BgrColor = std::array<std::uint8_t, 3>;
 class ColorMapper
 {
 public:
-  explicit ColorMapper(commands::ColorScheme scheme);
+  explicit ColorMapper(ColorScheme scheme);
 
   [[nodiscard]] BgrColor map(double value, double min, double max) const noexcept;
 

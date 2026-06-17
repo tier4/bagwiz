@@ -367,28 +367,28 @@ constexpr std::array<BgrColor, 256> kRainbowLut = {
 
 }  // namespace
 
-ColorMapper::ColorMapper(commands::ColorScheme scheme)
+ColorMapper::ColorMapper(ColorScheme scheme)
 {
   switch (scheme) {
-    case commands::ColorScheme::kViridis:
+    case ColorScheme::kViridis:
       lut_ = kViridisLut;
       break;
-    case commands::ColorScheme::kTurbo:
+    case ColorScheme::kTurbo:
       lut_ = kTurboLut;
       break;
-    case commands::ColorScheme::kJet:
+    case ColorScheme::kJet:
       lut_ = kJetLut;
       break;
-    case commands::ColorScheme::kPlasma:
+    case ColorScheme::kPlasma:
       lut_ = kPlasmaLut;
       break;
-    case commands::ColorScheme::kInferno:
+    case ColorScheme::kInferno:
       lut_ = kInfernoLut;
       break;
-    case commands::ColorScheme::kMagma:
+    case ColorScheme::kMagma:
       lut_ = kMagmaLut;
       break;
-    case commands::ColorScheme::kRainbow:
+    case ColorScheme::kRainbow:
       lut_ = kRainbowLut;
       break;
   }
