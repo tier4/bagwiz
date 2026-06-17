@@ -842,4 +842,33 @@ TEST_F(GenerateVideoTest, ThreadedPointCloudOverlayMatchesSynchronous)
   EXPECT_EQ(threaded_bytes, sync_bytes);
 }
 
+// Command-level integration test for the point-cloud overlay path against a real
+// rosbag. Skips gracefully when the bag is not available (e.g. CI or another
+// developer's machine).
+TEST_F(GenerateVideoTest, PointCloudOverlayOnRealBag)
+{
+  constexpr const char * kRealBag =
+    "/home/otenim/data/rosbags/merged/YuY5LyKH/YuY5LyKH_2026-02-09T16-11-10-0600_110.mcap";
+  if (!std::filesystem::exists(kRealBag)) {
+    GTEST_SKIP() << "Real test bag not available: " << kRealBag;
+  }
+
+  const auto out = tmp_dir_ / "out.avi";
+  GenerateVideoArgs args{kRealBag, "/sensing/camera/camera0/image_raw/compressed", out, false};
+  args.pointcloud_topic = "/sensing/lidar/front/seyond_points";
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  ASSERT_TRUE(std::filesystem::exists(out));
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+
+  constexpr std::uint32_t kExpectedWidth = 3840U;
+  constexpr std::uint32_t kExpectedHeight = 2160U;
+  constexpr std::int64_t kExpectedFrames = 600;
+  EXPECT_EQ(probe.width, kExpectedWidth);
+  EXPECT_EQ(probe.height, kExpectedHeight);
+  EXPECT_EQ(probe.frame_count, kExpectedFrames);
+  EXPECT_NEAR(probe.duration_s, 30.0, 1.0);
+}
+
 }  // namespace
