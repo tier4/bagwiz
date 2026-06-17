@@ -110,12 +110,49 @@ TEST(PointCloud2Parser, ParsesBasicCloud)
   const auto payload = make_pointcloud2_payload();
   const auto result = parse_pointcloud2(payload);
   ASSERT_TRUE(result.ok());
+  EXPECT_EQ(result.cloud->timestamp_ns, 0);
   EXPECT_EQ(result.cloud->frame_id, "lidar");
   EXPECT_EQ(result.cloud->width, 2u);
   EXPECT_EQ(result.cloud->fields.size(), 3u);
   EXPECT_EQ(result.cloud->point_step, 12u);
+  EXPECT_TRUE(result.cloud->is_dense);
   ASSERT_EQ(result.cloud->data.size(), 24u);
+
   const auto off_x = result.cloud->field_offset("x");
   ASSERT_TRUE(off_x.has_value());
   EXPECT_EQ(*off_x, 0u);
+
+  const auto off_y = result.cloud->field_offset("y");
+  ASSERT_TRUE(off_y.has_value());
+  EXPECT_EQ(*off_y, 4u);
+
+  const auto off_z = result.cloud->field_offset("z");
+  ASSERT_TRUE(off_z.has_value());
+  EXPECT_EQ(*off_z, 8u);
+
+  std::array<float, 3> first_point{};
+  std::memcpy(first_point.data(), result.cloud->data.data(), sizeof(first_point));
+  EXPECT_FLOAT_EQ(first_point[0], 1.0f);
+  EXPECT_FLOAT_EQ(first_point[1], 2.0f);
+  EXPECT_FLOAT_EQ(first_point[2], 3.0f);
+}
+
+TEST(PointCloud2Parser, ParseRejectsTruncatedPayload)
+{
+  using bagwiz::core::pointcloud::parse_pointcloud2;
+  auto payload = make_pointcloud2_payload();
+  // Truncate inside the data section (drop the last 5 bytes: part of data + is_dense).
+  payload.resize(payload.size() - 5);
+  const auto result = parse_pointcloud2(payload);
+  EXPECT_FALSE(result.ok());
+  EXPECT_FALSE(result.error.empty());
+}
+
+TEST(PointCloud2FieldOffset, MissingFieldReturnsNullopt)
+{
+  using bagwiz::core::pointcloud::PointCloud2;
+  PointCloud2 cloud;
+  cloud.fields = {{"x", 0}, {"y", 4}};
+  const auto offset = cloud.field_offset("z");
+  EXPECT_FALSE(offset.has_value());
 }

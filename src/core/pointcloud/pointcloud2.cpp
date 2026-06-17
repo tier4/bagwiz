@@ -46,8 +46,10 @@ std::optional<std::uint32_t> PointCloud2::field_offset(const std::string & name)
 //   uint8[] data            // length-prefixed; point_step * height * width bytes
 //   bool   is_dense
 //
-// The point `data` is read as a zero-copy span via CdrReader::read_bytes, so a
-// multi-million-point cloud is never materialised element-by-element.
+// CdrReader::read_bytes returns a zero-copy view into the CDR payload, which is
+// then copied into result.cloud->data so the returned PointCloud2 owns its bytes.
+// This avoids materialising a large point cloud element-by-element while still
+// giving the caller an independent data vector.
 PointCloud2Result parse_pointcloud2(std::span<const std::byte> payload)
 {
   PointCloud2Result result;
