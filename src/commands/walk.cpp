@@ -9,11 +9,15 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
+#include "bagwiz/core/image/packed_raster.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/message_formatter.hpp"
 #include "bagwiz/core/terminal_input.hpp"
+#include "bagwiz/core/tui/image/terminal_image_caps.hpp"
+#include "bagwiz/core/tui/image/terminal_image_renderer.hpp"
 #include "bagwiz/core/tui/layout.hpp"
 #include "bagwiz/core/tui/pager.hpp"
+#include "bagwiz/core/tui/renderer.hpp"
 #include "bagwiz/core/tui/width.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
@@ -45,6 +49,10 @@ namespace
 {
 
 constexpr const char * kLogger = "bagwiz.cmd.walk";
+
+// Message-cursor moves shared by the YAML view and the image preview, so
+// wrap-around, "at first message", and G's full-scan behave identically in both.
+enum class MsgNav { kNext, kPrev, kFirst, kLast };
 
 // Cached owning copy of a single bag message. RawMessage's span is
 // invalidated by the next BagReader::next() call, so walk must take a
@@ -154,6 +162,8 @@ std::filesystem::path resolve_yaml_save_path(
 //   g / G         : jump to first / last message (G forces a full scan)
 //   s             : save current message as yaml (prompts for output path)
 //   a             : toggle full-expansion of long primitive arrays
+//   i             : toggle in-terminal image preview (image topics on a
+//                   Kitty/Sixel-capable terminal; absent otherwise)
 //   q / Ctrl-C    : quit
 // Messages are cached lazily so `prev` stays O(1) for anything already
 // seen and `G` is the only key that can trigger a full-remaining scan.
@@ -244,6 +254,19 @@ public:
       return 0;
     }
 
+    // Image preview is offered only for topics to_packed_raster can decode and
+    // only on terminals that speak a graphics protocol. Probe the terminal once,
+    // before the pager owns stdin; the probe briefly enters raw mode so the
+    // reply bytes arrive immediately instead of being held by line buffering.
+    const bool is_image_topic = core::image::is_supported_image_type(type_name);
+    core::tui::image::TerminalImageCaps image_caps;
+    if (is_image_topic) {
+      core::TerminalRawMode probe_raw;
+      image_caps = core::tui::image::detect_terminal_image_caps(
+        std::cout, STDIN_FILENO, core::tui::query_terminal_size());
+    }
+    const bool preview_available = is_image_topic && image_caps.can_render();
+
     std::size_t index = 0;
     bool expand_arrays = false;
     std::string status;
@@ -304,10 +327,15 @@ public:
       // placeholder index row for now and patch it once we know the
       // visible body window.
       footer_logical.emplace_back();
-      footer_logical.emplace_back(
+      std::string legend =
         "  [→/Space] next   [←/b] prev   [↑/k] up   [↓/j] down   "
         "[Home/H] head   [End/T] tail   [g] first   [G] last   [s] save as yaml   "
-        "[a] expand arrays   [q] quit");
+        "[a] expand arrays   ";
+      if (preview_available) {
+        legend += "[i] image preview   ";
+      }
+      legend += "[q] quit";
+      footer_logical.emplace_back(std::move(legend));
       footer_logical.push_back(status.empty() ? std::string{} : fmt::format("  {}", status));
 
       // Wrap everything except the index row first to learn the
@@ -365,10 +393,16 @@ public:
       return frame;
     };
 
-    auto on_nav = [&](core::tui::NavKey nav) -> core::tui::AppKeyResult {
+    // Move the message cursor. Shared by the YAML view (on_nav) and the image
+    // preview so both wrap, clamp at the first message, and full-scan on kLast
+    // identically. Mutates index/cache/exhausted/status and returns whether the
+    // cursor actually moved, so callers can skip work that only matters on a real
+    // move (resetting the pager scroll offset; re-decoding the preview frame).
+    auto navigate = [&](MsgNav move) -> bool {
       status.clear();
-      switch (nav) {
-        case core::tui::NavKey::kNext:
+      const std::size_t before = index;
+      switch (move) {
+        case MsgNav::kNext:
           if (index + 1 < cache.size()) {
             ++index;
           } else if (load_next()) {
@@ -377,37 +411,159 @@ public:
             index = 0;
             status = "(wrapped to first)";
           }
-          pager.set_scroll_offset(0);
-          return core::tui::AppKeyResult::kHandled;
-        case core::tui::NavKey::kPrev:
+          break;
+        case MsgNav::kPrev:
           if (index > 0) {
             --index;
-            pager.set_scroll_offset(0);
           } else {
             status = "(at first message)";
           }
-          return core::tui::AppKeyResult::kHandled;
-        case core::tui::NavKey::kFirst:
+          break;
+        case MsgNav::kFirst:
           index = 0;
-          pager.set_scroll_offset(0);
-          return core::tui::AppKeyResult::kHandled;
-        case core::tui::NavKey::kLast: {
+          break;
+        case MsgNav::kLast: {
           std::size_t loaded = 0;
           while (load_next()) {
             ++loaded;
           }
           index = cache.size() - 1;
-          pager.set_scroll_offset(0);
           if (loaded == 0 && exhausted) {
             status = "(already at last message)";
           }
-          return core::tui::AppKeyResult::kHandled;
+          break;
         }
+      }
+      return index != before;
+    };
+
+    auto on_nav = [&](core::tui::NavKey nav) -> core::tui::AppKeyResult {
+      status.clear();
+      switch (nav) {
+        case core::tui::NavKey::kNext:
+          navigate(MsgNav::kNext);
+          pager.set_scroll_offset(0);
+          return core::tui::AppKeyResult::kHandled;
+        case core::tui::NavKey::kPrev:
+          // Preserve the YAML view's behaviour: only reset the body scroll when
+          // the cursor actually moved (pressing prev at the first message keeps
+          // the current scroll position).
+          if (navigate(MsgNav::kPrev)) {
+            pager.set_scroll_offset(0);
+          }
+          return core::tui::AppKeyResult::kHandled;
+        case core::tui::NavKey::kFirst:
+          navigate(MsgNav::kFirst);
+          pager.set_scroll_offset(0);
+          return core::tui::AppKeyResult::kHandled;
+        case core::tui::NavKey::kLast:
+          navigate(MsgNav::kLast);
+          pager.set_scroll_offset(0);
+          return core::tui::AppKeyResult::kHandled;
         case core::tui::NavKey::kResize:
           return core::tui::AppKeyResult::kHandled;
         default:
           return core::tui::AppKeyResult::kIgnored;
       }
+    };
+
+    // Paint one preview frame: a two-line caption, the decoded image centred in
+    // the region between caption and key hint, and the key hint on the last row.
+    // Graphics escapes bypass the pager (they have no display width), so this
+    // writes straight to the pager's ostream.
+    auto render_preview = [&](std::ostream & out, core::tui::Size term) {
+      const int rows = std::max(1, term.rows);
+      const int cols = std::max(1, term.cols);
+
+      // Drop any previously transmitted graphics and wipe the screen so kitty
+      // placements do not accumulate across navigation/resize.
+      core::tui::image::clear_image(out, image_caps.backend);
+      out << "\x1B[2J";
+
+      const auto & msg = cache[index];
+      const char * total_suffix = exhausted ? "" : "+";
+      const std::size_t last_loaded_index = cache.size() - 1;
+      const auto pr = core::image::to_packed_raster(type_name, msg.payload);
+
+      core::tui::draw_line(out, 1, fmt::format("  {}  {}", topic_name, type_name), cols);
+      std::string info;
+      if (pr.ok()) {
+        const auto & img = *pr.raster;
+        info = fmt::format(
+          "  {}x{}  {}   [{} / {}{}]", img.width, img.height, img.encoding, index,
+          last_loaded_index, total_suffix);
+      } else {
+        info = fmt::format("  [{} / {}{}]", index, last_loaded_index, total_suffix);
+      }
+      core::tui::draw_line(out, 2, info, cols);
+
+      // Image region: from row 3 down to the row above the key hint (row `rows`).
+      const int region_row = 3;
+      const int region_rows = std::max(1, rows - region_row);
+      if (pr.ok()) {
+        core::tui::image::CellRegion region;
+        region.row = region_row;
+        region.col = 1;
+        region.rows = region_rows;
+        region.cols = cols;
+        const std::string err = core::tui::image::render_image(out, *pr.raster, region, image_caps);
+        if (!err.empty()) {
+          core::tui::draw_line(
+            out, region_row, fmt::format("  preview unavailable: {}", err), cols);
+        }
+      } else {
+        core::tui::draw_line(
+          out, region_row, fmt::format("  cannot decode this message: {}", pr.error), cols);
+      }
+
+      core::tui::draw_line(
+        out, rows, "  [→/Space] next   [←/b] prev   [g] first   [G] last   [i] back   [q] quit",
+        cols);
+      out.flush();
+    };
+
+    // Image-preview sub-loop. Runs inside on_app_key, reusing the raw-mode +
+    // SIGWINCH scope the pager already holds. Navigation keys re-decode and
+    // re-render; i/q return to the YAML view, which the pager then repaints.
+    auto run_preview = [&]() {
+      std::ostream & out = std::cout;
+      bool running = true;
+      bool needs_render = true;
+      while (running) {
+        if (needs_render) {
+          render_preview(out, core::tui::query_terminal_size());
+          needs_render = false;
+        }
+        switch (core::read_key_event()) {
+          case core::KeyEvent::kNext:
+            // Re-decode only when the cursor actually moved; otherwise the frame
+            // is unchanged and a full decode + scale would be wasted.
+            needs_render = navigate(MsgNav::kNext);
+            break;
+          case core::KeyEvent::kPrev:
+            needs_render = navigate(MsgNav::kPrev);
+            break;
+          case core::KeyEvent::kFirst:
+            needs_render = navigate(MsgNav::kFirst);
+            break;
+          case core::KeyEvent::kLast:
+            needs_render = navigate(MsgNav::kLast);
+            break;
+          case core::KeyEvent::kResize:
+            needs_render = true;  // geometry changed: re-fit and re-render
+            break;
+          case core::KeyEvent::kTogglePreview:
+          case core::KeyEvent::kQuit:
+            running = false;
+            break;
+          default:
+            break;  // scroll / save / expand keys are inert in the preview
+        }
+      }
+      // Hand a clean screen back to the pager for the YAML repaint.
+      core::tui::image::clear_image(out, image_caps.backend);
+      out << "\x1B[2J";
+      out.flush();
     };
 
     auto on_app_key = [&](core::KeyEvent ev) -> core::tui::AppKeyResult {
@@ -477,6 +633,17 @@ public:
           }
           return core::tui::AppKeyResult::kHandled;
         }
+        case core::KeyEvent::kTogglePreview:
+          if (!is_image_topic) {
+            status = "(not an image topic)";
+            return core::tui::AppKeyResult::kHandled;
+          }
+          if (!image_caps.can_render()) {
+            status = "(image preview not supported in this terminal)";
+            return core::tui::AppKeyResult::kHandled;
+          }
+          run_preview();
+          return core::tui::AppKeyResult::kHandled;
         default:
           return core::tui::AppKeyResult::kIgnored;
       }

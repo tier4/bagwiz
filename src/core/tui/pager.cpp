@@ -71,6 +71,7 @@ NavKey to_nav_key(KeyEvent ev) noexcept
       return NavKey::kResize;
     case KeyEvent::kSaveYaml:
     case KeyEvent::kToggleArrayExpand:
+    case KeyEvent::kTogglePreview:
     case KeyEvent::kUnknown:
       return NavKey::kNone;
   }

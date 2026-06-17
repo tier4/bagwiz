@@ -208,6 +208,8 @@ add_library(bagwiz_core
   src/core/tui/screen_scope.cpp
   src/core/tui/signal_handler.cpp
   src/core/tui/width.cpp
+  src/core/tui/image/terminal_image_caps.cpp
+  src/core/tui/image/terminal_image_renderer.cpp
   src/commands/registry.cpp
   src/io/bag_factory.cpp
   src/io/file_decompressor.cpp
@@ -403,6 +405,14 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_tui_pager_test test/core/tui/pager_test.cpp)
   target_link_libraries(bagwiz_tui_pager_test bagwiz_core)
+
+  ament_add_gtest(
+    bagwiz_terminal_image_caps_test test/core/tui/image/terminal_image_caps_test.cpp)
+  target_link_libraries(bagwiz_terminal_image_caps_test bagwiz_core)
+
+  ament_add_gtest(
+    bagwiz_terminal_image_renderer_test test/core/tui/image/terminal_image_renderer_test.cpp)
+  target_link_libraries(bagwiz_terminal_image_renderer_test bagwiz_core)
 
   ament_add_gtest(bagwiz_trajectory_test test/core/trajectory_test.cpp)
   target_link_libraries(bagwiz_trajectory_test bagwiz_core)

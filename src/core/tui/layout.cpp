@@ -31,6 +31,8 @@ Size query_terminal_size() noexcept
   if (::ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0 && ws.ws_col > 0) {
     out.rows = static_cast<int>(ws.ws_row);
     out.cols = static_cast<int>(ws.ws_col);
+    out.xpixel = static_cast<int>(ws.ws_xpixel);  // may be 0 if unreported
+    out.ypixel = static_cast<int>(ws.ws_ypixel);  // may be 0 if unreported
   }
   return out;
 }

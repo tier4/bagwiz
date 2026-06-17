@@ -30,6 +30,7 @@ enum class KeyEvent {
   kScrollTail,         // jump to the bottom of the current message's body
   kSaveYaml,           // save current message body as YAML (walk command)
   kToggleArrayExpand,  // toggle full-expansion of long primitive arrays (walk command)
+  kTogglePreview,      // toggle in-terminal image preview (walk command)
   kQuit,               // exit the interactive loop
   kResize,             // terminal was resized (synthesised by read_key_event
                        // from a SIGWINCH flag set by tui::internal; never
@@ -44,8 +45,8 @@ enum class KeyEvent {
 //   * single bytes: Space (next), 'b' (prev), 'g' (first), 'G' (last),
 //     'k' (scroll up), 'j' (scroll down), 'H' (scroll head), 'T' (scroll
 //     tail), 's' (save as yaml — walk), 'a' (toggle array expand — walk),
-//     'q'/'Q' (quit), plus control chars (^C, ^D) and a lone ESC (0x1B)
-//     for quit
+//     'i' (toggle image preview — walk), 'q'/'Q' (quit), plus control
+//     chars (^C, ^D) and a lone ESC (0x1B) for quit
 //   * three-byte ANSI sequences "ESC [ C" (Right -> next), "ESC [ D"
 //     (Left -> prev), "ESC [ A" (Up -> scroll up), "ESC [ B" (Down ->
 //     scroll down), "ESC [ H" (Home -> scroll head), "ESC [ F" (End ->

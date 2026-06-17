@@ -71,6 +71,11 @@ TEST(ClassifyKey, ToggleArrayExpandBinding)
   EXPECT_EQ(classify_key("a"), KeyEvent::kToggleArrayExpand);
 }
 
+TEST(ClassifyKey, TogglePreviewBinding)
+{
+  EXPECT_EQ(classify_key("i"), KeyEvent::kTogglePreview);
+}
+
 // 'r' used to cycle the rotation format in the (now removed) `tf walk`
 // viewer. Pin that it no longer binds so a future re-use is intentional.
 TEST(ClassifyKey, RotationKeyIsUnknown)

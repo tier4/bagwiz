@@ -130,4 +130,10 @@ PackedRasterResult to_packed_raster(std::string_view type, std::span<const std::
   return result;
 }
 
+// cppcheck-suppress passedByValue  // string_view is the canonical by-value idiom
+bool is_supported_image_type(std::string_view type) noexcept
+{
+  return type == kImageType || type == kCompressedImageType;
+}
+
 }  // namespace bagwiz::core::image

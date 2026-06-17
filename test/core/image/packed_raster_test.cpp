@@ -19,6 +19,7 @@
 
 namespace
 {
+using bagwiz::core::image::is_supported_image_type;
 using bagwiz::core::image::to_packed_raster;
 
 constexpr const char * kImageType = "sensor_msgs/msg/Image";
@@ -202,6 +203,15 @@ TEST(ToPackedRasterTest, CompressedGarbageBitstreamIsError)
   const auto r = to_packed_raster(kCompressedImageType, {payload.data(), payload.size()});
   EXPECT_FALSE(r.ok());
   EXPECT_FALSE(r.error.empty());
+}
+
+TEST(ToPackedRasterTest, IsSupportedImageTypeMatchesDispatch)
+{
+  EXPECT_TRUE(is_supported_image_type(kImageType));
+  EXPECT_TRUE(is_supported_image_type(kCompressedImageType));
+  EXPECT_FALSE(is_supported_image_type("std_msgs/msg/String"));
+  EXPECT_FALSE(is_supported_image_type("sensor_msgs/msg/PointCloud2"));
+  EXPECT_FALSE(is_supported_image_type(""));
 }
 
 }  // namespace

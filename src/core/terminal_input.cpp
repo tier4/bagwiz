@@ -117,6 +117,8 @@ KeyEvent classify_key(std::string_view bytes)
         return KeyEvent::kSaveYaml;
       case 'a':
         return KeyEvent::kToggleArrayExpand;
+      case 'i':
+        return KeyEvent::kTogglePreview;
       default:
         return KeyEvent::kUnknown;
     }

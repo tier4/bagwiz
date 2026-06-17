@@ -12,11 +12,15 @@
 namespace bagwiz::core::tui
 {
 
-// Terminal geometry in character cells.
+// Terminal geometry. rows/cols are character cells; xpixel/ypixel are the
+// cell-grid size in pixels as reported by TIOCGWINSZ (ws_xpixel/ws_ypixel),
+// or 0 when the terminal does not report them (common — many xterms, tmux).
 struct Size
 {
   int rows = 24;
   int cols = 80;
+  int xpixel = 0;  // total grid width in pixels; 0 = unknown
+  int ypixel = 0;  // total grid height in pixels; 0 = unknown
 };
 
 // Query the current terminal size via TIOCGWINSZ on STDOUT_FILENO.

@@ -58,6 +58,11 @@ struct PackedRasterResult
 [[nodiscard]] PackedRasterResult to_packed_raster(
   std::string_view type, std::span<const std::byte> payload);
 
+// True when `type` is a message type to_packed_raster() can decode (raw
+// "sensor_msgs/msg/Image" or "sensor_msgs/msg/CompressedImage"). Callers use it
+// to gate image-only UI (e.g. walk's preview hint) without attempting a decode.
+[[nodiscard]] bool is_supported_image_type(std::string_view type) noexcept;
+
 }  // namespace bagwiz::core::image
 
 #endif  // BAGWIZ__CORE__IMAGE__PACKED_RASTER_HPP_
