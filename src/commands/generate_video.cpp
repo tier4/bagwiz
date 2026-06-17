@@ -669,10 +669,9 @@ cv::Mat overlay_points(
       cv::circle(canvas, {p.u, p.v}, radius, bgr, cv::FILLED);
     }
   } else {
-    // Draw every point onto a single overlay and blend it once. Per-point
-    // copies of a full HD/4K frame are too expensive and risk memory pressure.
-    cv::Mat overlay;
-    canvas.copyTo(overlay);
+    // Draw every point onto a single transparent overlay and blend it once.
+    // Per-point copies of a full HD/4K frame are too expensive and risk memory pressure.
+    cv::Mat overlay(height, width, CV_8UC3, cv::Scalar{0, 0, 0});
     for (const auto & p : projected_sorted) {
       if (!in_bounds(p)) {
         continue;
@@ -681,8 +680,8 @@ cv::Mat overlay_points(
       const cv::Scalar bgr(color[0], color[1], color[2]);
       cv::circle(overlay, {p.u, p.v}, radius, bgr, cv::FILLED);
     }
-    cv::Mat blended = canvas.clone();
-    cv::addWeighted(overlay, alpha, canvas, 1.0 - alpha, 0.0, blended);
+    cv::Mat blended;
+    cv::addWeighted(canvas, 1.0 - alpha, overlay, alpha, 0.0, blended);
     return blended;
   }
   return canvas;
