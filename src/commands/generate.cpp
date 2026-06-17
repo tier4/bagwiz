@@ -63,43 +63,32 @@ private:
 
   void configure_video(CLI::App & app)
   {
-    auto * sub = app.add_subcommand(
-      "video",
-      "Render an image topic to a video file. <output>'s extension picks the container/codec "
-      "(.mp4/.mkv/.mov -> H.264, .avi -> MJPEG); the frame rate is derived from the message "
-      "timestamps.");
-    sub->add_option("<input>", video_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+    auto * sub =
+      app.add_subcommand("video", "Render an image topic from a rosbag to a video file.");
+    sub->add_option("<input>", video_args_.input_path, "Input ROS 2 rosbag (file or directory).")
       ->required()
       ->check(CLI::ExistingPath);
-    sub->add_option("<img_topic>", video_args_.topic, "Image topic to render.")->required();
     sub
       ->add_option(
-        "<output>", video_args_.output_path,
-        "Output video path. Its extension selects the output format: "
-        ".mp4/.mkv/.mov -> H.264, .avi -> MJPEG. If mpv fails with H.264, try VLC "
-        "or run mpv --hwdec=no; .avi (MJPEG) lowers quality.")
+        "<img_topic>", video_args_.topic,
+        "Image topic to render. Supported types: sensor_msgs/msg/Image (bgr8, rgb8) and "
+        "sensor_msgs/msg/CompressedImage (JPEG/PNG).")
       ->required();
     sub
       ->add_option(
-        "--pcd", video_args_.pointcloud_topic,
-        "PointCloud2 topic to project onto the video. When omitted, generate video behaves as "
-        "before and produces a plain video without point-cloud overlay.")
-      ->check([](const std::string & topic) {
-        if (topic.empty()) {
-          return std::string{"pcd topic must not be empty"};
-        }
-        return std::string{};
-      });
+        "<output>", video_args_.output_path,
+        "Output video path. Extension selects container/codec: .mp4/.mkv/.mov -> H.264, "
+        ".avi -> MJPEG.")
+      ->required();
     sub->add_flag(
       "-w,--overwrite", video_args_.overwrite,
       "Replace an existing <output>. Without it, an existing output path stops the run.");
     sub
       ->add_option(
         "--cam-info", video_args_.camera_info_topic,
-        "CameraInfo topic to use for --undistort and point-cloud projection. When omitted, "
-        "bagwiz derives it from <img_topic>: image topics ending in /image_raw/compressed, "
-        "/image_rect_color, or /image_rect_color/compressed resolve to the sibling /camera_info "
-        "topic.")
+        "CameraInfo topic for --undistort and --pcd. When omitted, bagwiz derives it from "
+        "<img_topic>: /image_raw/compressed, /image_rect_color, and /image_rect_color/compressed "
+        "map their prefix to /camera_info.")
       ->check([](const std::string & topic) {
         if (topic.empty()) {
           return std::string{"cam-info topic must not be empty"};
@@ -109,8 +98,18 @@ private:
     sub->add_flag(
       "--undistort", video_args_.undistort,
       "Apply distortion correction to each frame using the resolved CameraInfo. "
-      "When this flag is set, a camera-info topic is required; use --cam-info if "
-      "auto-resolution from the image topic fails.");
+      "Requires a camera-info topic; use --cam-info if auto-resolution fails.");
+    sub
+      ->add_option(
+        "--pcd", video_args_.pointcloud_topic,
+        "PointCloud2 topic to project onto each frame (requires CameraInfo and a TF chain from "
+        "the cloud frame to the camera frame).")
+      ->check([](const std::string & topic) {
+        if (topic.empty()) {
+          return std::string{"pcd topic must not be empty"};
+        }
+        return std::string{};
+      });
     const std::map<std::string, core::pointcloud::PointCloudProperty> property_map = {
       {"x", core::pointcloud::PointCloudProperty::kX},
       {"y", core::pointcloud::PointCloudProperty::kY},
@@ -120,7 +119,7 @@ private:
     sub
       ->add_option(
         "--field", video_args_.property,
-        "Point field used for coloring: x, y, z, distance, intensity.")
+        "Point-cloud field used for coloring: x, y, z, distance, intensity.")
       ->transform(CLI::CheckedTransformer{property_map})
       ->default_val(core::pointcloud::PointCloudProperty::kDistance);
     sub
@@ -149,17 +148,8 @@ private:
       ->default_val(1.0f)
       ->check(CLI::Range(0.0f, 1.0f));
     sub->footer(
-      "Supported topic types: sensor_msgs/msg/Image (bgr8, rgb8) and "
-      "sensor_msgs/msg/CompressedImage (JPEG/PNG, decoded to BGR before encoding).\n"
       "Frames stream straight to the encoder (no large temp files); the output is written\n"
-      "atomically and a failed run leaves no partial file behind.\n"
-      "Point-cloud overlays are enabled with --pcd and controlled with --field, --min, --max, "
-      "--scheme, --point-size, and --alpha; an explicit CameraInfo topic is supplied with "
-      "--cam-info.\n"
-      "CameraInfo auto-resolution: /image_raw/compressed, /image_rect_color, and "
-      "/image_rect_color/compressed map their prefix to /camera_info.\n"
-      "Playback note: H.264 outputs (.mp4/.mkv/.mov) can crash mpv's hardware decoder; "
-      "try VLC or run mpv --hwdec=no. Use .avi (MJPEG) only if lower quality is acceptable.");
+      "atomically and a failed run leaves no partial file behind.");
     sub->callback([this]() { selected_ = Subcommand::kVideo; });
   }
 };
