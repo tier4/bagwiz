@@ -9,13 +9,18 @@
 #ifndef BAGWIZ__COMMANDS__GENERATE_VIDEO_HPP_
 #define BAGWIZ__COMMANDS__GENERATE_VIDEO_HPP_
 
+#include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
 
 namespace bagwiz::commands
 {
+
+enum class PointCloudProperty { kX, kY, kZ, kDistance, kIntensity };
+enum class ColorScheme { kViridis, kTurbo, kJet, kPlasma, kInferno, kMagma, kRainbow };
 
 // Arguments for `bagwiz generate video`. Populated by GenerateCommand's CLI
 // wiring (src/commands/generate.cpp) and consumed by run_generate_video. Kept
@@ -45,6 +50,15 @@ struct GenerateVideoArgs
   std::optional<std::string> camera_info_topic;
   // Apply OpenCV undistortion using the resolved camera info.
   bool undistort = false;
+
+  // Point-cloud overlay options.
+  std::optional<std::string> pointcloud_topic;
+  PointCloudProperty property = PointCloudProperty::kDistance;
+  std::optional<double> property_min;
+  std::optional<double> property_max;
+  ColorScheme colorscheme = ColorScheme::kViridis;
+  std::uint32_t point_size = 2;
+  float alpha = 1.0f;
 };
 
 // Classification of whether a topic can be rendered to video.
