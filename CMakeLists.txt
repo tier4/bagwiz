@@ -183,6 +183,8 @@ add_library(bagwiz_core
   src/core/pipeline/rewrite_backend.cpp
   src/core/pipeline/sequential_backend.cpp
   src/core/pipeline/topic_router.cpp
+  src/core/pipeline/pipelined_backend.cpp
+  src/core/pipeline/backend_select.cpp
   src/core/topic_match.cpp
   src/core/broken_bag.cpp
   src/core/tf_chain.cpp
@@ -251,7 +253,9 @@ else()
     target_link_libraries(bagwiz_core PUBLIC ${${bagwiz_dep}_TARGETS})
   endforeach()
 endif()
-target_link_libraries(bagwiz_core PUBLIC yaml-cpp SQLite::SQLite3 zstd::zstd ${CMAKE_DL_LIBS})
+# Threads::Threads supplies -pthread for the std::thread in PipelinedBackend.
+find_package(Threads REQUIRED)
+target_link_libraries(bagwiz_core PUBLIC yaml-cpp SQLite::SQLite3 zstd::zstd Threads::Threads ${CMAKE_DL_LIBS})
 # GeographicLib (WGS84 -> ENU/UTM projection) is private to geo_pose_convert.cpp.
 target_include_directories(bagwiz_core PRIVATE ${GeographicLib_INCLUDE_DIRS})
 target_link_libraries(bagwiz_core PRIVATE ${GeographicLib_LIBRARIES})
@@ -423,6 +427,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_rewrite_backend_test test/core/pipeline/rewrite_backend_test.cpp)
   target_link_libraries(bagwiz_rewrite_backend_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_pipelined_backend_test test/core/pipeline/pipelined_backend_test.cpp)
+  target_link_libraries(bagwiz_pipelined_backend_test bagwiz_core)
 
   ament_add_gtest(bagwiz_bag_inplace_test test/core/bag_inplace_test.cpp)
   target_link_libraries(bagwiz_bag_inplace_test bagwiz_core)

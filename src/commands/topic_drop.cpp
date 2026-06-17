@@ -80,7 +80,8 @@ int execute_drop_pass(
 
   core::BagCopyCounts counts;
   try {
-    counts = core::bag_copy_filtered(*reader, *writer, drop, "topic drop");
+    counts = core::bag_copy_filtered(
+      *reader, *writer, drop, "topic drop", core::pipeline::BackendKind::Pipelined);
   } catch (const std::exception & e) {
     BAGWIZ_LOG_ERROR(kLogger, "Stream copy from %s failed: %s", args.input_path.c_str(), e.what());
     return 1;

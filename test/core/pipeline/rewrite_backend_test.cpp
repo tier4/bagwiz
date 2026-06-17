@@ -8,6 +8,7 @@
 
 #include "bagwiz/core/pipeline/rewrite_backend.hpp"
 
+#include "bag_equal.hpp"  // NOLINT(build/include_subdir)  sibling test header, resolves relative
 #include "bagwiz/core/pipeline/sequential_backend.hpp"
 #include "bagwiz/core/pipeline/topic_router.hpp"
 #include "bagwiz/io/bag_io.hpp"
@@ -72,29 +73,6 @@ std::filesystem::path build_input(const std::filesystem::path & dir)
   writer->write("/foo", 3'000'000'000LL, payload_view());
   writer->close();
   return path;
-}
-
-// Reusable differential oracle: assert two bags carry the same
-// (topic, timestamp, payload-bytes) sequence in emission order. Milestone #3
-// reuses this to gate a threaded backend's output against SequentialBackend.
-void expect_bags_equal(const std::filesystem::path & a, const std::filesystem::path & b)
-{
-  auto ra = bagwiz::io::open_read(a);
-  auto rb = bagwiz::io::open_read(b);
-  bagwiz::io::RawMessage ma;
-  bagwiz::io::RawMessage mb;
-  while (true) {
-    const bool got_a = ra->next(ma);
-    const bool got_b = rb->next(mb);
-    ASSERT_EQ(got_a, got_b) << "bags differ in message count";
-    if (!got_a) {
-      break;
-    }
-    EXPECT_EQ(ma.topic->name, mb.topic->name);
-    EXPECT_EQ(ma.timestamp_ns, mb.timestamp_ns);
-    ASSERT_EQ(ma.payload.size(), mb.payload.size());
-    EXPECT_EQ(0, std::memcmp(ma.payload.data(), mb.payload.data(), ma.payload.size()));
-  }
 }
 
 class RewriteBackendTest : public ::testing::Test
@@ -228,5 +206,5 @@ TEST_F(RewriteBackendTest, SequentialPassthroughIsByteIdentical)
   EXPECT_EQ(counts.renamed, 0U);
 
   // A full-passthrough rewrite reproduces the input message stream exactly.
-  expect_bags_equal(in_path, out_path);
+  bagwiz::test::expect_bags_equal(in_path, out_path);
 }

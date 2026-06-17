@@ -102,6 +102,29 @@ resource_run "$BIN topic drop '$BAG' '$TOPIC' -o '$DROP_OUT' --overwrite"
 outbytes=$(stat -c %s "$DROP_OUT" 2>/dev/null || echo 0)
 echo "  output: $(du -h "$DROP_OUT" 2>/dev/null | cut -f1) ($outbytes bytes, uncompressed)  expansion=$(awk -v i="$inbytes" -v o="$outbytes" 'BEGIN{if(i>0)printf "%.2fx",o/i; else print "n/a"}')"
 
+# [B'] backend comparison: the same full rewrite under each selectable backend
+# (BAGWIZ_BACKEND). Proves the threaded PipelinedBackend's output is byte
+# -identical to the SequentialBackend oracle (md5) and quantifies the speedup.
+echo
+echo "===== [B'] BACKEND COMPARISON  (full rewrite per BAGWIZ_BACKEND) ====="
+declare -A BK_WALL BK_MD5
+for bk in sequential pipelined; do
+    BK_OUT="$OUTDIR/drop.$bk.mcap"
+    BK_WALL[$bk]=$(median_wall "env BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' '$TOPIC' -o '$BK_OUT' --overwrite")
+    BK_MD5[$bk]=$(md5sum "$BK_OUT" 2>/dev/null | awk '{print $1}')
+    echo "  --- $bk: median wall ${BK_WALL[$bk]}s   md5 ${BK_MD5[$bk]}"
+    profile_run "env BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' '$TOPIC' -o '$BK_OUT' --overwrite"
+    resource_run "env BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' '$TOPIC' -o '$BK_OUT' --overwrite"
+done
+if [ -n "${BK_MD5[sequential]}" ] && [ "${BK_MD5[sequential]}" = "${BK_MD5[pipelined]}" ]; then
+    echo "  byte-identical output across backends (md5 match): OK"
+else
+    echo "  OUTPUT DIFFERS across backends (md5 mismatch) -- correctness bug!" >&2
+fi
+awk -v s="${BK_WALL[sequential]}" -v p="${BK_WALL[pipelined]}" \
+    'BEGIN{ if(p>0) printf "  speedup (sequential/pipelined): %.2fx\n", s/p }'
+rm -f "$OUTDIR/drop.sequential.mcap" "$OUTDIR/drop.pipelined.mcap"
+
 # [C] sparse extraction: keep only the tiny latched topic -> read-bound floor.
 KEEP_OUT="$OUTDIR/keep.mcap"
 echo

@@ -100,3 +100,47 @@ reader's **emission order** (a sequence-only reorder key). Acceptance for any
 non-sequential backend is **byte-identical output** vs the sequential strategy and
 vs today's binary (differential oracle), with ASan + TSan as CI gates. Inject and
 transform commands are barred from any reordering backend.
+
+## Milestone #3 — PipelinedBackend results
+
+`PipelinedBackend` (`src/core/pipeline/pipelined_backend.cpp`) overlaps the read
+and write stages on two threads: the calling thread reads + routes + copies each
+kept message into a byte-bounded FIFO queue (`BoundedMessageQueue`, 128 MiB cap)
+and a single writer thread drains it. A single consumer over a FIFO preserves the
+reader's emission order, so the output is byte-identical to `SequentialBackend`.
+The pure-copy trio (`topic drop`/`keep`/`rename`) defaults to it;
+`BAGWIZ_BACKEND=sequential|pipelined` overrides per run on the same binary.
+
+Measured on the canonical 2.5 GB fixture, warm cache, same 24-core host,
+`topic drop /tf_static -o` (full rewrite), `/usr/bin/time` wall:
+
+| Backend (`BAGWIZ_BACKEND`) | Wall (warm) | CPU                 | Peak RSS | Stage split (BAGWIZ_PROFILE)                                      |
+| -------------------------- | ----------- | ------------------- | -------- | ----------------------------------------------------------------- |
+| `sequential` (oracle)      | 2.53–2.71 s | ~100 % (1 core)     | ~50 MB   | read 0.78 s (32 %) / write 1.68 s (68 %)                          |
+| `pipelined` (trio default) | 1.81–2.02 s | ~150 % (~1.5 cores) | ~208 MB  | read 0.86 s / write 1.79 s, **stage-busy sum 2.65 s > real wall** |
+
+- **Speedup ≈ 1.40×** (best/best 2.53 / 1.81), against the **~1.45× Amdahl
+  ceiling** from write-dominance — the pipeline is essentially write-bound, as
+  predicted. The reported per-stage "wall" sum (2.65 s) exceeds the real elapsed
+  wall (~1.8 s) precisely because read and write now run concurrently; that gap
+  is the overlap that buys the speedup.
+- **Byte-identical**: both outputs md5 `e505922a4ac60e0c4f00c0c7962a838c`
+  (2,975,347,142 bytes), counts identical (31,648 copied / 30 dropped). The
+  differential oracle (`expect_bags_equal`) and the per-run md5 in
+  `scripts/bench-rewrite.sh` ([B'] section) gate this.
+- **RSS cost**: ~50 MB → ~208 MB. The increase is the 128 MiB queue cap plus the
+  owned payload copies the threaded hand-off requires (the cost the zero-copy
+  Sequential path avoids). Bounded and tunable via the queue cap; a fast reader
+  cannot balloon it past the cap thanks to backpressure.
+- **Sanitizers**: the pipeline tests pass clean under **ThreadSanitizer** (no data
+  races) and **AddressSanitizer + UBSan** (no use-after-free / leaks / UB). No
+  sanitizer CI job exists in-repo yet; these were run via a separate colcon build
+  base with `-fsanitize=thread` / `-fsanitize=address,undefined`. Note: TSan needs
+  ASLR disabled on this kernel (`setarch "$(uname -m)" -R ctest …`) to avoid its
+  "unexpected memory mapping" loader abort — that abort is an environment quirk,
+  not a race (the thread-free `bag_copy_test` aborts identically without it).
+
+Why only the trio: the 2-stage pipeline reorders nothing, but inject/transform
+commands stay on Sequential per the PRD scope (and because they decode, which the
+decoders are not thread-safe for). A decode-worker / parallel-map backend remains
+unjustified — the process stage is 0 % here.

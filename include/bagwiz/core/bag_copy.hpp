@@ -9,6 +9,7 @@
 #ifndef BAGWIZ__CORE__BAG_COPY_HPP_
 #define BAGWIZ__CORE__BAG_COPY_HPP_
 
+#include "bagwiz/core/pipeline/backend_select.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <cstdint>
@@ -51,7 +52,8 @@ struct BagCopyCounts
 // exception propagates.
 BagCopyCounts bag_copy_filtered(
   io::BagReader & reader, io::BagWriter & writer, const std::unordered_set<std::string> & suppress,
-  std::string_view profile_label = "");
+  std::string_view profile_label = "",
+  pipeline::BackendKind backend = pipeline::BackendKind::Sequential);
 
 struct BagCopyRenameCounts
 {
@@ -77,7 +79,8 @@ struct BagCopyRenameCounts
 // is visible through the returned counters when an exception propagates.
 BagCopyRenameCounts bag_copy_renamed(
   io::BagReader & reader, io::BagWriter & writer,
-  const std::unordered_map<std::string, std::string> & rename, std::string_view profile_label = "");
+  const std::unordered_map<std::string, std::string> & rename, std::string_view profile_label = "",
+  pipeline::BackendKind backend = pipeline::BackendKind::Sequential);
 
 }  // namespace bagwiz::core
 
