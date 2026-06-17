@@ -34,7 +34,7 @@ bagwiz generate video [OPTIONS] <input> <image_topic> <output>
 
 | Flag                | Description                                                                                            |
 | ------------------- | ------------------------------------------------------------------------------------------------------ |
-| `--camera-info`     | CameraInfo topic to use for `--undistort`. When omitted, bagwiz derives it from `<image_topic>`.       |
+| `--cam-info`        | CameraInfo topic to use for `--undistort`. When omitted, bagwiz derives it from `<image_topic>`.       |
 | `--undistort`       | Apply distortion correction to each frame using the resolved CameraInfo. Requires a camera-info topic. |
 | `-w`, `--overwrite` | Replace an existing `<output>`. Without it, an existing output path stops the run.                     |
 
@@ -51,7 +51,7 @@ rejected.
 
 ### CameraInfo auto-resolution
 
-When `--camera-info` is not given, `generate video` attempts to find a sibling
+When `--cam-info` is not given, `generate video` attempts to find a sibling
 `sensor_msgs/msg/CameraInfo` topic from the `<image_topic>` name:
 
 | `<image_topic>` suffix         | Resolved CameraInfo topic |
@@ -63,7 +63,7 @@ When `--camera-info` is not given, `generate video` attempts to find a sibling
 If the resolved topic does not exist or is not a `sensor_msgs/msg/CameraInfo`,
 it is treated as unresolved. That is fine for plain rendering, but when
 `--undistort` is set a camera-info topic is required, so the run stops and asks
-you to pass `--camera-info` explicitly.
+you to pass `--cam-info` explicitly.
 
 ### Output format
 
@@ -99,7 +99,7 @@ output. If mpv fails to play, try VLC or run `mpv --hwdec=no`. Use `.avi`
 - **Undistortion** (`--undistort`) reads the first `sensor_msgs/msg/CameraInfo`
   message from the resolved camera-info topic and applies OpenCV distortion
   correction to every frame before encoding. This requires a camera-info topic;
-  use `--camera-info` when auto-resolution fails.
+  use `--cam-info` when auto-resolution fails.
 - Dimensions must be even (the 4:2:0 pixel formats these codecs use require it).
 
 ### Examples
@@ -116,12 +116,12 @@ bagwiz generate video drive.mcap /sensing/camera/image_raw/compressed out.mp4 --
 
 # Render with distortion correction using an explicit CameraInfo topic.
 bagwiz generate video drive.mcap /sensing/camera/image_raw out.mp4 \
-  --undistort --camera-info /sensing/camera/camera_info
+  --undistort --cam-info /sensing/camera/camera_info
 ```
 
 ## Exit status
 
-| Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | The video was written successfully.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `1`  | The input could not be opened; the topic was not found or is an unsupported type; the topic has no messages; the image encoding is unsupported; the output extension is unsupported or its codec is unavailable; `<output>` exists without `-w`/`--overwrite`; a frame changed geometry mid-stream; `--undistort` was set but no camera-info topic could be resolved; the explicit `--camera-info` topic was missing or not a `sensor_msgs/msg/CameraInfo`; or a read/encode/write error occurred. |
+| Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | The video was written successfully.                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `1`  | The input could not be opened; the topic was not found or is an unsupported type; the topic has no messages; the image encoding is unsupported; the output extension is unsupported or its codec is unavailable; `<output>` exists without `-w`/`--overwrite`; a frame changed geometry mid-stream; `--undistort` was set but no camera-info topic could be resolved; the explicit `--cam-info` topic was missing or not a `sensor_msgs/msg/CameraInfo`; or a read/encode/write error occurred. |

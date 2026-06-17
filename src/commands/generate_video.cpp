@@ -142,7 +142,7 @@ std::optional<std::string> validate_camera_info_topic(
   for (const auto & t : reader->topics()) {
     if (t.name == topic) {
       if (t.type != kCameraInfoType) {
-        return "topic '" + topic + "' has type '" + t.type + "', but --camera-info requires " +
+        return "topic '" + topic + "' has type '" + t.type + "', but --cam-info requires " +
                kCameraInfoType;
       }
       return std::nullopt;
@@ -343,7 +343,7 @@ int run_generate_video(const GenerateVideoArgs & args)
     BAGWIZ_LOG_ERROR(
       kLogger,
       "--undistort requires a camera-info topic, but none could be derived from '%s'. "
-      "Pass it explicitly with --camera-info.",
+      "Pass it explicitly with --cam-info.",
       args.topic.c_str());
     return 1;
   }

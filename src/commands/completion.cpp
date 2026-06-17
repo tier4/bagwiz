@@ -77,7 +77,7 @@ constexpr std::array<std::string_view, 2> kGenerateVideoSupportedTypes{{
   "sensor_msgs/msg/CompressedImage",
 }};
 
-// CameraInfo topic type accepted by `generate video --camera-info`. This MUST
+// CameraInfo topic type accepted by `generate video --cam-info`. This MUST
 // mirror the camera-info type constant in src/commands/generate_video.cpp.
 constexpr std::array<std::string_view, 1> kCameraInfoType{{
   "sensor_msgs/msg/CameraInfo",
@@ -903,10 +903,10 @@ std::vector<std::string> complete_topic(const CompletionRequest & request)
 // `video`. The `<image_topic>` positional is completed earlier by
 // try_topic_completion via kTopicBindings (image topics only); <input>/<output>
 // are paths that fall through to the shell's file completion. Here we surface
-// `video` plus its own flags for any `-` word, and the value for `--camera-info`.
+// `video` plus its own flags for any `-` word, and the value for `--cam-info`.
 //
 //   video: `generate`(0) `video`(1) `<input>`(2) `<image_topic>`(3) `<output>`(4)
-//          [--camera-info <topic>] [--undistort] [-w|--overwrite]
+//          [--cam-info <topic>] [--undistort] [-w|--overwrite]
 std::vector<std::string> complete_generate(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -920,11 +920,11 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & sub = request.words[kFirstCommandArgWord];
     if (sub == "video") {
-      return matching(with_help({"--camera-info", "--undistort", "--overwrite", "-w"}), current);
+      return matching(with_help({"--cam-info", "--undistort", "--overwrite", "-w"}), current);
     }
   }
 
-  if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--camera-info") {
+  if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--cam-info") {
     if (request.words.size() <= kSecondCommandArgWord) {
       return {};
     }
