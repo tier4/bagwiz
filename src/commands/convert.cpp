@@ -9,6 +9,7 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/convert_msgtype_geo.hpp"
+#include "bagwiz/core/bag_copy.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/msg_definition_resolver.hpp"
 #include "bagwiz/core/msgtype_convert/geo_pose_convert.hpp"
@@ -23,6 +24,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 
 namespace bagwiz::commands
@@ -336,36 +338,18 @@ private:
         kLogger, "(plus %zu more topic(s) without resolvable .msg)", unresolved_defs - 5);
     }
 
-    uint64_t total_in = 0;
-    uint64_t total_out = 0;
-    uint64_t total_failed = 0;
-    io::RawMessage msg;
-    while (true) {
-      try {
-        if (!reader->next(msg)) {
-          break;
-        }
-      } catch (const std::exception & e) {
-        BAGWIZ_LOG_ERROR(kLogger, "ros2 read error: %s", e.what());
-        return 1;
-      }
-      ++total_in;
-
-      if (msg.topic == nullptr) {
-        continue;
-      }
-
-      try {
-        writer->write(msg.topic->name, msg.timestamp_ns, msg.payload);
-        ++total_out;
-      } catch (const std::exception & e) {
-        ++total_failed;
-        if (total_failed <= 3) {
-          BAGWIZ_LOG_WARN(
-            kLogger, "writer->write failed on '%s': %s; skipping message", msg.topic->name.c_str(),
-            e.what());
-        }
-      }
+    // convert is a pure passthrough copy (only the storage format changes), so it
+    // runs through the shared rewrite seam with an empty suppress set on the
+    // threaded backend. A read/write error now aborts the run (fail-fast) instead
+    // of silently skipping messages, which could mask partial output corruption.
+    core::BagCopyCounts counts;
+    try {
+      const std::unordered_set<std::string> none;
+      counts = core::bag_copy_filtered(
+        *reader, *writer, none, "convert", core::pipeline::BackendKind::Pipelined);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "convert read/write failed: %s", e.what());
+      return 1;
     }
 
     try {
@@ -376,11 +360,8 @@ private:
     }
 
     BAGWIZ_LOG_INFO(
-      kLogger, "Repack done: %" PRIu64 "/%" PRIu64 " messages written across %zu topic(s)",
-      total_out, total_in, declared);
-    if (total_failed > 0) {
-      BAGWIZ_LOG_WARN(kLogger, "%" PRIu64 " message(s) failed to write", total_failed);
-    }
+      kLogger, "Repack done: %" PRIu64 " message(s) written across %zu topic(s)", counts.copied,
+      declared);
 
     return 0;
   }

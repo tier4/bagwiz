@@ -142,7 +142,7 @@ bool resolve_dump_format(
 struct TfTopic
 {
   std::string name;
-  bool is_static;
+  bool is_static = false;
 };
 
 std::vector<TfTopic> collect_tf_topics(const io::BagReader & reader)
@@ -163,7 +163,7 @@ struct InputEdge
 {
   std::string frame_id;
   std::string child_frame_id;
-  std::int64_t stamp_ns;
+  std::int64_t stamp_ns = 0;
 };
 
 // Walk every TF topic once: insert each contained TransformStamped into
@@ -1072,7 +1072,8 @@ private:
 
     core::BagCopyCounts counts;
     try {
-      counts = core::bag_copy_filtered(*reader, *writer, suppress);
+      counts = core::bag_copy_filtered(
+        *reader, *writer, suppress, "traj join", core::pipeline::BackendKind::Pipelined);
     } catch (const std::exception & e) {
       BAGWIZ_LOG_ERROR(
         kLogger, "Stream copy from %s failed: %s", args.input_path.c_str(), e.what());
