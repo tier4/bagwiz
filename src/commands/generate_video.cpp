@@ -38,6 +38,7 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <future>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -45,6 +46,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -632,6 +634,74 @@ private:
   std::int64_t cached_timestamp_ns_ = 0;
 };
 
+// Result of point-cloud transform/projection work. Kept separate from
+// ProjectionResult so callers can return an error string without throwing.
+struct ProjectionWorkResult
+{
+  std::vector<core::pointcloud::ProjectedPoint> points;
+  std::string error;
+
+  [[nodiscard]] bool ok() const noexcept { return error.empty(); }
+};
+
+// Transform the cloud into the camera frame and project it onto the image.
+// This helper is shared by the synchronous and the threaded overlay paths.
+ProjectionWorkResult project_cloud_for_frame(
+  const core::pointcloud::PointCloud2 & cloud, const core::image::CameraInfo & camera_info,
+  tf2::BufferCore & tf_buffer, std::uint32_t image_width, std::uint32_t image_height,
+  core::pointcloud::PointCloudProperty property)
+{
+  const std::string & image_frame = camera_info.frame_id;
+  const std::string & cloud_frame = cloud.frame_id;
+  geometry_msgs::msg::TransformStamped tf;
+  try {
+    tf = tf_buffer.lookupTransform(image_frame, cloud_frame, tf2::TimePointZero);
+  } catch (const tf2::TransformException & e) {
+    return {
+      {}, std::string("cannot transform ") + cloud_frame + " -> " + image_frame + ": " + e.what()};
+  }
+
+  std::array<double, 16> transform{};
+  tf2::Quaternion q(
+    tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z,
+    tf.transform.rotation.w);
+  tf2::Matrix3x3(q).getOpenGLSubMatrix(transform.data());
+  transform[12] = tf.transform.translation.x;
+  transform[13] = tf.transform.translation.y;
+  transform[14] = tf.transform.translation.z;
+
+  const auto projected = core::pointcloud::project_pointcloud(
+    cloud, camera_info, transform, image_width, image_height, property);
+  if (!projected.ok()) {
+    return {{}, std::move(projected.error)};
+  }
+  return {std::move(projected.points), {}};
+}
+
+// Fetch, parse, transform, and project the point cloud nearest to `target_ns`.
+// Each call opens its own BagReader so the work can safely run on a background
+// thread; the caller supplies the read-only camera info and TF buffer.
+ProjectionWorkResult run_projection_work(
+  const std::filesystem::path & input, const std::string & pointcloud_topic,
+  const std::vector<PointCloudIndexEntry> & entries, std::int64_t target_ns,
+  const core::image::CameraInfo & camera_info, tf2::BufferCore & tf_buffer,
+  std::uint32_t image_width, std::uint32_t image_height,
+  core::pointcloud::PointCloudProperty property)
+{
+  try {
+    PointCloudFetcher fetcher(input, pointcloud_topic, entries);
+    std::string error;
+    const auto * cloud = fetcher.fetch(target_ns, error);
+    if (cloud == nullptr) {
+      return {{}, std::move(error)};
+    }
+    return project_cloud_for_frame(
+      *cloud, camera_info, tf_buffer, image_width, image_height, property);
+  } catch (const std::exception & e) {
+    return {{}, std::string("point-cloud projection failed: ") + e.what()};
+  }
+}
+
 // Draw projected points on top of a decoded frame. `step` is the source row
 // stride in bytes. The returned cv::Mat owns the drawn buffer.
 cv::Mat overlay_points(
@@ -911,147 +981,171 @@ int run_generate_video(const GenerateVideoArgs & args)
 
   std::unique_ptr<core::video::VideoEncoder> encoder;
   std::unique_ptr<UndistortHelper> undistort_helper;
-  std::unique_ptr<PointCloudFetcher> pcd_fetcher;
   std::uint32_t enc_w = 0;
   std::uint32_t enc_h = 0;
   std::string enc_encoding;
   std::uint64_t written = 0;
 
-  if (pointcloud_topic.has_value()) {
+  // Owned decode buffer that survives across BagReader::next() calls, which
+  // invalidate raw payload spans. Used by both the synchronous and the threaded
+  // point-cloud overlay paths.
+  struct FrameBuffer
+  {
+    std::int64_t timestamp_ns = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::uint32_t step = 0;
+    core::video::SourcePixelFormat pixel_format = core::video::SourcePixelFormat::kBgr8;
+    std::string encoding;
+    std::vector<std::byte> data;
+  };
+
+  auto decode_to_buffer = [&](
+                            std::int64_t timestamp_ns,
+                            std::span<const std::byte> payload) -> std::optional<FrameBuffer> {
+    FrameBuffer frame;
+    frame.timestamp_ns = timestamp_ns;
+    if (is_compressed) {
+      const auto cimg = core::image::extract_compressed_image(payload);
+      if (!cimg.ok()) {
+        BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, cimg.error.c_str());
+        return std::nullopt;
+      }
+      auto dec = core::image::decode_compressed_image(cimg.image->data, cimg.image->format);
+      if (!dec.ok()) {
+        BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, dec.error.c_str());
+        return std::nullopt;
+      }
+      frame.width = dec.image->width;
+      frame.height = dec.image->height;
+      frame.step = dec.image->width * 3U;
+      frame.pixel_format = core::video::SourcePixelFormat::kBgr8;
+      frame.encoding = "bgr8";
+      frame.data = std::move(dec.image->bgr);
+    } else {
+      const auto img = core::image::extract_raw_image(payload);
+      if (!img.ok()) {
+        BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, img.error.c_str());
+        return std::nullopt;
+      }
+      const auto & v = *img.image;
+      if (v.encoding == "bgr8") {
+        frame.pixel_format = core::video::SourcePixelFormat::kBgr8;
+      } else if (v.encoding == "rgb8") {
+        frame.pixel_format = core::video::SourcePixelFormat::kRgb8;
+      } else {
+        BAGWIZ_LOG_ERROR(
+          kLogger, "image encoding '%s' is not supported in this release; only bgr8 and rgb8.",
+          v.encoding.c_str());
+        return std::nullopt;
+      }
+      frame.width = v.width;
+      frame.height = v.height;
+      frame.step = v.step;
+      frame.encoding = v.encoding;
+      frame.data.assign(v.data.begin(), v.data.end());
+    }
+    return frame;
+  };
+
+  auto encode_frame = [&](
+                        FrameBuffer & frame,
+                        const std::vector<core::pointcloud::ProjectedPoint> * projected) -> bool {
+    std::span<const std::byte> fdata{frame.data.data(), frame.data.size()};
+    std::uint32_t fstep = frame.step;
+
+    if (encoder == nullptr) {
+      // The first frame fixes the geometry and pixel encoding for the run.
+      enc_w = frame.width;
+      enc_h = frame.height;
+      enc_encoding = frame.encoding;
+      auto opened = core::video::open_video_encoder(tmp_path, enc_w, enc_h, fps.num, fps.den);
+      if (!opened.ok()) {
+        BAGWIZ_LOG_ERROR(kLogger, "%s", opened.error.c_str());
+        return false;
+      }
+      encoder = std::move(opened.encoder);
+
+      if (args.undistort) {
+        undistort_helper = std::make_unique<UndistortHelper>(*camera_info, enc_w, enc_h);
+      }
+    } else if (frame.width != enc_w || frame.height != enc_h || frame.encoding != enc_encoding) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "frame %" PRIu64 " changed to %ux%u %s from the first frame's %ux%u %s; aborting.",
+        written, frame.width, frame.height, frame.encoding.c_str(), enc_w, enc_h,
+        enc_encoding.c_str());
+      return false;
+    }
+
+    if (undistort_helper != nullptr) {
+      fdata = undistort_helper->remap(fdata, fstep);
+      fstep = enc_w * 3U;
+    }
+
+    if (projected != nullptr) {
+      cv::Mat overlay_canvas = overlay_points(
+        fdata, frame.width, frame.height, fstep, *projected, pcd_span.property_min,
+        pcd_span.property_max, args.colorscheme, args.point_size, args.alpha);
+      fdata = std::span<const std::byte>(
+        reinterpret_cast<const std::byte *>(overlay_canvas.data),
+        overlay_canvas.total() * overlay_canvas.elemSize());
+      fstep = static_cast<std::uint32_t>(overlay_canvas.step[0]);
+    }
+
+    if (auto e = encoder->write_frame(fdata, fstep, frame.pixel_format); !e.empty()) {
+      BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, e.c_str());
+      return false;
+    }
+    ++written;
+    return true;
+  };
+
+  // Threading is only worthwhile when there is enough work to hide the overhead
+  // of launching a thread and opening a fresh BagReader per frame.
+  constexpr std::uint64_t kThreadingMinFrames = 4;
+  const bool use_threaded_projection =
+    pointcloud_topic.has_value() && args.enable_threaded_projection &&
+    span.count >= kThreadingMinFrames && std::thread::hardware_concurrency() > 1;
+
+  // The synchronous path keeps the original cached fetcher for small bags or
+  // when threading is disabled; the async path opens a fresh reader per frame.
+  std::unique_ptr<PointCloudFetcher> pcd_fetcher;
+  if (pointcloud_topic.has_value() && !use_threaded_projection) {
     pcd_fetcher = std::make_unique<PointCloudFetcher>(
       args.input_path, *pointcloud_topic, std::move(pcd_span.entries));
   }
 
   io::RawMessage raw;
-  core::image::DecodedImage decoded;  // reused storage for the compressed path
   try {
-    while (reader->next(raw)) {
-      // Normalize either message type to a packed 8-bit frame the encoder
-      // accepts: width, height, row stride, pixel layout, and the pixel bytes.
-      std::uint32_t fw = 0;
-      std::uint32_t fh = 0;
-      std::uint32_t fstep = 0;
-      auto fsrc = core::video::SourcePixelFormat::kBgr8;
-      std::string fenc;
-      std::span<const std::byte> fdata;
+    if (use_threaded_projection) {
+      // Async path: keep one frame of projection work running ahead so that
+      // fetch/parse/project for frame N+1 overlaps with encoding frame N.
+      auto launch_projection = [&](
+                                 std::int64_t target_ns, std::uint32_t w,
+                                 std::uint32_t h) -> std::future<ProjectionWorkResult> {
+        return std::async(std::launch::async, [&, target_ns, w, h, topic = *pointcloud_topic]() {
+          return run_projection_work(
+            args.input_path, topic, pcd_span.entries, target_ns, *camera_info, *tf_buffer, w, h,
+            args.property);
+        });
+      };
 
-      if (is_compressed) {
-        const auto cimg = core::image::extract_compressed_image(raw.payload);
-        if (!cimg.ok()) {
-          BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, cimg.error.c_str());
-          encoder.reset();
-          cleanup_tmp();
-          return 1;
-        }
-        auto dec = core::image::decode_compressed_image(cimg.image->data, cimg.image->format);
-        if (!dec.ok()) {
-          BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, dec.error.c_str());
-          encoder.reset();
-          cleanup_tmp();
-          return 1;
-        }
-        decoded = std::move(*dec.image);
-        fw = decoded.width;
-        fh = decoded.height;
-        fstep = decoded.width * 3U;
-        fsrc = core::video::SourcePixelFormat::kBgr8;  // the decoder always emits BGR24
-        fenc = "bgr8";
-        fdata = {decoded.bgr.data(), decoded.bgr.size()};
-      } else {
-        const auto img = core::image::extract_raw_image(raw.payload);
-        if (!img.ok()) {
-          BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, img.error.c_str());
-          encoder.reset();
-          cleanup_tmp();
-          return 1;
-        }
-        const auto & v = *img.image;
-        if (v.encoding == "bgr8") {
-          fsrc = core::video::SourcePixelFormat::kBgr8;
-        } else if (v.encoding == "rgb8") {
-          fsrc = core::video::SourcePixelFormat::kRgb8;
-        } else {
-          BAGWIZ_LOG_ERROR(
-            kLogger, "image encoding '%s' is not supported in this release; only bgr8 and rgb8.",
-            v.encoding.c_str());
-          encoder.reset();
-          cleanup_tmp();
-          return 1;
-        }
-        fw = v.width;
-        fh = v.height;
-        fstep = v.step;
-        fenc = v.encoding;
-        fdata = v.data;
-      }
-
-      if (encoder == nullptr) {
-        // The first frame fixes the geometry and pixel encoding for the run.
-        enc_w = fw;
-        enc_h = fh;
-        enc_encoding = fenc;
-        auto opened = core::video::open_video_encoder(tmp_path, enc_w, enc_h, fps.num, fps.den);
-        if (!opened.ok()) {
-          BAGWIZ_LOG_ERROR(kLogger, "%s", opened.error.c_str());
-          cleanup_tmp();
-          return 1;
-        }
-        encoder = std::move(opened.encoder);
-
-        if (args.undistort) {
-          undistort_helper = std::make_unique<UndistortHelper>(*camera_info, enc_w, enc_h);
-        }
-      } else if (fw != enc_w || fh != enc_h || fenc != enc_encoding) {
+      if (!reader->next(raw)) {
         BAGWIZ_LOG_ERROR(
-          kLogger,
-          "frame %" PRIu64 " changed to %ux%u %s from the first frame's %ux%u %s; aborting.",
-          written, fw, fh, fenc.c_str(), enc_w, enc_h, enc_encoding.c_str());
-        encoder.reset();
+          kLogger, "topic '%s' yielded no frames in the encode pass.", args.topic.c_str());
         cleanup_tmp();
         return 1;
       }
-
-      if (undistort_helper != nullptr) {
-        fdata = undistort_helper->remap(fdata, fstep);
-        fstep = enc_w * 3U;
+      auto current = decode_to_buffer(raw.timestamp_ns, raw.payload);
+      if (!current) {
+        cleanup_tmp();
+        return 1;
       }
+      auto pending_projection =
+        launch_projection(current->timestamp_ns, current->width, current->height);
 
-      cv::Mat overlay_canvas;
-      if (pcd_fetcher != nullptr) {
-        std::string pcd_error;
-        const auto * cloud = pcd_fetcher->fetch(raw.timestamp_ns, pcd_error);
-        if (cloud == nullptr) {
-          BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, pcd_error.c_str());
-          encoder.reset();
-          cleanup_tmp();
-          return 1;
-        }
-
-        const std::string & image_frame = camera_info->frame_id;
-        const std::string & cloud_frame = cloud->frame_id;
-        geometry_msgs::msg::TransformStamped tf;
-        try {
-          tf = tf_buffer->lookupTransform(image_frame, cloud_frame, tf2::TimePointZero);
-        } catch (const tf2::TransformException & e) {
-          BAGWIZ_LOG_ERROR(
-            kLogger, "cannot transform %s -> %s: %s", cloud_frame.c_str(), image_frame.c_str(),
-            e.what());
-          encoder.reset();
-          cleanup_tmp();
-          return 1;
-        }
-
-        std::array<double, 16> transform{};
-        tf2::Quaternion q(
-          tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z,
-          tf.transform.rotation.w);
-        tf2::Matrix3x3(q).getOpenGLSubMatrix(transform.data());
-        transform[12] = tf.transform.translation.x;
-        transform[13] = tf.transform.translation.y;
-        transform[14] = tf.transform.translation.z;
-
-        const auto projected = core::pointcloud::project_pointcloud(
-          *cloud, *camera_info, transform, fw, fh, args.property);
+      while (true) {
+        auto projected = pending_projection.get();
         if (!projected.ok()) {
           BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, projected.error.c_str());
           encoder.reset();
@@ -1059,22 +1153,75 @@ int run_generate_video(const GenerateVideoArgs & args)
           return 1;
         }
 
-        overlay_canvas = overlay_points(
-          fdata, fw, fh, fstep, projected.points, pcd_span.property_min, pcd_span.property_max,
-          args.colorscheme, args.point_size, args.alpha);
-        fdata = std::span<const std::byte>(
-          reinterpret_cast<const std::byte *>(overlay_canvas.data),
-          overlay_canvas.total() * overlay_canvas.elemSize());
-        fstep = static_cast<std::uint32_t>(overlay_canvas.step[0]);
-      }
+        io::RawMessage next_raw;
+        const bool has_next = reader->next(next_raw);
+        std::optional<FrameBuffer> next_frame;
+        std::optional<std::future<ProjectionWorkResult>> next_projection;
+        if (has_next) {
+          next_frame = decode_to_buffer(next_raw.timestamp_ns, next_raw.payload);
+          if (!next_frame) {
+            encoder.reset();
+            cleanup_tmp();
+            return 1;
+          }
+          next_projection =
+            launch_projection(next_frame->timestamp_ns, next_frame->width, next_frame->height);
+        }
 
-      if (auto e = encoder->write_frame(fdata, fstep, fsrc); !e.empty()) {
-        BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, e.c_str());
-        encoder.reset();
-        cleanup_tmp();
-        return 1;
+        if (!encode_frame(*current, &projected.points)) {
+          encoder.reset();
+          cleanup_tmp();
+          return 1;
+        }
+
+        if (!has_next) {
+          break;
+        }
+        current = std::move(*next_frame);
+        pending_projection = std::move(*next_projection);
       }
-      ++written;
+    } else {
+      // Synchronous path: decode, optionally project, and encode frame-by-frame.
+      // This keeps the original cached PointCloudFetcher so small bags or
+      // single-threaded runs do not pay the per-frame BagReader open/close cost.
+      while (reader->next(raw)) {
+        auto frame = decode_to_buffer(raw.timestamp_ns, raw.payload);
+        if (!frame) {
+          encoder.reset();
+          cleanup_tmp();
+          return 1;
+        }
+
+        const std::vector<core::pointcloud::ProjectedPoint> * projected_ptr = nullptr;
+        std::vector<core::pointcloud::ProjectedPoint> projected_storage;
+        if (pcd_fetcher != nullptr) {
+          std::string pcd_error;
+          const auto * cloud = pcd_fetcher->fetch(raw.timestamp_ns, pcd_error);
+          if (cloud == nullptr) {
+            BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, pcd_error.c_str());
+            encoder.reset();
+            cleanup_tmp();
+            return 1;
+          }
+
+          const auto projected = project_cloud_for_frame(
+            *cloud, *camera_info, *tf_buffer, frame->width, frame->height, args.property);
+          if (!projected.ok()) {
+            BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, projected.error.c_str());
+            encoder.reset();
+            cleanup_tmp();
+            return 1;
+          }
+          projected_storage = std::move(projected.points);
+          projected_ptr = &projected_storage;
+        }
+
+        if (!encode_frame(*frame, projected_ptr)) {
+          encoder.reset();
+          cleanup_tmp();
+          return 1;
+        }
+      }
     }
   } catch (const std::exception & e) {
     BAGWIZ_LOG_ERROR(kLogger, "error reading topic '%s': %s", args.topic.c_str(), e.what());

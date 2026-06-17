@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <fstream>
 #include <span>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -796,6 +797,49 @@ TEST_F(GenerateVideoTest, PointCloudOverlayWorksOnCompressedImage)
   const auto probe = bagwiz::core::video::probe_video(out);
   ASSERT_TRUE(probe.ok()) << probe.error;
   EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+// Read a file into `out` for bit-exact comparison. The helper is void so it can
+// use gtest's fatal FAIL() macro if the file cannot be opened.
+void read_file_bytes(const std::filesystem::path & path, std::vector<std::byte> & out)
+{
+  std::ifstream f(path, std::ios::binary);
+  if (!f) {
+    FAIL() << "could not open " << path;
+  }
+  std::ostringstream ss;
+  ss << f.rdbuf();
+  const std::string content = ss.str();
+  out.clear();
+  out.reserve(content.size());
+  for (unsigned char c : content) {
+    out.push_back(static_cast<std::byte>(c));
+  }
+}
+
+TEST_F(GenerateVideoTest, ThreadedPointCloudOverlayMatchesSynchronous)
+{
+  // Use enough frames to satisfy the internal threshold for threaded projection.
+  constexpr int kFrames = 6;
+  const auto in =
+    build_bag_with_pointcloud_overlay(tmp_dir_, "/cam/image_rect_color", false, kFrames, 16, 16);
+  const auto out_threaded = tmp_dir_ / "out_threaded.avi";
+  const auto out_sync = tmp_dir_ / "out_sync.avi";
+
+  GenerateVideoArgs args{in, "/cam/image_rect_color", out_threaded, false};
+  args.pointcloud_topic = "/points";
+  args.enable_threaded_projection = true;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  args.output_path = out_sync;
+  args.enable_threaded_projection = false;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  std::vector<std::byte> threaded_bytes;
+  std::vector<std::byte> sync_bytes;
+  read_file_bytes(out_threaded, threaded_bytes);
+  read_file_bytes(out_sync, sync_bytes);
+  EXPECT_EQ(threaded_bytes, sync_bytes);
 }
 
 }  // namespace

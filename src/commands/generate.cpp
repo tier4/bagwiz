@@ -91,9 +91,10 @@ private:
     sub
       ->add_option(
         "--cam-info", video_args_.camera_info_topic,
-        "CameraInfo topic to use for --undistort. When omitted, bagwiz derives it from "
-        "<img_topic>: image topics ending in /image_raw/compressed, /image_rect_color, or "
-        "/image_rect_color/compressed resolve to the sibling /camera_info topic.")
+        "CameraInfo topic to use for --undistort and point-cloud projection. When omitted, "
+        "bagwiz derives it from <img_topic>: image topics ending in /image_raw/compressed, "
+        "/image_rect_color, or /image_rect_color/compressed resolve to the sibling /camera_info "
+        "topic.")
       ->check([](const std::string & topic) {
         if (topic.empty()) {
           return std::string{"cam-info topic must not be empty"};
