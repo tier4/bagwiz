@@ -198,3 +198,7 @@ default = ["humble"]
 humble = ["humble"]
 jazzy = ["jazzy"]
 lyrical = ["lyrical"]
+
+[pypi-dependencies]
+numpy = "*"
+matplotlib = ">=3.11.0, <4"
