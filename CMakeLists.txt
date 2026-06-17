@@ -464,6 +464,9 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_raw_image_test test/core/image/raw_image_test.cpp)
   target_link_libraries(bagwiz_raw_image_test bagwiz_core)
 
+  ament_add_gtest(bagwiz_camera_info_test test/core/image/camera_info_test.cpp)
+  target_link_libraries(bagwiz_camera_info_test bagwiz_core)
+
   ament_add_gtest(bagwiz_compressed_image_test test/core/image/compressed_image_test.cpp)
   target_link_libraries(bagwiz_compressed_image_test bagwiz_core)
 

@@ -50,6 +50,12 @@ struct CameraInfoResult
 // error result rather than throwing.
 [[nodiscard]] CameraInfoResult extract_camera_info(std::span<const std::byte> payload);
 
+// Return a CameraInfo whose pixel-coordinate entries are scaled by `scale` so
+// that undistortion/projection match an image resized by the same factor. The
+// distortion coefficients, rectification matrix, homogeneous entries (k[8],
+// p[10]), and the depth translation in p[11] are left unchanged.
+[[nodiscard]] CameraInfo scale_camera_info(const CameraInfo & info, double scale);
+
 }  // namespace bagwiz::core::image
 
 #endif  // BAGWIZ__CORE__IMAGE__CAMERA_INFO_HPP_

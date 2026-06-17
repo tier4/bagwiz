@@ -106,4 +106,27 @@ CameraInfoResult extract_camera_info(std::span<const std::byte> payload)
   return result;
 }
 
+CameraInfo scale_camera_info(const CameraInfo & info, double scale)
+{
+  CameraInfo scaled = info;
+  // K = [[fx, skew, cx], [0, fy, cy], [0, 0, 1]]
+  scaled.k[0] *= scale;
+  scaled.k[1] *= scale;
+  scaled.k[2] *= scale;
+  scaled.k[4] *= scale;
+  scaled.k[5] *= scale;
+  // P = [[fx', s', cx', tx], [0, fy', cy', ty], [0, 0, 1, tz]]
+  // The first two rows hold pixel coordinates and scale with the image; the
+  // third row (rotation / homogeneous coordinate) and tz do not.
+  scaled.p[0] *= scale;
+  scaled.p[1] *= scale;
+  scaled.p[2] *= scale;
+  scaled.p[3] *= scale;
+  scaled.p[4] *= scale;
+  scaled.p[5] *= scale;
+  scaled.p[6] *= scale;
+  scaled.p[7] *= scale;
+  return scaled;
+}
+
 }  // namespace bagwiz::core::image

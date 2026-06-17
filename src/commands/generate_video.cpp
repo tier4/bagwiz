@@ -705,21 +705,6 @@ ProjectionWorkResult run_projection_work(
   }
 }
 
-// Scale a CameraInfo by `scale`. The distortion coefficients stay unchanged,
-// but the intrinsics (k) and projection matrix (p) are scaled so that the
-// projection matches an image resized by the same factor.
-core::image::CameraInfo scale_camera_info(const core::image::CameraInfo & info, double scale)
-{
-  core::image::CameraInfo scaled = info;
-  for (auto & v : scaled.k) {
-    v *= scale;
-  }
-  for (auto & v : scaled.p) {
-    v *= scale;
-  }
-  return scaled;
-}
-
 // Draw projected points on top of a decoded frame. `step` is the source row
 // stride in bytes. The returned cv::Mat owns the drawn buffer.
 cv::Mat overlay_points(
@@ -954,7 +939,7 @@ int run_generate_video(const GenerateVideoArgs & args)
       BAGWIZ_LOG_ERROR(kLogger, "%s", ci.error.c_str());
       return 1;
     }
-    camera_info = scale_camera_info(*ci.info, static_cast<double>(args.resize_scale));
+    camera_info = core::image::scale_camera_info(*ci.info, static_cast<double>(args.resize_scale));
   }
 
   // 6b. Load TF data when a point-cloud overlay is requested so the cloud can be
