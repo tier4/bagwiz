@@ -247,7 +247,7 @@ std::filesystem::path write_traj_dump_mixed_fixture(const std::filesystem::path 
 
 // MCAP carrying one raw image topic (/image), one compressed image topic
 // (/image/compressed), and one non-image topic (/points). Used to verify
-// `generate video` <topic> completion offers both image types it operates on
+// `generate video` <image_topic> completion offers both image types it operates on
 // (sensor_msgs/msg/Image and sensor_msgs/msg/CompressedImage) while excluding
 // every non-image topic. Topic metadata alone drives completion, so the
 // payloads are arbitrary bytes.
@@ -268,6 +268,31 @@ std::filesystem::path write_image_topics_fixture(const std::filesystem::path & p
   writer->declare_topic(make_topic("/points", "sensor_msgs/msg/PointCloud2"));
   writer->write("/image", 1'000'000'000, bytes);
   writer->write("/image/compressed", 2'000'000'000, bytes);
+  writer->write("/points", 3'000'000'000, bytes);
+  writer->close();
+  return path;
+}
+
+// MCAP carrying an image topic (/cam/image_raw/compressed) and its sibling
+// CameraInfo topic (/cam/camera_info), plus an unrelated topic (/points). Used to
+// verify `--camera-info` completion offers only the CameraInfo topic.
+std::filesystem::path write_camera_info_fixture(const std::filesystem::path & path)
+{
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Mcap;
+  options.layout = bagwiz::io::Layout::SingleFile;
+  options.mcap_compression = "none";
+
+  constexpr std::array<std::byte, 4> kPayload{
+    std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}};
+  const auto bytes = std::span<const std::byte>(kPayload.data(), kPayload.size());
+
+  auto writer = bagwiz::io::open_write(path, options);
+  writer->declare_topic(make_topic("/cam/image_raw/compressed", "sensor_msgs/msg/CompressedImage"));
+  writer->declare_topic(make_topic("/cam/camera_info", "sensor_msgs/msg/CameraInfo"));
+  writer->declare_topic(make_topic("/points", "sensor_msgs/msg/PointCloud2"));
+  writer->write("/cam/image_raw/compressed", 1'000'000'000, bytes);
+  writer->write("/cam/camera_info", 2'000'000'000, bytes);
   writer->write("/points", 3'000'000'000, bytes);
   writer->close();
   return path;
@@ -1088,16 +1113,16 @@ TEST(FlagCompletionTest, GenerateParentDashListsHelpFlags)
     run_completion({"bagwiz", "__complete", "2", "bagwiz", "generate", "-"}), "--help\n-h\n");
 }
 
-// `generate video -` surfaces the action's -w/--overwrite flag plus the implicit
-// help flags, sorted.
+// `generate video -` surfaces the action's flags plus the implicit help flags,
+// sorted.
 TEST(FlagCompletionTest, GenerateVideoDashListsVideoFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "generate", "video", "-"}),
-    "--help\n--overwrite\n-h\n-w\n");
+    "--camera-info\n--help\n--overwrite\n--undistort\n-h\n-w\n");
 }
 
-// `generate video <bag> <TAB>` (the <topic> slot) lists only the bag's image
+// `generate video <bag> <TAB>` (the <image_topic> slot) lists only the bag's image
 // topics — /image (Image) and /image/compressed (CompressedImage) here —
 // excluding the non-image /points, sorted.
 TEST_F(CompletionTest, GenerateVideoTopicSlotListsOnlyImageTopics)
@@ -1111,7 +1136,7 @@ TEST_F(CompletionTest, GenerateVideoTopicSlotListsOnlyImageTopics)
     "/image\n/image/compressed\n");
 }
 
-// A typed prefix narrows the <topic> candidates within the image-type set.
+// A typed prefix narrows the <image_topic> candidates within the image-type set.
 TEST_F(CompletionTest, GenerateVideoTopicSlotRespectsPrefix)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
@@ -1138,7 +1163,50 @@ TEST_F(CompletionTest, GenerateVideoTopicSlotExcludesUnsupportedTypeOnPrefix)
     "");
 }
 
-// A bag with no image topic yields no <topic> candidates, so the shell's default
+// `--camera-info <TAB>` after a bag offers only sensor_msgs/msg/CameraInfo
+// topics, excluding image and non-CameraInfo topics.
+TEST_F(CompletionTest, GenerateVideoCameraInfoFlagListsOnlyCameraInfoTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "7", "bagwiz", "generate", "video", "~/cameras.mcap",
+       "/cam/image_raw/compressed", "out.avi", "--camera-info"}),
+    "/cam/camera_info\n");
+}
+
+// A typed prefix narrows the `--camera-info` candidates within the CameraInfo set.
+TEST_F(CompletionTest, GenerateVideoCameraInfoFlagRespectsPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "7", "bagwiz", "generate", "video", "~/cameras.mcap",
+       "/cam/image_raw/compressed", "out.avi", "--camera-info", "/cam/c"}),
+    "/cam/camera_info\n");
+}
+
+// A bag with no CameraInfo topic yields no `--camera-info` candidates.
+TEST_F(CompletionTest, GenerateVideoCameraInfoFlagEmptyWhenNoCameraInfoTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_image_topics_fixture(tmp_dir_ / "images.mcap");  // no CameraInfo
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "7", "bagwiz", "generate", "video", "~/images.mcap", "/image",
+       "out.avi", "--camera-info"}),
+    "");
+}
+
+// A bag with no image topic yields no <image_topic> candidates, so the shell's default
 // file completion takes over (matches walk/traj/tf behavior).
 TEST_F(CompletionTest, GenerateVideoTopicSlotEmptyWhenNoImageTopics)
 {

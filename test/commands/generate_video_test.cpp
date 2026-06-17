@@ -14,8 +14,10 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <span>
@@ -48,6 +50,16 @@ public:
     align(4);
     for (int i = 0; i < 4; ++i) {
       buf_.push_back(static_cast<std::byte>((v >> (8 * i)) & 0xFFU));
+    }
+  }
+  void f64(double v)
+  {
+    align(8);
+    std::uint64_t bits = 0;
+    static_assert(sizeof(bits) == sizeof(v));
+    std::memcpy(&bits, &v, sizeof(v));
+    for (std::size_t i = 0; i < 8; ++i) {
+      buf_.push_back(static_cast<std::byte>((bits >> (8 * i)) & 0xFFU));
     }
   }
   void i32(std::int32_t v) { u32(static_cast<std::uint32_t>(v)); }
@@ -110,6 +122,47 @@ std::vector<std::byte> make_compressed_payload(
   return b.take();
 }
 
+// Serialize a sensor_msgs/msg/CameraInfo with the given intrinsics. Distortion
+// coefficients are empty and the rectification matrix is identity.
+std::vector<std::byte> make_camera_info_payload(
+  std::uint32_t w, std::uint32_t h, const std::array<double, 9> & k)
+{
+  CdrBuilder b;
+  b.i32(0);            // header.stamp.sec
+  b.u32(0);            // header.stamp.nanosec
+  b.str("cam");        // header.frame_id
+  b.u32(h);            // height
+  b.u32(w);            // width
+  b.str("plumb_bob");  // distortion_model
+  b.u32(0);            // d.length
+  for (std::size_t i = 0; i < 9; ++i) {
+    b.f64(k[i]);
+  }
+  // r = identity
+  constexpr std::array<double, 9> identity_r{1, 0, 0, 0, 1, 0, 0, 0, 1};
+  for (std::size_t i = 0; i < 9; ++i) {
+    b.f64(identity_r[i]);
+  }
+  // p = [K 0]
+  for (std::size_t row = 0; row < 3; ++row) {
+    for (std::size_t col = 0; col < 4; ++col) {
+      double value = 0.0;
+      if (col < 3) {
+        value = k[row * 3 + col];
+      }
+      b.f64(value);
+    }
+  }
+  b.u32(0);  // binning_x
+  b.u32(0);  // binning_y
+  b.u32(0);  // roi.x_offset
+  b.u32(0);  // roi.y_offset
+  b.u32(0);  // roi.width
+  b.u32(0);  // roi.height
+  b.u8(0);   // roi.do_rectify
+  return b.take();
+}
+
 bagwiz::io::TopicInfo make_topic(std::string name, std::string type)
 {
   bagwiz::io::TopicInfo t;
@@ -132,6 +185,7 @@ constexpr const char * kImageTopic = "/cam/image";
 constexpr const char * kImageType = "sensor_msgs/msg/Image";
 constexpr const char * kCompressedTopic = "/cam/image/compressed";
 constexpr const char * kCompressedType = "sensor_msgs/msg/CompressedImage";
+constexpr const char * kCameraInfoType = "sensor_msgs/msg/CameraInfo";
 
 // Build an MCAP bag with an Image topic (`frames` messages at 100 ms spacing,
 // WxH, `encoding`) plus a CompressedImage topic and a lidar topic (declared so
@@ -169,6 +223,64 @@ std::filesystem::path build_compressed_bag(
     const auto payload = make_compressed_payload("jpeg", {jpeg.data(), jpeg.size()});
     const std::int64_t ts = 1'000'000'000LL + static_cast<std::int64_t>(i) * 100'000'000LL;
     writer->write(kCompressedTopic, ts, {payload.data(), payload.size()});
+  }
+  writer->close();
+  return path;
+}
+
+// Build an MCAP bag with an image topic named `image_topic` plus a sibling
+// `/camera_info` topic. When `compressed` is true the image topic carries JPEG
+// frames; otherwise it carries raw bgr8 frames. The CameraInfo is sized to match
+// the image dimensions.
+std::filesystem::path build_bag_with_camera_info(
+  const std::filesystem::path & dir, const std::string & image_topic, bool compressed, int frames,
+  std::uint32_t w, std::uint32_t h)
+{
+  const auto path = dir / "input";
+  auto writer = bagwiz::io::open_write(path, mcap_dir_opts());
+
+  const std::string camera_info_topic = [image_topic]() {
+    std::string stem = image_topic;
+    for (const auto & suffix :
+         {"/image_raw/compressed", "/image_rect_color/compressed", "/image_rect_color"}) {
+      if (
+        stem.size() > std::string_view{suffix}.size() &&
+        std::string_view{stem}.substr(stem.size() - std::string_view{suffix}.size()) == suffix) {
+        stem.resize(stem.size() - std::string_view{suffix}.size());
+        break;
+      }
+    }
+    return stem + "/camera_info";
+  }();
+
+  writer->declare_topic(make_topic(image_topic, compressed ? kCompressedType : kImageType));
+  writer->declare_topic(make_topic(camera_info_topic, kCameraInfoType));
+
+  const std::array<double, 9> k{
+    static_cast<double>(w),
+    0.0,
+    static_cast<double>(w) / 2.0,
+    0.0,
+    static_cast<double>(h),
+    static_cast<double>(h) / 2.0,
+    0.0,
+    0.0,
+    1.0};
+  const auto camera_info_payload = make_camera_info_payload(w, h, k);
+  writer->write(
+    camera_info_topic, 1'000'000'000LL, {camera_info_payload.data(), camera_info_payload.size()});
+
+  for (int i = 0; i < frames; ++i) {
+    const std::int64_t ts = 1'000'000'000LL + static_cast<std::int64_t>(i) * 100'000'000LL;
+    if (compressed) {
+      const auto jpeg =
+        bagwiz::test::encode_still_image("jpeg", w, h, static_cast<std::uint8_t>(i * 20), 100, 50);
+      const auto payload = make_compressed_payload("jpeg", {jpeg.data(), jpeg.size()});
+      writer->write(image_topic, ts, {payload.data(), payload.size()});
+    } else {
+      const auto payload = make_image_payload(w, h, "bgr8", static_cast<std::uint8_t>(i * 20));
+      writer->write(image_topic, ts, {payload.data(), payload.size()});
+    }
   }
   writer->close();
   return path;
@@ -381,6 +493,114 @@ TEST_F(GenerateVideoTest, RunOverwriteReplacesExistingOutput)
   const auto probe = bagwiz::core::video::probe_video(out);
   ASSERT_TRUE(probe.ok()) << probe.error;
   EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+// ---- camera-info auto-resolution ------------------------------------------
+
+TEST_F(GenerateVideoTest, AutoResolvesCameraInfoForImageRawCompressed)
+{
+  constexpr int kFrames = 2;
+  const auto in =
+    build_bag_with_camera_info(tmp_dir_, "/cam/image_raw/compressed", true, kFrames, 16, 16);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image_raw/compressed", out, false};
+  args.undistort = true;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+TEST_F(GenerateVideoTest, AutoResolvesCameraInfoForImageRectColor)
+{
+  constexpr int kFrames = 2;
+  const auto in =
+    build_bag_with_camera_info(tmp_dir_, "/cam/image_rect_color", false, kFrames, 16, 16);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image_rect_color", out, false};
+  args.undistort = true;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+TEST_F(GenerateVideoTest, AutoResolvesCameraInfoForImageRectColorCompressed)
+{
+  constexpr int kFrames = 2;
+  const auto in =
+    build_bag_with_camera_info(tmp_dir_, "/cam/image_rect_color/compressed", true, kFrames, 16, 16);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image_rect_color/compressed", out, false};
+  args.undistort = true;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+TEST_F(GenerateVideoTest, UndistortFailsWhenAutoResolutionCannotFindCameraInfo)
+{
+  constexpr int kFrames = 2;
+  const auto in = build_bag(tmp_dir_, kFrames, 16, 16, "bgr8");  // /cam/image, no /cam/camera_info
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, kImageTopic, out, false};
+  args.undistort = true;
+  EXPECT_EQ(run_generate_video(args), 1);
+  EXPECT_FALSE(std::filesystem::exists(out));
+}
+
+TEST_F(GenerateVideoTest, ExplicitCameraInfoTopicWorksForUndistort)
+{
+  constexpr int kFrames = 2;
+  const auto in = tmp_dir_ / "input";
+
+  // Build a bag with /cam/image and an unrelated /other/camera_info topic so
+  // auto-resolution fails and explicit selection is required.
+  {
+    auto writer = bagwiz::io::open_write(in, mcap_dir_opts());
+    writer->declare_topic(make_topic(kImageTopic, kImageType));
+    writer->declare_topic(make_topic("/other/camera_info", kCameraInfoType));
+    const std::array<double, 9> k{16, 0, 8, 0, 16, 8, 0, 0, 1};
+    const auto ci_payload = make_camera_info_payload(16, 16, k);
+    writer->write("/other/camera_info", 1'000'000'000LL, {ci_payload.data(), ci_payload.size()});
+    for (int i = 0; i < kFrames; ++i) {
+      const auto payload = make_image_payload(16, 16, "bgr8", static_cast<std::uint8_t>(i * 20));
+      const std::int64_t ts = 1'000'000'000LL + static_cast<std::int64_t>(i) * 100'000'000LL;
+      writer->write(kImageTopic, ts, {payload.data(), payload.size()});
+    }
+    writer->close();
+  }
+
+  const auto out = tmp_dir_ / "out.avi";
+  GenerateVideoArgs args{in, kImageTopic, out, false};
+  args.camera_info_topic = "/other/camera_info";
+  args.undistort = true;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+TEST_F(GenerateVideoTest, ExplicitCameraInfoTopicWithWrongTypeFails)
+{
+  constexpr int kFrames = 2;
+  const auto in = build_bag(tmp_dir_, kFrames, 16, 16, "bgr8");
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, kImageTopic, out, false};
+  args.camera_info_topic = "/sensing/lidar";  // PointCloud2, not CameraInfo
+  args.undistort = true;
+  EXPECT_EQ(run_generate_video(args), 1);
+  EXPECT_FALSE(std::filesystem::exists(out));
 }
 
 }  // namespace

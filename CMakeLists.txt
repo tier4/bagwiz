@@ -198,6 +198,7 @@ add_library(bagwiz_core
   src/core/image/raw_image.cpp
   src/core/image/compressed_image.cpp
   src/core/image/image_decoder.cpp
+  src/core/image/camera_info.cpp
   src/core/video/frame_rate.cpp
   src/core/video/video_encoder.cpp
   src/core/tui/layout.cpp
@@ -267,6 +268,11 @@ target_link_libraries(bagwiz_core PRIVATE nlohmann_json::nlohmann_json)
 # header returns only std types behind a pimpl), so keep it PRIVATE and out of
 # the export set.
 target_link_libraries(bagwiz_core PRIVATE PkgConfig::LIBAV)
+# OpenCV is an implementation detail of the `generate video --undistort` path
+# (camera_info parsing + cv::undistort). Keep it PRIVATE so it does not leak
+# into bagwiz_core's export set.
+find_package(OpenCV REQUIRED)
+target_link_libraries(bagwiz_core PRIVATE ${OpenCV_LIBS})
 # fmt is used header-only inside bagwiz_core (renderer.cpp). Linking fmt::fmt
 # would force it into the bagwiz_core export set, which fails because fmt is
 # fetched via FetchContent and not installable.
@@ -297,7 +303,7 @@ add_executable(bagwiz
   src/commands/topic_keep.cpp
   src/commands/topic_rename.cpp
 )
-target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang)
+target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang ${OpenCV_LIBS})
 
 install(TARGETS bagwiz RUNTIME DESTINATION bin)
 install(TARGETS bagwiz_core
@@ -482,7 +488,7 @@ if(BUILD_TESTING)
     src/commands/generate_video.cpp)
   target_include_directories(bagwiz_generate_video_test PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/test")
-  target_link_libraries(bagwiz_generate_video_test bagwiz_core fmt::fmt PkgConfig::LIBAV)
+  target_link_libraries(bagwiz_generate_video_test bagwiz_core fmt::fmt PkgConfig::LIBAV ${OpenCV_LIBS})
 
   ament_add_gtest(bagwiz_output_path_test test/core/output_path_test.cpp)
   target_link_libraries(bagwiz_output_path_test bagwiz_core)

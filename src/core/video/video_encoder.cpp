@@ -309,6 +309,16 @@ OpenVideoEncoderResult open_video_encoder(
   if (choice->id == AV_CODEC_ID_H264) {
     av_dict_set(&opts, "preset", "medium", 0);
     av_dict_set(&opts, "crf", "23", 0);
+    // Disable B-frames. The default libx264 setting inserts B-frames, which
+    // leads to negative DTS in the MP4 container and crashes some hardware
+    // decoders (notably mpv's Vulkan hwdec path). Set both the codec-context
+    // field and the encoder option so the request is respected regardless of
+    // which path the libx264 wrapper reads.
+    im->codec->max_b_frames = 0;
+    av_dict_set(&opts, "bframes", "0", 0);
+    // Also disable scenecut: with B-frames off and a short GOP, libx264 tends
+    // to mark every frame as an I-frame, blowing up the file size for no gain.
+    av_dict_set(&opts, "sc_threshold", "0", 0);
   }
   ret = avcodec_open2(im->codec, encoder, &opts);
   av_dict_free(&opts);
@@ -388,6 +398,7 @@ VideoProbe probe_video(const std::filesystem::path & path)
   probe.width = static_cast<std::uint32_t>(st->codecpar->width);
   probe.height = static_cast<std::uint32_t>(st->codecpar->height);
   probe.codec = avcodec_get_name(st->codecpar->codec_id);
+  probe.has_b_frames = st->codecpar->video_delay > 0;
 
   std::int64_t count = 0;
   AVPacket * pkt = av_packet_alloc();

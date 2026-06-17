@@ -10,7 +10,9 @@
 #define BAGWIZ__COMMANDS__GENERATE_VIDEO_HPP_
 
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <utility>
 
 namespace bagwiz::commands
 {
@@ -21,12 +23,28 @@ namespace bagwiz::commands
 // directly from tests without driving the CLI parser.
 struct GenerateVideoArgs
 {
+  GenerateVideoArgs() = default;
+  GenerateVideoArgs(
+    std::filesystem::path input_path_arg, std::string topic_arg,
+    std::filesystem::path output_path_arg, bool overwrite_arg)
+  : input_path(std::move(input_path_arg)),
+    topic(std::move(topic_arg)),
+    output_path(std::move(output_path_arg)),
+    overwrite(overwrite_arg)
+  {
+  }
+
   std::filesystem::path input_path;
   std::string topic;
   std::filesystem::path output_path;
   // Replace a pre-existing <output>. Without it, an existing output path stops
   // the run before any work is done.
   bool overwrite = false;
+  // Explicit camera-info topic. When absent, run_generate_video tries to
+  // derive it from the image topic name.
+  std::optional<std::string> camera_info_topic;
+  // Apply OpenCV undistortion using the resolved camera info.
+  bool undistort = false;
 };
 
 // Classification of whether a topic can be rendered to video.

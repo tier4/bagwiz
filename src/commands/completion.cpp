@@ -77,6 +77,12 @@ constexpr std::array<std::string_view, 2> kGenerateVideoSupportedTypes{{
   "sensor_msgs/msg/CompressedImage",
 }};
 
+// CameraInfo topic type accepted by `generate video --camera-info`. This MUST
+// mirror the camera-info type constant in src/commands/generate_video.cpp.
+constexpr std::array<std::string_view, 1> kCameraInfoType{{
+  "sensor_msgs/msg/CameraInfo",
+}};
+
 // Declarative table of commands that take a positional <topic> argument.
 // `subcommand` is empty when the command has no subcommand level (e.g.
 // `bagwiz walk <input> <topic>`). `input_word` and `topic_word` are
@@ -109,7 +115,7 @@ constexpr std::array<TopicArgBinding, 8> kTopicBindings{{
   // bag; <dst_topic> is a new name with nothing to suggest, so the binding is
   // non-variadic and fires at the single topic_word.
   {"topic", "rename", kSecondCommandArgWord, kThirdCommandArgWord, {}, false},
-  // `generate video <input> <topic> <output>`: complete the single <topic> slot
+  // `generate video <input> <image_topic> <output>`: complete the single <image_topic> slot
   // from the bag's image topics (kGenerateVideoSupportedTypes). <input> and
   // <output> are paths that fall through to the shell's file completion.
   {"generate", "video", kSecondCommandArgWord, kThirdCommandArgWord, kGenerateVideoSupportedTypes,
@@ -469,7 +475,7 @@ std::vector<std::string> collect_tf_frame_ids(
     }
 
     io::ReadFilter filter;
-    filter.topics = tf_topic_names;
+    filter.topics = std::move(tf_topic_names);
     reader->set_filter(filter);
 
     std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> decoders;
@@ -894,12 +900,13 @@ std::vector<std::string> complete_topic(const CompletionRequest & request)
 
 // `generate` is a command group for producing media from a rosbag; its sole
 // subcommand is `video`. At the subcommand slot (word 1) the only candidate is
-// `video`. The <topic> positional is completed earlier by try_topic_completion
-// via kTopicBindings (image topics only); <input>/<output> are paths that fall
-// through to the shell's file completion. Here we surface `video` plus its own
-// flags for any `-` word.
+// `video`. The `<image_topic>` positional is completed earlier by
+// try_topic_completion via kTopicBindings (image topics only); <input>/<output>
+// are paths that fall through to the shell's file completion. Here we surface
+// `video` plus its own flags for any `-` word, and the value for `--camera-info`.
 //
-//   video: `generate`(0) `video`(1) `<input>`(2) `<topic>`(3) `<output>`(4) [-w|--overwrite]
+//   video: `generate`(0) `video`(1) `<input>`(2) `<image_topic>`(3) `<output>`(4)
+//          [--camera-info <topic>] [--undistort] [-w|--overwrite]
 std::vector<std::string> complete_generate(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -913,8 +920,19 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & sub = request.words[kFirstCommandArgWord];
     if (sub == "video") {
-      return matching(with_help({"--overwrite", "-w"}), current);
+      return matching(with_help({"--camera-info", "--undistort", "--overwrite", "-w"}), current);
     }
+  }
+
+  if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--camera-info") {
+    if (request.words.size() <= kSecondCommandArgWord) {
+      return {};
+    }
+    const auto & bag_arg = request.words[kSecondCommandArgWord];
+    if (bag_arg.empty() || bag_arg.starts_with("-")) {
+      return {};
+    }
+    return complete_topics(expand_current_user_home(bag_arg), current, kCameraInfoType);
   }
   return {};
 }

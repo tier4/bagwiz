@@ -11,6 +11,7 @@
 #include "bagwiz/commands/generate_video.hpp"
 #include "bagwiz/core/logging.hpp"
 
+#include <string>
 #include <string_view>
 
 namespace bagwiz::commands
@@ -64,24 +65,46 @@ private:
       "Render an image topic to a video file. <output>'s extension picks the container/codec "
       "(.mp4/.mkv/.mov -> H.264, .avi -> MJPEG); the frame rate is derived from the message "
       "timestamps.");
-    sub->add_option("input", video_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+    sub->add_option("<input>", video_args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
-    sub->add_option("topic", video_args_.topic, "Image topic to render.")->required();
+    sub->add_option("<image_topic>", video_args_.topic, "Image topic to render.")->required();
     sub
       ->add_option(
-        "output", video_args_.output_path,
+        "<output>", video_args_.output_path,
         "Output video path. Its extension selects the output format: "
-        ".mp4/.mkv/.mov -> H.264, .avi -> MJPEG.")
+        ".mp4/.mkv/.mov -> H.264, .avi -> MJPEG. If mpv fails with H.264, try VLC "
+        "or run mpv --hwdec=no; .avi (MJPEG) lowers quality.")
       ->required();
     sub->add_flag(
       "-w,--overwrite", video_args_.overwrite,
       "Replace an existing <output>. Without it, an existing output path stops the run.");
+    sub
+      ->add_option(
+        "--camera-info", video_args_.camera_info_topic,
+        "CameraInfo topic to use for --undistort. When omitted, bagwiz derives it from "
+        "<image_topic>: image topics ending in /image_raw/compressed, /image_rect_color, or "
+        "/image_rect_color/compressed resolve to the sibling /camera_info topic.")
+      ->check([](const std::string & topic) {
+        if (topic.empty()) {
+          return std::string{"camera-info topic must not be empty"};
+        }
+        return std::string{};
+      });
+    sub->add_flag(
+      "--undistort", video_args_.undistort,
+      "Apply distortion correction to each frame using the resolved CameraInfo. "
+      "When this flag is set, a camera-info topic is required; use --camera-info if "
+      "auto-resolution from the image topic fails.");
     sub->footer(
       "Supported topic types: sensor_msgs/msg/Image (bgr8, rgb8) and "
       "sensor_msgs/msg/CompressedImage (JPEG/PNG, decoded to BGR before encoding).\n"
       "Frames stream straight to the encoder (no large temp files); the output is written\n"
-      "atomically and a failed run leaves no partial file behind.");
+      "atomically and a failed run leaves no partial file behind.\n"
+      "CameraInfo auto-resolution: /image_raw/compressed, /image_rect_color, and "
+      "/image_rect_color/compressed map their prefix to /camera_info.\n"
+      "Playback note: H.264 outputs (.mp4/.mkv/.mov) can crash mpv's hardware decoder; "
+      "try VLC or run mpv --hwdec=no. Use .avi (MJPEG) only if lower quality is acceptable.");
     sub->callback([this]() { selected_ = Subcommand::kVideo; });
   }
 };

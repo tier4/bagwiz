@@ -49,6 +49,11 @@ sqlite = "*"
 # (src/core/video/video_encoder.cpp). The conda-forge build bundles the libx264
 # (H.264) and mjpeg encoders. Inherited by every distro environment.
 ffmpeg = "*"
+# opencv (conda-forge) backs the `bagwiz generate video --undistort` path: it
+# reads sensor_msgs/msg/CameraInfo intrinsics and applies cv::undistort to each
+# decoded frame before encoding. Linked PRIVATE so it does not leak into
+# bagwiz_core's export set, matching GeographicLib and libav.
+opencv = "*"
 
 # Activation applies to every environment: select Cyclone DDS (bagwiz depends on
 # rmw_cyclonedds_cpp; Fast DDS is the distro default since Jazzy) and source the

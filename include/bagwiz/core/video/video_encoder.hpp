@@ -92,6 +92,7 @@ struct VideoProbe
   std::int64_t frame_count = 0;  // video packets counted from the container
   double duration_s = 0.0;
   std::string codec;
+  bool has_b_frames = false;
   std::string error;
 
   [[nodiscard]] bool ok() const noexcept { return error.empty(); }

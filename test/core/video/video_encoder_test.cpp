@@ -118,6 +118,7 @@ TEST_F(VideoEncoderTest, EncodesH264Mp4WhenLibx264Available)
   EXPECT_EQ(probe.height, kH);
   EXPECT_EQ(probe.frame_count, kFrames);
   EXPECT_EQ(probe.codec, "h264");
+  EXPECT_FALSE(probe.has_b_frames);
 }
 
 TEST_F(VideoEncoderTest, RejectsUnsupportedExtension)

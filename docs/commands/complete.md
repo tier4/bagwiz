@@ -167,7 +167,7 @@ source ~/.config/fish/completions/bagwiz.fish
     — every topic in the bag, offered at every selector slot (variadic)
   - `bagwiz topic rename <input> <src_topic> <dst_topic>` — every topic in the bag
     at the `<src_topic>` slot only; `<dst_topic>` is a new name with nothing to suggest
-  - `bagwiz generate video <input> <topic> <output>` — restricted to the image
+  - `bagwiz generate video <input> <image_topic> <output>` — restricted to the image
     types `generate video` operates on (`sensor_msgs/msg/Image`,
     `sensor_msgs/msg/CompressedImage`); topics of any other type are omitted
 
