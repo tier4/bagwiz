@@ -68,11 +68,12 @@ struct ImageFit
 // Render `raster` into `region` via `caps.backend`, writing graphics escapes to
 // `out`. The image is scaled aspect-preserved into `region * kPreviewFillFactor`
 // (BGR->RGB happens in the scale step) and centered: the cursor is moved to the
-// centered top-left cell before the escapes are emitted. Returns "" on success,
-// or a human-readable reason on failure (empty raster, kNone backend, scale
-// failure, sixel-not-yet-available). Does not clear the region or reposition the
-// cursor afterward — the caller composes the caption/hint rows around it. Never
-// throws.
+// centered top-left cell before the escapes are emitted. Kitty transmits the
+// frame as an APC graphics command; Sixel encodes it via libsixel. Returns "" on
+// success, or a human-readable reason on failure (empty raster, kNone backend,
+// scale failure, sixel encode failure). Does not clear the region or reposition
+// the cursor afterward — the caller composes the caption/hint rows around it.
+// Never throws.
 [[nodiscard]] std::string render_image(
   std::ostream & out, const bagwiz::core::image::PackedRaster & raster, CellRegion region,
   const TerminalImageCaps & caps);

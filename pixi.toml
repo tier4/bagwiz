@@ -54,6 +54,11 @@ ffmpeg = "*"
 # decoded frame before encoding. Linked PRIVATE so it does not leak into
 # bagwiz_core's export set, matching GeographicLib and libav.
 opencv = "*"
+# libsixel (conda-forge) supplies libsixel + its pkg-config file (`libsixel.pc`)
+# for the Sixel backend of `bagwiz walk`'s image preview
+# (src/core/tui/image/terminal_image_renderer.cpp). Linked PRIVATE behind the
+# renderer .cpp so it never enters bagwiz_core's export set, matching libav.
+libsixel = "*"
 
 # Activation applies to every environment: select Cyclone DDS (bagwiz depends on
 # rmw_cyclonedds_cpp; Fast DDS is the distro default since Jazzy) and source the

@@ -31,6 +31,10 @@ using bagwiz::core::tui::image::ImageBackend;
 // the DA1 reply; a non-Kitty terminal answers only DA1.
 constexpr std::string_view kKittyOk = "\x1b_Gi=31;OK\x1b\\\x1b[?62;1;c";
 constexpr std::string_view kDa1Only = "\x1b[?62;1;c";
+// A Sixel-capable terminal advertises capability 4 in its Primary DA reply.
+constexpr std::string_view kDa1Sixel = "\x1b[?62;4;c";
+// Kitty success APC followed by a DA reply that also advertises Sixel.
+constexpr std::string_view kKittyAndSixel = "\x1b_Gi=31;OK\x1b\\\x1b[?62;4;c";
 
 // Feed `reply` to the probe through a pipe (closed after the canned bytes so the
 // read sees EOF) and return the detected backend.
@@ -129,6 +133,41 @@ TEST(TerminalImageCapsTest, DetectNoneOnDa1Only)
 TEST(TerminalImageCapsTest, DetectNoneOnEmptyReply)
 {
   EXPECT_EQ(probe_with_reply("", term_80x24()), ImageBackend::kNone);
+}
+
+// --- Sixel classification ----------------------------------------------------
+
+TEST(TerminalImageCapsTest, ClassifySixelFromDa1Capability4)
+{
+  EXPECT_EQ(classify_query_reply(kDa1Sixel), ImageBackend::kSixel);
+}
+
+TEST(TerminalImageCapsTest, ClassifyKittyTakesPrecedenceOverSixel)
+{
+  EXPECT_EQ(classify_query_reply(kKittyAndSixel), ImageBackend::kKitty);
+}
+
+TEST(TerminalImageCapsTest, ClassifyDa1WithoutCapability4IsNone)
+{
+  // Multiple params, none of them the bare Sixel code 4.
+  EXPECT_EQ(classify_query_reply("\x1b[?62;1;6;9;c"), ImageBackend::kNone);
+}
+
+TEST(TerminalImageCapsTest, ClassifySixelMatchIsTokenExact)
+{
+  // 40 and 14 contain a '4' digit but are not capability 4; must not match.
+  EXPECT_EQ(classify_query_reply("\x1b[?40;14;c"), ImageBackend::kNone);
+}
+
+TEST(TerminalImageCapsTest, ClassifySixelAsFirstOrLastParam)
+{
+  EXPECT_EQ(classify_query_reply("\x1b[?4;1;c"), ImageBackend::kSixel);
+  EXPECT_EQ(classify_query_reply("\x1b[?62;1;4c"), ImageBackend::kSixel);
+}
+
+TEST(TerminalImageCapsTest, DetectSixelViaPipe)
+{
+  EXPECT_EQ(probe_with_reply(kDa1Sixel, term_80x24()), ImageBackend::kSixel);
 }
 
 }  // namespace

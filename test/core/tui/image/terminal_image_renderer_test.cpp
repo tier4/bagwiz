@@ -71,6 +71,14 @@ TerminalImageCaps kitty_caps(int cell_w, int cell_h)
   return caps;
 }
 
+TerminalImageCaps sixel_caps(int cell_w, int cell_h)
+{
+  TerminalImageCaps caps;
+  caps.backend = ImageBackend::kSixel;
+  caps.cell = CellPixels{cell_w, cell_h};
+  return caps;
+}
+
 // --- base64_encode (RFC 4648 test vectors) -----------------------------------
 
 TEST(TerminalImageRendererTest, Base64EmptyIsEmpty)
@@ -164,6 +172,27 @@ TEST(TerminalImageRendererTest, RenderKittyChunksLargePayload)
   // Control keys ride only the first chunk, which is a continuation (m=1).
   EXPECT_NE(s.find(",a=T,m=1;"), std::string::npos);
   EXPECT_NE(s.find("m=0;"), std::string::npos);
+}
+
+TEST(TerminalImageRendererTest, RenderSixelEmitsDcsFraming)
+{
+  // Exercises the real libsixel encoder; assert the DCS framing rather than
+  // exact bytes (palette/quantization is libsixel-version dependent).
+  const PackedRaster raster = make_raster(8, 8);
+  const CellRegion region{1, 1, 6, 12};
+  const TerminalImageCaps caps = sixel_caps(6, 12);
+  const ImageFit fit = fit_image(raster.width, raster.height, region, caps.cell);
+
+  std::ostringstream out;
+  const std::string err = render_image(out, raster, region, caps);
+  ASSERT_EQ(err, "");
+  const std::string s = out.str();
+
+  // Cursor positioned at the centered top-left cell, then a Sixel DCS string.
+  const std::string cup = "\x1b[" + std::to_string(fit.row) + ";" + std::to_string(fit.col) + "H";
+  EXPECT_NE(s.find(cup), std::string::npos);
+  EXPECT_NE(s.find("\x1bP"), std::string::npos);   // DCS introducer (ESC P)
+  EXPECT_NE(s.find("\x1b\\"), std::string::npos);  // ST terminator (ESC \)
 }
 
 TEST(TerminalImageRendererTest, RenderEmptyRasterErrorsWithoutOutput)

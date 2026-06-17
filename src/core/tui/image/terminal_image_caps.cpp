@@ -38,6 +38,34 @@ constexpr std::size_t kMaxReplyBytes = 4096;
 // reliable read terminator even when the kitty query is ignored.
 constexpr std::string_view kKittyQuery = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\";
 constexpr std::string_view kDa1Query = "\x1b[c";
+
+// True when the Primary DA reply (`ESC [ ? Pn ; Pn ; ... c`) advertises Sixel,
+// which is capability code 4. The parameter list is split on ';' and each token
+// compared exactly to "4" so multi-digit codes like 14 or 40 never false-match.
+// Allocation-free to stay noexcept-safe.
+bool da1_advertises_sixel(std::string_view reply) noexcept
+{
+  const auto start = reply.find("\x1b[?");
+  if (start == std::string_view::npos) {
+    return false;
+  }
+  std::string_view params = reply.substr(start + 3);  // skip the "ESC [ ?" prefix
+  if (const auto term = params.find('c'); term != std::string_view::npos) {
+    params = params.substr(0, term);
+  }
+  std::size_t pos = 0;
+  while (true) {
+    const auto sep = params.find(';', pos);
+    const auto end = sep == std::string_view::npos ? params.size() : sep;
+    if (params.substr(pos, end - pos) == "4") {
+      return true;
+    }
+    if (sep == std::string_view::npos) {
+      return false;
+    }
+    pos = sep + 1;
+  }
+}
 }  // namespace
 
 CellPixels cell_pixels(Size term) noexcept
@@ -67,7 +95,11 @@ ImageBackend classify_query_reply(std::string_view reply) noexcept
       return ImageBackend::kKitty;
     }
   }
-  // PR 3 will additionally classify Sixel from the DA1 reply's `;4` capability.
+  // Kitty takes precedence; otherwise fall back to Sixel when the Primary DA
+  // reply advertises capability 4. Selection order: kitty -> sixel -> none.
+  if (da1_advertises_sixel(reply)) {
+    return ImageBackend::kSixel;
+  }
   return ImageBackend::kNone;
 }
 
@@ -103,8 +135,12 @@ TerminalImageCaps detect_terminal_image_caps(std::ostream & out, int in_fd, Size
     }
     reply.append(buf.data(), static_cast<std::size_t>(n));
     // DA1 reply (`ESC [ ? ... c`) is the terminator; once present, whatever the
-    // kitty query produced has already arrived ahead of it.
-    if (reply.find("\x1b[?") != std::string::npos && reply.find('c') != std::string::npos) {
+    // kitty query produced has already arrived ahead of it. Search for the `c`
+    // from the `ESC [ ?` onward so a stray `c` earlier in the stream cannot end
+    // the read before the full DA1 parameter list (which carries the Sixel
+    // capability) has arrived.
+    if (const auto da1 = reply.find("\x1b[?");
+        da1 != std::string::npos && reply.find('c', da1) != std::string::npos) {
       break;
     }
   }

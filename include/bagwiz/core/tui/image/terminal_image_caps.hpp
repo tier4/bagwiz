@@ -16,7 +16,7 @@
 
 // Detects which terminal graphics protocol (if any) the current terminal
 // supports, so `walk` can offer an image preview only where it can actually
-// render. This is protocol-only: Kitty graphics and (from PR 3) Sixel. There is
+// render. This is protocol-only: Kitty graphics and DEC Sixel. There is
 // deliberately no half-block / truecolor fallback — a terminal that supports
 // neither protocol reports kNone and the preview is simply unavailable.
 namespace bagwiz::core::tui::image
@@ -24,7 +24,7 @@ namespace bagwiz::core::tui::image
 
 enum class ImageBackend {
   kNone,   // no supported graphics protocol; preview unavailable
-  kSixel,  // DEC Sixel (added in PR 3)
+  kSixel,  // DEC Sixel (libsixel)
   kKitty,  // Kitty graphics protocol
 };
 

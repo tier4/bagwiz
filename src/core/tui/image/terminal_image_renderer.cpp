@@ -15,6 +15,7 @@ extern "C" {
 #include <libavutil/mem.h>
 #include <libavutil/pixfmt.h>
 #include <libswscale/swscale.h>
+#include <sixel.h>
 }
 
 #include <algorithm>
@@ -166,6 +167,75 @@ void emit_kitty(std::ostream & out, std::span<const std::byte> rgb, int w, int h
   }
 }
 
+// libsixel output callback: append the encoded sixel bytes to the ostream passed
+// as `priv`. Signature matches sixel_write_function.
+int sixel_write_to_ostream(char * data, int size, void * priv)
+{
+  auto * os = static_cast<std::ostream *>(priv);
+  if (size > 0) {
+    os->write(data, static_cast<std::streamsize>(size));
+  }
+  return size;
+}
+
+// RAII for the libsixel handles, so every early return releases them.
+struct SixelContext
+{
+  sixel_output_t * output = nullptr;
+  sixel_dither_t * dither = nullptr;
+
+  SixelContext() = default;
+  SixelContext(const SixelContext &) = delete;
+  SixelContext & operator=(const SixelContext &) = delete;
+  SixelContext(SixelContext &&) = delete;
+  SixelContext & operator=(SixelContext &&) = delete;
+
+  ~SixelContext()
+  {
+    if (dither != nullptr) {
+      sixel_dither_unref(dither);
+    }
+    if (output != nullptr) {
+      sixel_output_unref(output);
+    }
+  }
+};
+
+// Encode `rgb` (packed RGB24, w*h*3 bytes) as a Sixel DCS stream via libsixel and
+// write it at the 1-based (row, col). libsixel's API takes a non-const pixel
+// pointer (it only reads), hence the mutable buffer. Returns "" on success or a
+// human-readable reason on failure.
+std::string emit_sixel(
+  std::ostream & out, std::vector<std::byte> & rgb, int w, int h, int row, int col)
+{
+  if (rgb.empty()) {
+    return "preview image is empty";
+  }
+  move_cursor(out, row, col);
+  auto * pixels =
+    reinterpret_cast<unsigned char *>(  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+      rgb.data());
+
+  constexpr int kSixelColors = 256;
+  SixelContext ctx;
+  if (SIXEL_FAILED(sixel_output_new(&ctx.output, sixel_write_to_ostream, &out, nullptr))) {
+    return "failed to create the sixel output context";
+  }
+  if (SIXEL_FAILED(sixel_dither_new(&ctx.dither, kSixelColors, nullptr))) {
+    return "failed to create the sixel dither context";
+  }
+  if (SIXEL_FAILED(sixel_dither_initialize(
+        ctx.dither, pixels, w, h, SIXEL_PIXELFORMAT_RGB888, SIXEL_LARGE_AUTO, SIXEL_REP_AUTO,
+        SIXEL_QUALITY_AUTO))) {
+    return "failed to build the sixel palette";
+  }
+  // depth is unused by modern libsixel; pass the historical bytes-per-pixel (3).
+  if (SIXEL_FAILED(sixel_encode(pixels, w, h, 3, ctx.dither, ctx.output))) {
+    return "failed to encode the sixel image";
+  }
+  return "";
+}
+
 }  // namespace
 
 ImageFit fit_image(
@@ -267,7 +337,7 @@ std::string render_image(
       emit_kitty(out, rgb, fit.px_width, fit.px_height, fit.row, fit.col);
       return "";
     case ImageBackend::kSixel:
-      return "sixel image preview is not available yet";  // PR 3
+      return emit_sixel(out, rgb, fit.px_width, fit.px_height, fit.row, fit.col);
     case ImageBackend::kNone:
     default:
       return "terminal has no supported graphics backend";

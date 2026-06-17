@@ -75,12 +75,14 @@ re-decode and re-render the new frame — and the view redraws on resize. Press
   carrying JPEG or PNG (decoded via FFmpeg). Other encodings show a short
   "cannot decode" note in place of the image and you can keep navigating.
 - **Supported terminals are graphics-protocol only.** The preview uses the
-  **Kitty graphics protocol** (kitty, Ghostty, WezTerm); Sixel support is
-  planned. There is **no half-block / ASCII fallback** — on a terminal that
-  speaks neither protocol the `[i]` hint is hidden and the YAML view is the only
-  view. Capability is detected once at startup. Inside `tmux`/`screen` the
-  graphics queries are swallowed (no passthrough yet), so preview is reported as
-  unavailable.
+  **Kitty graphics protocol** (kitty, Ghostty, WezTerm) or **DEC Sixel** (foot,
+  Konsole, `xterm` built with sixel support, WezTerm); when a terminal supports
+  both, Kitty is preferred. There is **no half-block / ASCII fallback** — on a
+  terminal that speaks neither protocol the `[i]` hint is hidden and the YAML
+  view is the only view. Capability is detected once at startup (a Kitty
+  graphics query plus the Primary Device Attributes reply, where capability `4`
+  signals Sixel). Inside `tmux`/`screen` the graphics queries are swallowed (no
+  passthrough yet), so preview is reported as unavailable.
 - The image is scaled aspect-preserved to fit the body region with a fixed
   padding margin (it never fills edge-to-edge) and is centered. Only the current
   frame is decoded and held; stepping re-decodes on demand.
@@ -141,20 +143,20 @@ not been read into the cache yet (they get pulled in on demand).
 
 ## Keys
 
-| Key            | Action                                                                                                                              |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `→` / `Space`  | Next message (wraps from last back to first).                                                                                       |
-| `←` / `b`      | Previous message.                                                                                                                   |
-| `↑` / `k`      | Scroll body up one line.                                                                                                            |
-| `↓` / `j`      | Scroll body down one line.                                                                                                          |
-| `Home` / `H`   | Jump body scroll to the head.                                                                                                       |
-| `End` / `T`    | Jump body scroll to the tail.                                                                                                       |
-| `g`            | Jump to the first message.                                                                                                          |
-| `G`            | Jump to the last message (forces a full-remaining scan).                                                                            |
-| `s`            | Save as yaml - writes the current message body (prompts for path).                                                                  |
-| `a`            | Toggle full expansion of long primitive arrays (default off).                                                                       |
-| `i`            | Toggle in-terminal image preview (image topics on a Kitty-capable terminal; hidden otherwise). See [Image preview](#image-preview). |
-| `q` / `Ctrl-C` | Quit.                                                                                                                               |
+| Key            | Action                                                                                                                                        |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `→` / `Space`  | Next message (wraps from last back to first).                                                                                                 |
+| `←` / `b`      | Previous message.                                                                                                                             |
+| `↑` / `k`      | Scroll body up one line.                                                                                                                      |
+| `↓` / `j`      | Scroll body down one line.                                                                                                                    |
+| `Home` / `H`   | Jump body scroll to the head.                                                                                                                 |
+| `End` / `T`    | Jump body scroll to the tail.                                                                                                                 |
+| `g`            | Jump to the first message.                                                                                                                    |
+| `G`            | Jump to the last message (forces a full-remaining scan).                                                                                      |
+| `s`            | Save as yaml - writes the current message body (prompts for path).                                                                            |
+| `a`            | Toggle full expansion of long primitive arrays (default off).                                                                                 |
+| `i`            | Toggle in-terminal image preview (image topics on a Kitty- or Sixel-capable terminal; hidden otherwise). See [Image preview](#image-preview). |
+| `q` / `Ctrl-C` | Quit.                                                                                                                                         |
 
 When the body is taller than the visible window, a `lines X-Y of N`
 indicator is shown above the key legend.

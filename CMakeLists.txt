@@ -98,6 +98,18 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
   libavcodec libavformat libavutil libswscale)
 
+# libsixel (conda-forge `libsixel`) backs the Sixel backend of `bagwiz walk`'s
+# image preview (src/core/tui/image/terminal_image_renderer.cpp). Its pkg-config
+# file lists optional Requires.private integrations (libcurl, libjpeg, libpng,
+# gdk-pixbuf-2.0) whose .pc files are not installed in the env, so
+# `pkg_check_modules(... REQUIRED)` would fail dependency resolution even though
+# `-lsixel` itself links and loads fine (libsixel's own runtime .so deps are
+# present). Locate the library and header directly instead. Consumed PRIVATE
+# (every libsixel symbol stays inside the renderer .cpp) so it never enters
+# bagwiz_core's export set.
+find_library(SIXEL_LIBRARY NAMES sixel REQUIRED)
+find_path(SIXEL_INCLUDE_DIR NAMES sixel.h REQUIRED)
+
 # CLI11 and fmt are not available as rosdep keys on all supported distros, so
 # fetch them at configure time. Both are small, header-light libraries.
 include(FetchContent)
@@ -271,6 +283,10 @@ target_link_libraries(bagwiz_core PRIVATE nlohmann_json::nlohmann_json)
 # header returns only std types behind a pimpl), so keep it PRIVATE and out of
 # the export set.
 target_link_libraries(bagwiz_core PRIVATE PkgConfig::LIBAV)
+# libsixel is an implementation detail of terminal_image_renderer.cpp (the public
+# header returns only std types), so keep it PRIVATE and out of the export set.
+target_link_libraries(bagwiz_core PRIVATE ${SIXEL_LIBRARY})
+target_include_directories(bagwiz_core PRIVATE ${SIXEL_INCLUDE_DIR})
 # OpenCV is an implementation detail of the `generate video --undistort` path
 # (camera_info parsing + cv::undistort). Keep it PRIVATE so it does not leak
 # into bagwiz_core's export set.
