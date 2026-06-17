@@ -83,6 +83,10 @@ constexpr std::array<std::string_view, 1> kCameraInfoType{{
   "sensor_msgs/msg/CameraInfo",
 }};
 
+constexpr std::array<std::string_view, 1> kPointCloud2Type{{
+  "sensor_msgs/msg/PointCloud2",
+}};
+
 // Declarative table of commands that take a positional <topic> argument.
 // `subcommand` is empty when the command has no subcommand level (e.g.
 // `bagwiz walk <input> <topic>`). `input_word` and `topic_word` are
@@ -920,19 +924,32 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & sub = request.words[kFirstCommandArgWord];
     if (sub == "video") {
-      return matching(with_help({"--cam-info", "--undistort", "--overwrite", "-w"}), current);
+      return matching(
+        with_help({"--cam-info", "--overwrite", "--pcd", "--undistort", "-w"}), current);
     }
   }
 
-  if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--cam-info") {
-    if (request.words.size() <= kSecondCommandArgWord) {
-      return {};
-    }
-    const auto & bag_arg = request.words[kSecondCommandArgWord];
-    if (bag_arg.empty() || bag_arg.starts_with("-")) {
-      return {};
-    }
-    return complete_topics(expand_current_user_home(bag_arg), current, kCameraInfoType);
+  auto complete_topic_after_flag =
+    [&](const std::string_view & flag, const std::span<const std::string_view> & types) {
+      if (request.cursor_word == 0 || request.words[request.cursor_word - 1] != flag) {
+        return std::optional<std::vector<std::string>>{};
+      }
+      if (request.words.size() <= kSecondCommandArgWord) {
+        return std::optional<std::vector<std::string>>{std::vector<std::string>{}};
+      }
+      const auto & bag_arg = request.words[kSecondCommandArgWord];
+      if (bag_arg.empty() || bag_arg.starts_with("-")) {
+        return std::optional<std::vector<std::string>>{std::vector<std::string>{}};
+      }
+      return std::optional<std::vector<std::string>>{
+        complete_topics(expand_current_user_home(bag_arg), current, types)};
+    };
+
+  if (auto cam_info = complete_topic_after_flag("--cam-info", kCameraInfoType); cam_info) {
+    return std::move(*cam_info);
+  }
+  if (auto pcd = complete_topic_after_flag("--pcd", kPointCloud2Type); pcd) {
+    return std::move(*pcd);
   }
   return {};
 }

@@ -81,10 +81,15 @@ private:
       ->required();
     sub
       ->add_option(
-        "<pcd_topic>", video_args_.pointcloud_topic,
-        "Optional PointCloud2 topic to project onto the video. When omitted, generate video "
-        "behaves as before and produces a plain video without point-cloud overlay.")
-      ->required(false);
+        "--pcd", video_args_.pointcloud_topic,
+        "PointCloud2 topic to project onto the video. When omitted, generate video behaves as "
+        "before and produces a plain video without point-cloud overlay.")
+      ->check([](const std::string & topic) {
+        if (topic.empty()) {
+          return std::string{"pcd topic must not be empty"};
+        }
+        return std::string{};
+      });
     sub->add_flag(
       "-w,--overwrite", video_args_.overwrite,
       "Replace an existing <output>. Without it, an existing output path stops the run.");
@@ -148,10 +153,9 @@ private:
       "sensor_msgs/msg/CompressedImage (JPEG/PNG, decoded to BGR before encoding).\n"
       "Frames stream straight to the encoder (no large temp files); the output is written\n"
       "atomically and a failed run leaves no partial file behind.\n"
-      "Backward compatibility: the original <input> <img_topic> <output> signature is "
-      "preserved by keeping <output> before the optional [<pcd_topic>] positional. "
-      "Point-cloud overlays are controlled with --field, --min, --max, --scheme, "
-      "--point-size, and --alpha; an explicit CameraInfo topic is supplied with --cam-info.\n"
+      "Point-cloud overlays are enabled with --pcd and controlled with --field, --min, --max, "
+      "--scheme, --point-size, and --alpha; an explicit CameraInfo topic is supplied with "
+      "--cam-info.\n"
       "CameraInfo auto-resolution: /image_raw/compressed, /image_rect_color, and "
       "/image_rect_color/compressed map their prefix to /camera_info.\n"
       "Playback note: H.264 outputs (.mp4/.mkv/.mov) can crash mpv's hardware decoder; "

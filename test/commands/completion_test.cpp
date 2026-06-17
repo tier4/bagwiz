@@ -1119,7 +1119,7 @@ TEST(FlagCompletionTest, GenerateVideoDashListsVideoFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "generate", "video", "-"}),
-    "--cam-info\n--help\n--overwrite\n--undistort\n-h\n-w\n");
+    "--cam-info\n--help\n--overwrite\n--pcd\n--undistort\n-h\n-w\n");
 }
 
 // `generate video <bag> <TAB>` (the <image_topic> slot) lists only the bag's image
