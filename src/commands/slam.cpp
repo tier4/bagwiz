@@ -79,22 +79,24 @@ core::slam::SensorTransform to_sensor_transform(const geometry_msgs::msg::Transf
     ts.transform.rotation.w};
   return out;
 }
+
 }  // namespace
 
-// `bagwiz slam <input> <cloud_topic>` runs LiDAR-only SLAM (GLIM's
-// OdometryEstimationCT) over a single PointCloud2 topic, entirely in-process:
-// bagwiz reads + decodes the bag and feeds GLIM's modules directly, with no ROS
-// node / pub-sub. The estimated 6-DoF trajectory is written in the TUM format.
+// `bagwiz slam <input> <pcd_topic> <output_root>` runs LiDAR SLAM over a single
+// PointCloud2 topic, entirely in-process: bagwiz reads + decodes the bag and
+// feeds GLIM's modules directly, with no ROS node / pub-sub. By default the
+// marginalized frames flow through GLIM's SubMapping -> GlobalMapping
+// (CloudMapper) so the output is the globally-optimized 6-DoF trajectory
+// (traj.tum in `output_root`) plus an optimized world-frame point-cloud map
+// (map.ply in `output_root`).
 //
 // With `--imu <topic>` the odometry switches to GLIM's LiDAR-IMU
 // OdometryEstimationCPU: the IMU↔LiDAR extrinsic is resolved from the bag's
 // static TF (`/tf_static`) using the cloud's and the IMU's header frame_ids, and
 // the command errors clearly if that static-TF chain (or a frame) is absent.
 //
-// With `--map <out.ply>` the marginalized frames additionally flow through
-// GLIM's SubMapping -> GlobalMapping (CloudMapper) so the output is the
-// globally-optimized trajectory plus an optimized world-frame point-cloud map
-// (binary PLY). Without it, only odometry runs and the trajectory is written.
+// `--without-global-optim` skips the global optimization and writes only the
+// raw odometry trajectory (traj.tum) to `output_root`; no map is produced.
 //
 // Clouds without a per-point time field are treated as already
 // motion-undistorted (all points simultaneous). The GPU backend is a later
@@ -113,25 +115,29 @@ public:
     app.add_option("input", input_path_, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
-    app.add_option("topic", cloud_topic_, "PointCloud2 topic to run SLAM on")->required();
-    app.add_option("-o,--output", output_path_, "Output trajectory path (TUM format)")->required();
+    app.add_option("pcd_topic", cloud_topic_, "PointCloud2 topic to run SLAM on")->required();
+    app
+      .add_option(
+        "output_root", output_root_,
+        "Output root directory; writes traj.tum and, unless --without-global-optim, "
+        "map.ply")
+      ->required();
     app.add_option(
       "--imu", imu_topic_,
       "Optional Imu topic; switches odometry to LiDAR-IMU. The LiDAR<-IMU extrinsic is "
       "resolved from the bag's static TF using the cloud and IMU header frame_ids "
       "(errors if that chain is absent).");
-    app.add_option(
-      "--map", map_path_,
-      "Also build and write the globally-optimized point-cloud map (binary PLY); "
-      "the trajectory written to -o is then the optimized one");
     app
       .add_option(
         "--map-resolution", map_resolution_,
         "Exported map voxel size in meters (smaller = denser; default 0.2). Controls "
         "only the exported map's density, never the optimization or trajectory. The "
-        "LiDAR preprocessor's ~0.15 m input voxel bounds the real resolution. Only used "
-        "with --map.")
+        "LiDAR preprocessor's ~0.15 m input voxel bounds the real resolution.")
       ->check(CLI::PositiveNumber);
+    app.add_flag(
+      "--without-global-optim", without_global_optim_,
+      "Skip global mapping and write only the raw odometry trajectory (traj.tum); "
+      "no point-cloud map is produced");
     app.add_flag("-w,--overwrite", overwrite_, "Overwrite the output(s) if they already exist");
   }
 
@@ -152,12 +158,38 @@ public:
       return 1;
     }
 
+    // Validate / create the output root before any heavy work. A file at the
+    // path is an error; an existing directory is accepted so the user can target a
+    // project folder, and individual output files are guarded by prepare_output_path.
+    {
+      std::error_code ec;
+      if (std::filesystem::exists(output_root_, ec)) {
+        if (!std::filesystem::is_directory(output_root_, ec)) {
+          BAGWIZ_LOG_ERROR(
+            kLogger, "Output path '%s' exists but is not a directory", output_root_.c_str());
+          return 1;
+        }
+      } else {
+        if (!std::filesystem::create_directories(output_root_, ec)) {
+          BAGWIZ_LOG_ERROR(
+            kLogger, "Could not create output root '%s': %s", output_root_.c_str(),
+            ec.message().c_str());
+          return 1;
+        }
+      }
+    }
+
+    output_path_ = output_root_ / "traj.tum";
     const auto prepared = core::prepare_output_path(output_path_, overwrite_);
     if (!prepared.ok) {
       BAGWIZ_LOG_ERROR(kLogger, "%s", prepared.error.c_str());
       return 1;
     }
-    if (!map_path_.empty()) {
+
+    // Global mapping is the default; derive the map path unless the user asked to
+    // skip it.
+    if (!without_global_optim_) {
+      map_path_ = output_root_ / "map.ply";
       const auto prepared_map = core::prepare_output_path(map_path_, overwrite_);
       if (!prepared_map.ok) {
         BAGWIZ_LOG_ERROR(kLogger, "%s", prepared_map.error.c_str());
@@ -177,11 +209,11 @@ public:
       t_lidar_imu = extrinsic;
     }
 
-    // `--map` swaps the odometry-only path for the optimized mapping pipeline;
-    // everything up to here (open / validate / prepare outputs / extrinsic) is
-    // shared.
-    return map_path_.empty() ? run_odometry(*reader, t_lidar_imu)
-                             : run_mapping(*reader, t_lidar_imu);
+    // `--without-global-optim` swaps the optimized mapping pipeline for the raw
+    // odometry path; everything up to here (open / validate / prepare outputs /
+    // extrinsic) is shared.
+    return without_global_optim_ ? run_odometry(*reader, t_lidar_imu)
+                                 : run_mapping(*reader, t_lidar_imu);
   }
 
 private:
@@ -547,10 +579,12 @@ private:
   std::filesystem::path input_path_;
   std::string cloud_topic_;
   std::string imu_topic_;
+  std::filesystem::path output_root_;
   std::filesystem::path output_path_;
   std::filesystem::path map_path_;
   double map_resolution_ = 0.2;  // exported-map voxel size [m]; see --map-resolution
   bool overwrite_ = false;
+  bool without_global_optim_ = false;
 };
 
 BAGWIZ_REGISTER_COMMAND(SlamCommand)
