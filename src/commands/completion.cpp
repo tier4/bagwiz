@@ -87,6 +87,10 @@ constexpr std::array<std::string_view, 1> kPointCloud2Type{{
   "sensor_msgs/msg/PointCloud2",
 }};
 
+constexpr std::array<std::string_view, 1> kImuType{{
+  "sensor_msgs/msg/Imu",
+}};
+
 // Declarative table of commands that take a positional <topic> argument.
 // `subcommand` is empty when the command has no subcommand level (e.g.
 // `bagwiz walk <input> <topic>`). `input_word` and `topic_word` are
@@ -108,7 +112,7 @@ struct TopicArgBinding
   bool variadic{false};
 };
 
-constexpr std::array<TopicArgBinding, 8> kTopicBindings{{
+constexpr std::array<TopicArgBinding, 9> kTopicBindings{{
   {"walk", "", kFirstCommandArgWord, kSecondCommandArgWord, {}, false},
   {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord, kTrajDumpSupportedTypes, false},
   {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord, {}, false},
@@ -124,6 +128,10 @@ constexpr std::array<TopicArgBinding, 8> kTopicBindings{{
   // <output> are paths that fall through to the shell's file completion.
   {"generate", "video", kSecondCommandArgWord, kThirdCommandArgWord, kGenerateVideoSupportedTypes,
    false},
+  // `slam <input> <pcd_topic> <output_root>`: complete the single <pcd_topic>
+  // slot from the bag's PointCloud2 topics. <input> and <output_root> are paths
+  // that fall through to the shell's file completion.
+  {"slam", "", kFirstCommandArgWord, kSecondCommandArgWord, kPointCloud2Type, false},
 }};
 
 enum class CompletionShell { Bash, Zsh, Fish };
@@ -961,6 +969,36 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
   return {};
 }
 
+// `slam <input> <pcd_topic> <output_root> [--imu <topic>]
+// [--map-resolution <m>] [--without-global-optim] [-w|--overwrite]`
+//
+// The positional <pcd_topic> slot is completed earlier by try_topic_completion
+// via kTopicBindings (PointCloud2 topics only). Here we surface the command's
+// flags for any `-` word and complete the value of `--imu` from the bag's
+// sensor_msgs/msg/Imu topics. <input> and <output_root> are paths that fall
+// through to the shell's file completion.
+std::vector<std::string> complete_slam(const CompletionRequest & request)
+{
+  const auto current = current_word(request);
+  if (request.cursor_word >= kFirstCommandArgWord && current.starts_with("-")) {
+    return matching(
+      with_help({"--imu", "--map-resolution", "--overwrite", "--without-global-optim", "-w"}),
+      current);
+  }
+
+  if (request.cursor_word == 0 || request.words[request.cursor_word - 1] != "--imu") {
+    return {};
+  }
+  if (request.words.size() <= kFirstCommandArgWord) {
+    return {};
+  }
+  const auto & bag_arg = request.words[kFirstCommandArgWord];
+  if (bag_arg.empty() || bag_arg.starts_with("-")) {
+    return {};
+  }
+  return complete_topics(expand_current_user_home(bag_arg), current, kImuType);
+}
+
 std::vector<std::string> complete_request(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -990,6 +1028,9 @@ std::vector<std::string> complete_request(const CompletionRequest & request)
   }
   if (command == "generate") {
     return complete_generate(request);
+  }
+  if (command == "slam") {
+    return complete_slam(request);
   }
   if (command == "ls" || command == "walk") {
     return complete_help_only(request);
