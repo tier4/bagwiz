@@ -66,6 +66,14 @@ TEST(Renderer, EnterLeaveAltScreen)
   EXPECT_EQ(os.str(), "\x1B[?1049h\x1B[?1049l");
 }
 
+TEST(Renderer, SynchronizedUpdateBracketsEmitMode2026)
+{
+  std::ostringstream os;
+  tui::begin_synchronized_update(os);
+  tui::end_synchronized_update(os);
+  EXPECT_EQ(os.str(), "\x1B[?2026h\x1B[?2026l");
+}
+
 TEST(Renderer, DrawLineEmitsMoveEraseText)
 {
   std::ostringstream os;

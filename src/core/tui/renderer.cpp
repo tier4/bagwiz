@@ -55,6 +55,16 @@ void leave_alt_screen(std::ostream & out)
   out << "\x1B[?1049l";
 }
 
+void begin_synchronized_update(std::ostream & out)
+{
+  out << "\x1B[?2026h";
+}
+
+void end_synchronized_update(std::ostream & out)
+{
+  out << "\x1B[?2026l";
+}
+
 void draw_line(std::ostream & out, int row, std::string_view text, int max_cols)
 {
   move_cursor(out, row, 1);

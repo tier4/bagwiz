@@ -475,6 +475,14 @@ public:
       const int rows = std::max(1, term.rows);
       const int cols = std::max(1, term.cols);
 
+      // Bracket the whole repaint in a synchronized update so the terminal keeps
+      // showing the current frame until the new one is fully transmitted, then
+      // swaps atomically. Without this the clear below blanks the screen for as
+      // long as the terminal needs to receive and decode the next image, which
+      // reads as a one-frame "blink" on every prev/next. Unsupported terminals
+      // ignore the mode and behave exactly as before.
+      core::tui::begin_synchronized_update(out);
+
       // Drop any previously transmitted graphics and wipe the screen so kitty
       // placements do not accumulate across navigation/resize.
       core::tui::image::clear_image(out, image_caps.backend);
@@ -519,6 +527,9 @@ public:
       core::tui::draw_line(
         out, rows, "  [→/Space] next   [←/b] prev   [g] first   [G] last   [i] back   [q] quit",
         cols);
+      // Close the synchronized update: the terminal now reveals the fully
+      // assembled frame in one atomic swap.
+      core::tui::end_synchronized_update(out);
       out.flush();
     };
 
