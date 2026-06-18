@@ -15,8 +15,11 @@
 #include <glim/odometry/estimation_frame.hpp>
 #include <glim/odometry/odometry_estimation_ct.hpp>
 #include <glim/preprocess/cloud_preprocessor.hpp>
+#include <glim/util/logging.hpp>
 #include <glim/util/raw_points.hpp>
 #include <glim/util/time_keeper.hpp>
+
+#include <spdlog/spdlog.h>
 
 #include <cmath>
 #include <cstddef>
@@ -60,8 +63,18 @@ struct CloudOdometry::Impl
   std::map<std::int64_t, core::TrajectoryPose> poses;
 };
 
-CloudOdometry::CloudOdometry() : impl_(std::make_unique<Impl>())
+CloudOdometry::CloudOdometry()
 {
+  // GLIM logs ~50 lines of "config file not found / using default value" while
+  // its modules read parameters at construction. We deliberately drive GLIM with
+  // no config directory (its built-in defaults are exactly what we want here), so
+  // silence that one-time startup chatter. Genuine runtime warnings/errors still
+  // surface at the logger's previous level once construction is done.
+  const auto logger = glim::get_default_logger();
+  const auto previous_level = logger->level();
+  logger->set_level(spdlog::level::off);
+  impl_ = std::make_unique<Impl>();
+  logger->set_level(previous_level);
 }
 CloudOdometry::~CloudOdometry() = default;
 CloudOdometry::CloudOdometry(CloudOdometry &&) noexcept = default;
