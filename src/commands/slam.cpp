@@ -70,6 +70,14 @@ public:
       "--map", map_path_,
       "Also build and write the globally-optimized point-cloud map (binary PLY); "
       "the trajectory written to -o is then the optimized one");
+    app
+      .add_option(
+        "--map-resolution", map_resolution_,
+        "Exported map voxel size in meters (smaller = denser; default 0.2). Controls "
+        "only the exported map's density, never the optimization or trajectory. The "
+        "LiDAR preprocessor's ~0.15 m input voxel bounds the real resolution. Only used "
+        "with --map.")
+      ->check(CLI::PositiveNumber);
     app.add_flag("-w,--overwrite", overwrite_, "Overwrite the output(s) if they already exist");
   }
 
@@ -207,7 +215,9 @@ private:
   // M2 path: optimized mapping -> optimized TUM trajectory + binary PLY map.
   int run_mapping(io::BagReader & reader)
   {
-    core::slam::CloudMapper mapper;
+    core::slam::CloudMapperConfig config;
+    config.map_resolution = map_resolution_;
+    core::slam::CloudMapper mapper(config);
     std::int64_t scans = 0;
     std::int64_t skipped = 0;
     if (!read_scans(
@@ -252,6 +262,7 @@ private:
   std::string cloud_topic_;
   std::filesystem::path output_path_;
   std::filesystem::path map_path_;
+  double map_resolution_ = 0.2;  // exported-map voxel size [m]; see --map-resolution
   bool overwrite_ = false;
 };
 

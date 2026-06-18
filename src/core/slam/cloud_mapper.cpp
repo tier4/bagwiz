@@ -8,6 +8,7 @@
 
 #include "bagwiz/core/slam/cloud_mapper.hpp"
 
+#include "bagwiz/core/slam/cloud_filters.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
 #include "bagwiz/core/trajectory.hpp"
 
@@ -26,11 +27,13 @@
 
 #include <spdlog/spdlog.h>
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -59,7 +62,10 @@ core::TrajectoryPose to_pose(double stamp, const Eigen::Isometry3d & transform)
 // We feed LiDAR only (OdometryEstimationCT is LiDAR-only CT-GICP) and never call
 // insert_imu, so disable IMU in both mapping stages — the GLIM defaults enable
 // it, which would make insert_submap build IMU factors from uninitialised
-// bias/velocity and warn that frames are not IMU-framed.
+// bias/velocity and warn that frames are not IMU-framed. Everything else keeps
+// GLIM's stock defaults: the exported map's density is controlled separately, by
+// re-binning the optimized per-frame points (see CloudMapper::Impl::fill_map),
+// so the sub mapping that drives the optimization is left untouched.
 glim::SubMappingParams make_sub_mapping_params()
 {
   glim::SubMappingParams params;
@@ -76,15 +82,31 @@ glim::GlobalMappingParams make_global_mapping_params()
 
 struct CloudMapper::Impl
 {
+  // Full points of one odometry frame, captured at insert() while GLIM still
+  // holds them. Sub mapping subsamples keyframes and drops per-frame points to
+  // save memory, so these full LiDAR-frame points (the only ones dense enough to
+  // build a high-resolution map) must be copied out the moment they arrive.
+  // Keyed by EstimationFrame::id so they can be paired with the frame's
+  // optimized submap-relative pose at capture time.
+  struct StashedPoints
+  {
+    std::vector<std::array<float, 3>> points;  // LiDAR-frame coordinates
+    std::vector<float> intensities;            // empty unless the scan had intensities
+  };
+
   // One frame of a submap, captured BEFORE the submap is inserted into global
   // mapping (which overwrites SubMap::T_world_origin with the chained global
   // estimate). T_origin_frame is the frame's pose relative to the submap origin
   // and is invariant under global optimization; the optimized world pose is
-  // recovered later as (optimized T_world_origin) * T_origin_frame.
+  // recovered later as (optimized T_world_origin) * T_origin_frame. The points
+  // are this frame's full LiDAR-frame cloud, moved in from the stash.
   struct FrameRef
   {
+    std::int64_t id = 0;
     double stamp = 0.0;
     Eigen::Isometry3d T_origin_frame = Eigen::Isometry3d::Identity();
+    std::vector<std::array<float, 3>> points;  // LiDAR-frame, full density
+    std::vector<float> intensities;            // parallel to points; may be empty
   };
   struct SubMapEntry
   {
@@ -92,22 +114,62 @@ struct CloudMapper::Impl
     std::vector<FrameRef> frames;
   };
 
+  CloudMapperConfig config;
   glim::TimeKeeper time_keeper;
   glim::CloudPreprocessor preprocessor;
   glim::OdometryEstimationCT odometry;
   std::unique_ptr<glim::SubMapping> sub_mapping;
   std::unique_ptr<glim::GlobalMapping> global_mapping;
   std::vector<SubMapEntry> entries;
+  std::unordered_map<std::int64_t, StashedPoints> stash;  // frame id -> full points
 
-  Impl()
-  : sub_mapping(std::make_unique<glim::SubMapping>(make_sub_mapping_params())),
+  explicit Impl(const CloudMapperConfig & cfg)
+  : config(cfg),
+    sub_mapping(std::make_unique<glim::SubMapping>(make_sub_mapping_params())),
     global_mapping(std::make_unique<glim::GlobalMapping>(make_global_mapping_params()))
   {
   }
 
-  // Capture each frame's submap-local relative pose, then hand the submap to
-  // global mapping. Order matters: insert_submap rewrites T_world_origin and
-  // drops the per-frame point clouds, so the relative poses are read first.
+  // Copy a frame's full LiDAR-frame points (and intensities, if any) out of GLIM
+  // before sub mapping drops them, keyed by id.
+  void stash_frame(const glim::EstimationFrame::ConstPtr & frame)
+  {
+    if (!frame || !frame->frame || frame->frame->size() == 0) {
+      return;
+    }
+    const auto & cloud = frame->frame;
+    const std::size_t n = cloud->size();
+    StashedPoints stashed;
+    stashed.points.reserve(n);
+    const bool has_intensities = cloud->has_intensities();
+    if (has_intensities) {
+      stashed.intensities.reserve(n);
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+      const Eigen::Vector4d & p = cloud->points[i];
+      stashed.points.push_back(
+        {static_cast<float>(p.x()), static_cast<float>(p.y()), static_cast<float>(p.z())});
+      if (has_intensities) {
+        stashed.intensities.push_back(static_cast<float>(cloud->intensities[i]));
+      }
+    }
+    stash[frame->id] = std::move(stashed);
+  }
+
+  // Stash the frame's full points, then hand it to sub mapping.
+  void feed_sub_mapping(const glim::EstimationFrame::ConstPtr & frame)
+  {
+    if (!frame) {
+      return;
+    }
+    stash_frame(frame);
+    sub_mapping->insert_frame(frame);
+  }
+
+  // Capture each frame's submap-local relative pose and pair it with the full
+  // points stashed at insert time, then hand the submap to global mapping. Order
+  // matters: insert_submap rewrites T_world_origin and drops the per-frame point
+  // clouds, so the relative poses are read first.
   void capture_and_insert(const glim::SubMap::Ptr & submap)
   {
     SubMapEntry entry;
@@ -119,9 +181,16 @@ struct CloudMapper::Impl
         continue;
       }
       FrameRef ref;
+      ref.id = frame->id;
       ref.stamp = frame->stamp;
       ref.T_origin_frame = T_origin_world * frame->T_world_lidar;
-      entry.frames.push_back(ref);
+      const auto found = stash.find(frame->id);
+      if (found != stash.end()) {
+        ref.points = std::move(found->second.points);
+        ref.intensities = std::move(found->second.intensities);
+        stash.erase(found);
+      }
+      entry.frames.push_back(std::move(ref));
     }
     entries.push_back(std::move(entry));
     global_mapping->insert_submap(submap);
@@ -135,9 +204,86 @@ struct CloudMapper::Impl
       }
     }
   }
+
+  // Optimized world pose per frame = T_world_origin * T_origin_frame. Keyed by
+  // timestamp so the poses come out time-ordered and a duplicate stamp keeps one
+  // entry (submap boundaries share no frames, but stay defensive).
+  void fill_trajectory(CloudMap & result) const
+  {
+    std::map<std::int64_t, core::TrajectoryPose> poses;
+    for (const auto & entry : entries) {
+      if (!entry.submap) {
+        continue;
+      }
+      const Eigen::Isometry3d & T_world_origin = entry.submap->T_world_origin;
+      for (const auto & ref : entry.frames) {
+        const Eigen::Isometry3d T_world_frame = T_world_origin * ref.T_origin_frame;
+        const auto pose = to_pose(ref.stamp, T_world_frame);
+        poses[pose.timestamp_ns] = pose;
+      }
+    }
+    result.trajectory.reserve(poses.size());
+    for (const auto & entry : poses) {
+      result.trajectory.push_back(entry.second);
+    }
+  }
+
+  // Rebuild the exported map from every frame's full points, placed at the
+  // frame's globally-optimized world pose and merged at config.map_resolution.
+  // This is the density decoupling: the optimization ran at GLIM's stock sub-map
+  // density, but the map we emit is as dense as the requested export voxel allows.
+  void fill_map(CloudMap & result) const
+  {
+    // Intensity is all-or-nothing across the whole map (mirrors GLIM's export and
+    // what write_ply expects): keep it only if every frame with points also
+    // carried intensities.
+    bool any_points = false;
+    bool all_intensity = true;
+    for (const auto & entry : entries) {
+      for (const auto & ref : entry.frames) {
+        if (ref.points.empty()) {
+          continue;
+        }
+        any_points = true;
+        if (ref.intensities.size() != ref.points.size()) {
+          all_intensity = false;
+        }
+      }
+    }
+    const bool with_intensity = any_points && all_intensity;
+
+    VoxelGrid grid(config.map_resolution, with_intensity);
+    for (const auto & entry : entries) {
+      if (!entry.submap) {
+        continue;
+      }
+      const Eigen::Isometry3d & T_world_origin = entry.submap->T_world_origin;
+      for (const auto & ref : entry.frames) {
+        if (ref.points.empty()) {
+          continue;
+        }
+        const Eigen::Isometry3d T_world_frame = T_world_origin * ref.T_origin_frame;
+        for (std::size_t i = 0; i < ref.points.size(); ++i) {
+          const Eigen::Vector3d local(ref.points[i][0], ref.points[i][1], ref.points[i][2]);
+          const Eigen::Vector3d world = T_world_frame * local;
+          if (with_intensity) {
+            grid.add(
+              static_cast<float>(world.x()), static_cast<float>(world.y()),
+              static_cast<float>(world.z()), ref.intensities[i]);
+          } else {
+            grid.add(
+              static_cast<float>(world.x()), static_cast<float>(world.y()),
+              static_cast<float>(world.z()));
+          }
+        }
+      }
+    }
+    result.points = grid.points();
+    result.intensities = grid.intensities();
+  }
 };
 
-CloudMapper::CloudMapper()
+CloudMapper::CloudMapper(CloudMapperConfig config)
 {
   // GLIM logs ~50 lines of "config file not found / using default value" while
   // its modules read parameters at construction (we drive GLIM with no config
@@ -153,7 +299,7 @@ CloudMapper::CloudMapper()
     ~LevelGuard() { logger.set_level(level); }
   } guard{*logger, logger->level()};
   logger->set_level(spdlog::level::off);
-  impl_ = std::make_unique<Impl>();
+  impl_ = std::make_unique<Impl>(config);
 }
 CloudMapper::~CloudMapper() = default;
 CloudMapper::CloudMapper(CloudMapper &&) noexcept = default;
@@ -191,11 +337,10 @@ void CloudMapper::insert(const LidarScan & scan)
   std::vector<glim::EstimationFrame::ConstPtr> marginalized;
   impl_->odometry.insert_frame(preprocessed, marginalized);
 
-  // The marginalized odometry frames are this mapper's input to sub mapping.
+  // The marginalized odometry frames are this mapper's input to sub mapping; each
+  // one's full points are stashed before sub mapping can drop them.
   for (const auto & frame : marginalized) {
-    if (frame) {
-      impl_->sub_mapping->insert_frame(frame);
-    }
+    impl_->feed_sub_mapping(frame);
   }
   impl_->drain_submaps();
 }
@@ -206,9 +351,7 @@ CloudMap CloudMapper::finish()
   // exactly as glim's async pipeline does at end of sequence — into sub mapping,
   // then force out the final submap.
   for (const auto & frame : impl_->odometry.get_remaining_frames()) {
-    if (frame) {
-      impl_->sub_mapping->insert_frame(frame);
-    }
+    impl_->feed_sub_mapping(frame);
   }
   // This drain only sees submaps the flushed remaining frames newly completed —
   // get_submaps() destructively swaps its queue, so the submaps drained during
@@ -227,47 +370,8 @@ CloudMap CloudMapper::finish()
   impl_->global_mapping->optimize();
 
   CloudMap result;
-
-  // Trajectory: optimized world pose per frame = T_world_origin * T_origin_frame.
-  // Keyed by timestamp so the poses come out time-ordered and a duplicate stamp
-  // (submap boundaries share no frames, but stay defensive) keeps one entry.
-  std::map<std::int64_t, core::TrajectoryPose> poses;
-  for (const auto & entry : impl_->entries) {
-    if (!entry.submap) {
-      continue;
-    }
-    const Eigen::Isometry3d & T_world_origin = entry.submap->T_world_origin;
-    for (const auto & ref : entry.frames) {
-      const Eigen::Isometry3d T_world_frame = T_world_origin * ref.T_origin_frame;
-      const auto pose = to_pose(ref.stamp, T_world_frame);
-      poses[pose.timestamp_ns] = pose;
-    }
-  }
-  result.trajectory.reserve(poses.size());
-  for (const auto & entry : poses) {
-    result.trajectory.push_back(entry.second);
-  }
-
-  // Map: GlobalMapping::export_points concatenates every submap's frame points
-  // transformed by its optimized T_world_origin, i.e. the world-frame map.
-  const auto cloud = impl_->global_mapping->export_points();
-  if (cloud && cloud->size() > 0) {
-    const std::size_t n = cloud->size();
-    const bool has_intensities = cloud->has_intensities();
-    result.points.reserve(n);
-    if (has_intensities) {
-      result.intensities.reserve(n);
-    }
-    for (std::size_t i = 0; i < n; ++i) {
-      const Eigen::Vector4d & p = cloud->points[i];
-      result.points.push_back(
-        {static_cast<float>(p.x()), static_cast<float>(p.y()), static_cast<float>(p.z())});
-      if (has_intensities) {
-        result.intensities.push_back(static_cast<float>(cloud->intensities[i]));
-      }
-    }
-  }
-
+  impl_->fill_trajectory(result);
+  impl_->fill_map(result);
   return result;
 }
 

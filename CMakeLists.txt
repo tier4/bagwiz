@@ -217,6 +217,7 @@ add_library(bagwiz_core
   src/core/pointcloud/projector.cpp
   src/core/slam/lidar_scan.cpp
   src/core/slam/point_cloud_io.cpp
+  src/core/slam/cloud_filters.cpp
   src/core/video/frame_rate.cpp
   src/core/video/video_encoder.cpp
   src/core/tui/layout.cpp
@@ -422,6 +423,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_slam_point_cloud_io_test test/core/slam/point_cloud_io_test.cpp)
   target_link_libraries(bagwiz_slam_point_cloud_io_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_slam_cloud_filters_test test/core/slam/cloud_filters_test.cpp)
+  target_link_libraries(bagwiz_slam_cloud_filters_test bagwiz_core)
 
   # GLIM-linked integration test for the odometry wrapper; only when SLAM is on
   # (find_package(glim) ran in the BAGWIZ_WITH_SLAM block above).

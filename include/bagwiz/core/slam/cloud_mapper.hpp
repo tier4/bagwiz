@@ -34,6 +34,22 @@
 namespace bagwiz::core::slam
 {
 
+// Density control for CloudMapper's exported map. This is deliberately
+// decoupled from GLIM's internal sub-map density: the optimization always runs
+// with GLIM's stock defaults (so the trajectory is reproducible and unaffected),
+// while the exported map is rebuilt from every frame's full points placed at
+// their globally-optimized poses and merged at `map_resolution`. Changing this
+// therefore changes only the map's appearance, never the trajectory.
+struct CloudMapperConfig
+{
+  // Voxel side length [m] of the exported map. The optimized per-frame points are
+  // merged into voxels of this size; smaller = denser. The cloud preprocessor's
+  // input voxel (~0.15 m) and 1–100 m range crop still bound how fine the real
+  // data is, but a value below ~0.15 m can still recover detail from the offset
+  // grids of overlapping frames (at the cost of a much larger map). Must be > 0.
+  double map_resolution = 0.2;
+};
+
 // Result of CloudMapper::finish(). All fields are GLIM-free plain data so the
 // caller can hand them straight to write_ply / write_tum.
 struct CloudMap
@@ -52,7 +68,9 @@ struct CloudMap
 class CloudMapper
 {
 public:
-  CloudMapper();
+  // `config` tunes the exported map's density (see CloudMapperConfig); the
+  // default reproduces GLIM's stock pipeline.
+  explicit CloudMapper(CloudMapperConfig config = {});
   ~CloudMapper();
 
   CloudMapper(const CloudMapper &) = delete;

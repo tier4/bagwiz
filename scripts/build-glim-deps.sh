@@ -93,14 +93,25 @@ cmake -S "${SRC}/gtsam_points" -B "${SRC}/gtsam_points/build" -G Ninja \
     -DBUILD_EXAMPLE=OFF -DBUILD_TOOLS=OFF
 cmake --build "${SRC}/gtsam_points/build" --target install -j"${jobs}"
 
-# 3) glim - headless CPU. Apply the fmt-12 compat fix: the env ships fmt 12,
-# whose fmt::ptr() rejects smart pointers (moved to <fmt/std.h>); pass the raw
-# pointer instead. Idempotent string replacement, version-tolerant.
+# 3) glim - headless CPU. Two idempotent, version-tolerant source patches:
+#
+#   a) fmt-12 compat: the env ships fmt 12, whose fmt::ptr() rejects smart
+#      pointers (moved to <fmt/std.h>); pass the raw pointer instead.
+#
+#   b) carry intensities: OdometryEstimationCT rebuilds the estimation frame
+#      from raw points and adds only times/normals/covs, dropping the per-point
+#      intensities the preprocessor extracted. Without this, intensity never
+#      reaches sub/global mapping and the exported map (GlobalMapping::
+#      export_points) is xyz-only. Copy intensities onto the frame right after
+#      the times so they propagate through to `bagwiz slam --map`.
 clone https://github.com/koide3/glim "${GLIM_REF}" glim
 ct="${SRC}/glim/src/glim/odometry/odometry_estimation_ct.cpp"
 sed -i \
     -e 's/fmt::ptr(frames\[last\])/fmt::ptr(frames[last].get())/' \
     -e 's/fmt::ptr(frames\[last - 1\])/fmt::ptr(frames[last - 1].get())/' \
+    "${ct}"
+grep -q 'add_intensities(raw_frame->intensities)' "${ct}" || sed -i \
+    's#\(frame_cpu->add_times(raw_frame->times);\)#\1\n  if (!raw_frame->intensities.empty()) frame_cpu->add_intensities(raw_frame->intensities);#' \
     "${ct}"
 cmake -S "${SRC}/glim" -B "${SRC}/glim/build" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
