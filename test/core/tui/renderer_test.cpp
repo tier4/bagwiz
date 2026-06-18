@@ -78,15 +78,24 @@ TEST(Renderer, DrawLineEmitsMoveEraseText)
 {
   std::ostringstream os;
   tui::draw_line(os, 3, "hello", 80);
-  EXPECT_EQ(os.str(), "\x1B[3;1H\x1B[2Khello");
+  // Adjacent string literals keep the control prefix separate from the visible
+  // text so the spell checker does not read "\x1B[2K" + "hello" as one token.
+  EXPECT_EQ(
+    os.str(),
+    "\x1B[3;1H\x1B[2K"
+    "hello");
 }
 
 TEST(Renderer, DrawLineTruncatesToColumns)
 {
   std::ostringstream os;
   tui::draw_line(os, 1, "hello world", 5);
-  // After move + erase, the visible text is exactly 5 columns wide.
-  EXPECT_EQ(os.str(), "\x1B[1;1H\x1B[2Khello");
+  // After move + erase, the visible text is exactly 5 columns wide. The control
+  // prefix and visible text are separate literals (see the note above).
+  EXPECT_EQ(
+    os.str(),
+    "\x1B[1;1H\x1B[2K"
+    "hello");
 }
 
 TEST(Renderer, DrawLineNeverEmitsNewline)
