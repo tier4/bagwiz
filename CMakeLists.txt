@@ -103,7 +103,7 @@ pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
 # file lists optional Requires.private integrations (libcurl, libjpeg, libpng,
 # gdk-pixbuf-2.0) whose .pc files are not installed in the env, so
 # `pkg_check_modules(... REQUIRED)` would fail dependency resolution even though
-# `-lsixel` itself links and loads fine (libsixel's own runtime .so deps are
+# `-lsixel` itself links and loads fine (the libsixel runtime .so deps are
 # present). Locate the library and header directly instead. Consumed PRIVATE
 # (every libsixel symbol stays inside the renderer .cpp) so it never enters
 # bagwiz_core's export set.

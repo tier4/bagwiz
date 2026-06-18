@@ -202,19 +202,19 @@ struct SixelContext
 };
 
 // Encode `rgb` (packed RGB24, w*h*3 bytes) as a Sixel DCS stream via libsixel and
-// write it at the 1-based (row, col). libsixel's API takes a non-const pixel
-// pointer (it only reads), hence the mutable buffer. Returns "" on success or a
-// human-readable reason on failure.
+// write it at the 1-based (row, col). The libsixel API takes a non-const pixel
+// pointer although it only reads it, so the const input is cast at the call site
+// below. Returns "" on success or a human-readable reason on failure.
 std::string emit_sixel(
-  std::ostream & out, std::vector<std::byte> & rgb, int w, int h, int row, int col)
+  std::ostream & out, const std::vector<std::byte> & rgb, int w, int h, int row, int col)
 {
   if (rgb.empty()) {
     return "preview image is empty";
   }
   move_cursor(out, row, col);
   auto * pixels =
-    reinterpret_cast<unsigned char *>(  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
-      rgb.data());
+    reinterpret_cast<unsigned char *>(       // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+      const_cast<std::byte *>(rgb.data()));  // NOLINT(cppcoreguidelines-pro-type-const-cast)
 
   constexpr int kSixelColors = 256;
   SixelContext ctx;

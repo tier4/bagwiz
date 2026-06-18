@@ -86,6 +86,7 @@ TEST(TerminalImageRendererTest, Base64EmptyIsEmpty)
   EXPECT_EQ(b64(""), "");
 }
 
+// cspell:ignore foob fooba
 TEST(TerminalImageRendererTest, Base64Rfc4648Vectors)
 {
   EXPECT_EQ(b64("f"), "Zg==");
