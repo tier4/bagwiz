@@ -8,6 +8,7 @@
 
 #include "bagwiz/core/slam/cloud_mapper.hpp"
 
+#include "bagwiz/core/pointcloud/projector.hpp"
 #include "bagwiz/core/slam/cloud_filters.hpp"
 #include "bagwiz/core/slam/glim_estimator.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
@@ -29,6 +30,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -90,8 +93,9 @@ struct CloudMapper::Impl
   // optimized submap-relative pose at capture time.
   struct StashedPoints
   {
-    std::vector<std::array<float, 3>> points;  // LiDAR-frame coordinates
-    std::vector<float> intensities;            // empty unless the scan had intensities
+    std::vector<std::array<float, 3>> points;         // LiDAR-frame coordinates
+    std::vector<float> intensities;                   // empty unless the scan had intensities
+    std::vector<std::array<std::uint8_t, 3>> colors;  // empty unless camera is configured
   };
 
   // One frame of a submap, captured BEFORE the submap is inserted into global
@@ -105,8 +109,9 @@ struct CloudMapper::Impl
     std::int64_t id = 0;
     double stamp = 0.0;
     Eigen::Isometry3d T_origin_frame = Eigen::Isometry3d::Identity();
-    std::vector<std::array<float, 3>> points;  // LiDAR-frame, full density
-    std::vector<float> intensities;            // parallel to points; may be empty
+    std::vector<std::array<float, 3>> points;         // LiDAR-frame, full density
+    std::vector<float> intensities;                   // parallel to points; may be empty
+    std::vector<std::array<std::uint8_t, 3>> colors;  // parallel to points; may be empty
   };
   struct SubMapEntry
   {
@@ -124,6 +129,15 @@ struct CloudMapper::Impl
   std::vector<SubMapEntry> entries;
   std::unordered_map<std::int64_t, StashedPoints> stash;  // frame id -> full points
 
+  struct BufferedImage
+  {
+    std::int64_t stamp_ns = 0;
+    image::PackedRaster raster;
+  };
+  std::deque<BufferedImage> images;
+
+  static constexpr std::int64_t kImageMatchWindowNs = 100'000'000;  // 0.1 s
+
   explicit Impl(const CloudMapperConfig & cfg)
   : config(cfg),
     odometry(detail::make_odometry_estimator(cfg.t_lidar_imu)),
@@ -133,6 +147,80 @@ struct CloudMapper::Impl
       std::make_unique<glim::GlobalMapping>(
         make_global_mapping_params(cfg.t_lidar_imu.has_value())))
   {
+  }
+
+  // Build a float32 PointCloud2 from a vector of xyz points so it can be handed
+  // to the projector for camera colorization.
+  static core::pointcloud::PointCloud2 make_points_cloud(
+    const std::vector<std::array<float, 3>> & points)
+  {
+    core::pointcloud::PointCloud2 cloud;
+    cloud.height = 1;
+    cloud.width = static_cast<std::uint32_t>(points.size());
+    cloud.fields = {
+      core::pointcloud::PointField{"x", 0, core::pointcloud::PointFieldType::kFloat32, 1},
+      core::pointcloud::PointField{"y", 4, core::pointcloud::PointFieldType::kFloat32, 1},
+      core::pointcloud::PointField{"z", 8, core::pointcloud::PointFieldType::kFloat32, 1},
+    };
+    cloud.point_step = 12;
+    cloud.row_step = cloud.point_step * cloud.width;
+    cloud.data.resize(cloud.row_step);
+    if (!cloud.data.empty()) {
+      std::memcpy(cloud.data.data(), points.data(), cloud.data.size());
+    }
+    cloud.is_dense = true;
+    return cloud;
+  }
+
+  // Find the buffered image whose timestamp is closest to `stamp` (seconds) and
+  // within kImageMatchWindowNs. Drop images that are too old to be useful for
+  // this or any later frame.
+  const image::PackedRaster * find_image(double stamp)
+  {
+    const std::int64_t t_ns = static_cast<std::int64_t>(std::llround(stamp * 1e9));
+    while (!images.empty() && images.front().stamp_ns < t_ns - kImageMatchWindowNs) {
+      images.pop_front();
+    }
+
+    const image::PackedRaster * best = nullptr;
+    std::int64_t best_diff = std::numeric_limits<std::int64_t>::max();
+    for (const auto & img : images) {
+      const std::int64_t diff = std::llabs(img.stamp_ns - t_ns);
+      if (diff < best_diff) {
+        best_diff = diff;
+        best = &img.raster;
+      }
+    }
+    if (best_diff > kImageMatchWindowNs) {
+      return nullptr;
+    }
+    return best;
+  }
+
+  // Colorize stashed points using the camera configured in `config`. On any
+  // failure (no matching image, projection error) the points are colored black
+  // so the exported map can still carry a valid color channel.
+  void colorize_stashed_points(StashedPoints & stashed, double stamp)
+  {
+    if (!config.camera.has_value()) {
+      return;
+    }
+    const auto * raster = find_image(stamp);
+    const std::size_t n = stashed.points.size();
+    if (raster == nullptr) {
+      stashed.colors.assign(n, {0, 0, 0});
+      return;
+    }
+
+    const auto cloud = make_points_cloud(stashed.points);
+    const auto color_result = core::pointcloud::colorize_pointcloud(
+      cloud, config.camera->info, *raster, config.camera->t_lidar_camera,
+      config.camera->use_rectified);
+    if (!color_result.ok() || color_result.colors.size() != n) {
+      stashed.colors.assign(n, {0, 0, 0});
+      return;
+    }
+    stashed.colors = std::move(color_result.colors);
   }
 
   // Copy a frame's full LiDAR-frame points (and intensities, if any) out of GLIM
@@ -158,6 +246,7 @@ struct CloudMapper::Impl
         stashed.intensities.push_back(static_cast<float>(cloud->intensities[i]));
       }
     }
+    colorize_stashed_points(stashed, frame->stamp);
     stash[frame->id] = std::move(stashed);
   }
 
@@ -193,6 +282,7 @@ struct CloudMapper::Impl
       if (found != stash.end()) {
         ref.points = std::move(found->second.points);
         ref.intensities = std::move(found->second.intensities);
+        ref.colors = std::move(found->second.colors);
         stash.erase(found);
       }
       entry.frames.push_back(std::move(ref));
@@ -239,11 +329,13 @@ struct CloudMapper::Impl
   // density, but the map we emit is as dense as the requested export voxel allows.
   void fill_map(CloudMap & result) const
   {
-    // Intensity is all-or-nothing across the whole map (mirrors GLIM's export and
-    // what write_ply expects): keep it only if every frame with points also
-    // carried intensities.
+    // Intensity and color are all-or-nothing across the whole map (mirrors GLIM's
+    // export and what write_ply expects): keep each channel only if every frame
+    // with points also carried it. Frames without a matching camera image are
+    // filled with black, so a configured camera always produces a color channel.
     bool any_points = false;
     bool all_intensity = true;
+    bool all_color = true;
     for (const auto & entry : entries) {
       for (const auto & ref : entry.frames) {
         if (ref.points.empty()) {
@@ -253,11 +345,15 @@ struct CloudMapper::Impl
         if (ref.intensities.size() != ref.points.size()) {
           all_intensity = false;
         }
+        if (ref.colors.size() != ref.points.size()) {
+          all_color = false;
+        }
       }
     }
     const bool with_intensity = any_points && all_intensity;
+    const bool with_color = any_points && all_color;
 
-    VoxelGrid grid(config.map_resolution, with_intensity);
+    VoxelGrid grid(config.map_resolution, with_intensity, with_color);
     for (const auto & entry : entries) {
       if (!entry.submap) {
         continue;
@@ -271,20 +367,24 @@ struct CloudMapper::Impl
         for (std::size_t i = 0; i < ref.points.size(); ++i) {
           const Eigen::Vector3d local(ref.points[i][0], ref.points[i][1], ref.points[i][2]);
           const Eigen::Vector3d world = T_world_frame * local;
-          if (with_intensity) {
-            grid.add(
-              static_cast<float>(world.x()), static_cast<float>(world.y()),
-              static_cast<float>(world.z()), ref.intensities[i]);
+          const float wx = static_cast<float>(world.x());
+          const float wy = static_cast<float>(world.y());
+          const float wz = static_cast<float>(world.z());
+          if (with_intensity && with_color) {
+            grid.add(wx, wy, wz, ref.intensities[i], ref.colors[i]);
+          } else if (with_intensity) {
+            grid.add(wx, wy, wz, ref.intensities[i]);
+          } else if (with_color) {
+            grid.add(wx, wy, wz, ref.colors[i]);
           } else {
-            grid.add(
-              static_cast<float>(world.x()), static_cast<float>(world.y()),
-              static_cast<float>(world.z()));
+            grid.add(wx, wy, wz);
           }
         }
       }
     }
     result.points = grid.points();
     result.intensities = grid.intensities();
+    result.colors = grid.colors();
   }
 };
 
@@ -358,6 +458,11 @@ void CloudMapper::insert(const LidarScan & scan)
     impl_->feed_sub_mapping(frame);
   }
   impl_->drain_submaps();
+}
+
+void CloudMapper::insert_image(std::int64_t stamp_ns, image::PackedRaster image)
+{
+  impl_->images.push_back({stamp_ns, std::move(image)});
 }
 
 CloudMap CloudMapper::finish()

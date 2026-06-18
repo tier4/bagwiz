@@ -969,34 +969,54 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
   return {};
 }
 
-// `slam <input> <pcd_topic> <output_root> [--imu <topic>]
-// [--map-resolution <m>] [--without-global-optim] [-w|--overwrite]`
+// `slam <input> <pcd_topic> <output_root> [--cam <image_topic>]
+// [--cam-info <camera_info_topic>] [--imu <topic>] [--map-res <m>]
+// [--without-global-optim] [-w|--overwrite]`
 //
 // The positional <pcd_topic> slot is completed earlier by try_topic_completion
 // via kTopicBindings (PointCloud2 topics only). Here we surface the command's
-// flags for any `-` word and complete the value of `--imu` from the bag's
-// sensor_msgs/msg/Imu topics. <input> and <output_root> are paths that fall
-// through to the shell's file completion.
+// flags for any `-` word and complete the values of `--cam`, `--cam-info`, and
+// `--imu` from the bag's image, CameraInfo, and Imu topics respectively.
+// <input> and <output_root> are paths that fall through to the shell's file
+// completion.
 std::vector<std::string> complete_slam(const CompletionRequest & request)
 {
   const auto current = current_word(request);
   if (request.cursor_word >= kFirstCommandArgWord && current.starts_with("-")) {
     return matching(
-      with_help({"--imu", "--map-resolution", "--overwrite", "--without-global-optim", "-w"}),
+      with_help(
+        {"--cam", "--cam-info", "--imu", "--map-res", "--overwrite", "--without-global-optim",
+         "-w"}),
       current);
   }
 
-  if (request.cursor_word == 0 || request.words[request.cursor_word - 1] != "--imu") {
-    return {};
+  auto complete_topic_after_flag =
+    [&](const std::string_view & flag, const std::span<const std::string_view> & types) {
+      if (request.cursor_word == 0 || request.words[request.cursor_word - 1] != flag) {
+        return std::optional<std::vector<std::string>>{};
+      }
+      if (request.words.size() <= kFirstCommandArgWord) {
+        return std::optional<std::vector<std::string>>{std::vector<std::string>{}};
+      }
+      const auto & bag_arg = request.words[kFirstCommandArgWord];
+      if (bag_arg.empty() || bag_arg.starts_with("-")) {
+        return std::optional<std::vector<std::string>>{std::vector<std::string>{}};
+      }
+      return std::optional<std::vector<std::string>>{
+        complete_topics(expand_current_user_home(bag_arg), current, types)};
+    };
+
+  if (auto cam = complete_topic_after_flag("--cam", kGenerateVideoSupportedTypes); cam) {
+    return std::move(*cam);
   }
-  if (request.words.size() <= kFirstCommandArgWord) {
-    return {};
+  if (auto cam_info = complete_topic_after_flag("--cam-info", kCameraInfoType); cam_info) {
+    return std::move(*cam_info);
   }
-  const auto & bag_arg = request.words[kFirstCommandArgWord];
-  if (bag_arg.empty() || bag_arg.starts_with("-")) {
-    return {};
+  if (auto imu = complete_topic_after_flag("--imu", kImuType); imu) {
+    return std::move(*imu);
   }
-  return complete_topics(expand_current_user_home(bag_arg), current, kImuType);
+
+  return {};
 }
 
 std::vector<std::string> complete_request(const CompletionRequest & request)

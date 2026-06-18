@@ -1248,6 +1248,41 @@ TEST_F(CompletionTest, GenerateVideoTopicSlotSuppressedWhenInputSlotIsFlag)
     "");
 }
 
+// `slam -` surfaces the command's flags plus the implicit help flags, sorted.
+TEST(FlagCompletionTest, SlamDashListsSlamFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "slam", "-"}),
+    "--cam\n--cam-info\n--help\n--imu\n--map-res\n--overwrite\n--without-global-optim\n-h\n-w\n");
+}
+
+// `--cam <TAB>` after a bag offers only image topics.
+TEST_F(CompletionTest, SlamCamFlagListsOnlyImageTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_image_topics_fixture(tmp_dir_ / "images.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "slam", "~/images.mcap", "/points", "out", "--cam"}),
+    "/image\n/image/compressed\n");
+}
+
+// `--cam-info <TAB>` after a bag offers only sensor_msgs/msg/CameraInfo topics.
+TEST_F(CompletionTest, SlamCamInfoFlagListsOnlyCameraInfoTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "slam", "~/cameras.mcap", "/points", "out",
+       "--cam-info"}),
+    "/cam/camera_info\n");
+}
+
 TEST(SupportedShellsTest, ListsBashZshAndFish)
 {
   const auto shells = bagwiz::commands::supported_shells();

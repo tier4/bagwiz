@@ -9,6 +9,8 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
+#include "bagwiz/core/image/camera_info.hpp"
+#include "bagwiz/core/image/packed_raster.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/output_path.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
@@ -23,6 +25,8 @@
 #include "bagwiz/core/trajectory.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
+#include <Eigen/Core>
+#include <Eigen/Geometry>
 #include <tf2/buffer_core.hpp>
 #include <tf2/time.hpp>
 
@@ -51,6 +55,7 @@ namespace
 constexpr const char * kLogger = "bagwiz.cmd.slam";
 constexpr const char * kPointCloud2Type = "sensor_msgs/msg/PointCloud2";
 constexpr const char * kImuType = "sensor_msgs/msg/Imu";
+constexpr const char * kCameraInfoType = "sensor_msgs/msg/CameraInfo";
 constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
 constexpr std::string_view kTfStaticSuffix = "tf_static";
 // Static transforms are timeless; a year-long cache dwarfs any bag and matches
@@ -80,6 +85,33 @@ core::slam::SensorTransform to_sensor_transform(const geometry_msgs::msg::Transf
   return out;
 }
 
+// Convert a quaternion + translation into a column-major 4x4 homogeneous matrix,
+// matching the layout expected by project_pointcloud() / colorize_pointcloud().
+std::array<double, 16> to_column_major_transform(const core::slam::SensorTransform & t)
+{
+  const Eigen::Quaterniond q(
+    t.rotation_xyzw[3], t.rotation_xyzw[0], t.rotation_xyzw[1], t.rotation_xyzw[2]);
+  const Eigen::Matrix3d R = q.toRotationMatrix();
+  return {
+    R(0, 0),
+    R(1, 0),
+    R(2, 0),
+    0.0,  // column 0
+    R(0, 1),
+    R(1, 1),
+    R(2, 1),
+    0.0,  // column 1
+    R(0, 2),
+    R(1, 2),
+    R(2, 2),
+    0.0,  // column 2
+    t.translation[0],
+    t.translation[1],
+    t.translation[2],
+    1.0  // column 3
+  };
+}
+
 }  // namespace
 
 // `bagwiz slam <input> <pcd_topic> <output_root>` runs LiDAR SLAM over a single
@@ -94,6 +126,14 @@ core::slam::SensorTransform to_sensor_transform(const geometry_msgs::msg::Transf
 // OdometryEstimationCPU: the IMU↔LiDAR extrinsic is resolved from the bag's
 // static TF (`/tf_static`) using the cloud's and the IMU's header frame_ids, and
 // the command errors clearly if that static-TF chain (or a frame) is absent.
+//
+// With `--cam <image_topic>` the exported map.ply is colorized by projecting
+// each map point into the nearest camera image (within a 0.1 s window). The
+// camera intrinsics are read from a sibling /camera_info topic or from an
+// explicit `--cam-info <topic>` using the same auto-resolution rules as
+// `bagwiz generate video`. The LiDAR↔camera extrinsic is resolved from the bag's
+// static TF, and points that fall outside the camera's field of view are colored
+// black.
 //
 // `--without-global-optim` skips the global optimization and writes only the
 // raw odometry trajectory (traj.tum) to `output_root`; no map is produced.
@@ -127,9 +167,19 @@ public:
       "Optional Imu topic; switches odometry to LiDAR-IMU. The LiDAR<-IMU extrinsic is "
       "resolved from the bag's static TF using the cloud and IMU header frame_ids "
       "(errors if that chain is absent).");
+    app.add_option(
+      "--cam", cam_topic_,
+      "Optional camera image topic used to colorize the exported map. Accepts "
+      "sensor_msgs/Image (bgr8/rgb8) and sensor_msgs/CompressedImage (jpeg/png). "
+      "The LiDAR<-camera extrinsic is resolved from the bag's static TF using the "
+      "cloud and camera header frame_ids (errors if that chain is absent).");
+    app.add_option(
+      "--cam-info", cam_info_topic_,
+      "Optional sensor_msgs/CameraInfo topic for --cam. When omitted it is auto-resolved "
+      "from the image topic name using the same rules as `bagwiz generate video`.");
     app
       .add_option(
-        "--map-resolution", map_resolution_,
+        "--map-res", map_resolution_,
         "Exported map voxel size in meters (smaller = denser; default 0.2). Controls "
         "only the exported map's density, never the optimization or trajectory. The "
         "LiDAR preprocessor's ~0.15 m input voxel bounds the real resolution.")
@@ -156,6 +206,11 @@ public:
     }
     if (!imu_topic_.empty() && !topic_present_with_type(*reader, imu_topic_, kImuType)) {
       return 1;
+    }
+    if (!cam_topic_.empty()) {
+      if (!validate_camera_topic(*reader) || !resolve_camera()) {
+        return 1;
+      }
     }
 
     // Validate / create the output root before any heavy work. A file at the
@@ -365,23 +420,15 @@ private:
     return true;
   }
 
-  // Resolve T_lidar_imu (cloud frame <- imu frame) from the bag's static TF.
-  // Returns false (logged) on any failure.
-  bool resolve_extrinsic(core::slam::SensorTransform & out)
+  // Resolve T_target_source (target frame <- source frame) from the bag's static
+  // TF. Returns false (logged) on any failure. Identity is returned when the two
+  // frames are the same.
+  bool resolve_transform(
+    const std::string & target_frame, const std::string & source_frame,
+    core::slam::SensorTransform & out, const char * description)
   {
-    std::string cloud_frame;
-    std::string imu_frame;
-    if (!peek_frames(cloud_frame, imu_frame)) {
-      return false;
-    }
-
-    // Same frame for cloud and IMU (e.g. an already-base_link IMU): the extrinsic
-    // is identity regardless of whether that frame is a TF node.
-    if (cloud_frame == imu_frame) {
+    if (target_frame == source_frame) {
       out = core::slam::SensorTransform{};
-      fmt::print(
-        stdout, "IMU and cloud share frame '{}'; using identity LiDAR<-IMU extrinsic\n",
-        cloud_frame);
       return true;
     }
 
@@ -390,7 +437,7 @@ private:
       return false;
     }
 
-    const auto missing = core::missing_frames(buffer, cloud_frame, imu_frame);
+    const auto missing = core::missing_frames(buffer, target_frame, source_frame);
     if (!missing.empty()) {
       std::string names;
       for (std::size_t i = 0; i < missing.size(); ++i) {
@@ -402,18 +449,216 @@ private:
     }
 
     try {
-      const auto ts = buffer.lookupTransform(cloud_frame, imu_frame, tf2::TimePointZero);
+      const auto ts = buffer.lookupTransform(target_frame, source_frame, tf2::TimePointZero);
       out = to_sensor_transform(ts);
     } catch (const std::exception & e) {
       BAGWIZ_LOG_ERROR(
-        kLogger, "No static TF chain from '%s' to '%s': %s", cloud_frame.c_str(), imu_frame.c_str(),
-        e.what());
+        kLogger, "No static TF chain from '%s' to '%s': %s", target_frame.c_str(),
+        source_frame.c_str(), e.what());
       return false;
     }
 
     fmt::print(
-      stdout, "Resolved LiDAR<-IMU extrinsic from static TF ('{}' <- '{}')\n", cloud_frame,
-      imu_frame);
+      stdout, "Resolved {} extrinsic from static TF ('{}' <- '{}')\n", description, target_frame,
+      source_frame);
+    return true;
+  }
+
+  // Resolve T_lidar_imu (cloud frame <- imu frame) from the bag's static TF.
+  // Returns false (logged) on any failure.
+  bool resolve_extrinsic(core::slam::SensorTransform & out)
+  {
+    std::string cloud_frame;
+    std::string imu_frame;
+    if (!peek_frames(cloud_frame, imu_frame)) {
+      return false;
+    }
+
+    if (cloud_frame == imu_frame) {
+      fmt::print(
+        stdout, "IMU and cloud share frame '{}'; using identity LiDAR<-IMU extrinsic\n",
+        cloud_frame);
+      return true;
+    }
+
+    return resolve_transform(cloud_frame, imu_frame, out, "LiDAR<-IMU");
+  }
+
+  // Read the first decodable header.frame_id from the cloud topic.
+  std::optional<std::string> peek_cloud_frame()
+  {
+    std::unique_ptr<io::BagReader> reader;
+    try {
+      reader = io::open_read(input_path_);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to reopen %s: %s", input_path_.c_str(), e.what());
+      return std::nullopt;
+    }
+    io::ReadFilter filter;
+    filter.topics.push_back(cloud_topic_);
+    reader->set_filter(filter);
+
+    std::int64_t failed = 0;
+    io::RawMessage raw;
+    while (reader->next(raw)) {
+      const auto parsed = core::pointcloud::parse_pointcloud2(raw.payload);
+      if (parsed.ok()) {
+        return parsed.cloud->frame_id;
+      }
+      ++failed;
+    }
+    BAGWIZ_LOG_ERROR(
+      kLogger, "Could not read a PointCloud2 frame_id from '%s' (%s message(s) failed to parse)",
+      cloud_topic_.c_str(), std::to_string(failed).c_str());
+    return std::nullopt;
+  }
+
+  // Verify `cam_topic_` exists in the bag and has a supported image message type.
+  bool validate_camera_topic(io::BagReader & reader)
+  {
+    const io::TopicInfo * info = nullptr;
+    for (const auto & t : reader.topics()) {
+      if (t.name == cam_topic_) {
+        info = &t;
+        break;
+      }
+    }
+    if (info == nullptr) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "Camera topic '%s' is not present in %s", cam_topic_.c_str(), input_path_.c_str());
+      return false;
+    }
+    if (!core::image::is_supported_image_type(info->type)) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "Camera topic '%s' is %s, expected a supported image type", cam_topic_.c_str(),
+        info->type.c_str());
+      return false;
+    }
+    return true;
+  }
+
+  // Auto-resolve or validate the CameraInfo topic, then read and return the first
+  // decodable CameraInfo message in the bag. On failure logs and returns nullopt.
+  std::optional<core::image::CameraInfo> resolve_camera_info()
+  {
+    std::unique_ptr<io::BagReader> reader;
+    try {
+      reader = io::open_read(input_path_);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to reopen %s: %s", input_path_.c_str(), e.what());
+      return std::nullopt;
+    }
+
+    std::string info_topic = cam_info_topic_;
+    if (info_topic.empty()) {
+      const auto resolved = core::image::resolve_camera_info_topic(cam_topic_, reader->topics());
+      if (!resolved) {
+        BAGWIZ_LOG_ERROR(
+          kLogger,
+          "Could not auto-resolve a CameraInfo topic for '%s'. Provide one explicitly with "
+          "--cam-info.",
+          cam_topic_.c_str());
+        return std::nullopt;
+      }
+      info_topic = *resolved;
+      fmt::print(stdout, "Auto-resolved CameraInfo topic for '{}': '{}'\n", cam_topic_, info_topic);
+    } else {
+      if (!topic_present_with_type(*reader, info_topic, kCameraInfoType)) {
+        return std::nullopt;
+      }
+    }
+
+    io::ReadFilter filter;
+    filter.topics.push_back(info_topic);
+    reader->set_filter(filter);
+
+    io::RawMessage raw;
+    while (reader->next(raw)) {
+      const auto result = core::image::extract_camera_info(raw.payload);
+      if (result.ok()) {
+        return result.info;
+      }
+    }
+    BAGWIZ_LOG_ERROR(
+      kLogger, "Could not read a valid sensor_msgs/CameraInfo from '%s'", info_topic.c_str());
+    return std::nullopt;
+  }
+
+  // Resolve camera intrinsics and the LiDAR<-camera extrinsic, populating
+  // camera_config_. Returns false on any failure (logged).
+  bool resolve_camera()
+  {
+    const auto camera_info = resolve_camera_info();
+    if (!camera_info) {
+      return false;
+    }
+
+    const auto cloud_frame = peek_cloud_frame();
+    if (!cloud_frame) {
+      return false;
+    }
+
+    core::slam::SensorTransform extrinsic;
+    if (*cloud_frame == camera_info->frame_id) {
+      extrinsic = core::slam::SensorTransform{};
+      fmt::print(
+        stdout, "Camera and cloud share frame '{}'; using identity LiDAR<-camera extrinsic\n",
+        *cloud_frame);
+    } else {
+      if (!resolve_transform(camera_info->frame_id, *cloud_frame, extrinsic, "LiDAR<-camera")) {
+        return false;
+      }
+    }
+
+    core::slam::CloudMapperConfig::CameraConfig config;
+    config.info = *camera_info;
+    config.t_lidar_camera = to_column_major_transform(extrinsic);
+    // Rectified image topics (e.g. /image_rect_color) are expected to align with
+    // the P matrix; raw topics use the K matrix.
+    config.use_rectified = (cam_topic_.find("/image_rect") != std::string::npos);
+
+    camera_config_ = std::move(config);
+    return true;
+  }
+
+  // Pre-buffer all camera images so they are available when GLIM stashes each
+  // submap frame. Returns false (logged) when no image could be decoded.
+  bool preload_camera_images(core::slam::CloudMapper & mapper)
+  {
+    std::unique_ptr<io::BagReader> reader;
+    try {
+      reader = io::open_read(input_path_);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to reopen %s: %s", input_path_.c_str(), e.what());
+      return false;
+    }
+
+    io::ReadFilter filter;
+    filter.topics.push_back(cam_topic_);
+    reader->set_filter(filter);
+
+    std::int64_t decoded = 0;
+    std::int64_t failed = 0;
+    io::RawMessage raw;
+    while (reader->next(raw)) {
+      auto raster = core::image::to_packed_raster(raw.topic->type, raw.payload);
+      if (!raster.ok()) {
+        BAGWIZ_LOG_WARN(
+          kLogger, "Failed to decode image on '%s' at %s ns: %s", cam_topic_.c_str(),
+          std::to_string(raw.timestamp_ns).c_str(), raster.error.c_str());
+        ++failed;
+        continue;
+      }
+      mapper.insert_image(raw.timestamp_ns, std::move(*raster.raster));
+      ++decoded;
+    }
+    if (decoded == 0) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "No decodable images on '%s' (%s message(s) failed)", cam_topic_.c_str(),
+        std::to_string(failed).c_str());
+      return false;
+    }
+    fmt::print(stdout, "Pre-loaded {} image(s) from '{}' for colorization\n", decoded, cam_topic_);
     return true;
   }
 
@@ -523,7 +768,11 @@ private:
     core::slam::CloudMapperConfig config;
     config.map_resolution = map_resolution_;
     config.t_lidar_imu = t_lidar_imu;
+    config.camera = camera_config_;
     core::slam::CloudMapper mapper(config);
+    if (camera_config_.has_value() && !preload_camera_images(mapper)) {
+      return 1;
+    }
     std::int64_t scans = 0;
     std::int64_t skipped = 0;
     std::int64_t imu_count = 0;
@@ -552,7 +801,7 @@ private:
     if (!write_trajectory(map.trajectory)) {
       return 1;
     }
-    core::slam::write_ply(map_out, map.points, map.intensities);
+    core::slam::write_ply(map_out, map.points, map.intensities, map.colors);
     if (!map_out.good()) {
       BAGWIZ_LOG_ERROR(kLogger, "write failed: %s", map_path_.c_str());
       return 1;
@@ -579,12 +828,15 @@ private:
   std::filesystem::path input_path_;
   std::string cloud_topic_;
   std::string imu_topic_;
+  std::string cam_topic_;
+  std::string cam_info_topic_;
   std::filesystem::path output_root_;
   std::filesystem::path output_path_;
   std::filesystem::path map_path_;
-  double map_resolution_ = 0.2;  // exported-map voxel size [m]; see --map-resolution
+  double map_resolution_ = 0.2;  // exported-map voxel size [m]; see --map-res
   bool overwrite_ = false;
   bool without_global_optim_ = false;
+  std::optional<core::slam::CloudMapperConfig::CameraConfig> camera_config_;
 };
 
 BAGWIZ_REGISTER_COMMAND(SlamCommand)

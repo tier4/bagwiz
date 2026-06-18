@@ -9,12 +9,15 @@
 #ifndef BAGWIZ__CORE__SLAM__CLOUD_MAPPER_HPP_
 #define BAGWIZ__CORE__SLAM__CLOUD_MAPPER_HPP_
 
+#include "bagwiz/core/image/camera_info.hpp"
+#include "bagwiz/core/image/packed_raster.hpp"
 #include "bagwiz/core/slam/imu_sample.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
 #include "bagwiz/core/trajectory.hpp"
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -57,6 +60,20 @@ struct CloudMapperConfig
   // extrinsic, and IMU enabled in sub/global mapping; feed IMU via insert_imu().
   // Convention is GLIM's T_lidar_imu (p_lidar = T_lidar_imu * p_imu).
   std::optional<SensorTransform> t_lidar_imu;
+
+  // Optional camera used to colorize the exported map. `info` is the camera's
+  // intrinsics, `t_lidar_camera` maps points from the LiDAR frame into the
+  // camera frame (same column-major layout as project_pointcloud()), and
+  // `use_rectified` selects `info.p` over `info.k` for projection. The mapper
+  // buffers per-frame images via insert_image() and samples the nearest one for
+  // each submap frame at stash time.
+  struct CameraConfig
+  {
+    image::CameraInfo info;
+    std::array<double, 16> t_lidar_camera;
+    bool use_rectified = false;
+  };
+  std::optional<CameraConfig> camera;
 };
 
 // Result of CloudMapper::finish(). All fields are GLIM-free plain data so the
@@ -72,6 +89,11 @@ struct CloudMap
   // Per-point intensity, parallel to `points`. Empty unless every submap
   // carried intensities (mirrors GLIM's all-or-nothing export).
   std::vector<float> intensities;
+
+  // Per-point BGR color, parallel to `points`. Empty unless a camera was
+  // configured and every submap frame received a color (frames without a
+  // matching image are filled with black).
+  std::vector<std::array<std::uint8_t, 3>> colors;
 };
 
 class CloudMapper
@@ -97,6 +119,13 @@ public:
   // with no per-point time is fed with explicit zero per-point times (treated
   // as already motion-undistorted), bypassing GLIM's pseudo-time synthesis.
   void insert(const LidarScan & scan);
+
+  // Buffer a camera image. `stamp_ns` is the image capture time in nanoseconds
+  // since epoch; images must arrive in non-decreasing timestamp order. Images
+  // are kept until a frame can sample the nearest one within the matching
+  // window, then discarded. Only effective when CloudMapperConfig::camera is
+  // set.
+  void insert_image(std::int64_t stamp_ns, image::PackedRaster image);
 
   // Flush the remaining in-flight frames, run the global optimization, and
   // return the optimized map + trajectory. Heavy: the global matching-based

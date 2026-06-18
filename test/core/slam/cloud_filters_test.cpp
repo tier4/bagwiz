@@ -112,4 +112,38 @@ TEST(VoxelGrid, EmptyGridProducesEmptyOutput)
   EXPECT_TRUE(grid.intensities().empty());
 }
 
+TEST(VoxelGrid, AveragesColorPerVoxelWhenEnabled)
+{
+  slam::VoxelGrid grid(1.0, /*with_intensity=*/false, /*with_color=*/true);
+  grid.add(0.1F, 0.1F, 0.1F, std::array<std::uint8_t, 3>{10, 20, 30});
+  grid.add(0.2F, 0.2F, 0.2F, std::array<std::uint8_t, 3>{30, 50, 70});
+
+  ASSERT_EQ(grid.size(), 1U);
+  const auto colors = grid.colors();
+  ASSERT_EQ(colors.size(), 1U);
+  EXPECT_EQ(colors[0], (std::array<std::uint8_t, 3>{20, 35, 50}));
+}
+
+TEST(VoxelGrid, ColorIgnoredWhenDisabled)
+{
+  slam::VoxelGrid grid(1.0, false, false);
+  grid.add(0.1F, 0.1F, 0.1F, std::array<std::uint8_t, 3>{10, 20, 30});
+  EXPECT_TRUE(grid.colors().empty());
+}
+
+TEST(VoxelGrid, ColorAndIntensityAccumulateTogether)
+{
+  slam::VoxelGrid grid(1.0, true, true);
+  grid.add(0.1F, 0.1F, 0.1F, 10.0F, std::array<std::uint8_t, 3>{0, 0, 0});
+  grid.add(0.2F, 0.2F, 0.2F, 30.0F, std::array<std::uint8_t, 3>{10, 10, 10});
+
+  ASSERT_EQ(grid.size(), 1U);
+  const auto intensities = grid.intensities();
+  const auto colors = grid.colors();
+  ASSERT_EQ(intensities.size(), 1U);
+  ASSERT_EQ(colors.size(), 1U);
+  EXPECT_NEAR(intensities[0], 20.0F, 1e-5);
+  EXPECT_EQ(colors[0], (std::array<std::uint8_t, 3>{5, 5, 5}));
+}
+
 }  // namespace

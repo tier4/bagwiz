@@ -43,23 +43,37 @@ std::size_t VoxelGrid::KeyHash::operator()(const Key & key) const
   return mix(key.x, kHashX) ^ mix(key.y, kHashY) ^ mix(key.z, kHashZ);
 }
 
-VoxelGrid::VoxelGrid(double resolution, bool with_intensity)
+VoxelGrid::VoxelGrid(double resolution, bool with_intensity, bool with_color)
 : resolution_(resolution > kMinResolution ? resolution : kMinResolution),
-  with_intensity_(with_intensity)
+  with_intensity_(with_intensity),
+  with_color_(with_color)
 {
 }
 
 void VoxelGrid::add(float x, float y, float z)
 {
-  accumulate(x, y, z, 0.0F);
+  accumulate(x, y, z, std::nullopt, std::nullopt);
 }
 
 void VoxelGrid::add(float x, float y, float z, float intensity)
 {
-  accumulate(x, y, z, intensity);
+  accumulate(x, y, z, intensity, std::nullopt);
 }
 
-void VoxelGrid::accumulate(float x, float y, float z, float intensity)
+void VoxelGrid::add(float x, float y, float z, const std::array<std::uint8_t, 3> & color)
+{
+  accumulate(x, y, z, std::nullopt, color);
+}
+
+void VoxelGrid::add(
+  float x, float y, float z, float intensity, const std::array<std::uint8_t, 3> & color)
+{
+  accumulate(x, y, z, intensity, color);
+}
+
+void VoxelGrid::accumulate(
+  float x, float y, float z, std::optional<float> intensity,
+  std::optional<std::array<std::uint8_t, 3>> color)
 {
   // floor (not truncation) so the grid is continuous across zero — otherwise the
   // voxels straddling an axis would be twice as wide.
@@ -81,8 +95,13 @@ void VoxelGrid::accumulate(float x, float y, float z, float intensity)
   cell->sum_x += static_cast<double>(x);
   cell->sum_y += static_cast<double>(y);
   cell->sum_z += static_cast<double>(z);
-  if (with_intensity_) {
-    cell->sum_intensity += static_cast<double>(intensity);
+  if (with_intensity_ && intensity.has_value()) {
+    cell->sum_intensity += static_cast<double>(*intensity);
+  }
+  if (with_color_ && color.has_value()) {
+    cell->sum_b += static_cast<std::uint64_t>((*color)[0]);
+    cell->sum_g += static_cast<std::uint64_t>((*color)[1]);
+    cell->sum_r += static_cast<std::uint64_t>((*color)[2]);
   }
   ++cell->count;
 }
@@ -109,6 +128,23 @@ std::vector<float> VoxelGrid::intensities() const
   result.reserve(accum_.size());
   for (const auto & cell : accum_) {
     result.push_back(static_cast<float>(cell.sum_intensity / static_cast<double>(cell.count)));
+  }
+  return result;
+}
+
+std::vector<std::array<std::uint8_t, 3>> VoxelGrid::colors() const
+{
+  std::vector<std::array<std::uint8_t, 3>> result;
+  if (!with_color_) {
+    return result;
+  }
+  result.reserve(accum_.size());
+  for (const auto & cell : accum_) {
+    const auto n = static_cast<double>(cell.count);
+    result.push_back(
+      {static_cast<std::uint8_t>(static_cast<std::uint64_t>(cell.sum_b / n)),
+       static_cast<std::uint8_t>(static_cast<std::uint64_t>(cell.sum_g / n)),
+       static_cast<std::uint8_t>(static_cast<std::uint64_t>(cell.sum_r / n))});
   }
   return result;
 }

@@ -14,6 +14,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -36,17 +37,18 @@
 namespace bagwiz::core::slam
 {
 
-// One extracted LiDAR scan. `intensities` and `times` are either empty or
-// exactly `points.size()` long.
+// One extracted LiDAR scan. `intensities`, `times`, and `colors` are either
+// empty or exactly `points.size()` long.
 struct LidarScan
 {
   std::int64_t stamp_ns = 0;  // header.stamp as nanoseconds since epoch
   std::string frame_id;       // header.frame_id (the cloud's reference frame)
 
-  std::vector<std::array<double, 3>> points;  // xyz, one per point
-  std::vector<double> intensities;            // empty when no intensity field
-  std::vector<double> times;                  // seconds; empty when no time field
-  bool has_per_point_time = false;            // false => already-undistorted
+  std::vector<std::array<double, 3>> points;        // xyz, one per point
+  std::vector<double> intensities;                  // empty when no intensity field
+  std::vector<double> times;                        // seconds; empty when no time field
+  std::vector<std::array<std::uint8_t, 3>> colors;  // BGR per point; empty when uncolorized
+  bool has_per_point_time = false;                  // false => already-undistorted
 };
 
 // Outcome of to_lidar_scan(). On success `scan` holds the data and `error` is
@@ -64,10 +66,13 @@ inline constexpr const char * kDefaultIntensityField = "intensity";
 
 // Extract a LidarScan from a parsed PointCloud2. Requires `x`/`y`/`z` fields of
 // FLOAT32 or FLOAT64. Intensity (named `intensity_field`) and a per-point time
-// field are optional. Big-endian point data (cloud.is_bigendian) is rejected.
+// field are optional. `colors` may be empty; when non-empty it must contain one
+// BGR triple for every point in the cloud and is copied into the scan as-is.
+// Big-endian point data (cloud.is_bigendian) is rejected.
 [[nodiscard]] LidarScanResult to_lidar_scan(
   const core::pointcloud::PointCloud2 & cloud,
-  const std::string & intensity_field = kDefaultIntensityField);
+  const std::string & intensity_field = kDefaultIntensityField,
+  std::span<const std::array<std::uint8_t, 3>> colors = {});
 
 }  // namespace bagwiz::core::slam
 

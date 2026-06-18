@@ -8,6 +8,8 @@
 
 #include "bagwiz/core/pointcloud/projector.hpp"
 
+#include "bagwiz/core/image/packed_raster.hpp"
+
 #include <gtest/gtest.h>
 
 #include <array>
@@ -20,6 +22,8 @@ namespace
 {
 
 using bagwiz::core::image::CameraInfo;
+using bagwiz::core::image::PackedRaster;
+using bagwiz::core::pointcloud::colorize_pointcloud;
 using bagwiz::core::pointcloud::PointCloud2;
 using bagwiz::core::pointcloud::PointCloudProperty;
 using bagwiz::core::pointcloud::PointField;
@@ -126,6 +130,25 @@ std::array<double, 16> translate_z_transform(double delta_z)
     0.0, 0.0, 1.0,     0.0,  // column 2
     0.0, 0.0, delta_z, 1.0   // column 3 (translation)
   };
+}
+
+// Build a BGR24 raster of the requested size. All pixels are black except the
+// one at (u, v), which is set to `color`.
+PackedRaster make_image(
+  std::uint32_t width, std::uint32_t height, std::uint32_t u, std::uint32_t v,
+  const std::array<std::uint8_t, 3> & color)
+{
+  PackedRaster image;
+  image.width = width;
+  image.height = height;
+  image.encoding = "bgr8";
+  image.bgr.assign(static_cast<std::size_t>(width) * height * 3U, std::byte{0});
+  const std::size_t offset =
+    (static_cast<std::size_t>(v) * width + static_cast<std::size_t>(u)) * 3U;
+  image.bgr[offset + 0] = static_cast<std::byte>(color[0]);
+  image.bgr[offset + 1] = static_cast<std::byte>(color[1]);
+  image.bgr[offset + 2] = static_cast<std::byte>(color[2]);
+  return image;
 }
 
 }  // namespace
@@ -271,4 +294,89 @@ TEST(Projector, UseRectifiedSelectsProjectionMatrix)
   EXPECT_EQ(raw.points[0].v, 240);
   EXPECT_EQ(rectified.points[0].u, 160);
   EXPECT_EQ(rectified.points[0].v, 120);
+}
+
+TEST(Colorize, ReturnsOneColorPerInputPoint)
+{
+  const auto cloud = make_xyz_cloud({{0.0f, 0.0f, 5.0f}, {1.0f, 0.0f, 5.0f}});
+  const auto camera = make_pinhole_camera(100.0, 100.0, 320.0, 240.0, 640, 480);
+  const auto image = make_image(640, 480, 320, 240, {11, 22, 33});
+
+  const auto result = colorize_pointcloud(cloud, camera, image, identity_transform());
+
+  ASSERT_TRUE(result.ok());
+  EXPECT_EQ(result.colors.size(), cloud.width * cloud.height);
+}
+
+TEST(Colorize, CenterPointSamplesPixelColor)
+{
+  const auto cloud = make_xyz_cloud({{0.0f, 0.0f, 5.0f}});
+  const auto camera = make_pinhole_camera(100.0, 100.0, 320.0, 240.0, 640, 480);
+  const auto image = make_image(640, 480, 320, 240, {0, 0, 255});  // red in BGR
+
+  const auto result = colorize_pointcloud(cloud, camera, image, identity_transform());
+
+  ASSERT_TRUE(result.ok());
+  ASSERT_EQ(result.colors.size(), 1u);
+  EXPECT_EQ(result.colors[0][0], 0u);
+  EXPECT_EQ(result.colors[0][1], 0u);
+  EXPECT_EQ(result.colors[0][2], 255u);
+}
+
+TEST(Colorize, PointBehindCameraIsBlack)
+{
+  const auto cloud = make_xyz_cloud({{0.0f, 0.0f, -5.0f}});
+  const auto camera = make_pinhole_camera(100.0, 100.0, 320.0, 240.0, 640, 480);
+  const auto image = make_image(640, 480, 320, 240, {0, 0, 255});
+
+  const auto result = colorize_pointcloud(cloud, camera, image, identity_transform());
+
+  ASSERT_TRUE(result.ok());
+  ASSERT_EQ(result.colors.size(), 1u);
+  EXPECT_EQ(result.colors[0], (std::array<std::uint8_t, 3>{0, 0, 0}));
+}
+
+TEST(Colorize, PointOutsideImageIsBlack)
+{
+  const auto cloud = make_xyz_cloud({{100.0f, 0.0f, 5.0f}});
+  const auto camera = make_pinhole_camera(100.0, 100.0, 320.0, 240.0, 640, 480);
+  const auto image = make_image(640, 480, 320, 240, {0, 0, 255});
+
+  const auto result = colorize_pointcloud(cloud, camera, image, identity_transform());
+
+  ASSERT_TRUE(result.ok());
+  ASSERT_EQ(result.colors.size(), 1u);
+  EXPECT_EQ(result.colors[0], (std::array<std::uint8_t, 3>{0, 0, 0}));
+}
+
+TEST(Colorize, MissingXYZFieldReturnsError)
+{
+  const auto cloud = make_xy_cloud({{1.0f, 2.0f}});
+  const auto camera = make_pinhole_camera(100.0, 100.0, 320.0, 240.0, 640, 480);
+  const auto image = make_image(640, 480, 320, 240, {0, 0, 255});
+
+  const auto result = colorize_pointcloud(cloud, camera, image, identity_transform());
+
+  EXPECT_FALSE(result.ok());
+  EXPECT_FALSE(result.error.empty());
+  EXPECT_TRUE(result.colors.empty());
+}
+
+TEST(Colorize, UseRectifiedSelectsProjectionMatrix)
+{
+  const auto cloud = make_xyz_cloud({{0.0f, 0.0f, 5.0f}});
+  const auto camera =
+    make_pinhole_camera_with_p(100.0, 100.0, 320.0, 240.0, 640, 480, 200.0, 200.0, 160.0, 120.0);
+  // Raw center (320,240) is black; rectified center (160,120) is colored.
+  const auto image = make_image(640, 480, 160, 120, {7, 8, 9});
+
+  const auto raw = colorize_pointcloud(cloud, camera, image, identity_transform(), false);
+  const auto rectified = colorize_pointcloud(cloud, camera, image, identity_transform(), true);
+
+  ASSERT_TRUE(raw.ok());
+  ASSERT_TRUE(rectified.ok());
+  ASSERT_EQ(raw.colors.size(), 1u);
+  ASSERT_EQ(rectified.colors.size(), 1u);
+  EXPECT_EQ(raw.colors[0], (std::array<std::uint8_t, 3>{0, 0, 0}));
+  EXPECT_EQ(rectified.colors[0], (std::array<std::uint8_t, 3>{7, 8, 9}));
 }

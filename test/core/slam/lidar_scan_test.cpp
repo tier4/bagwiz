@@ -173,4 +173,28 @@ TEST(LidarScan, BigEndianIsError)
   EXPECT_FALSE(r.ok());
 }
 
+TEST(LidarScan, ColorsCopiedWhenProvided)
+{
+  const std::vector<std::array<std::uint8_t, 3>> colors = {{1, 2, 3}, {4, 5, 6}};
+  const auto r = slam::to_lidar_scan(make_xyz_cloud(), slam::kDefaultIntensityField, colors);
+  ASSERT_TRUE(r.ok()) << r.error;
+  ASSERT_EQ(r.scan->colors.size(), 2U);
+  EXPECT_EQ(r.scan->colors[0], (std::array<std::uint8_t, 3>{1, 2, 3}));
+  EXPECT_EQ(r.scan->colors[1], (std::array<std::uint8_t, 3>{4, 5, 6}));
+}
+
+TEST(LidarScan, EmptyColorsLeavesScanEmpty)
+{
+  const auto r = slam::to_lidar_scan(make_xyz_cloud());
+  ASSERT_TRUE(r.ok()) << r.error;
+  EXPECT_TRUE(r.scan->colors.empty());
+}
+
+TEST(LidarScan, MismatchedColorCountIsError)
+{
+  const std::vector<std::array<std::uint8_t, 3>> colors = {{1, 2, 3}};  // cloud has 2 points
+  const auto r = slam::to_lidar_scan(make_xyz_cloud(), slam::kDefaultIntensityField, colors);
+  EXPECT_FALSE(r.ok());
+}
+
 }  // namespace

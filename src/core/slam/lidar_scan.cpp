@@ -133,7 +133,9 @@ bool field_fits(const PointCloud2 & cloud, const PointField & field) noexcept
 
 }  // namespace
 
-LidarScanResult to_lidar_scan(const PointCloud2 & cloud, const std::string & intensity_field)
+LidarScanResult to_lidar_scan(
+  const PointCloud2 & cloud, const std::string & intensity_field,
+  std::span<const std::array<std::uint8_t, 3>> colors)
 {
   LidarScanResult result;
 
@@ -177,6 +179,10 @@ LidarScanResult to_lidar_scan(const PointCloud2 & cloud, const std::string & int
     result.error = "PointCloud2 data buffer is smaller than width*height*point_step";
     return result;
   }
+  if (!colors.empty() && colors.size() != num_points) {
+    result.error = "color count does not match point count";
+    return result;
+  }
 
   LidarScan scan;
   scan.stamp_ns = cloud.timestamp_ns;
@@ -189,6 +195,9 @@ LidarScanResult to_lidar_scan(const PointCloud2 & cloud, const std::string & int
     scan.times.reserve(num_points);
     scan.has_per_point_time = true;
   }
+  if (!colors.empty()) {
+    scan.colors.reserve(num_points);
+  }
 
   for (std::uint32_t i = 0; i < num_points; ++i) {
     scan.points.push_back(
@@ -200,6 +209,9 @@ LidarScanResult to_lidar_scan(const PointCloud2 & cloud, const std::string & int
     }
     if (use_time) {
       scan.times.push_back(read_time_seconds(cloud, i, *ft));
+    }
+    if (!colors.empty()) {
+      scan.colors.push_back(colors[i]);
     }
   }
 

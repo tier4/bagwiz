@@ -46,6 +46,80 @@ float read_field(
 
 }  // namespace
 
+ColorizeResult colorize_pointcloud(
+  const PointCloud2 & cloud, const image::CameraInfo & camera_info,
+  const image::PackedRaster & image, const std::array<double, 16> & transform, bool use_rectified)
+{
+  ColorizeResult result;
+
+  const auto off_x = cloud.field_offset("x");
+  const auto off_y = cloud.field_offset("y");
+  const auto off_z = cloud.field_offset("z");
+  if (!off_x || !off_y || !off_z) {
+    result.error = "point cloud is missing required x/y/z fields";
+    return result;
+  }
+
+  const auto find_field = [&](const std::string & name) -> const PointField * {
+    for (const auto & f : cloud.fields) {
+      if (f.name == name) {
+        return &f;
+      }
+    }
+    return nullptr;
+  };
+
+  const PointField * field_x = find_field("x");
+  const PointField * field_y = find_field("y");
+  const PointField * field_z = find_field("z");
+
+  const double fx = use_rectified ? camera_info.p[0] : camera_info.k[0];
+  const double fy = use_rectified ? camera_info.p[5] : camera_info.k[4];
+  const double cx = use_rectified ? camera_info.p[2] : camera_info.k[2];
+  const double cy = use_rectified ? camera_info.p[6] : camera_info.k[5];
+
+  const std::uint32_t n = cloud.height * cloud.width;
+  result.colors.assign(n, {0, 0, 0});
+
+  if (image.width == 0 || image.height == 0) {
+    result.error = "image has zero width or height";
+    return result;
+  }
+
+  for (std::uint32_t i = 0; i < n; ++i) {
+    const float px = read_field(cloud, i, *off_x, field_x->datatype);
+    const float py = read_field(cloud, i, *off_y, field_y->datatype);
+    const float pz = read_field(cloud, i, *off_z, field_z->datatype);
+
+    const double tx = transform[0] * px + transform[4] * py + transform[8] * pz + transform[12];
+    const double ty = transform[1] * px + transform[5] * py + transform[9] * pz + transform[13];
+    const double tz = transform[2] * px + transform[6] * py + transform[10] * pz + transform[14];
+
+    if (tz <= 0.0) {
+      continue;
+    }
+
+    const double u = fx * tx / tz + cx;
+    const double v = fy * ty / tz + cy;
+    if (u < 0.0 || v < 0.0) {
+      continue;
+    }
+    const std::uint32_t ui = static_cast<std::uint32_t>(u);
+    const std::uint32_t vi = static_cast<std::uint32_t>(v);
+    if (ui >= image.width || vi >= image.height) {
+      continue;
+    }
+
+    const std::size_t offset = (static_cast<std::size_t>(vi) * image.width + ui) * 3U;
+    result.colors[i] = {
+      static_cast<std::uint8_t>(image.bgr[offset + 0]),
+      static_cast<std::uint8_t>(image.bgr[offset + 1]),
+      static_cast<std::uint8_t>(image.bgr[offset + 2])};
+  }
+
+  return result;
+}
+
 ProjectionResult project_pointcloud(
   const PointCloud2 & cloud, const image::CameraInfo & camera_info,
   const std::array<double, 16> & transform, std::uint32_t image_width, std::uint32_t image_height,

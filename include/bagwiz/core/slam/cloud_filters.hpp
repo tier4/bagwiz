@@ -12,6 +12,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -42,15 +43,23 @@ public:
   // `resolution` is the voxel side length in meters; must be > 0 (a non-positive
   // value is clamped to a tiny positive epsilon to avoid division by zero).
   // `with_intensity` selects whether per-point intensities are accumulated and
-  // returned; when false, intensities() is empty and the intensity argument to
-  // add() is ignored.
-  VoxelGrid(double resolution, bool with_intensity);
+  // returned; when false, intensities() is empty and any intensity argument to
+  // add() is ignored. `with_color` selects whether per-point BGR colors are
+  // accumulated and returned; when false, colors() is empty and any color
+  // argument to add() is ignored.
+  VoxelGrid(double resolution, bool with_intensity, bool with_color = false);
 
-  // Add one point with no intensity (used when with_intensity == false).
+  // Add one point with no intensity or color.
   void add(float x, float y, float z);
 
   // Add one point with an intensity (accumulated only when with_intensity).
   void add(float x, float y, float z, float intensity);
+
+  // Add one point with a BGR color (accumulated only when with_color).
+  void add(float x, float y, float z, const std::array<std::uint8_t, 3> & color);
+
+  // Add one point with both intensity and BGR color.
+  void add(float x, float y, float z, float intensity, const std::array<std::uint8_t, 3> & color);
 
   // Number of occupied voxels accumulated so far.
   [[nodiscard]] std::size_t size() const noexcept { return accum_.size(); }
@@ -61,6 +70,10 @@ public:
   // Mean intensity per occupied voxel, parallel to points(). Empty when the grid
   // was constructed with_intensity == false.
   [[nodiscard]] std::vector<float> intensities() const;
+
+  // Mean BGR color per occupied voxel, parallel to points(). Empty when the grid
+  // was constructed with_color == false.
+  [[nodiscard]] std::vector<std::array<std::uint8_t, 3>> colors() const;
 
 private:
   struct Key
@@ -83,13 +96,19 @@ private:
     double sum_y = 0.0;
     double sum_z = 0.0;
     double sum_intensity = 0.0;
+    std::uint64_t sum_b = 0;
+    std::uint64_t sum_g = 0;
+    std::uint64_t sum_r = 0;
     std::uint64_t count = 0;
   };
 
-  void accumulate(float x, float y, float z, float intensity);
+  void accumulate(
+    float x, float y, float z, std::optional<float> intensity,
+    std::optional<std::array<std::uint8_t, 3>> color);
 
   double resolution_;
   bool with_intensity_;
+  bool with_color_;
   std::unordered_map<Key, std::size_t, KeyHash> index_;  // voxel -> slot in accum_
   std::vector<Accum> accum_;                             // first-seen order
 };

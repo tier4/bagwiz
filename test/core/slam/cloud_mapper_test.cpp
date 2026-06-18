@@ -8,6 +8,8 @@
 
 #include "bagwiz/core/slam/cloud_mapper.hpp"
 
+#include "bagwiz/core/image/camera_info.hpp"
+#include "bagwiz/core/image/packed_raster.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
 
 #include <gtest/gtest.h>
@@ -16,6 +18,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 // Integration test that drives the real GLIM SubMapping -> GlobalMapping
 // pipeline through CloudMapper. Compiled only when BAGWIZ_WITH_SLAM is on (it
@@ -121,6 +124,70 @@ TEST(CloudMapper, StationarySensorYieldsMapAndTrajectory)
   EXPECT_LT(max_x - min_x, 2.0) << "stationary trajectory drifted in x";
   EXPECT_LT(max_y - min_y, 2.0) << "stationary trajectory drifted in y";
   EXPECT_LT(max_z - min_z, 2.0) << "stationary trajectory drifted in z";
+}
+
+namespace image = bagwiz::core::image;
+
+image::CameraInfo make_test_camera_info(std::uint32_t width, std::uint32_t height)
+{
+  image::CameraInfo info;
+  info.width = width;
+  info.height = height;
+  info.k = {10.0, 0.0, width / 2.0, 0.0, 10.0, height / 2.0, 0.0, 0.0, 1.0};
+  info.frame_id = "lidar";
+  return info;
+}
+
+image::PackedRaster make_solid_image(
+  std::uint32_t width, std::uint32_t height, const std::array<std::uint8_t, 3> & bgr)
+{
+  image::PackedRaster raster;
+  raster.width = width;
+  raster.height = height;
+  raster.encoding = "bgr8";
+  raster.bgr.assign(static_cast<std::size_t>(width) * height * 3U, std::byte{bgr[0]});
+  for (std::size_t i = 1; i < 3; ++i) {
+    for (std::size_t p = 0; p < static_cast<std::size_t>(width) * height; ++p) {
+      raster.bgr[p * 3U + i] = std::byte{bgr[i]};
+    }
+  }
+  return raster;
+}
+
+TEST(CloudMapper, CameraColorsTheExportedMap)
+{
+  // Camera is co-located with the LiDAR (identity rotation) but shifted 10 m
+  // behind it along z, so the static room scene is 9–12 m in front of the
+  // camera and projects inside the image. Every pixel is red; the exported map
+  // should therefore carry a red BGR color for every voxel.
+  slam::CloudMapperConfig config;
+  config.camera = slam::CloudMapperConfig::CameraConfig{};
+  config.camera->info = make_test_camera_info(64, 48);
+  config.camera->t_lidar_camera = {
+    1.0, 0.0, 0.0,  0.0,  // column 0
+    0.0, 1.0, 0.0,  0.0,  // column 1
+    0.0, 0.0, 1.0,  0.0,  // column 2
+    0.0, 0.0, 10.0, 1.0   // translation: camera 10 m behind lidar along z
+  };
+  config.camera->use_rectified = false;
+
+  slam::CloudMapper mapper(config);
+  constexpr std::int64_t kDtNs = 100'000'000;  // 10 Hz
+  std::int64_t stamp = 1'000'000'000'000'000'000LL;
+  constexpr std::array<std::uint8_t, 3> kRed{0, 0, 255};
+  for (int i = 0; i < 120; ++i) {
+    mapper.insert_image(stamp, make_solid_image(64, 48, kRed));
+    mapper.insert(make_room_scan(stamp));
+    stamp += kDtNs;
+  }
+
+  const slam::CloudMap map = mapper.finish();
+
+  ASSERT_FALSE(map.points.empty());
+  ASSERT_EQ(map.colors.size(), map.points.size());
+  for (const auto & c : map.colors) {
+    EXPECT_EQ(c, kRed);
+  }
 }
 
 }  // namespace

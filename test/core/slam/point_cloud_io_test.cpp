@@ -12,6 +12,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <sstream>
 #include <string>
@@ -40,6 +41,11 @@ float read_float(const std::string & body, std::size_t index)
   float value = 0.0F;
   std::memcpy(&value, body.data() + index * sizeof(float), sizeof(float));
   return value;
+}
+
+std::uint8_t read_u8(const std::string & body, std::size_t offset)
+{
+  return static_cast<std::uint8_t>(body[offset]);
 }
 
 TEST(PointCloudIo, WritesXyzPlyHeaderAndBody)
@@ -96,6 +102,55 @@ TEST(PointCloudIo, EmptyCloudWritesZeroVertices)
   const auto [header, body] = split_ply(os.str());
   EXPECT_NE(header.find("element vertex 0\n"), std::string::npos);
   EXPECT_TRUE(body.empty());
+}
+
+TEST(PointCloudIo, IncludesColorWhenSizesMatch)
+{
+  const std::vector<std::array<float, 3>> points = {{1.0F, 2.0F, 3.0F}};
+  // BGR triple: blue=10, green=20, red=30.
+  const std::vector<std::array<std::uint8_t, 3>> colors = {{10, 20, 30}};
+  std::ostringstream os;
+  slam::write_ply(os, points, {}, colors);
+  const auto [header, body] = split_ply(os.str());
+
+  EXPECT_NE(header.find("property uchar red\n"), std::string::npos);
+  EXPECT_NE(header.find("property uchar green\n"), std::string::npos);
+  EXPECT_NE(header.find("property uchar blue\n"), std::string::npos);
+  ASSERT_EQ(body.size(), 3U * sizeof(float) + 3U);
+  EXPECT_FLOAT_EQ(read_float(body, 0), 1.0F);
+  EXPECT_EQ(read_u8(body, 3U * sizeof(float) + 0U), 30U);  // red <- BGR[2]
+  EXPECT_EQ(read_u8(body, 3U * sizeof(float) + 1U), 20U);  // green <- BGR[1]
+  EXPECT_EQ(read_u8(body, 3U * sizeof(float) + 2U), 10U);  // blue <- BGR[0]
+}
+
+TEST(PointCloudIo, OmitsColorOnSizeMismatch)
+{
+  const std::vector<std::array<float, 3>> points = {{0.0F, 0.0F, 0.0F}, {1.0F, 1.0F, 1.0F}};
+  const std::vector<std::array<std::uint8_t, 3>> colors = {{1, 2, 3}};  // wrong length
+  std::ostringstream os;
+  slam::write_ply(os, points, {}, colors);
+  const auto [header, body] = split_ply(os.str());
+
+  EXPECT_EQ(header.find("red"), std::string::npos);
+  EXPECT_EQ(body.size(), 2U * 3U * sizeof(float));
+}
+
+TEST(PointCloudIo, ColorAndIntensityTogether)
+{
+  const std::vector<std::array<float, 3>> points = {{0.0F, 0.0F, 0.0F}};
+  const std::vector<float> intensities = {5.0F};
+  const std::vector<std::array<std::uint8_t, 3>> colors = {{10, 20, 30}};
+  std::ostringstream os;
+  slam::write_ply(os, points, intensities, colors);
+  const auto [header, body] = split_ply(os.str());
+
+  EXPECT_NE(header.find("property float intensity\n"), std::string::npos);
+  EXPECT_NE(header.find("property uchar red\n"), std::string::npos);
+  ASSERT_EQ(body.size(), 4U * sizeof(float) + 3U);
+  EXPECT_FLOAT_EQ(read_float(body, 3), 5.0F);              // intensity after xyz
+  EXPECT_EQ(read_u8(body, 4U * sizeof(float) + 0U), 30U);  // red
+  EXPECT_EQ(read_u8(body, 4U * sizeof(float) + 1U), 20U);  // green
+  EXPECT_EQ(read_u8(body, 4U * sizeof(float) + 2U), 10U);  // blue
 }
 
 }  // namespace

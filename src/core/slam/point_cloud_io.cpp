@@ -28,9 +28,10 @@ void write_f32(std::ostream & os, float value)
 
 void write_ply(
   std::ostream & os, std::span<const std::array<float, 3>> points,
-  std::span<const float> intensities)
+  std::span<const float> intensities, std::span<const std::array<std::uint8_t, 3>> colors)
 {
   const bool with_intensity = !intensities.empty() && intensities.size() == points.size();
+  const bool with_color = !colors.empty() && colors.size() == points.size();
 
   os << "ply\n"
      << "format binary_little_endian 1.0\n"
@@ -41,6 +42,11 @@ void write_ply(
   if (with_intensity) {
     os << "property float intensity\n";
   }
+  if (with_color) {
+    os << "property uchar red\n"
+       << "property uchar green\n"
+       << "property uchar blue\n";
+  }
   os << "end_header\n";
 
   for (std::size_t i = 0; i < points.size(); ++i) {
@@ -49,6 +55,12 @@ void write_ply(
     write_f32(os, points[i][2]);
     if (with_intensity) {
       write_f32(os, intensities[i]);
+    }
+    if (with_color) {
+      // Internal colors are BGR; PLY red/green/blue order requires the swap.
+      os.put(static_cast<char>(colors[i][2]));
+      os.put(static_cast<char>(colors[i][1]));
+      os.put(static_cast<char>(colors[i][0]));
     }
   }
 }
