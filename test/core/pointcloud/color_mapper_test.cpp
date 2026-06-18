@@ -21,9 +21,9 @@ TEST(ColorMapper, MapsMinMaxToEnds)
   ColorMapper mapper(ColorScheme::kViridis);
   const auto cmin = mapper.map(0.0, 0.0, 1.0);
   const auto cmax = mapper.map(1.0, 0.0, 1.0);
-  const auto cmid = mapper.map(0.5, 0.0, 1.0);
+  const auto mid_color = mapper.map(0.5, 0.0, 1.0);
   EXPECT_NE(cmin, cmax);
-  EXPECT_NE(cmin, cmid);
+  EXPECT_NE(cmin, mid_color);
 }
 
 TEST(ColorMapper, ClampsOutOfRange)
