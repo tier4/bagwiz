@@ -53,7 +53,7 @@ public:
   void add(float x, float y, float z, float intensity);
 
   // Number of occupied voxels accumulated so far.
-  [[nodiscard]] std::size_t size() const { return accum_.size(); }
+  [[nodiscard]] std::size_t size() const noexcept { return accum_.size(); }
 
   // Centroid of each occupied voxel, in first-seen order.
   [[nodiscard]] std::vector<std::array<float, 3>> points() const;

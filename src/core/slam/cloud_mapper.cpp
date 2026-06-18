@@ -114,7 +114,7 @@ struct CloudMapper::Impl
     std::vector<FrameRef> frames;
   };
 
-  CloudMapperConfig config;
+  const CloudMapperConfig config;  // Con.4: set once at construction, never mutated
   glim::TimeKeeper time_keeper;
   glim::CloudPreprocessor preprocessor;
   glim::OdometryEstimationCT odometry;
@@ -292,12 +292,26 @@ CloudMapper::CloudMapper(CloudMapperConfig config)
   // The level is restored via RAII so a throwing GLIM constructor cannot leave
   // the shared logger muted for the rest of the process.
   const auto logger = glim::get_default_logger();
-  struct LevelGuard
+  // Restore the logger's level on scope exit. A non-copyable RAII guard (it holds
+  // a reference, and double-restoring would be wrong), so copy/move are deleted.
+  class LevelGuard
   {
-    spdlog::logger & logger;
-    spdlog::level::level_enum level;
-    ~LevelGuard() { logger.set_level(level); }
-  } guard{*logger, logger->level()};
+  public:
+    LevelGuard(spdlog::logger & logger, spdlog::level::level_enum level)
+    : logger_(logger), level_(level)
+    {
+    }
+    ~LevelGuard() { logger_.set_level(level_); }
+    LevelGuard(const LevelGuard &) = delete;
+    LevelGuard & operator=(const LevelGuard &) = delete;
+    LevelGuard(LevelGuard &&) = delete;
+    LevelGuard & operator=(LevelGuard &&) = delete;
+
+  private:
+    spdlog::logger & logger_;
+    spdlog::level::level_enum level_;
+  };
+  const LevelGuard guard{*logger, logger->level()};
   logger->set_level(spdlog::level::off);
   impl_ = std::make_unique<Impl>(config);
 }

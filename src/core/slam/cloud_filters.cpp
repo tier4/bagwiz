@@ -10,6 +10,8 @@
 
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace bagwiz::core::slam
@@ -22,18 +24,23 @@ namespace
 constexpr double kMinResolution = 1e-3;
 
 // Mixed integer hash for a 3D voxel index (the classic Teschner et al. spatial
-// hash constants). Good enough spread for unordered_map bucketing.
-constexpr std::int64_t kHashX = 73856093;
-constexpr std::int64_t kHashY = 19349663;
-constexpr std::int64_t kHashZ = 83492791;
+// hash constants). Unsigned so the multiply wraps (defined) rather than risking
+// signed-integer overflow (UB). Good enough spread for unordered_map bucketing.
+constexpr std::size_t kHashX = 73856093U;
+constexpr std::size_t kHashY = 19349663U;
+constexpr std::size_t kHashZ = 83492791U;
+
+// One axis's contribution to the hash. A voxel index is reinterpreted (not
+// value-converted) to unsigned so negative indices keep a clean bit pattern.
+std::size_t mix(std::int32_t index, std::size_t multiplier)
+{
+  return static_cast<std::size_t>(static_cast<std::uint32_t>(index)) * multiplier;
+}
 }  // namespace
 
 std::size_t VoxelGrid::KeyHash::operator()(const Key & key) const
 {
-  const auto h = (static_cast<std::int64_t>(key.x) * kHashX) ^
-                 (static_cast<std::int64_t>(key.y) * kHashY) ^
-                 (static_cast<std::int64_t>(key.z) * kHashZ);
-  return static_cast<std::size_t>(h);
+  return mix(key.x, kHashX) ^ mix(key.y, kHashY) ^ mix(key.z, kHashZ);
 }
 
 VoxelGrid::VoxelGrid(double resolution, bool with_intensity)
