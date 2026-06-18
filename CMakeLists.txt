@@ -328,6 +328,22 @@ add_executable(bagwiz
 )
 target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang ${OpenCV_LIBS})
 
+# --- Optional in-process GLIM SLAM command (`bagwiz slam`) --------------------
+# OFF by default so normal builds need no GLIM. Enable with `pixi run build-slam`
+# (which builds the GLIM stack into install/<distro>/glim-deps via build-glim
+# and passes -DBAGWIZ_WITH_SLAM=ON plus that prefix on CMAKE_PREFIX_PATH). The
+# GLIM types stay confined to cloud_odometry.cpp (pimpl); slam.cpp is GLIM-free.
+option(BAGWIZ_WITH_SLAM "Build the in-process GLIM `bagwiz slam` command" OFF)
+if(BAGWIZ_WITH_SLAM)
+  find_package(glim CONFIG REQUIRED)
+  find_package(gtsam_points CONFIG REQUIRED)
+  target_sources(bagwiz PRIVATE
+    src/core/slam/cloud_odometry.cpp
+    src/commands/slam.cpp)
+  target_link_libraries(bagwiz PRIVATE glim::glim gtsam_points::gtsam_points)
+  target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_SLAM)
+endif()
+
 install(TARGETS bagwiz RUNTIME DESTINATION bin)
 install(TARGETS bagwiz_core
   EXPORT export_${PROJECT_NAME}

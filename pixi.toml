@@ -59,6 +59,11 @@ opencv = "*"
 # (src/core/tui/image/terminal_image_renderer.cpp). Linked PRIVATE behind the
 # renderer .cpp so it never enters bagwiz_core's export set, matching libav.
 libsixel = "*"
+# libboost-devel (conda-forge) supplies Boost for the GLIM SLAM stack built by
+# `pixi run build-glim`. System Boost is unusable here: conda's gcc excludes
+# /usr/include, so Boost must come from the env. Consumed only by the opt-in
+# SLAM build (`build-slam`), but cheap enough to keep in the shared base.
+libboost-devel = "*"
 
 # Activation applies to every environment: select Cyclone DDS (bagwiz depends on
 # rmw_cyclonedds_cpp; Fast DDS is the distro default since Jazzy) and source the
@@ -81,6 +86,19 @@ scripts = ["scripts/pixi-activate.sh"]
 args = [{ arg = "build_type", default = "Release" }]
 cmd = 'colcon build --symlink-install --packages-up-to bagwiz --build-base "build/$PIXI_ENVIRONMENT_NAME" --install-base "install/$PIXI_ENVIRONMENT_NAME" --cmake-args -DCMAKE_BUILD_TYPE={{ build_type }} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && ln -sfn "$PIXI_ENVIRONMENT_NAME/compile_commands.json" build/compile_commands.json'
 inputs = ["src", "include", "test", "CMakeLists.txt", "package.xml"]
+
+# Build the GLIM SLAM dependency stack (GTSAM + gtsam_points + glim) once into
+# install/<distro>/glim-deps. The script is idempotent: it no-ops when the
+# prefix already holds the pinned versions. Needed only for the SLAM build.
+[tasks.build-glim]
+cmd = 'bash scripts/build-glim-deps.sh'
+inputs = ["scripts/build-glim-deps.sh"]
+
+# Build bagwiz with the opt-in `bagwiz slam` command. Ensures the GLIM prefix
+# exists, then turns on BAGWIZ_WITH_SLAM and points CMake at the prefix.
+[tasks.build-slam]
+depends-on = ["build-glim"]
+cmd = 'colcon build --symlink-install --packages-up-to bagwiz --build-base "build/$PIXI_ENVIRONMENT_NAME" --install-base "install/$PIXI_ENVIRONMENT_NAME" --cmake-args -DCMAKE_BUILD_TYPE=Release -DBAGWIZ_WITH_SLAM=ON "-DCMAKE_PREFIX_PATH=$PIXI_PROJECT_ROOT/install/$PIXI_ENVIRONMENT_NAME/glim-deps" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && ln -sfn "$PIXI_ENVIRONMENT_NAME/compile_commands.json" build/compile_commands.json'
 
 [tasks.test]
 cmd = 'colcon test --packages-select bagwiz --build-base "build/$PIXI_ENVIRONMENT_NAME" --install-base "install/$PIXI_ENVIRONMENT_NAME" --event-handlers console_direct+ && colcon test-result --test-result-base "build/$PIXI_ENVIRONMENT_NAME" --verbose'
