@@ -9,6 +9,8 @@
 #ifndef BAGWIZ__CORE__IMAGE__CAMERA_INFO_HPP_
 #define BAGWIZ__CORE__IMAGE__CAMERA_INFO_HPP_
 
+#include "bagwiz/io/bag_io.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -55,6 +57,14 @@ struct CameraInfoResult
 // distortion coefficients, rectification matrix, homogeneous entries (k[8],
 // p[10]), and the depth translation in p[11] are left unchanged.
 [[nodiscard]] CameraInfo scale_camera_info(const CameraInfo & info, double scale);
+
+// Auto-resolve a CameraInfo topic from an image topic name.
+// Only the three known image suffixes map to a sibling /camera_info topic:
+//   /image_raw/compressed, /image_rect_color/compressed, /image_rect_color
+// Returns std::nullopt if the image topic has no recognized suffix or the
+// candidate CameraInfo topic is not present in the bag.
+[[nodiscard]] std::optional<std::string> resolve_camera_info_topic(
+  const std::string & image_topic, std::span<const io::TopicInfo> topics);
 
 }  // namespace bagwiz::core::image
 

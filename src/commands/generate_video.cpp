@@ -133,30 +133,7 @@ struct PointCloudSpan
 std::optional<std::string> resolve_camera_info_topic(
   const std::string & image_topic, std::span<const io::TopicInfo> topics)
 {
-  constexpr std::string_view kImageRawCompressed = "/image_raw/compressed";
-  constexpr std::string_view kImageRectColorCompressed = "/image_rect_color/compressed";
-  constexpr std::string_view kImageRectColor = "/image_rect_color";
-  constexpr std::string_view kCameraInfoSuffix = "/camera_info";
-
-  std::string_view stem{image_topic};
-  if (stem.ends_with(kImageRawCompressed)) {
-    stem.remove_suffix(kImageRawCompressed.size());
-  } else if (stem.ends_with(kImageRectColorCompressed)) {
-    stem.remove_suffix(kImageRectColorCompressed.size());
-  } else if (stem.ends_with(kImageRectColor)) {
-    stem.remove_suffix(kImageRectColor.size());
-  } else {
-    return std::nullopt;
-  }
-
-  std::string candidate{stem};
-  candidate += kCameraInfoSuffix;
-  for (const auto & t : topics) {
-    if (t.name == candidate && t.type == kCameraInfoType) {
-      return candidate;
-    }
-  }
-  return std::nullopt;
+  return core::image::resolve_camera_info_topic(image_topic, topics);
 }
 
 // Validate an explicit camera-info topic: it must exist in the bag and have the
