@@ -9,11 +9,14 @@
 #ifndef BAGWIZ__CORE__SLAM__CLOUD_MAPPER_HPP_
 #define BAGWIZ__CORE__SLAM__CLOUD_MAPPER_HPP_
 
+#include "bagwiz/core/slam/imu_sample.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
+#include "bagwiz/core/slam/sensor_transform.hpp"
 #include "bagwiz/core/trajectory.hpp"
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <vector>
 
 // LiDAR-only optimized mapping over a sequence of scans. Extends the M1
@@ -48,6 +51,12 @@ struct CloudMapperConfig
   // data is, but a value below ~0.15 m can still recover detail from the offset
   // grids of overlapping frames (at the cost of a much larger map). Must be > 0.
   double map_resolution = 0.2;
+
+  // LiDAR↔IMU extrinsic. nullopt → LiDAR-only CT odometry (the M2 behavior; IMU
+  // disabled in sub/global mapping). A value → LiDAR-IMU CPU odometry with that
+  // extrinsic, and IMU enabled in sub/global mapping; feed IMU via insert_imu().
+  // Convention is GLIM's T_lidar_imu (p_lidar = T_lidar_imu * p_imu).
+  std::optional<SensorTransform> t_lidar_imu;
 };
 
 // Result of CloudMapper::finish(). All fields are GLIM-free plain data so the
@@ -77,6 +86,12 @@ public:
   CloudMapper & operator=(const CloudMapper &) = delete;
   CloudMapper(CloudMapper &&) noexcept;
   CloudMapper & operator=(CloudMapper &&) noexcept;
+
+  // Feed one IMU sample (LiDAR-IMU mode only; a no-op in LiDAR-only mode).
+  // Forwarded to the odometry and the sub/global mapping stages, all of which
+  // buffer it for their own preintegration. Samples must arrive in
+  // non-decreasing timestamp order, interleaved with scans.
+  void insert_imu(const ImuSample & imu);
 
   // Feed one scan. Scans must arrive in non-decreasing timestamp order. A scan
   // with no per-point time is fed with explicit zero per-point times (treated

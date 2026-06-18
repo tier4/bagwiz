@@ -8,7 +8,9 @@
 
 #include "bagwiz/core/slam/cloud_odometry.hpp"
 
+#include "bagwiz/core/slam/imu_sample.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
+#include "bagwiz/core/slam/sensor_transform.hpp"
 
 #include <gtest/gtest.h>
 
@@ -105,6 +107,81 @@ TEST(CloudOdometry, StationarySensorYieldsStableTrajectory)
   EXPECT_LT(max_x - min_x, 2.0) << "stationary trajectory drifted in x";
   EXPECT_LT(max_y - min_y, 2.0) << "stationary trajectory drifted in y";
   EXPECT_LT(max_z - min_z, 2.0) << "stationary trajectory drifted in z";
+}
+
+// A stationary IMU sample: gravity along +z (specific force of a level, static
+// sensor), no rotation. Fed to the LiDAR-IMU backend so it can gravity-align and
+// initialize its state.
+slam::ImuSample make_gravity_imu(std::int64_t stamp_ns)
+{
+  slam::ImuSample imu;
+  imu.stamp_ns = stamp_ns;
+  imu.frame_id = "imu";
+  imu.linear_acceleration = {0.0, 0.0, 9.80665};
+  imu.angular_velocity = {0.0, 0.0, 0.0};
+  return imu;
+}
+
+TEST(CloudOdometry, ImuModeStationaryYieldsStableTrajectory)
+{
+  // Identity LiDAR↔IMU extrinsic (the synthetic IMU shares the LiDAR frame), so
+  // CloudOdometry takes the LiDAR-IMU CPU backend. The IMU reads pure gravity and
+  // the scene is fixed, so the trajectory must initialize, stay finite and
+  // bounded, and be time-monotonic — proving the IMU path runs in-process.
+  slam::CloudOdometry odometry{slam::SensorTransform{}};
+
+  constexpr std::int64_t kImuDtNs = 5'000'000;     // 200 Hz
+  constexpr std::int64_t kScanDtNs = 100'000'000;  // 10 Hz
+  const std::int64_t base = 1'000'000'000'000'000'000LL;
+
+  // Prime the estimator with 0.5 s of IMU before the first scan so it can
+  // estimate the initial gravity-aligned state.
+  std::int64_t imu_stamp = base;
+  const std::int64_t first_scan = base + 500'000'000LL;
+  while (imu_stamp < first_scan) {
+    odometry.insert_imu(make_gravity_imu(imu_stamp));
+    imu_stamp += kImuDtNs;
+  }
+
+  // 80 scans @ 10 Hz (8 s, well past the 5 s smoother lag) with IMU filling each
+  // inter-scan interval and a sample exactly at the scan time.
+  for (int i = 0; i < 80; ++i) {
+    const std::int64_t scan_stamp = first_scan + static_cast<std::int64_t>(i) * kScanDtNs;
+    while (imu_stamp < scan_stamp) {
+      odometry.insert_imu(make_gravity_imu(imu_stamp));
+      imu_stamp += kImuDtNs;
+    }
+    odometry.insert_imu(make_gravity_imu(scan_stamp));
+    odometry.insert(make_room_scan(scan_stamp));
+  }
+
+  const auto trajectory = odometry.finish();
+  ASSERT_FALSE(trajectory.empty());
+
+  for (std::size_t i = 1; i < trajectory.size(); ++i) {
+    EXPECT_LT(trajectory[i - 1].timestamp_ns, trajectory[i].timestamp_ns);
+  }
+
+  double min_x = trajectory.front().tx;
+  double max_x = min_x;
+  double min_y = trajectory.front().ty;
+  double max_y = min_y;
+  double min_z = trajectory.front().tz;
+  double max_z = min_z;
+  for (const auto & pose : trajectory) {
+    min_x = std::min(min_x, pose.tx);
+    max_x = std::max(max_x, pose.tx);
+    min_y = std::min(min_y, pose.ty);
+    max_y = std::max(max_y, pose.ty);
+    min_z = std::min(min_z, pose.tz);
+    max_z = std::max(max_z, pose.tz);
+    ASSERT_TRUE(std::isfinite(pose.tx) && std::isfinite(pose.ty) && std::isfinite(pose.tz));
+  }
+  // Loose bound: a symmetric, noise-free synthetic scene is weakly constrained;
+  // we assert the IMU pipeline does not diverge, not tight accuracy.
+  EXPECT_LT(max_x - min_x, 3.0) << "stationary IMU trajectory drifted in x";
+  EXPECT_LT(max_y - min_y, 3.0) << "stationary IMU trajectory drifted in y";
+  EXPECT_LT(max_z - min_z, 3.0) << "stationary IMU trajectory drifted in z";
 }
 
 }  // namespace

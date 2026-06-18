@@ -9,6 +9,7 @@
 #include "bagwiz/core/slam/cloud_mapper.hpp"
 
 #include "bagwiz/core/slam/cloud_filters.hpp"
+#include "bagwiz/core/slam/glim_estimator.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
 #include "bagwiz/core/trajectory.hpp"
 
@@ -18,14 +19,11 @@
 #include <glim/mapping/sub_map.hpp>
 #include <glim/mapping/sub_mapping.hpp>
 #include <glim/odometry/estimation_frame.hpp>
-#include <glim/odometry/odometry_estimation_ct.hpp>
+#include <glim/odometry/odometry_estimation_base.hpp>
 #include <glim/preprocess/cloud_preprocessor.hpp>
-#include <glim/util/logging.hpp>
 #include <glim/util/raw_points.hpp>
 #include <glim/util/time_keeper.hpp>
 #include <gtsam_points/types/point_cloud.hpp>
-
-#include <spdlog/spdlog.h>
 
 #include <array>
 #include <cmath>
@@ -33,6 +31,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -59,23 +58,24 @@ core::TrajectoryPose to_pose(double stamp, const Eigen::Isometry3d & transform)
   return pose;
 }
 
-// We feed LiDAR only (OdometryEstimationCT is LiDAR-only CT-GICP) and never call
-// insert_imu, so disable IMU in both mapping stages — the GLIM defaults enable
-// it, which would make insert_submap build IMU factors from uninitialised
-// bias/velocity and warn that frames are not IMU-framed. Everything else keeps
-// GLIM's stock defaults: the exported map's density is controlled separately, by
-// re-binning the optimized per-frame points (see CloudMapper::Impl::fill_map),
-// so the sub mapping that drives the optimization is left untouched.
-glim::SubMappingParams make_sub_mapping_params()
+// IMU in the mapping stages is enabled iff we run the LiDAR-IMU backend (an
+// extrinsic was provided and insert_imu is fed). In LiDAR-only mode it must stay
+// off — GLIM's defaults enable it, which would make insert_submap build IMU
+// factors from uninitialised bias/velocity and warn that frames are not
+// IMU-framed. Everything else keeps GLIM's stock defaults: the exported map's
+// density is controlled separately, by re-binning the optimized per-frame points
+// (see CloudMapper::Impl::fill_map), so the sub mapping that drives the
+// optimization is left untouched.
+glim::SubMappingParams make_sub_mapping_params(bool enable_imu)
 {
   glim::SubMappingParams params;
-  params.enable_imu = false;
+  params.enable_imu = enable_imu;
   return params;
 }
-glim::GlobalMappingParams make_global_mapping_params()
+glim::GlobalMappingParams make_global_mapping_params(bool enable_imu)
 {
   glim::GlobalMappingParams params;
-  params.enable_imu = false;
+  params.enable_imu = enable_imu;
   return params;
 }
 }  // namespace
@@ -117,7 +117,8 @@ struct CloudMapper::Impl
   const CloudMapperConfig config;  // Con.4: set once at construction, never mutated
   glim::TimeKeeper time_keeper;
   glim::CloudPreprocessor preprocessor;
-  glim::OdometryEstimationCT odometry;
+  // CT (LiDAR-only) or CPU (LiDAR-IMU) behind the common base interface.
+  std::unique_ptr<glim::OdometryEstimationBase> odometry;
   std::unique_ptr<glim::SubMapping> sub_mapping;
   std::unique_ptr<glim::GlobalMapping> global_mapping;
   std::vector<SubMapEntry> entries;
@@ -125,8 +126,12 @@ struct CloudMapper::Impl
 
   explicit Impl(const CloudMapperConfig & cfg)
   : config(cfg),
-    sub_mapping(std::make_unique<glim::SubMapping>(make_sub_mapping_params())),
-    global_mapping(std::make_unique<glim::GlobalMapping>(make_global_mapping_params()))
+    odometry(detail::make_odometry_estimator(cfg.t_lidar_imu)),
+    sub_mapping(
+      std::make_unique<glim::SubMapping>(make_sub_mapping_params(cfg.t_lidar_imu.has_value()))),
+    global_mapping(
+      std::make_unique<glim::GlobalMapping>(
+        make_global_mapping_params(cfg.t_lidar_imu.has_value())))
   {
   }
 
@@ -285,39 +290,32 @@ struct CloudMapper::Impl
 
 CloudMapper::CloudMapper(CloudMapperConfig config)
 {
-  // GLIM logs ~50 lines of "config file not found / using default value" while
-  // its modules read parameters at construction (we drive GLIM with no config
-  // directory on purpose — its built-in defaults are what we want). Silence that
-  // one-time startup chatter; genuine runtime warnings still surface afterwards.
-  // The level is restored via RAII so a throwing GLIM constructor cannot leave
-  // the shared logger muted for the rest of the process.
-  const auto logger = glim::get_default_logger();
-  // Restore the logger's level on scope exit. A non-copyable RAII guard (it holds
-  // a reference, and double-restoring would be wrong), so copy/move are deleted.
-  class LevelGuard
-  {
-  public:
-    LevelGuard(spdlog::logger & logger, spdlog::level::level_enum level)
-    : logger_(logger), level_(level)
-    {
-    }
-    ~LevelGuard() { logger_.set_level(level_); }
-    LevelGuard(const LevelGuard &) = delete;
-    LevelGuard & operator=(const LevelGuard &) = delete;
-    LevelGuard(LevelGuard &&) = delete;
-    LevelGuard & operator=(LevelGuard &&) = delete;
-
-  private:
-    spdlog::logger & logger_;
-    spdlog::level::level_enum level_;
-  };
-  const LevelGuard guard{*logger, logger->level()};
-  logger->set_level(spdlog::level::off);
+  // Silence GLIM's one-time construction chatter (it logs ~50 "config not found /
+  // using default" lines while reading params; we drive it with no config dir on
+  // purpose). RAII-restored so a throwing GLIM constructor cannot leave the
+  // shared logger muted for the rest of the process; genuine runtime warnings
+  // still surface afterwards.
+  const detail::ScopedLoggerSilence silence;
   impl_ = std::make_unique<Impl>(config);
 }
 CloudMapper::~CloudMapper() = default;
 CloudMapper::CloudMapper(CloudMapper &&) noexcept = default;
 CloudMapper & CloudMapper::operator=(CloudMapper &&) noexcept = default;
+
+void CloudMapper::insert_imu(const ImuSample & imu)
+{
+  const double stamp = static_cast<double>(imu.stamp_ns) * 1e-9;
+  const Eigen::Vector3d linear_acc(
+    imu.linear_acceleration[0], imu.linear_acceleration[1], imu.linear_acceleration[2]);
+  const Eigen::Vector3d angular_vel(
+    imu.angular_velocity[0], imu.angular_velocity[1], imu.angular_velocity[2]);
+  // Route to all three stages (no-ops in LiDAR-only mode): odometry estimates
+  // motion from it; sub/global mapping use it for their own IMU factors. Each
+  // stage buffers IMU in its own preintegrator.
+  impl_->odometry->insert_imu(stamp, linear_acc, angular_vel);
+  impl_->sub_mapping->insert_imu(stamp, linear_acc, angular_vel);
+  impl_->global_mapping->insert_imu(stamp, linear_acc, angular_vel);
+}
 
 void CloudMapper::insert(const LidarScan & scan)
 {
@@ -349,7 +347,10 @@ void CloudMapper::insert(const LidarScan & scan)
 
   const auto preprocessed = impl_->preprocessor.preprocess(raw);
   std::vector<glim::EstimationFrame::ConstPtr> marginalized;
-  impl_->odometry.insert_frame(preprocessed, marginalized);
+  // The active-frame return is intentionally ignored here: the mapper's
+  // trajectory comes from the globally-optimized submap poses in finish(), not
+  // from the odometry estimate. Only the marginalized frames feed sub mapping.
+  impl_->odometry->insert_frame(preprocessed, marginalized);
 
   // The marginalized odometry frames are this mapper's input to sub mapping; each
   // one's full points are stashed before sub mapping can drop them.
@@ -364,7 +365,7 @@ CloudMap CloudMapper::finish()
   // Flush the odometry smoother window — the remaining frames are marginalized
   // exactly as glim's async pipeline does at end of sequence — into sub mapping,
   // then force out the final submap.
-  for (const auto & frame : impl_->odometry.get_remaining_frames()) {
+  for (const auto & frame : impl_->odometry->get_remaining_frames()) {
     impl_->feed_sub_mapping(frame);
   }
   // This drain only sees submaps the flushed remaining frames newly completed —

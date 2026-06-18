@@ -8,24 +8,23 @@
 
 #include "bagwiz/core/slam/cloud_odometry.hpp"
 
+#include "bagwiz/core/slam/glim_estimator.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
 #include "bagwiz/core/trajectory.hpp"
 
 #include <Eigen/Geometry>
 #include <glim/odometry/estimation_frame.hpp>
-#include <glim/odometry/odometry_estimation_ct.hpp>
+#include <glim/odometry/odometry_estimation_base.hpp>
 #include <glim/preprocess/cloud_preprocessor.hpp>
-#include <glim/util/logging.hpp>
 #include <glim/util/raw_points.hpp>
 #include <glim/util/time_keeper.hpp>
-
-#include <spdlog/spdlog.h>
 
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace bagwiz::core::slam
@@ -56,29 +55,39 @@ struct CloudOdometry::Impl
 {
   glim::TimeKeeper time_keeper;
   glim::CloudPreprocessor preprocessor;
-  glim::OdometryEstimationCT odometry;
+  // CT (LiDAR-only) or CPU (LiDAR-IMU) behind the common base interface.
+  std::unique_ptr<glim::OdometryEstimationBase> odometry;
   // Keyed by timestamp so every scan contributes exactly one pose and a later
   // finalized (marginalized) pose overwrites the earlier provisional estimate.
   // std::map also keeps the trajectory ordered by time for free.
   std::map<std::int64_t, core::TrajectoryPose> poses;
 };
 
-CloudOdometry::CloudOdometry()
+CloudOdometry::CloudOdometry(std::optional<SensorTransform> t_lidar_imu)
 {
-  // GLIM logs ~50 lines of "config file not found / using default value" while
-  // its modules read parameters at construction. We deliberately drive GLIM with
-  // no config directory (its built-in defaults are exactly what we want here), so
-  // silence that one-time startup chatter. Genuine runtime warnings/errors still
-  // surface at the logger's previous level once construction is done.
-  const auto logger = glim::get_default_logger();
-  const auto previous_level = logger->level();
-  logger->set_level(spdlog::level::off);
+  // Silence GLIM's one-time construction chatter (it logs ~50 "config not found /
+  // using default" lines while reading params; we drive it with no config dir on
+  // purpose). RAII-restored so a throwing GLIM constructor cannot leave the
+  // shared logger muted for the rest of the process; genuine runtime warnings
+  // still surface afterwards.
+  const detail::ScopedLoggerSilence silence;
   impl_ = std::make_unique<Impl>();
-  logger->set_level(previous_level);
+  impl_->odometry = detail::make_odometry_estimator(t_lidar_imu);
 }
 CloudOdometry::~CloudOdometry() = default;
 CloudOdometry::CloudOdometry(CloudOdometry &&) noexcept = default;
 CloudOdometry & CloudOdometry::operator=(CloudOdometry &&) noexcept = default;
+
+void CloudOdometry::insert_imu(const ImuSample & imu)
+{
+  const double stamp = static_cast<double>(imu.stamp_ns) * 1e-9;
+  const Eigen::Vector3d linear_acc(
+    imu.linear_acceleration[0], imu.linear_acceleration[1], imu.linear_acceleration[2]);
+  const Eigen::Vector3d angular_vel(
+    imu.angular_velocity[0], imu.angular_velocity[1], imu.angular_velocity[2]);
+  // A no-op on the CT base (LiDAR-only mode); the CPU estimator buffers it.
+  impl_->odometry->insert_imu(stamp, linear_acc, angular_vel);
+}
 
 void CloudOdometry::insert(const LidarScan & scan)
 {
@@ -118,7 +127,7 @@ void CloudOdometry::insert(const LidarScan & scan)
   // smoother-window's worth that never marginalize), then let any finalized
   // pose for the same timestamp overwrite it.
   const glim::EstimationFrame::ConstPtr active =
-    impl_->odometry.insert_frame(preprocessed, marginalized);
+    impl_->odometry->insert_frame(preprocessed, marginalized);
   if (active) {
     const auto pose = to_pose(*active);
     impl_->poses[pose.timestamp_ns] = pose;
@@ -133,7 +142,7 @@ void CloudOdometry::insert(const LidarScan & scan)
 
 std::vector<core::TrajectoryPose> CloudOdometry::finish()
 {
-  for (const auto & frame : impl_->odometry.get_remaining_frames()) {
+  for (const auto & frame : impl_->odometry->get_remaining_frames()) {
     if (frame) {
       const auto pose = to_pose(*frame);
       impl_->poses[pose.timestamp_ns] = pose;
