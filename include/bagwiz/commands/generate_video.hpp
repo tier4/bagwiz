@@ -9,6 +9,10 @@
 #ifndef BAGWIZ__COMMANDS__GENERATE_VIDEO_HPP_
 #define BAGWIZ__COMMANDS__GENERATE_VIDEO_HPP_
 
+#include "bagwiz/core/pointcloud/color_scheme.hpp"
+#include "bagwiz/core/pointcloud/property.hpp"
+
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -45,6 +49,21 @@ struct GenerateVideoArgs
   std::optional<std::string> camera_info_topic;
   // Apply OpenCV undistortion using the resolved camera info.
   bool undistort = false;
+  // Scale output dimensions by this factor while preserving aspect ratio.
+  float resize_scale = 1.0f;
+
+  // Point-cloud overlay options.
+  std::optional<std::string> pointcloud_topic;
+  core::pointcloud::PointCloudProperty property = core::pointcloud::PointCloudProperty::kDistance;
+  std::optional<double> property_min;
+  std::optional<double> property_max;
+  core::pointcloud::ColorScheme colorscheme = core::pointcloud::ColorScheme::kViridis;
+  std::uint32_t point_size = 2;
+  float alpha = 1.0f;
+  // Internal toggle for the threaded point-cloud projection pipeline. When false
+  // the synchronous path is used, which keeps output bit-for-bit identical to the
+  // pre-threading implementation. Not exposed on the CLI; tests set this directly.
+  bool enable_threaded_projection = true;
 };
 
 // Classification of whether a topic can be rendered to video.

@@ -53,12 +53,13 @@ CameraInfoResult extract_camera_info(std::span<const std::byte> payload)
   try {
     cdr_walker::CdrReader reader(payload);
 
-    // std_msgs/Header
-    (void)reader.read_i32();     // header.stamp.sec
-    (void)reader.read_u32();     // header.stamp.nanosec
-    (void)reader.read_string();  // header.frame_id
-
     CameraInfo info;
+
+    // std_msgs/Header
+    (void)reader.read_i32();               // header.stamp.sec
+    (void)reader.read_u32();               // header.stamp.nanosec
+    info.frame_id = reader.read_string();  // header.frame_id
+
     info.height = reader.read_u32();
     info.width = reader.read_u32();
     info.distortion_model = reader.read_string();
@@ -103,6 +104,29 @@ CameraInfoResult extract_camera_info(std::span<const std::byte> payload)
     result.error = std::string("failed to parse sensor_msgs/msg/CameraInfo payload: ") + e.what();
   }
   return result;
+}
+
+CameraInfo scale_camera_info(const CameraInfo & info, double scale)
+{
+  CameraInfo scaled = info;
+  // K = [[fx, skew, cx], [0, fy, cy], [0, 0, 1]]
+  scaled.k[0] *= scale;
+  scaled.k[1] *= scale;
+  scaled.k[2] *= scale;
+  scaled.k[4] *= scale;
+  scaled.k[5] *= scale;
+  // P = [[fx', s', cx', tx], [0, fy', cy', ty], [0, 0, 1, tz]]
+  // The first two rows hold pixel coordinates and scale with the image; the
+  // third row (rotation / homogeneous coordinate) and tz do not.
+  scaled.p[0] *= scale;
+  scaled.p[1] *= scale;
+  scaled.p[2] *= scale;
+  scaled.p[3] *= scale;
+  scaled.p[4] *= scale;
+  scaled.p[5] *= scale;
+  scaled.p[6] *= scale;
+  scaled.p[7] *= scale;
+  return scaled;
 }
 
 }  // namespace bagwiz::core::image

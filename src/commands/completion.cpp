@@ -77,10 +77,14 @@ constexpr std::array<std::string_view, 2> kGenerateVideoSupportedTypes{{
   "sensor_msgs/msg/CompressedImage",
 }};
 
-// CameraInfo topic type accepted by `generate video --camera-info`. This MUST
+// CameraInfo topic type accepted by `generate video --cam-info`. This MUST
 // mirror the camera-info type constant in src/commands/generate_video.cpp.
 constexpr std::array<std::string_view, 1> kCameraInfoType{{
   "sensor_msgs/msg/CameraInfo",
+}};
+
+constexpr std::array<std::string_view, 1> kPointCloud2Type{{
+  "sensor_msgs/msg/PointCloud2",
 }};
 
 // Declarative table of commands that take a positional <topic> argument.
@@ -903,10 +907,10 @@ std::vector<std::string> complete_topic(const CompletionRequest & request)
 // `video`. The `<image_topic>` positional is completed earlier by
 // try_topic_completion via kTopicBindings (image topics only); <input>/<output>
 // are paths that fall through to the shell's file completion. Here we surface
-// `video` plus its own flags for any `-` word, and the value for `--camera-info`.
+// `video` plus its own flags for any `-` word, and the value for `--cam-info`.
 //
 //   video: `generate`(0) `video`(1) `<input>`(2) `<image_topic>`(3) `<output>`(4)
-//          [--camera-info <topic>] [--undistort] [-w|--overwrite]
+//          [--cam-info <topic>] [--undistort] [-w|--overwrite]
 std::vector<std::string> complete_generate(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -920,19 +924,39 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & sub = request.words[kFirstCommandArgWord];
     if (sub == "video") {
-      return matching(with_help({"--camera-info", "--undistort", "--overwrite", "-w"}), current);
+      return matching(
+        with_help({"--cam-info", "--overwrite", "--pcd", "--undistort", "-w"}), current);
     }
   }
 
-  if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--camera-info") {
-    if (request.words.size() <= kSecondCommandArgWord) {
-      return {};
-    }
-    const auto & bag_arg = request.words[kSecondCommandArgWord];
-    if (bag_arg.empty() || bag_arg.starts_with("-")) {
-      return {};
-    }
-    return complete_topics(expand_current_user_home(bag_arg), current, kCameraInfoType);
+  auto complete_topic_after_flag =
+    [&](const std::string_view & flag, const std::span<const std::string_view> & types) {
+      if (request.cursor_word == 0 || request.words[request.cursor_word - 1] != flag) {
+        return std::optional<std::vector<std::string>>{};
+      }
+      if (request.words.size() <= kSecondCommandArgWord) {
+        return std::optional<std::vector<std::string>>{std::vector<std::string>{}};
+      }
+      const auto & bag_arg = request.words[kSecondCommandArgWord];
+      if (bag_arg.empty() || bag_arg.starts_with("-")) {
+        return std::optional<std::vector<std::string>>{std::vector<std::string>{}};
+      }
+      return std::optional<std::vector<std::string>>{
+        complete_topics(expand_current_user_home(bag_arg), current, types)};
+    };
+
+  if (auto cam_info = complete_topic_after_flag("--cam-info", kCameraInfoType); cam_info) {
+    return std::move(*cam_info);
+  }
+  if (auto pcd = complete_topic_after_flag("--pcd", kPointCloud2Type); pcd) {
+    return std::move(*pcd);
+  }
+
+  if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--field") {
+    return matching({"distance", "intensity", "x", "y", "z"}, current);
+  }
+  if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--scheme") {
+    return matching({"inferno", "jet", "magma", "plasma", "rainbow", "turbo", "viridis"}, current);
   }
   return {};
 }

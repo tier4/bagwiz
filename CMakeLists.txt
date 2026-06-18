@@ -212,6 +212,9 @@ add_library(bagwiz_core
   src/core/image/image_decoder.cpp
   src/core/image/camera_info.cpp
   src/core/image/packed_raster.cpp
+  src/core/pointcloud/pointcloud2.cpp
+  src/core/pointcloud/color_mapper.cpp
+  src/core/pointcloud/projector.cpp
   src/core/video/frame_rate.cpp
   src/core/video/video_encoder.cpp
   src/core/tui/layout.cpp
@@ -491,8 +494,20 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_packed_raster_test test/core/image/packed_raster_test.cpp)
   target_link_libraries(bagwiz_packed_raster_test bagwiz_core)
 
+  ament_add_gtest(bagwiz_camera_info_test test/core/image/camera_info_test.cpp)
+  target_link_libraries(bagwiz_camera_info_test bagwiz_core)
+
   ament_add_gtest(bagwiz_compressed_image_test test/core/image/compressed_image_test.cpp)
   target_link_libraries(bagwiz_compressed_image_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_pointcloud2_test test/core/pointcloud/pointcloud2_test.cpp)
+  target_link_libraries(bagwiz_pointcloud2_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_color_mapper_test test/core/pointcloud/color_mapper_test.cpp)
+  target_link_libraries(bagwiz_color_mapper_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_projector_test test/core/pointcloud/projector_test.cpp)
+  target_link_libraries(bagwiz_projector_test bagwiz_core)
 
   # image_decoder lives in bagwiz_core; libav is linked explicitly so the test
   # can both drive the decoder and synthesize JPEG/PNG fixtures with libav

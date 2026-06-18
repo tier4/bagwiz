@@ -275,7 +275,7 @@ std::filesystem::path write_image_topics_fixture(const std::filesystem::path & p
 
 // MCAP carrying an image topic (/cam/image_raw/compressed) and its sibling
 // CameraInfo topic (/cam/camera_info), plus an unrelated topic (/points). Used to
-// verify `--camera-info` completion offers only the CameraInfo topic.
+// verify `--cam-info` completion offers only the CameraInfo topic.
 std::filesystem::path write_camera_info_fixture(const std::filesystem::path & path)
 {
   bagwiz::io::CreateOptions options;
@@ -1119,7 +1119,23 @@ TEST(FlagCompletionTest, GenerateVideoDashListsVideoFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "generate", "video", "-"}),
-    "--camera-info\n--help\n--overwrite\n--undistort\n-h\n-w\n");
+    "--cam-info\n--help\n--overwrite\n--pcd\n--undistort\n-h\n-w\n");
+}
+
+// `--field <TAB>` offers the valid point-cloud field choices, sorted.
+TEST(FlagCompletionTest, GenerateVideoFieldFlagListsChoices)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "--field"}),
+    "distance\nintensity\nx\ny\nz\n");
+}
+
+// `--scheme <TAB>` offers the valid color scheme choices, sorted.
+TEST(FlagCompletionTest, GenerateVideoSchemeFlagListsChoices)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "--scheme"}),
+    "inferno\njet\nmagma\nplasma\nrainbow\nturbo\nviridis\n");
 }
 
 // `generate video <bag> <TAB>` (the <image_topic> slot) lists only the bag's image
@@ -1163,7 +1179,7 @@ TEST_F(CompletionTest, GenerateVideoTopicSlotExcludesUnsupportedTypeOnPrefix)
     "");
 }
 
-// `--camera-info <TAB>` after a bag offers only sensor_msgs/msg/CameraInfo
+// `--cam-info <TAB>` after a bag offers only sensor_msgs/msg/CameraInfo
 // topics, excluding image and non-CameraInfo topics.
 TEST_F(CompletionTest, GenerateVideoCameraInfoFlagListsOnlyCameraInfoTopics)
 {
@@ -1174,11 +1190,11 @@ TEST_F(CompletionTest, GenerateVideoCameraInfoFlagListsOnlyCameraInfoTopics)
   EXPECT_EQ(
     run_completion(
       {"bagwiz", "__complete", "7", "bagwiz", "generate", "video", "~/cameras.mcap",
-       "/cam/image_raw/compressed", "out.avi", "--camera-info"}),
+       "/cam/image_raw/compressed", "out.avi", "--cam-info"}),
     "/cam/camera_info\n");
 }
 
-// A typed prefix narrows the `--camera-info` candidates within the CameraInfo set.
+// A typed prefix narrows the `--cam-info` candidates within the CameraInfo set.
 TEST_F(CompletionTest, GenerateVideoCameraInfoFlagRespectsPrefix)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
@@ -1188,11 +1204,11 @@ TEST_F(CompletionTest, GenerateVideoCameraInfoFlagRespectsPrefix)
   EXPECT_EQ(
     run_completion(
       {"bagwiz", "__complete", "7", "bagwiz", "generate", "video", "~/cameras.mcap",
-       "/cam/image_raw/compressed", "out.avi", "--camera-info", "/cam/c"}),
+       "/cam/image_raw/compressed", "out.avi", "--cam-info", "/cam/c"}),
     "/cam/camera_info\n");
 }
 
-// A bag with no CameraInfo topic yields no `--camera-info` candidates.
+// A bag with no CameraInfo topic yields no `--cam-info` candidates.
 TEST_F(CompletionTest, GenerateVideoCameraInfoFlagEmptyWhenNoCameraInfoTopics)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
@@ -1202,7 +1218,7 @@ TEST_F(CompletionTest, GenerateVideoCameraInfoFlagEmptyWhenNoCameraInfoTopics)
   EXPECT_EQ(
     run_completion(
       {"bagwiz", "__complete", "7", "bagwiz", "generate", "video", "~/images.mcap", "/image",
-       "out.avi", "--camera-info"}),
+       "out.avi", "--cam-info"}),
     "");
 }
 

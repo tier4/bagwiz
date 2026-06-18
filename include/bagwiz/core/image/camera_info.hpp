@@ -20,7 +20,8 @@
 namespace bagwiz::core::image
 {
 
-// A subset of sensor_msgs/msg/CameraInfo fields needed for undistortion.
+// A subset of sensor_msgs/msg/CameraInfo fields needed for undistortion and
+// point-cloud overlay transform lookup.
 struct CameraInfo
 {
   std::uint32_t width = 0;
@@ -30,6 +31,7 @@ struct CameraInfo
   std::array<double, 9> k{};   // intrinsic camera matrix
   std::array<double, 9> r{};   // rectification matrix
   std::array<double, 12> p{};  // projection/camera matrix
+  std::string frame_id;        // header.frame_id
 };
 
 // Outcome of extract_camera_info(). On success `info` is set and `error` is
@@ -47,6 +49,12 @@ struct CameraInfoResult
 // must outlive parsing (no copy). A truncated or malformed payload yields an
 // error result rather than throwing.
 [[nodiscard]] CameraInfoResult extract_camera_info(std::span<const std::byte> payload);
+
+// Return a CameraInfo whose pixel-coordinate entries are scaled by `scale` so
+// that undistortion/projection match an image resized by the same factor. The
+// distortion coefficients, rectification matrix, homogeneous entries (k[8],
+// p[10]), and the depth translation in p[11] are left unchanged.
+[[nodiscard]] CameraInfo scale_camera_info(const CameraInfo & info, double scale);
 
 }  // namespace bagwiz::core::image
 
