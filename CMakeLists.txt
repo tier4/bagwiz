@@ -340,6 +340,7 @@ if(BAGWIZ_WITH_SLAM)
   find_package(gtsam_points CONFIG REQUIRED)
   target_sources(bagwiz PRIVATE
     src/core/slam/cloud_odometry.cpp
+    src/core/slam/cloud_mapper.cpp
     src/commands/slam.cpp)
   target_link_libraries(bagwiz PRIVATE glim::glim gtsam_points::gtsam_points)
   target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_SLAM)
@@ -429,6 +430,12 @@ if(BUILD_TESTING)
       test/core/slam/cloud_odometry_test.cpp
       src/core/slam/cloud_odometry.cpp)
     target_link_libraries(bagwiz_slam_cloud_odometry_test
+      bagwiz_core glim::glim gtsam_points::gtsam_points)
+
+    ament_add_gtest(bagwiz_slam_cloud_mapper_test
+      test/core/slam/cloud_mapper_test.cpp
+      src/core/slam/cloud_mapper.cpp)
+    target_link_libraries(bagwiz_slam_cloud_mapper_test
       bagwiz_core glim::glim gtsam_points::gtsam_points)
   endif()
 
