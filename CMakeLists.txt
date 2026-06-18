@@ -215,6 +215,7 @@ add_library(bagwiz_core
   src/core/pointcloud/pointcloud2.cpp
   src/core/pointcloud/color_mapper.cpp
   src/core/pointcloud/projector.cpp
+  src/core/slam/lidar_scan.cpp
   src/core/video/frame_rate.cpp
   src/core/video/video_encoder.cpp
   src/core/tui/layout.cpp
@@ -397,6 +398,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_cdr_walker_test test/core/cdr_walker/walker_test.cpp)
   target_link_libraries(bagwiz_cdr_walker_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_slam_lidar_scan_test test/core/slam/lidar_scan_test.cpp)
+  target_link_libraries(bagwiz_slam_lidar_scan_test bagwiz_core)
 
   ament_add_gtest(bagwiz_decoder_test test/core/decoder/decoder_test.cpp)
   target_link_libraries(bagwiz_decoder_test bagwiz_core)
