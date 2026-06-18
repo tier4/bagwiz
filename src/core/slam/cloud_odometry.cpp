@@ -18,10 +18,10 @@
 #include <glim/util/raw_points.hpp>
 #include <glim/util/time_keeper.hpp>
 
-#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -54,7 +54,10 @@ struct CloudOdometry::Impl
   glim::TimeKeeper time_keeper;
   glim::CloudPreprocessor preprocessor;
   glim::OdometryEstimationCT odometry;
-  std::vector<core::TrajectoryPose> poses;
+  // Keyed by timestamp so every scan contributes exactly one pose and a later
+  // finalized (marginalized) pose overwrites the earlier provisional estimate.
+  // std::map also keeps the trajectory ordered by time for free.
+  std::map<std::int64_t, core::TrajectoryPose> poses;
 };
 
 CloudOdometry::CloudOdometry() : impl_(std::make_unique<Impl>())
@@ -96,10 +99,21 @@ void CloudOdometry::insert(const LidarScan & scan)
 
   const auto preprocessed = impl_->preprocessor.preprocess(raw);
   std::vector<glim::EstimationFrame::ConstPtr> marginalized;
-  impl_->odometry.insert_frame(preprocessed, marginalized);
+  // insert_frame returns this scan's (provisional) estimate; `marginalized`
+  // collects the finalized poses of frames leaving the fixed-lag window. Record
+  // the returned frame so every scan contributes a pose (including the last
+  // smoother-window's worth that never marginalize), then let any finalized
+  // pose for the same timestamp overwrite it.
+  const glim::EstimationFrame::ConstPtr active =
+    impl_->odometry.insert_frame(preprocessed, marginalized);
+  if (active) {
+    const auto pose = to_pose(*active);
+    impl_->poses[pose.timestamp_ns] = pose;
+  }
   for (const auto & frame : marginalized) {
     if (frame) {
-      impl_->poses.push_back(to_pose(*frame));
+      const auto pose = to_pose(*frame);
+      impl_->poses[pose.timestamp_ns] = pose;
     }
   }
 }
@@ -108,15 +122,16 @@ std::vector<core::TrajectoryPose> CloudOdometry::finish()
 {
   for (const auto & frame : impl_->odometry.get_remaining_frames()) {
     if (frame) {
-      impl_->poses.push_back(to_pose(*frame));
+      const auto pose = to_pose(*frame);
+      impl_->poses[pose.timestamp_ns] = pose;
     }
   }
-  std::sort(
-    impl_->poses.begin(), impl_->poses.end(),
-    [](const core::TrajectoryPose & lhs, const core::TrajectoryPose & rhs) {
-      return lhs.timestamp_ns < rhs.timestamp_ns;
-    });
-  return impl_->poses;
+  std::vector<core::TrajectoryPose> trajectory;
+  trajectory.reserve(impl_->poses.size());
+  for (const auto & entry : impl_->poses) {
+    trajectory.push_back(entry.second);
+  }
+  return trajectory;  // std::map already orders the poses by timestamp
 }
 
 }  // namespace bagwiz::core::slam
