@@ -418,6 +418,16 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_slam_lidar_scan_test test/core/slam/lidar_scan_test.cpp)
   target_link_libraries(bagwiz_slam_lidar_scan_test bagwiz_core)
 
+  # GLIM-linked integration test for the odometry wrapper; only when SLAM is on
+  # (find_package(glim) ran in the BAGWIZ_WITH_SLAM block above).
+  if(BAGWIZ_WITH_SLAM)
+    ament_add_gtest(bagwiz_slam_cloud_odometry_test
+      test/core/slam/cloud_odometry_test.cpp
+      src/core/slam/cloud_odometry.cpp)
+    target_link_libraries(bagwiz_slam_cloud_odometry_test
+      bagwiz_core glim::glim gtsam_points::gtsam_points)
+  endif()
+
   ament_add_gtest(bagwiz_decoder_test test/core/decoder/decoder_test.cpp)
   target_link_libraries(bagwiz_decoder_test bagwiz_core)
 

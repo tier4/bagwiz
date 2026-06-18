@@ -183,6 +183,11 @@ ros-jazzy-ament-cmake-gtest = "*"
 ros-jazzy-sensor-msgs = "*"
 ros-jazzy-diagnostic-msgs = "*"
 ros-jazzy-builtin-interfaces = "*"
+# Jazzy's default Eigen (5.0.x) breaks the GLIM/GTSAM source build (cascading
+# -Werror / missing-include); pin to 3.4 so `build-glim` works and bagwiz's SLAM
+# translation units share one Eigen with the vendored prefix. Humble already
+# ships 3.4, so it needs no pin.
+eigen = "3.4.*"
 
 [feature.lyrical]
 channels = [{ channel = "https://prefix.dev/robostack-lyrical", priority = 1 }]
@@ -210,6 +215,11 @@ ros-lyrical-ament-cmake-gtest = "*"
 ros-lyrical-sensor-msgs = "*"
 ros-lyrical-diagnostic-msgs = "*"
 ros-lyrical-builtin-interfaces = "*"
+# NOTE: SLAM is not wired for lyrical. Unlike jazzy, lyrical cannot pin Eigen to
+# 3.4 — ros-lyrical-tf2-eigen-kdl hard-requires eigen-abi 5.0.1, so `eigen=3.4`
+# is unsatisfiable here. SLAM on lyrical would need a vendored Eigen 3.4 fed only
+# to the GLIM build + bagwiz's SLAM units (the Milestone-0 approach); deferred.
+# `build-slam` is supported on humble + jazzy.
 
 # ---------------------------------------------------------------------------
 # One environment per distro. Each solves independently against its own
