@@ -146,7 +146,15 @@ struct CloudMapper::Impl
     const std::size_t n = cloud->size();
     StashedPoints stashed;
     stashed.points.reserve(n);
-    const bool has_intensities = cloud->has_intensities();
+    // Intensities are sourced from the preprocessed input frame, NOT from
+    // cloud->intensities. GLIM's LiDAR-only backend (OdometryEstimationCT) never
+    // copies intensities onto its estimation-frame cloud, so cloud->has_intensities()
+    // is false there; the LiDAR-IMU backend does copy them. raw_frame->intensities
+    // is populated by the preprocessor in BOTH modes and is index-aligned 1:1 with
+    // cloud->points (the estimation cloud is built from the same preprocessed points,
+    // only deskewed — deskewing preserves count and order), so it pairs correctly
+    // with the geometry read from cloud->points below.
+    const bool has_intensities = frame->raw_frame && frame->raw_frame->intensities.size() == n;
     if (has_intensities) {
       stashed.intensities.reserve(n);
     }
@@ -155,7 +163,7 @@ struct CloudMapper::Impl
       stashed.points.push_back(
         {static_cast<float>(p.x()), static_cast<float>(p.y()), static_cast<float>(p.z())});
       if (has_intensities) {
-        stashed.intensities.push_back(static_cast<float>(cloud->intensities[i]));
+        stashed.intensities.push_back(static_cast<float>(frame->raw_frame->intensities[i]));
       }
     }
     stash[frame->id] = std::move(stashed);

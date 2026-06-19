@@ -61,6 +61,16 @@ slam::LidarScan make_room_scan(std::int64_t stamp_ns)
   return scan;
 }
 
+// Same room, with a constant intensity attached to every point. A constant
+// survives voxel-grid averaging exactly, so the exported map's intensities must
+// all equal it — a tight check that intensity flows end to end.
+slam::LidarScan make_room_scan_with_intensity(std::int64_t stamp_ns, float intensity)
+{
+  slam::LidarScan scan = make_room_scan(stamp_ns);
+  scan.intensities.assign(scan.points.size(), static_cast<double>(intensity));
+  return scan;
+}
+
 TEST(CloudMapper, StationarySensorYieldsMapAndTrajectory)
 {
   // Submaps form only after enough keyframes accumulate, and CT odometry
@@ -121,6 +131,35 @@ TEST(CloudMapper, StationarySensorYieldsMapAndTrajectory)
   EXPECT_LT(max_x - min_x, 2.0) << "stationary trajectory drifted in x";
   EXPECT_LT(max_y - min_y, 2.0) << "stationary trajectory drifted in y";
   EXPECT_LT(max_z - min_z, 2.0) << "stationary trajectory drifted in z";
+}
+
+// Regression: in LiDAR-only mode the odometry backend is GLIM's
+// OdometryEstimationCT, which (unlike the LiDAR-IMU backend) never copies
+// per-point intensities onto its estimation-frame cloud. The mapper must still
+// export intensities by sourcing them from the preprocessed frame, so a scan fed
+// with intensities yields a map that carries them — not an empty intensity set.
+TEST(CloudMapper, LidarOnlyPreservesIntensity)
+{
+  constexpr float kIntensity = 7.0f;
+  slam::CloudMapper mapper;                    // no extrinsic => LiDAR-only (CT) backend
+  constexpr std::int64_t kDtNs = 100'000'000;  // 10 Hz
+  std::int64_t stamp = 1'000'000'000'000'000'000LL;
+  for (int i = 0; i < 120; ++i) {
+    mapper.insert(make_room_scan_with_intensity(stamp, kIntensity));
+    stamp += kDtNs;
+  }
+
+  const slam::CloudMap map = mapper.finish();
+
+  ASSERT_FALSE(map.points.empty());
+  // The defect: intensities came back empty in LiDAR-only mode. They must be
+  // present and one-per-point.
+  ASSERT_EQ(map.intensities.size(), map.points.size());
+  // A constant intensity is invariant under per-voxel averaging, so every
+  // exported value must equal what was fed (and crucially must not be zero).
+  for (const float v : map.intensities) {
+    EXPECT_NEAR(v, kIntensity, 1e-3f);
+  }
 }
 
 }  // namespace
