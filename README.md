@@ -91,6 +91,7 @@ invocation. Click through for full usage, options, and examples:
 | [`bagwiz generate`](docs/commands/generate.md) | Generate non-rosbag media from a rosbag — e.g. render an image topic to a video (`video`).                 |
 | [`bagwiz traj`](docs/commands/traj.md)         | Dump a topic's pose trajectory to TUM, or join a trajectory file back into a bag.                          |
 | [`bagwiz tf`](docs/commands/tf.md)             | Inspect the TF frame tree in a ROS 2 rosbag.                                                               |
+| [`bagwiz slam`](docs/commands/slam.md)         | In-process LiDAR (or LiDAR-IMU) SLAM over a PointCloud2 topic — trajectory + map (`run`). Optional build.  |
 | [`bagwiz check`](docs/commands/check.md)       | Find rosbags whose storage is corrupt / unreadable, and optionally delete them.                            |
 | [`bagwiz complete`](docs/commands/complete.md) | Generate a shell completion script (`bash`, `zsh`, `fish`).                                                |
 
