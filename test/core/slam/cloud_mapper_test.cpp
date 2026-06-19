@@ -262,4 +262,61 @@ TEST(CloudMapper, LidarOnlyPreservesIntensity)
   }
 }
 
+// Regression guard for the IMU/CPU backend path. The LiDAR-only test above covers
+// the CT backend; nothing otherwise exercises GLIM's LiDAR-IMU backend together
+// with intensities. The exported point now flows through BOTH recently-merged
+// fixes inside stash_frame: intensity sourced from raw_frame->intensities (#196)
+// and geometry brought back into the LiDAR frame via T_lidar_sensor (#197). This
+// pins that they coexist on the IMU path — a LiDAR-IMU run fed a constant
+// intensity must export it, one value per point (not an empty intensity set).
+TEST(CloudMapper, ImuModePreservesIntensity)
+{
+  constexpr float kIntensity = 7.0f;
+
+  // Same 180-deg-X extrinsic + gravity priming as the placement test: the
+  // extrinsic selects the CPU (LiDAR-IMU) backend and the gravity samples let it
+  // initialize its gravity-aligned state. The scans additionally carry intensity.
+  slam::SensorTransform t_lidar_imu;
+  t_lidar_imu.rotation_xyzw = {1.0, 0.0, 0.0, 0.0};
+  t_lidar_imu.translation = {0.0, 0.0, 0.0};
+
+  slam::CloudMapperConfig config;
+  config.t_lidar_imu = t_lidar_imu;
+  slam::CloudMapper mapper(config);
+
+  constexpr std::int64_t kImuDtNs = 5'000'000;     // 200 Hz
+  constexpr std::int64_t kScanDtNs = 100'000'000;  // 10 Hz
+  const std::int64_t base = 1'000'000'000'000'000'000LL;
+
+  // Prime 0.5 s of IMU so the backend can estimate its gravity-aligned state.
+  std::int64_t imu_stamp = base;
+  const std::int64_t first_scan = base + 500'000'000LL;
+  while (imu_stamp < first_scan) {
+    mapper.insert_imu(make_flipped_gravity_imu(imu_stamp));
+    imu_stamp += kImuDtNs;
+  }
+
+  // 120 scans @ 10 Hz with IMU filling each inter-scan interval and a sample
+  // exactly at the scan time; every scan carries the same constant intensity.
+  for (int i = 0; i < 120; ++i) {
+    const std::int64_t scan_stamp = first_scan + static_cast<std::int64_t>(i) * kScanDtNs;
+    while (imu_stamp < scan_stamp) {
+      mapper.insert_imu(make_flipped_gravity_imu(imu_stamp));
+      imu_stamp += kImuDtNs;
+    }
+    mapper.insert_imu(make_flipped_gravity_imu(scan_stamp));
+    mapper.insert(make_room_scan_with_intensity(scan_stamp, kIntensity));
+  }
+
+  const slam::CloudMap map = mapper.finish();
+
+  ASSERT_FALSE(map.points.empty());
+  // Intensities must survive the IMU pipeline: present, one-per-point, and equal
+  // to the constant fed in (a constant is invariant under per-voxel averaging).
+  ASSERT_EQ(map.intensities.size(), map.points.size());
+  for (const float v : map.intensities) {
+    EXPECT_NEAR(v, kIntensity, 1e-3f);
+  }
+}
+
 }  // namespace
