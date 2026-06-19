@@ -144,6 +144,22 @@ struct CloudMapper::Impl
     }
     const auto & cloud = frame->frame;
     const std::size_t n = cloud->size();
+
+    // GLIM stores each estimation frame's points in frame->frame_id coordinates,
+    // and that frame DIFFERS between backends: the LiDAR frame for the CT
+    // (LiDAR-only) backend, but the IMU frame for the CPU (LiDAR-IMU) backend
+    // (GLIM builds it as points_imu = T_imu_lidar * points_lidar). The map and
+    // trajectory downstream both place these points with T_world_lidar, so bring
+    // every frame's points back into the LiDAR frame first. T_lidar_sensor is
+    // identity for the CT backend (frame_id == LIDAR, points already LiDAR-frame)
+    // and equals T_lidar_imu for the IMU backend (frame_id == IMU); GLIM's own
+    // T_world_sensor() selects T_world_lidar / T_world_imu by frame_id. Skipping
+    // this corrupts the whole map whenever the IMU<-LiDAR extrinsic is not
+    // identity (e.g. a 180-deg-flipped IMU), placing every point off by exactly
+    // that extrinsic.
+    const Eigen::Isometry3d T_lidar_sensor =
+      frame->T_world_lidar.inverse() * frame->T_world_sensor();
+
     StashedPoints stashed;
     stashed.points.reserve(n);
     const bool has_intensities = cloud->has_intensities();
@@ -151,7 +167,7 @@ struct CloudMapper::Impl
       stashed.intensities.reserve(n);
     }
     for (std::size_t i = 0; i < n; ++i) {
-      const Eigen::Vector4d & p = cloud->points[i];
+      const Eigen::Vector3d p = T_lidar_sensor * cloud->points[i].head<3>();
       stashed.points.push_back(
         {static_cast<float>(p.x()), static_cast<float>(p.y()), static_cast<float>(p.z())});
       if (has_intensities) {

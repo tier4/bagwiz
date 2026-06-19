@@ -8,7 +8,9 @@
 
 #include "bagwiz/core/slam/cloud_mapper.hpp"
 
+#include "bagwiz/core/slam/imu_sample.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
+#include "bagwiz/core/slam/sensor_transform.hpp"
 
 #include <gtest/gtest.h>
 
@@ -16,6 +18,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <vector>
 
 // Integration test that drives the real GLIM SubMapping -> GlobalMapping
 // pipeline through CloudMapper. Compiled only when BAGWIZ_WITH_SLAM is on (it
@@ -121,6 +125,102 @@ TEST(CloudMapper, StationarySensorYieldsMapAndTrajectory)
   EXPECT_LT(max_x - min_x, 2.0) << "stationary trajectory drifted in x";
   EXPECT_LT(max_y - min_y, 2.0) << "stationary trajectory drifted in y";
   EXPECT_LT(max_z - min_z, 2.0) << "stationary trajectory drifted in z";
+}
+
+// IMU specific force for a level, static sensor whose frame is the LiDAR frame
+// rotated 180 deg about X (the real Tamagawa mounting): gravity is "down" =
+// LiDAR -z, so the LiDAR-frame specific force is (0,0,+g); rotating it into the
+// 180-deg-X-flipped IMU frame gives (0,0,-g). No rotation.
+slam::ImuSample make_flipped_gravity_imu(std::int64_t stamp_ns)
+{
+  slam::ImuSample imu;
+  imu.stamp_ns = stamp_ns;
+  imu.frame_id = "imu";
+  imu.linear_acceleration = {0.0, 0.0, -9.80665};
+  imu.angular_velocity = {0.0, 0.0, 0.0};
+  return imu;
+}
+
+// Regression for the LiDAR-IMU map-placement bug: GLIM's CPU (IMU) backend stores
+// each frame's points in the IMU frame (points_imu = T_imu_lidar * points_lidar),
+// whereas the CT backend stores them in the LiDAR frame. The mapper places points
+// with the LiDAR pose, so for a non-identity extrinsic the IMU-frame points were
+// previously transformed by an extra T_imu_lidar — here a 180 deg rotation about
+// X — which flips the whole map upside down (and smears it once the sensor moves).
+// With an identity extrinsic the error vanishes, so the existing IMU test cannot
+// see it; this one uses the 180-deg-X extrinsic that exposes it.
+TEST(CloudMapper, ImuModeFlippedExtrinsicMapIsNotVerticallyFlipped)
+{
+  // 180 deg about X: quaternion (x,y,z,w) = (1,0,0,0). No translation. This is the
+  // rotation half of the real Tamagawa LiDAR<-IMU extrinsic.
+  slam::SensorTransform t_lidar_imu;
+  t_lidar_imu.rotation_xyzw = {1.0, 0.0, 0.0, 0.0};
+  t_lidar_imu.translation = {0.0, 0.0, 0.0};
+
+  slam::CloudMapperConfig config;
+  config.t_lidar_imu = t_lidar_imu;
+  slam::CloudMapper mapper(config);
+
+  constexpr std::int64_t kImuDtNs = 5'000'000;     // 200 Hz
+  constexpr std::int64_t kScanDtNs = 100'000'000;  // 10 Hz
+  const std::int64_t base = 1'000'000'000'000'000'000LL;
+
+  // Prime 0.5 s of IMU so the backend can estimate its gravity-aligned state.
+  std::int64_t imu_stamp = base;
+  const std::int64_t first_scan = base + 500'000'000LL;
+  while (imu_stamp < first_scan) {
+    mapper.insert_imu(make_flipped_gravity_imu(imu_stamp));
+    imu_stamp += kImuDtNs;
+  }
+
+  // 120 scans @ 10 Hz (12 s, well past the 5 s smoother lag) with IMU filling each
+  // inter-scan interval and a sample exactly at the scan time.
+  for (int i = 0; i < 120; ++i) {
+    const std::int64_t scan_stamp = first_scan + static_cast<std::int64_t>(i) * kScanDtNs;
+    while (imu_stamp < scan_stamp) {
+      mapper.insert_imu(make_flipped_gravity_imu(imu_stamp));
+      imu_stamp += kImuDtNs;
+    }
+    mapper.insert_imu(make_flipped_gravity_imu(scan_stamp));
+    mapper.insert(make_room_scan(scan_stamp));
+  }
+
+  const slam::CloudMap map = mapper.finish();
+
+  ASSERT_FALSE(map.points.empty());
+  for (const auto & p : map.points) {
+    ASSERT_TRUE(std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]));
+  }
+
+  // The world frame is gravity-aligned (+z up), so the room's floor (z = -1 in the
+  // LiDAR frame, a dense planar spike of points) must sit in the LOWER half of the
+  // map's z-extent. The pre-fix code placed IMU-frame points with the LiDAR pose,
+  // flipping the room about X so the floor landed in the UPPER half. We test the
+  // MEDIAN z relative to the z-extent — an origin-offset-independent invariant. The
+  // floor spike pulls the median far below the midpoint when upright (~0.1) and far
+  // above it when flipped (~0.9), so 0.5 separates the two with a wide margin.
+  float z_min = std::numeric_limits<float>::infinity();
+  float z_max = -std::numeric_limits<float>::infinity();
+  std::vector<float> zs;
+  zs.reserve(map.points.size());
+  for (const auto & p : map.points) {
+    z_min = std::min(z_min, p[2]);
+    z_max = std::max(z_max, p[2]);
+    zs.push_back(p[2]);
+  }
+  std::nth_element(zs.begin(), zs.begin() + zs.size() / 2, zs.end());
+  const double z_median = zs[zs.size() / 2];
+  ASSERT_GT(z_max - z_min, 0.5f) << "degenerate map: no vertical extent";
+  const double floor_relative = (z_median - z_min) / (z_max - z_min);
+  EXPECT_LT(floor_relative, 0.5)
+    << "map is vertically flipped (floor above center): IMU-frame points placed with the "
+       "LiDAR pose instead of being brought back into the LiDAR frame";
+
+  // Sanity: the optimized trajectory still runs and is time-monotonic.
+  ASSERT_FALSE(map.trajectory.empty());
+  for (std::size_t i = 1; i < map.trajectory.size(); ++i) {
+    EXPECT_LT(map.trajectory[i - 1].timestamp_ns, map.trajectory[i].timestamp_ns);
+  }
 }
 
 }  // namespace
