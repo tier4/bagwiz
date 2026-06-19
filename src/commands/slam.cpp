@@ -78,6 +78,12 @@ private:
       "Optional Imu topic; switches odometry to LiDAR-IMU. The LiDAR<-IMU extrinsic is "
       "resolved from the bag's static TF using the cloud and IMU header frame_ids "
       "(errors if that chain is absent).");
+    sub->add_option(
+      "--gnss", run_args_.gnss_topic,
+      "Optional NavSatFix topic; adds GNSS global constraints during global mapping "
+      "(horizontal translation priors on submap poses) to pin the world frame to GNSS "
+      "and curb drift. Fixes are projected to a local ENU frame internally; no TF is "
+      "consulted. Requires global mapping (incompatible with --without-global-optim).");
     sub
       ->add_option(
         "--map-resolution", run_args_.map_resolution,

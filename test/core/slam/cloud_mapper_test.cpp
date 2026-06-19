@@ -319,4 +319,81 @@ TEST(CloudMapper, ImuModePreservesIntensity)
   }
 }
 
+// A GNSS fix already projected to the local metric frame.
+slam::GnssPoint make_gnss_point(std::int64_t t_ns, double x, double y, double z)
+{
+  slam::GnssPoint p;
+  p.stamp_ns = t_ns;
+  p.position = {x, y, z};
+  return p;
+}
+
+// GNSS off (the default): insert_gnss must be a pure no-op — no constraints, and
+// an otherwise-normal map + trajectory. Guards the enable_gnss gate on the ingest
+// side. (The alignment math itself is unit-tested in gnss_alignment_test, which
+// needs no GLIM and no sensor motion.)
+TEST(CloudMapper, GnssDisabledIgnoresFixes)
+{
+  slam::CloudMapper mapper;                    // enable_gnss defaults to false
+  constexpr std::int64_t kDtNs = 100'000'000;  // 10 Hz
+  std::int64_t stamp = 1'000'000'000'000'000'000LL;
+  for (int i = 0; i < 120; ++i) {
+    mapper.insert(make_room_scan(stamp));
+    mapper.insert_gnss(make_gnss_point(stamp, static_cast<double>(i) * 1.0, 0.0, 0.0));
+    stamp += kDtNs;
+  }
+
+  const slam::CloudMap map = mapper.finish();
+  EXPECT_EQ(map.gnss_factor_count, 0u);
+  ASSERT_FALSE(map.points.empty());
+  ASSERT_FALSE(map.trajectory.empty());
+}
+
+// GNSS on, but the sensor is stationary, so the SLAM baseline stays well under
+// the default 10 m gate: build_gnss_factors must add nothing, and enabling GNSS
+// must not destabilize a run that yields no constraints (finite, non-empty map +
+// trajectory). Exercises the finish() path where gnss_factor_count == 0 and the
+// injection callback is never registered.
+TEST(CloudMapper, GnssInsufficientBaselineAddsNoConstraints)
+{
+  slam::CloudMapperConfig config;
+  config.enable_gnss = true;  // default gnss_min_baseline = 10 m
+  slam::CloudMapper mapper(config);
+
+  constexpr std::int64_t kDtNs = 100'000'000;  // 10 Hz
+  std::int64_t stamp = 1'000'000'000'000'000'000LL;
+  for (int i = 0; i < 120; ++i) {
+    mapper.insert(make_room_scan(stamp));
+    // GNSS spans the whole scan range so the submaps are time-covered; only the
+    // baseline gate stops a constraint from being created.
+    mapper.insert_gnss(make_gnss_point(stamp, static_cast<double>(i) * 0.5, 0.0, 0.0));
+    stamp += kDtNs;
+  }
+
+  const slam::CloudMap map = mapper.finish();
+  EXPECT_EQ(map.gnss_factor_count, 0u);
+  ASSERT_FALSE(map.points.empty());
+  for (const auto & p : map.points) {
+    ASSERT_TRUE(std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]));
+  }
+  ASSERT_FALSE(map.trajectory.empty());
+}
+
+// NOTE on the missing ">=2 submaps -> factors actually injected" case:
+// GNSS factors require at least two GNSS-covered submaps with a baseline over
+// gnss_min_baseline. GLIM's stock SubMapping only closes a submap after
+// ~max_num_keyframes keyframes, which in practice needs >10 m of travel — more
+// than this 10 m synthetic room allows before the sensor exits it and scan
+// matching degrades. A stationary or short-motion scene (all this fixture can
+// produce reliably) yields a single submap, so build_gnss_factors always stops
+// at the ids.size() < 2 gate here (verified: one submap for 200 scans, moving or
+// not). The factor-injection path is therefore covered as follows instead:
+//   - the world<-GNSS alignment + prior targets: gnss_alignment_test (exact,
+//     GLIM-free);
+//   - the GTSAM factor type / callback wiring: compile-verified (identical to
+//     glim_ext's proven gnss_global usage) and exercised end to end on real bags
+//     with genuine multi-submap motion.
+// Forcing a second submap here would require an unrealistically long, flaky
+// synthetic trajectory, so it is deliberately left to real-bag validation.
+
 }  // namespace

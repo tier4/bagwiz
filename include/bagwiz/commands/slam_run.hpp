@@ -28,6 +28,12 @@ struct SlamRunArgs
   // LiDAR-IMU OdometryEstimationCPU, resolving the LiDAR<-IMU extrinsic from the
   // bag's static TF using the cloud's and the IMU's header frame_ids.
   std::string imu_topic;
+  // Optional NavSatFix topic. Empty: no GNSS. Set: adds GNSS global constraints
+  // (horizontal translation priors on submap poses) during global mapping,
+  // pinning the world frame to GNSS and curbing drift. Requires global mapping,
+  // so it is rejected together with without_global_optim. The fixes are
+  // projected to a local ENU frame internally; no extrinsic/TF is consulted.
+  std::string gnss_topic;
   // Output root directory; receives traj.tum and, unless without_global_optim,
   // map.ply.
   std::filesystem::path output_root;

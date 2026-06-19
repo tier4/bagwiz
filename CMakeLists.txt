@@ -217,6 +217,9 @@ add_library(bagwiz_core
   src/core/pointcloud/projector.cpp
   src/core/slam/lidar_scan.cpp
   src/core/slam/imu_sample.cpp
+  src/core/slam/gnss_sample.cpp
+  src/core/slam/gnss_projector.cpp
+  src/core/slam/gnss_alignment.cpp
   src/core/slam/point_cloud_io.cpp
   src/core/slam/cloud_filters.cpp
   src/core/video/frame_rate.cpp
@@ -341,12 +344,16 @@ option(BAGWIZ_WITH_SLAM "Build the in-process GLIM `bagwiz slam` command" OFF)
 if(BAGWIZ_WITH_SLAM)
   find_package(glim CONFIG REQUIRED)
   find_package(gtsam_points CONFIG REQUIRED)
+  # GTSAM is pulled transitively by gtsam_points, but cloud_mapper.cpp now uses
+  # GTSAM directly (PoseTranslationPrior / noise models for the GNSS constraint),
+  # so depend on it explicitly for its headers and the `gtsam` link target.
+  find_package(GTSAM CONFIG REQUIRED)
   target_sources(bagwiz PRIVATE
     src/core/slam/cloud_odometry.cpp
     src/core/slam/cloud_mapper.cpp
     src/commands/slam.cpp
     src/commands/slam_run.cpp)
-  target_link_libraries(bagwiz PRIVATE glim::glim gtsam_points::gtsam_points)
+  target_link_libraries(bagwiz PRIVATE glim::glim gtsam_points::gtsam_points gtsam)
   target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_SLAM)
 endif()
 
@@ -433,6 +440,17 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_slam_imu_sample_test test/core/slam/imu_sample_test.cpp)
   target_link_libraries(bagwiz_slam_imu_sample_test bagwiz_core)
 
+  ament_add_gtest(bagwiz_slam_gnss_sample_test test/core/slam/gnss_sample_test.cpp)
+  target_link_libraries(bagwiz_slam_gnss_sample_test bagwiz_core)
+
+  # gnss_projector lives in bagwiz_core; GeographicLib is linked explicitly (as
+  # the geo_pose_convert test does) since it is otherwise a private dependency.
+  ament_add_gtest(bagwiz_slam_gnss_projector_test test/core/slam/gnss_projector_test.cpp)
+  target_link_libraries(bagwiz_slam_gnss_projector_test bagwiz_core ${GeographicLib_LIBRARIES})
+
+  ament_add_gtest(bagwiz_slam_gnss_alignment_test test/core/slam/gnss_alignment_test.cpp)
+  target_link_libraries(bagwiz_slam_gnss_alignment_test bagwiz_core)
+
   # GLIM-linked integration test for the odometry wrapper; only when SLAM is on
   # (find_package(glim) ran in the BAGWIZ_WITH_SLAM block above).
   if(BAGWIZ_WITH_SLAM)
@@ -446,7 +464,7 @@ if(BUILD_TESTING)
       test/core/slam/cloud_mapper_test.cpp
       src/core/slam/cloud_mapper.cpp)
     target_link_libraries(bagwiz_slam_cloud_mapper_test
-      bagwiz_core glim::glim gtsam_points::gtsam_points)
+      bagwiz_core glim::glim gtsam_points::gtsam_points gtsam)
   endif()
 
   ament_add_gtest(bagwiz_decoder_test test/core/decoder/decoder_test.cpp)

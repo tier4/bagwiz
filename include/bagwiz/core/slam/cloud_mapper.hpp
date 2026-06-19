@@ -15,6 +15,8 @@
 #include "bagwiz/core/trajectory.hpp"
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -57,6 +59,35 @@ struct CloudMapperConfig
   // extrinsic, and IMU enabled in sub/global mapping; feed IMU via insert_imu().
   // Convention is GLIM's T_lidar_imu (p_lidar = T_lidar_imu * p_imu).
   std::optional<SensorTransform> t_lidar_imu;
+
+  // GNSS global constraint (ported from glim_ext's gnss_global). When true, GNSS
+  // points fed via insert_gnss() add horizontal translation priors on the submap
+  // poses during the final global optimization, pinning the world frame to GNSS
+  // and curbing drift. Defaults below mirror glim_ext's config_gnss_global.json.
+  bool enable_gnss = false;
+
+  // Minimum SLAM-estimated baseline [m] (distance between the first and last
+  // GNSS-associated submap origins) before the world<-GNSS alignment is
+  // estimated. Too little motion makes the planar rotation ill-conditioned, so
+  // no GNSS factors are added until this is exceeded. Defaults to 10.0 to match
+  // glim_ext's shipped config_gnss_global.json (its in-code fallback is 5.0).
+  double gnss_min_baseline = 10.0;
+
+  // Per-axis information (precision) of each GNSS translation prior, in the
+  // GNSS-aligned world frame {x, y, z}. The default leaves z at 0 so only the
+  // horizontal position is constrained (GNSS height is typically the weakest
+  // axis); x/y at 1e3 pulls the submaps onto the GNSS track. Mirrors
+  // prior_inf_scale.
+  std::array<double, 3> gnss_prior_inf_scale{1e3, 1e3, 0.0};
+};
+
+// One GNSS fix already projected into the local metric (ENU) frame the mapper
+// aligns to. GLIM-free plain data; produced by the command layer (NavSatFix ->
+// gnss_projector) and consumed by CloudMapper::insert_gnss.
+struct GnssPoint
+{
+  std::int64_t stamp_ns = 0;          // fix timestamp, nanoseconds since epoch
+  std::array<double, 3> position{};   // local metric meters {east, north, up}
 };
 
 // Result of CloudMapper::finish(). All fields are GLIM-free plain data so the
@@ -72,6 +103,11 @@ struct CloudMap
   // Per-point intensity, parallel to `points`. Empty unless every submap
   // carried intensities (mirrors GLIM's all-or-nothing export).
   std::vector<float> intensities;
+
+  // Number of GNSS translation-prior factors applied during global
+  // optimization. 0 when GNSS was disabled or could not initialize (no fixes
+  // overlapping the submap timespan, or baseline below gnss_min_baseline).
+  std::size_t gnss_factor_count = 0;
 };
 
 class CloudMapper
@@ -92,6 +128,12 @@ public:
   // buffer it for their own preintegration. Samples must arrive in
   // non-decreasing timestamp order, interleaved with scans.
   void insert_imu(const ImuSample & imu);
+
+  // Feed one GNSS fix, already projected to the local metric frame (see
+  // GnssPoint). A no-op unless config.enable_gnss is set. Points are buffered
+  // and turned into submap translation priors in finish(); they should arrive
+  // in non-decreasing timestamp order.
+  void insert_gnss(const GnssPoint & gnss);
 
   // Feed one scan. Scans must arrive in non-decreasing timestamp order. A scan
   // with no per-point time is fed with explicit zero per-point times (treated
