@@ -38,6 +38,10 @@ struct SlamRunArgs
   bool overwrite = false;
   // Skip global mapping and write only the raw odometry trajectory; no map.
   bool without_global_optim = false;
+  // After writing map.ply, serve it over a loopback HTTP server and open the
+  // default browser to a Three.js viewer. Blocks until interrupted (Ctrl-C).
+  // Mutually exclusive with without_global_optim (which produces no map).
+  bool vis = false;
 };
 
 // Run LiDAR SLAM over a single PointCloud2 topic entirely in-process: bagwiz

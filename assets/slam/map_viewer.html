@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>bagwiz — map.ply</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #101014;
+      }
+      #status {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        font: 13px/1.4 monospace;
+        color: #e0e0e0;
+        background: rgba(0, 0, 0, 0.45);
+        padding: 6px 10px;
+        border-radius: 4px;
+        pointer-events: none;
+      }
+    </style>
+    <!--
+      Three.js is loaded from a CDN via an import map (the 63 MB map.ply itself is
+      always served locally by bagwiz). Viewing therefore needs internet access;
+      run without --vis to skip the viewer entirely.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="status">Loading…</div>
+    <!-- map.ply is fetched with a relative URL, so no server port is templated in. -->
+    <script type="module" src="map_viewer.js"></script>
+  </body>
+</html>

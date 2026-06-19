@@ -16,6 +16,7 @@
 #include "bagwiz/core/slam/cloud_odometry.hpp"
 #include "bagwiz/core/slam/imu_sample.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
+#include "bagwiz/core/slam/map_viewer.hpp"
 #include "bagwiz/core/slam/point_cloud_io.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
 #include "bagwiz/core/tf_chain.hpp"
@@ -512,6 +513,19 @@ private:
       "to {} and {}\n",
       map.trajectory.size(), map.points.size(), scans, imu_suffix(imu_count), skipped,
       output_path_.string(), map_path_.string());
+
+    // --vis: serve the map.ply just written and open the browser. This blocks
+    // until the user interrupts the viewer. CLI parsing already rejects
+    // --vis together with --without-global-optim, so a map always exists here.
+    if (args_.vis) {
+#ifdef BAGWIZ_WITH_MAP_VIEWER
+      return core::slam::serve_map_viewer(map_path_);
+#else
+      BAGWIZ_LOG_ERROR(
+        kLogger, "--vis is unavailable: this binary was built without the map viewer");
+      return 1;
+#endif
+    }
     return 0;
   }
 

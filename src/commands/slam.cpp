@@ -85,12 +85,19 @@ private:
         "only the exported map's density, never the optimization or trajectory. The "
         "LiDAR preprocessor's ~0.15 m input voxel bounds the real resolution.")
       ->check(CLI::PositiveNumber);
-    sub->add_flag(
+    auto * without_optim = sub->add_flag(
       "--without-global-optim", run_args_.without_global_optim,
       "Skip global mapping and write only the raw odometry trajectory (traj.tum); "
       "no point-cloud map is produced");
     sub->add_flag(
       "-w,--overwrite", run_args_.overwrite, "Overwrite the output(s) if they already exist");
+    sub
+      ->add_flag(
+        "--vis", run_args_.vis,
+        "After writing map.ply, open the default browser to a Three.js point-cloud viewer "
+        "served over a loopback HTTP server. Runs until interrupted (Ctrl-C). Cannot be "
+        "combined with --without-global-optim, which produces no map.")
+      ->excludes(without_optim);
     sub->callback([this]() { selected_ = Subcommand::kRun; });
   }
 };
