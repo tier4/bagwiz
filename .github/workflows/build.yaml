@@ -32,3 +32,26 @@ jobs:
 
       - name: Test
         run: pixi run -e ${{ matrix.distro }} test
+
+  # Guard the reproducibility contract: the committed pixi.lock is the source of
+  # truth for exact dependency versions, while pixi.toml deliberately keeps most
+  # specs loose (only deliberate, documented pins such as cmake <4 and Jazzy's
+  # eigen 3.4.* are constrained). This job fails when pixi.lock no longer
+  # satisfies pixi.toml -- e.g. the manifest was edited without re-running
+  # `pixi lock`, or the lockfile was hand-edited. `pixi lock --check` only
+  # verifies lockfile satisfiability and never installs an environment, so it
+  # stays fast and independent of the ROS build matrix above.
+  lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pixi
+        uses: prefix-dev/setup-pixi@v0.9.6
+        with:
+          pixi-version: v0.70.2
+          run-install: false
+
+      - name: Verify pixi.lock is in sync with pixi.toml
+        run: pixi lock --check
