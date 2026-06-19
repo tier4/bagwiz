@@ -128,10 +128,10 @@ constexpr std::array<TopicArgBinding, 9> kTopicBindings{{
   // <output> are paths that fall through to the shell's file completion.
   {"generate", "video", kSecondCommandArgWord, kThirdCommandArgWord, kGenerateVideoSupportedTypes,
    false},
-  // `slam <input> <pcd_topic> <output_root>`: complete the single <pcd_topic>
+  // `slam run <input> <pcd_topic> <output_root>`: complete the single <pcd_topic>
   // slot from the bag's PointCloud2 topics. <input> and <output_root> are paths
   // that fall through to the shell's file completion.
-  {"slam", "", kFirstCommandArgWord, kSecondCommandArgWord, kPointCloud2Type, false},
+  {"slam", "run", kSecondCommandArgWord, kThirdCommandArgWord, kPointCloud2Type, false},
 }};
 
 enum class CompletionShell { Bash, Zsh, Fish };
@@ -969,18 +969,38 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
   return {};
 }
 
-// `slam <input> <pcd_topic> <output_root> [--imu <topic>]
-// [--map-resolution <m>] [--without-global-optim] [-w|--overwrite]`
+// `slam` is a command group whose sole action verb is `run`; the verb adds one
+// positional slot, shifting every argument one word to the right of the old flat
+// command:
 //
-// The positional <pcd_topic> slot is completed earlier by try_topic_completion
-// via kTopicBindings (PointCloud2 topics only). Here we surface the command's
-// flags for any `-` word and complete the value of `--imu` from the bag's
-// sensor_msgs/msg/Imu topics. <input> and <output_root> are paths that fall
-// through to the shell's file completion.
+//   run: `slam`(0) `run`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
+//        [--imu <topic>] [--map-resolution <m>] [--without-global-optim] [-w|--overwrite]
+//
+// At the action slot (word 1) the only candidate is `run` (or the help flags for
+// a `-` word). Past it, the positional <pcd_topic> slot is completed earlier by
+// try_topic_completion via kTopicBindings (PointCloud2 topics only); here we
+// surface `run`'s flags for any `-` word and complete the value of `--imu` from
+// the bag's sensor_msgs/msg/Imu topics. <input> and <output_root> are paths that
+// fall through to the shell's file completion.
 std::vector<std::string> complete_slam(const CompletionRequest & request)
 {
   const auto current = current_word(request);
-  if (request.cursor_word >= kFirstCommandArgWord && current.starts_with("-")) {
+  if (request.cursor_word == kFirstCommandArgWord) {
+    if (current.starts_with("-")) {
+      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
+    }
+    return matching({"run"}, current);
+  }
+
+  // Reaching here implies cursor_word >= kSecondCommandArgWord (cursor_word == 0
+  // is handled by the caller and == kFirstCommandArgWord above), so words[1]
+  // exists (parse_request clamps cursor_word to words.size()). Only `run` has
+  // flags or a bag to complete from.
+  if (request.words[kFirstCommandArgWord] != "run") {
+    return {};
+  }
+
+  if (current.starts_with("-")) {
     return matching(
       with_help({"--imu", "--map-resolution", "--overwrite", "--without-global-optim", "-w"}),
       current);
@@ -989,10 +1009,10 @@ std::vector<std::string> complete_slam(const CompletionRequest & request)
   if (request.cursor_word == 0 || request.words[request.cursor_word - 1] != "--imu") {
     return {};
   }
-  if (request.words.size() <= kFirstCommandArgWord) {
+  if (request.words.size() <= kSecondCommandArgWord) {
     return {};
   }
-  const auto & bag_arg = request.words[kFirstCommandArgWord];
+  const auto & bag_arg = request.words[kSecondCommandArgWord];
   if (bag_arg.empty() || bag_arg.starts_with("-")) {
     return {};
   }
