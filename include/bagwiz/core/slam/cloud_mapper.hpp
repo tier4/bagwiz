@@ -74,11 +74,37 @@ struct CloudMapperConfig
   double gnss_min_baseline = 10.0;
 
   // Per-axis information (precision) of each GNSS translation prior, in the
-  // GNSS-aligned world frame {x, y, z}. The default leaves z at 0 so only the
-  // horizontal position is constrained (GNSS height is typically the weakest
-  // axis); x/y at 1e3 pulls the submaps onto the GNSS track. Mirrors
-  // prior_inf_scale.
+  // GNSS-aligned world frame {x, y, z}. Used as the FALLBACK when a fix carries no
+  // usable covariance (covariance_type UNKNOWN) or gnss_use_covariance is false.
+  // The default leaves z at 0 so only the horizontal position is constrained (GNSS
+  // height is typically the weakest axis); x/y at 1e3 pulls the submaps onto the
+  // GNSS track. Mirrors prior_inf_scale.
   std::array<double, 3> gnss_prior_inf_scale{1e3, 1e3, 0.0};
+
+  // When true (default), a fix carrying a KNOWN position covariance weights its
+  // prior by that covariance (rotated into the world frame, inflated, floored)
+  // instead of the fixed gnss_prior_inf_scale precision. NavSatFix covariance is
+  // ~metre-level for SBAS/standalone fixes and cm-level for RTK, so this keeps a
+  // fixed cm-tight prior from over-trusting a metre-level fix (and vice versa).
+  // Falls back to gnss_prior_inf_scale per fix when the covariance is unavailable.
+  bool gnss_use_covariance = true;
+
+  // Lower bound [m] on each horizontal stddev of a covariance-derived prior, added
+  // isotropically (sigma_floor^2 on the diagonal). Guards against an
+  // over-optimistic receiver covariance dominating the graph. Unused by the
+  // fixed-precision fallback.
+  double gnss_horizontal_sigma_floor = 0.05;
+
+  // Multiplicative inflation (>=1) on a covariance-derived stddev. GNSS formal
+  // covariance is optimistic and consecutive fixes are time-correlated, so the
+  // independent-prior model double-counts; inflate to compensate. 1.0 applies the
+  // covariance as reported.
+  double gnss_covariance_inflation = 1.0;
+
+  // Huber robust-kernel threshold (whitened-residual / sigma units) wrapping each
+  // GNSS prior so one multipath outlier cannot dominate; 0 disables the kernel.
+  // 1.345 is the classic 95%-efficiency value.
+  double gnss_robust_huber_k = 1.345;
 
   // GNSS antenna lever-arm: the antenna phase-center position expressed in the
   // cloud (LiDAR) frame, i.e. T_cloud_gnss.translation(). A NavSatFix reports the
@@ -100,6 +126,12 @@ struct GnssPoint
 {
   std::int64_t stamp_ns = 0;         // fix timestamp, nanoseconds since epoch
   std::array<double, 3> position{};  // local metric meters {east, north, up}
+
+  // Position covariance (m^2), row-major 3x3, in the SAME local ENU frame as
+  // `position` (the projector preserves ENU axes over the local trajectory area).
+  // Used to weight the prior; ignored when covariance_type is UNKNOWN.
+  std::array<double, 9> covariance{};
+  std::uint8_t covariance_type = 0;  // sensor_msgs/NavSatFix: 0 UNKNOWN .. 3 KNOWN
 };
 
 // Result of CloudMapper::finish(). All fields are GLIM-free plain data so the

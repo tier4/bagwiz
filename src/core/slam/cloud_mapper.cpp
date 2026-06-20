@@ -50,6 +50,12 @@ namespace bagwiz::core::slam
 {
 namespace
 {
+// Variance [m^2] for an "unconstrained" axis of a Gaussian prior: large enough
+// that its information (1/variance) is negligible next to the LiDAR/IMU factors,
+// emulating the fixed-precision path's zero z-information without an actual
+// singular (infinite-variance) model.
+constexpr double kUnconstrainedZVariance = 1e8;  // ~ (1e4 m)^2
+
 core::TrajectoryPose to_pose(double stamp, const Eigen::Isometry3d & transform)
 {
   const Eigen::Vector3d translation = transform.translation();
@@ -141,6 +147,8 @@ struct CloudMapper::Impl
   {
     double stamp = 0.0;
     Eigen::Vector3d xyz = Eigen::Vector3d::Zero();
+    std::array<double, 9> covariance{};  // local ENU, m^2, row-major
+    std::uint8_t covariance_type = 0;    // sensor_msgs/NavSatFix: 0 UNKNOWN .. 3 KNOWN
   };
   // GNSS fixes collected via insert_gnss (config.enable_gnss only), consumed by
   // build_gnss_factors() in finish().
@@ -260,12 +268,16 @@ struct CloudMapper::Impl
   }
 
   // Record one GNSS fix (already projected to the local metric frame). Stamp is
-  // converted to seconds to match EstimationFrame stamps.
+  // converted to seconds to match EstimationFrame stamps; the ENU covariance is
+  // carried through for per-prior weighting.
   void add_gnss(const GnssPoint & p)
   {
-    gnss_points.push_back(
-      {static_cast<double>(p.stamp_ns) * 1e-9,
-       Eigen::Vector3d(p.position[0], p.position[1], p.position[2])});
+    GnssMetric m;
+    m.stamp = static_cast<double>(p.stamp_ns) * 1e-9;
+    m.xyz = Eigen::Vector3d(p.position[0], p.position[1], p.position[2]);
+    m.covariance = p.covariance;
+    m.covariance_type = p.covariance_type;
+    gnss_points.push_back(m);
   }
 
   // Linear-interpolate the GNSS position at time `t` (seconds). gnss_points must
@@ -286,6 +298,25 @@ struct CloudMapper::Impl
     const double tr = right->stamp;
     const double p = (tr > tl) ? (t - tl) / (tr - tl) : 0.0;
     return (1.0 - p) * left->xyz + p * right->xyz;
+  }
+
+  // Covariance + type of the GNSS fix closest in time to `t`. gnss_points must be
+  // sorted by stamp. Used to weight a submap's prior; nearest (not interpolated)
+  // since covariance matrices do not interpolate linearly and adjacent fixes are
+  // ~equally representative over a submap's short span.
+  const GnssMetric & nearest_gnss(double t) const
+  {
+    const auto right = std::lower_bound(
+      gnss_points.begin(), gnss_points.end(), t,
+      [](const GnssMetric & g, double tt) { return g.stamp < tt; });
+    if (right == gnss_points.begin()) {
+      return *right;
+    }
+    if (right == gnss_points.end()) {
+      return gnss_points.back();
+    }
+    const auto left = right - 1;
+    return (t - left->stamp <= right->stamp - t) ? *left : *right;
   }
 
   // Build GNSS translation-prior factors from the collected submaps + fixes
@@ -322,6 +353,8 @@ struct CloudMapper::Impl
     std::vector<std::array<double, 3>> est;
     std::vector<std::array<double, 3>> offsets;  // per-submap antenna offset in world
     std::vector<std::array<double, 3>> gnss;
+    std::vector<std::array<double, 9>> covs;  // nearest-fix ENU covariance per submap
+    std::vector<std::uint8_t> cov_types;
     for (const auto & entry : entries) {
       if (!entry.submap || entry.frames.empty()) {
         continue;
@@ -339,10 +372,13 @@ struct CloudMapper::Impl
       // frozen at build time; iSAM2 then moves the origin under the prior).
       const Eigen::Vector3d offset_world = entry.submap->T_world_origin.rotation() * lever_origin;
       const Eigen::Vector3d fix = interpolate_gnss(t_mid);
+      const GnssMetric & near = nearest_gnss(t_mid);
       ids.push_back(static_cast<std::uint64_t>(entry.submap->id));
       est.push_back({origin.x(), origin.y(), origin.z()});
       offsets.push_back({offset_world.x(), offset_world.y(), offset_world.z()});
       gnss.push_back({fix.x(), fix.y(), fix.z()});
+      covs.push_back(near.covariance);
+      cov_types.push_back(near.covariance_type);
     }
     if (ids.size() < 2) {
       return;
@@ -359,21 +395,54 @@ struct CloudMapper::Impl
 
     // Estimate the world<-GNSS transform (antenna-to-antenna so the lever-arm does
     // not contaminate the fit) and map each fix back onto its submap origin; that
-    // mapped position is the submap's translation-prior target. With a zero offset
-    // this reduces to align_gnss_to_world(est, gnss).
-    const std::vector<std::array<double, 3>> world = gnss_targets_with_offset(est, offsets, gnss);
-    if (world.size() != ids.size()) {
+    // mapped position is the submap's translation-prior target. The fitted ENU->world
+    // rotation lets each fix's covariance be expressed in the world frame.
+    const GnssOffsetTargets aligned = gnss_targets_with_offset(est, offsets, gnss);
+    if (aligned.targets.size() != ids.size()) {
       return;
     }
 
+    // Fixed-precision fallback (used when a fix has no usable covariance or
+    // gnss_use_covariance is off): the original glim_ext-style behavior.
     const Eigen::Vector3d precisions(
       config.gnss_prior_inf_scale[0], config.gnss_prior_inf_scale[1],
       config.gnss_prior_inf_scale[2]);
-    const auto model = gtsam::noiseModel::Diagonal::Precisions(precisions);
+    const gtsam::SharedNoiseModel fixed_model = gtsam::noiseModel::Diagonal::Precisions(precisions);
+
+    // Vertical (z) handling mirrors the fixed path: honor a configured z precision,
+    // otherwise leave height effectively unconstrained (a large variance ~ zero
+    // information) so GNSS height — the weakest GNSS axis — does not fight the LiDAR.
+    const double z_variance = config.gnss_prior_inf_scale[2] > 0.0
+                                ? 1.0 / config.gnss_prior_inf_scale[2]
+                                : kUnconstrainedZVariance;
+
     using gtsam::symbol_shorthand::X;
     gnss_factors.reserve(ids.size());
     for (std::size_t i = 0; i < ids.size(); ++i) {
-      const gtsam::Point3 target(world[i][0], world[i][1], world[i][2]);
+      const gtsam::Point3 target(
+        aligned.targets[i][0], aligned.targets[i][1], aligned.targets[i][2]);
+
+      gtsam::SharedNoiseModel base = fixed_model;
+      if (config.gnss_use_covariance && cov_types[i] != kNavSatCovarianceTypeUnknown) {
+        // Horizontal ENU covariance {c_ee, c_en, c_ne, c_nn} from the nearest fix,
+        // rotated into the world frame, inflated and floored; z left per z_variance.
+        const std::array<double, 4> cov_h = {covs[i][0], covs[i][1], covs[i][3], covs[i][4]};
+        const std::array<double, 9> w = gnss_world_prior_covariance(
+          cov_h, aligned.world_from_enu_cos, aligned.world_from_enu_sin,
+          config.gnss_horizontal_sigma_floor, config.gnss_covariance_inflation, z_variance);
+        Eigen::Matrix3d cov_w;
+        cov_w << w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8];
+        base = gtsam::noiseModel::Gaussian::Covariance(cov_w);
+      }
+
+      // Robust-wrap so one multipath outlier cannot dominate; a Huber k of 0
+      // disables it.
+      gtsam::SharedNoiseModel model = base;
+      if (config.gnss_robust_huber_k > 0.0) {
+        model = gtsam::noiseModel::Robust::Create(
+          gtsam::noiseModel::mEstimator::Huber::Create(config.gnss_robust_huber_k), base);
+      }
+
       gtsam::NonlinearFactor::shared_ptr factor(
         new gtsam::PoseTranslationPrior<gtsam::Pose3>(X(ids[i]), target, model));
       gnss_factors.push_back(factor);

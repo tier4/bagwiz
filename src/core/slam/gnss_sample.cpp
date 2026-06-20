@@ -31,10 +31,12 @@ namespace bagwiz::core::slam
 //   float64[9] position_covariance        // FIXED-SIZE array, inline, no length prefix
 //   uint8 position_covariance_type
 //
-// We extract the stamp, frame_id, status.status and lat/lon/alt; status.service,
-// the covariance array and its type are skipped. read_u16 aligns past the pad
-// byte after the int8 status, and read_f64 aligns past the variable-length
-// frame_id string and the status fields before latitude.
+// We extract the stamp, frame_id, status.status, lat/lon/alt, the 9-element
+// position_covariance and its type; status.service is skipped. read_u16 aligns
+// past the pad byte after the int8 status, and read_f64 aligns past the
+// variable-length frame_id string and the status fields before latitude. The
+// covariance is a FIXED-SIZE float64[9] (inline, no length prefix), so it is read
+// as nine consecutive read_f64() calls; read_u8 then takes the trailing type byte.
 GnssSampleResult parse_navsatfix(std::span<const std::byte> payload)
 {
   GnssSampleResult result;
@@ -56,7 +58,11 @@ GnssSampleResult parse_navsatfix(std::span<const std::byte> payload)
     sample.latitude = reader.read_f64();
     sample.longitude = reader.read_f64();
     sample.altitude = reader.read_f64();
-    // position_covariance[9] and position_covariance_type are not read.
+
+    for (auto & c : sample.position_covariance) {
+      c = reader.read_f64();
+    }
+    sample.position_covariance_type = reader.read_u8();
 
     result.sample = std::move(sample);
   } catch (const std::exception & e) {

@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -17,10 +18,10 @@
 #include <vector>
 
 // Unit test for parse_navsatfix against a hand-built sensor_msgs/msg/NavSatFix
-// CDR-1 (LE) payload. The position_covariance array is filled with sentinel
-// values the parser must SKIP — if the layout/alignment is wrong, lat/lon/alt
-// would pick up the sentinels (or the status fields would shift) and the
-// assertions fail. No GLIM is involved; this runs in the default build.
+// CDR-1 (LE) payload. Exercises stamp/frame/status/lat-lon-alt extraction plus the
+// position_covariance[9] + type block that follows them — if the layout/alignment
+// is wrong, lat/lon/alt or the covariance values shift and the assertions fail. No
+// GLIM is involved; this runs in the default build.
 namespace
 {
 namespace slam = bagwiz::core::slam;
@@ -97,7 +98,7 @@ private:
 std::vector<std::byte> make_navsatfix_payload(
   std::int32_t sec, std::uint32_t nanosec, const std::string & frame_id, std::int8_t status,
   std::uint16_t service, double latitude, double longitude, double altitude,
-  double sentinel = -999.0)
+  const std::array<double, 9> & covariance = {}, std::uint8_t covariance_type = 0)
 {
   CdrWriter w;
   w.i32(sec);
@@ -109,12 +110,11 @@ std::vector<std::byte> make_navsatfix_payload(
   w.f64(latitude);
   w.f64(longitude);
   w.f64(altitude);
-  // position_covariance[9] — fixed-size float64 array, must be skipped.
-  for (int i = 0; i < 9; ++i) {
-    w.f64(sentinel);
+  // position_covariance[9] — fixed-size float64 array (inline, no length prefix).
+  for (double c : covariance) {
+    w.f64(c);
   }
-  // position_covariance_type (uint8) — present but never read.
-  w.u8(0);
+  w.u8(covariance_type);  // position_covariance_type
   return w.bytes();
 }
 
@@ -135,11 +135,35 @@ TEST(ParseNavSatFix, ExtractsStampFrameStatusAndLatLonAlt)
   EXPECT_DOUBLE_EQ(s.altitude, 40.5);
 }
 
+TEST(ParseNavSatFix, ExtractsPositionCovarianceAndType)
+{
+  // A full row-major 3x3 covariance (ENU), with off-diagonal terms, plus a KNOWN
+  // type. The parser must read all nine values in order and the trailing type
+  // byte; getting the float64[9] layout wrong would shift these or the type.
+  const std::array<double, 9> cov = {0.58, -0.57, 0.38, -0.57, 1.43, -0.29, 0.38, -0.29, 3.06};
+  const auto payload = make_navsatfix_payload(
+    1'700'000'000, 0, "gnss_link", /*status=*/1, /*service=*/15, 35.0, 139.0, 40.0, cov,
+    /*covariance_type=*/3);
+
+  const auto result = slam::parse_navsatfix(payload);
+  ASSERT_TRUE(result.ok()) << result.error;
+  const slam::GnssSample & s = *result.sample;
+
+  for (std::size_t i = 0; i < cov.size(); ++i) {
+    EXPECT_DOUBLE_EQ(s.position_covariance[i], cov[i]) << "covariance[" << i << "]";
+  }
+  EXPECT_EQ(s.position_covariance_type, 3);
+  // lat/lon/alt must remain uncorrupted by the covariance block that follows them.
+  EXPECT_DOUBLE_EQ(s.latitude, 35.0);
+  EXPECT_DOUBLE_EQ(s.altitude, 40.0);
+}
+
 TEST(ParseNavSatFix, PreservesNoFixStatus)
 {
   // status = -1 (STATUS_NO_FIX). The parser must report it faithfully so callers
   // can drop the sample; it does not filter on its own.
-  const auto payload = make_navsatfix_payload(1, 0, "", /*status=*/-1, /*service=*/0, 0.0, 0.0, 0.0);
+  const auto payload =
+    make_navsatfix_payload(1, 0, "", /*status=*/-1, /*service=*/0, 0.0, 0.0, 0.0);
 
   const auto result = slam::parse_navsatfix(payload);
   ASSERT_TRUE(result.ok()) << result.error;

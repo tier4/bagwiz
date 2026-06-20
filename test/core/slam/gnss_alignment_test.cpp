@@ -152,7 +152,7 @@ TEST(GnssTargetsWithOffset, ZeroOffsetMatchesPlainAlignment)
   const auto plain = slam::align_gnss_to_world(est, gnss);
   const auto with_offset = slam::gnss_targets_with_offset(est, zero_offsets, gnss);
 
-  expect_points_near(with_offset, plain, 1e-12);
+  expect_points_near(with_offset.targets, plain, 1e-12);
 }
 
 TEST(GnssTargetsWithOffset, RemovesHeadingDependentLeverArm)
@@ -163,8 +163,8 @@ TEST(GnssTargetsWithOffset, RemovesHeadingDependentLeverArm)
   const auto offsets = offsets_for(kLHeadings, 1.5, 0.0, 0.0);
   const auto gnss = add_points(kLOrigins, offsets);  // perfect antenna fixes, identity datum
 
-  const auto targets = slam::gnss_targets_with_offset(kLOrigins, offsets, gnss);
-  expect_points_near(targets, kLOrigins, 1e-9);
+  const auto result = slam::gnss_targets_with_offset(kLOrigins, offsets, gnss);
+  expect_points_near(result.targets, kLOrigins, 1e-9);
 
   // Contrast: the plain alignment (no lever-arm awareness) feeds the antenna
   // positions straight in, so its targets retain a heading-dependent bias well
@@ -178,23 +178,87 @@ TEST(GnssTargetsWithOffset, RecoversThroughDatumYawAndTranslation)
 {
   // Same lever arm, but the GNSS datum is rotated 0.4 rad and shifted (100, -50):
   // the antenna-to-antenna fit must still recover, and removing the offset must
-  // still land the targets back on the submap origins.
+  // still land the targets back on the submap origins. The reported ENU->world
+  // rotation must recover that same datum yaw (cos 0.4, sin 0.4).
   const auto offsets = offsets_for(kLHeadings, 1.5, 0.5, 0.0);
   const auto antenna = add_points(kLOrigins, offsets);
   const auto gnss = apply_2d_transform(antenna, 0.4, 100.0, -50.0);
 
-  const auto targets = slam::gnss_targets_with_offset(kLOrigins, offsets, gnss);
-  expect_points_near(targets, kLOrigins, 1e-9);
+  const auto result = slam::gnss_targets_with_offset(kLOrigins, offsets, gnss);
+  expect_points_near(result.targets, kLOrigins, 1e-9);
+  EXPECT_NEAR(result.world_from_enu_cos, std::cos(0.4), 1e-9);
+  EXPECT_NEAR(result.world_from_enu_sin, std::sin(0.4), 1e-9);
 }
 
 TEST(GnssTargetsWithOffset, RejectsEmptyOrMismatchedInputs)
 {
-  EXPECT_TRUE(slam::gnss_targets_with_offset({}, {}, {}).empty());
+  EXPECT_TRUE(slam::gnss_targets_with_offset({}, {}, {}).targets.empty());
 
   const std::vector<std::array<double, 3>> two = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
   const std::vector<std::array<double, 3>> one_off = {{0.0, 0.0, 0.0}};
   // offsets length mismatched with origins/gnss -> empty.
-  EXPECT_TRUE(slam::gnss_targets_with_offset(two, one_off, two).empty());
+  EXPECT_TRUE(slam::gnss_targets_with_offset(two, one_off, two).targets.empty());
+}
+
+// --- gnss_world_prior_covariance: ENU->world rotation + floor + inflation -----
+
+constexpr double kUnconstrainedZVar = 1e8;  // ~ (1e4 m)^2: z effectively free
+
+TEST(GnssWorldPriorCovariance, IdentityRotationPassesHorizontalThrough)
+{
+  // cos=1, sin=0, no floor, no inflation: the horizontal block is unchanged and z
+  // is whatever z_variance we ask for.
+  const std::array<double, 4> cov = {0.5, 0.1, 0.1, 0.9};
+  const auto w = slam::gnss_world_prior_covariance(cov, 1.0, 0.0, 0.0, 1.0, kUnconstrainedZVar);
+  EXPECT_NEAR(w[0], 0.5, 1e-12);
+  EXPECT_NEAR(w[1], 0.1, 1e-12);
+  EXPECT_NEAR(w[3], 0.1, 1e-12);
+  EXPECT_NEAR(w[4], 0.9, 1e-12);
+  EXPECT_EQ(w[2], 0.0);
+  EXPECT_EQ(w[5], 0.0);
+  EXPECT_EQ(w[6], 0.0);
+  EXPECT_EQ(w[7], 0.0);
+  EXPECT_DOUBLE_EQ(w[8], kUnconstrainedZVar);
+}
+
+TEST(GnssWorldPriorCovariance, NinetyDegreeRotationSwapsAxes)
+{
+  // A diagonal ENU covariance rotated by 90deg (cos=0, sin=1, M=[[0,1],[-1,0]])
+  // must swap the East/North variances in the world frame.
+  const std::array<double, 4> cov = {0.25, 0.0, 0.0, 4.0};
+  const auto w = slam::gnss_world_prior_covariance(cov, 0.0, 1.0, 0.0, 1.0, kUnconstrainedZVar);
+  EXPECT_NEAR(w[0], 4.0, 1e-12);   // was N
+  EXPECT_NEAR(w[4], 0.25, 1e-12);  // was E
+  EXPECT_NEAR(w[1], 0.0, 1e-12);
+}
+
+TEST(GnssWorldPriorCovariance, RotationPreservesTraceAndIsSymmetric)
+{
+  // A similarity rotation preserves the trace; the output must stay symmetric.
+  const std::array<double, 4> cov = {0.58, -0.57, -0.57, 1.43};
+  const double theta = 0.7;
+  const auto w = slam::gnss_world_prior_covariance(
+    cov, std::cos(theta), std::sin(theta), 0.0, 1.0, kUnconstrainedZVar);
+  EXPECT_NEAR(w[0] + w[4], 0.58 + 1.43, 1e-9);  // trace preserved
+  EXPECT_NEAR(w[1], w[3], 1e-12);               // symmetric
+}
+
+TEST(GnssWorldPriorCovariance, FloorRaisesOverOptimisticVariance)
+{
+  // A wildly optimistic 1 mm covariance must be lifted to at least the floor^2.
+  const std::array<double, 4> cov = {1e-6, 0.0, 0.0, 1e-6};
+  const double floor = 0.1;  // 10 cm
+  const auto w = slam::gnss_world_prior_covariance(cov, 1.0, 0.0, floor, 1.0, kUnconstrainedZVar);
+  EXPECT_GE(w[0], floor * floor - 1e-12);
+  EXPECT_GE(w[4], floor * floor - 1e-12);
+}
+
+TEST(GnssWorldPriorCovariance, InflationScalesVarianceBySquare)
+{
+  const std::array<double, 4> cov = {0.5, 0.0, 0.0, 0.5};
+  const double infl = 2.0;
+  const auto w = slam::gnss_world_prior_covariance(cov, 1.0, 0.0, 0.0, infl, kUnconstrainedZVar);
+  EXPECT_NEAR(w[0], 0.5 * infl * infl, 1e-12);  // variance scales by inflation^2
 }
 
 }  // namespace

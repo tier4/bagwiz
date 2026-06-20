@@ -657,7 +657,13 @@ private:
     core::slam::GnssProjector projector;
     auto on_gnss = [&](const core::slam::GnssSample & g) {
       const std::array<double, 3> enu = projector.project(g.latitude, g.longitude, g.altitude);
-      mapper.insert_gnss(core::slam::GnssPoint{g.stamp_ns, enu});
+      core::slam::GnssPoint point{g.stamp_ns, enu};
+      // NavSatFix covariance is ENU at the antenna; the local ENU projection
+      // preserves those axes over the trajectory area, so carry it unchanged for
+      // per-prior weighting in the mapper.
+      point.covariance = g.position_covariance;
+      point.covariance_type = g.position_covariance_type;
+      mapper.insert_gnss(point);
     };
 
     std::int64_t scans = 0;

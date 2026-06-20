@@ -89,8 +89,12 @@ Written under `<output_root>`:
   world frame (it is not georeferenced). The antenna lever-arm is resolved from the
   bag's static TF (cloud ← `NavSatFix` `frame_id`) and removed, so the prior
   constrains the sensor origin rather than the antenna; when that TF is absent the
-  run still succeeds (warned) using the raw antenna position. GNSS covariance is
-  not used (a fixed per-axis precision is applied). With too little motion or no
+  run still succeeds (warned) using the raw antenna position. Each prior is
+  weighted by that fix's reported `position_covariance` — rotated into the world
+  frame, inflated, floored, and wrapped in a Huber robust kernel — so a metre-level
+  SBAS fix is trusted less than a centimetre-level RTK fix; a fix whose covariance
+  type is `UNKNOWN` falls back to a fixed per-axis precision. Height stays
+  effectively unconstrained (GNSS's weakest axis). With too little motion or no
   temporal overlap, no constraints are added and the run warns but still succeeds.
   Requires global mapping (rejected with `--without-global-optim`).
 - **Deskewing.** Clouds with a per-point time field are deskewed by GLIM; clouds

@@ -9,6 +9,7 @@
 #ifndef BAGWIZ__CORE__SLAM__GNSS_SAMPLE_HPP_
 #define BAGWIZ__CORE__SLAM__GNSS_SAMPLE_HPP_
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -17,10 +18,11 @@
 // SLAM-facing extraction layer that turns a sensor_msgs/msg/NavSatFix CDR
 // payload into a GLIM-free plain-data sample, mirroring how imu_sample /
 // parse_imu keep the GLIM dependency out of the ingest layer. Only the stamp,
-// frame_id, fix status and WGS84 latitude/longitude/altitude are extracted —
-// the GNSS global constraint (a horizontal translation prior on submap poses)
-// needs the position, and the status lets the caller drop NO_FIX samples; the
-// position covariance is skipped (the ported glim_ext constraint ignores it).
+// frame_id, fix status, WGS84 latitude/longitude/altitude and the position
+// covariance are extracted — the GNSS global constraint (a horizontal translation
+// prior on submap poses) needs the position, the status lets the caller drop
+// NO_FIX samples, and the covariance lets the mapper weight each prior by the
+// fix's reported accuracy instead of a single fixed precision.
 //
 // Lives in bagwiz_core so it compiles in every build and is unit-tested without
 // the GLIM stack; the projection to a local metric frame (gnss_projector) and
@@ -42,11 +44,24 @@ struct GnssSample
   double latitude = 0.0;   // degrees
   double longitude = 0.0;  // degrees
   double altitude = 0.0;   // meters (WGS84 ellipsoid)
+
+  // sensor_msgs/NavSatFix.position_covariance: 3x3, row-major, in m^2, expressed
+  // in the local ENU tangent plane at the antenna {East, North, Up}. Meaningful
+  // only when position_covariance_type != COVARIANCE_TYPE_UNKNOWN.
+  std::array<double, 9> position_covariance{};
+
+  // sensor_msgs/NavSatFix.position_covariance_type: 0 UNKNOWN, 1 APPROXIMATED,
+  // 2 DIAGONAL_KNOWN, 3 KNOWN.
+  std::uint8_t position_covariance_type = 0;
 };
 
 // sensor_msgs/NavSatStatus.STATUS_NO_FIX: no satellite fix; such samples carry
 // no usable position and should be dropped by the caller.
 inline constexpr std::int8_t kNavSatStatusNoFix = -1;
+
+// sensor_msgs/NavSatFix.COVARIANCE_TYPE_UNKNOWN: the position_covariance carries
+// no usable accuracy information; the caller must not weight a prior by it.
+inline constexpr std::uint8_t kNavSatCovarianceTypeUnknown = 0;
 
 // Outcome of parse_navsatfix(). On success `sample` holds the data and `error`
 // is empty; on failure `sample` is reset and `error` carries the reason.
