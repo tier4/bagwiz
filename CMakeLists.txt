@@ -377,22 +377,50 @@ if(BAGWIZ_WITH_MAP_VIEWER)
   FetchContent_MakeAvailable(httplib)
   unset(CMAKE_POLICY_VERSION_MINIMUM)
 
-  # Embed the viewer assets (HTML + JS) into the binary as string_view literals
-  # via configure_file (@ONLY so the assets' own ${...}/; characters are left
-  # untouched). Editing an asset retriggers configure through CONFIGURE_DEPENDS.
+  # The viewer client is TypeScript (assets/slam/*.ts). Compile it to ES modules
+  # at configure time, then embed the generated JS (HTML + JS) into the binary as
+  # string_view literals via configure_file (@ONLY so the assets' own ${...}/;
+  # characters are left untouched). three.js is only a devDependency for type
+  # checking — it is loaded from a CDN at runtime — so its types are installed
+  # first. npm/tsc come from the pixi `nodejs` dependency. Editing a .ts/.html or
+  # tsconfig retriggers configure (and thus tsc) through CONFIGURE_DEPENDS.
   set(_viewer_assets_dir "${CMAKE_CURRENT_SOURCE_DIR}/assets/slam")
   set(_viewer_gen_dir "${CMAKE_CURRENT_BINARY_DIR}/generated_viewer")
+  set(_viewer_js_dir "${_viewer_gen_dir}/js")
+
+  find_program(NPM_EXECUTABLE npm REQUIRED)
+  if(NOT EXISTS "${_viewer_assets_dir}/node_modules")
+    message(STATUS "bagwiz: installing map-viewer TypeScript toolchain (npm ci)")
+    execute_process(
+      COMMAND "${NPM_EXECUTABLE}" ci --no-audit --no-fund
+      WORKING_DIRECTORY "${_viewer_assets_dir}"
+      RESULT_VARIABLE _npm_result)
+    if(NOT _npm_result EQUAL 0)
+      message(FATAL_ERROR "bagwiz: npm ci failed for the map viewer (exit ${_npm_result}); "
+        "remove ${_viewer_assets_dir}/node_modules and retry with network access")
+    endif()
+  endif()
+  execute_process(
+    COMMAND "${_viewer_assets_dir}/node_modules/.bin/tsc" -p tsconfig.json
+            --outDir "${_viewer_js_dir}"
+    WORKING_DIRECTORY "${_viewer_assets_dir}"
+    RESULT_VARIABLE _tsc_result)
+  if(NOT _tsc_result EQUAL 0)
+    message(FATAL_ERROR "bagwiz: TypeScript compile of the map viewer failed (exit ${_tsc_result})")
+  endif()
+
   file(READ "${_viewer_assets_dir}/map_viewer.html" VIEWER_HTML)
-  file(READ "${_viewer_assets_dir}/map_viewer.js" VIEWER_JS)
-  file(READ "${_viewer_assets_dir}/map_colormaps.js" VIEWER_COLORMAPS)
+  file(READ "${_viewer_js_dir}/map_viewer.js" VIEWER_JS)
+  file(READ "${_viewer_js_dir}/map_colormaps.js" VIEWER_COLORMAPS)
   configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/map_viewer_assets.hpp.in"
     "${_viewer_gen_dir}/bagwiz/core/slam/map_viewer_assets.hpp"
     @ONLY)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${_viewer_assets_dir}/map_viewer.html"
-    "${_viewer_assets_dir}/map_viewer.js"
-    "${_viewer_assets_dir}/map_colormaps.js")
+    "${_viewer_assets_dir}/map_viewer.ts"
+    "${_viewer_assets_dir}/map_colormaps.ts"
+    "${_viewer_assets_dir}/tsconfig.json")
 
   target_sources(bagwiz_core PRIVATE src/core/slam/map_viewer.cpp)
   target_include_directories(bagwiz_core PRIVATE "${_viewer_gen_dir}")

@@ -5,7 +5,7 @@
 // 256*3 bytes (R,G,B per stop) to keep this module small.
 // Linted by ESLint (eslint.config.mjs) and formatted by Prettier.
 
-const LUTS_B64 = {
+const LUTS_B64: Record<string, string> = {
   turbo:
     "MBI7MhVDMxhKNBtRNR5YNiFfNyRmOCdtOSpzOi15Oy+APDKGPTWLPjiRPzuXPz6cQECiQUOnQUasQkmxQku1Q066RFG/RFTDRFbHRVnLRVzPRV7TRmHWRmTaRmbdRmngRmvjR27mR3HpR3PrR3buR3jwR3vyRn30RoD2RoL4RoX6Rof7RYr8RYz9RI/+Q5H+QpT/QZb/QJn/Ppv+PZ7+O6D9OqP8OKX7N6j6Nav4M633Ma/1L7L0LrTyLLfwKrnuKLzrJ77pJcDnI8PkIsXiIMffH8ndHsvaHM3YG9DVGtLSGtTQGdXNGNfKGNnIGNvFGN3CGN7AGOC9GeK7GeO5GuS2HOa0HeeyH+mvIOqsIuuqJeynJ+6kKu+hLPCeL/GbMvKYNfOUOPSRPPWOP/aKQ/eHRviESviATvl9Uvp6Vfp2WftzXfxvYfxsZf1paf1mbf5icf5fdf5cef5Zff9WgP9ThP9RiP9Oi/9Lj/9Jkv9Hlv5Emf5CnP5An/0/of09pPw8p/w6qfs5rPs4r/o3sfk2tPg2t/c1ufY1vPU0vvQ0wfM0w/E0xvA0yO80y+00zew00Oo00uk11Oc11+U12eQ22+I23eA339834d0349s45dk459c56dU569M57NE67s8678068cs68sk69Mc69cU69sM698E6+L45+bw5+ro5+7g4+7Y3/LM2/LE2/a41/aw0/qkz/qcy/qQx/qEw/p4v/pst/pks/pYr/pMq/pAp/Y0n/Yom/Icl/IQj+4Ei+34h+nsf+Xge+XUd+HIc928a9mwZ9WkY9GYX82MV8mAU8V0T8FsS71gR7VUQ7FMP61AO6k4N6EsM50kM5UcL5EUK4kMK4UEJ3z8I3T0I3DsH2jkH2DcG1jUG1DMF0jEF0C8Fzi0EzCsEyioEyCgDxSYDwyUDwSMCviECvCACuR4Ctx0CtBsBshoBrxgBrBcBqRYBpxQBpBMBoRIBnhABmw8BmA4BlQ0BkgsBjgoBiwkCiAgChQcCgQYCfgUCegQD",
   viridis:
@@ -23,7 +23,7 @@ const LUTS_B64 = {
 export const COLORMAP_NAMES = ["turbo", "viridis", "inferno", "plasma", "jet", "gray"];
 export const DEFAULT_COLORMAP = "turbo";
 
-function decodeLut(b64) {
+function decodeLut(b64: string): Uint8Array {
   const binary = atob(b64);
   const lut = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) {
@@ -32,7 +32,7 @@ function decodeLut(b64) {
   return lut; // 768 bytes: R,G,B per stop, 256 stops
 }
 
-const LUTS = {};
+const LUTS: Record<string, Uint8Array> = {};
 for (const name of COLORMAP_NAMES) {
   LUTS[name] = decodeLut(LUTS_B64[name]);
 }
@@ -40,7 +40,12 @@ for (const name of COLORMAP_NAMES) {
 // Sample colormap `name` at `t` (clamped to [0,1]), linearly interpolating
 // between the two nearest of the 256 stops. Writes normalized r,g,b into
 // out[off..off+2]. Unknown names fall back to the default map.
-export function sampleColormap(name, t, out, off) {
+export function sampleColormap(
+  name: string,
+  t: number,
+  out: Float32Array | number[],
+  off: number,
+): void {
   const lut = LUTS[name] || LUTS[DEFAULT_COLORMAP];
   const x = t <= 0 ? 0 : t >= 1 ? 1 : t;
   const pos = x * 255;

@@ -41,6 +41,7 @@ cxx-compiler = "*"            # conda-forge g++; sets CXX on activation
 pkg-config = "*"
 colcon-common-extensions = "*"
 git = "*"                     # CMake FetchContent (CLI11/fmt/rang) clones at configure time
+nodejs = "*"                  # npm + tsc: compiles the map viewer's TypeScript at build time (BAGWIZ_WITH_MAP_VIEWER)
 geographiclib-cpp = "*"       # GeographicLib C++ library (conda-forge); NOT the python `geographiclib`
 nlohmann_json = "*"
 sqlite = "*"
