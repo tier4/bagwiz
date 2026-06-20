@@ -996,6 +996,32 @@ TEST(FlagCompletionTest, TopicSubcommandListsDropKeepAndRename)
     run_completion({"bagwiz", "__complete", "2", "bagwiz", "topic", ""}), "drop\nkeep\nrename\n");
 }
 
+// `bagwiz slam <TAB>` lists the command group's action verbs (run, vis), sorted.
+TEST(FlagCompletionTest, SlamSubcommandListsRunAndVis)
+{
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "slam", ""}), "run\nvis\n");
+}
+
+// A partial verb narrows the candidates.
+TEST(FlagCompletionTest, SlamSubcommandPrefixNarrowsToVis)
+{
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "slam", "v"}), "vis\n");
+}
+
+// `slam vis <TAB>`: the <map> positional is a path, left to shell file
+// completion, so no candidates are emitted.
+TEST(FlagCompletionTest, SlamVisMapSlotDefersToShell)
+{
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "3", "bagwiz", "slam", "vis", ""}), "");
+}
+
+// `slam vis -` surfaces only the implicit help flags (vis has no other flags).
+TEST(FlagCompletionTest, SlamVisDashListsHelpFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "slam", "vis", "-"}), "--help\n-h\n");
+}
+
 // `bagwiz topic -` is the command-group slot; only the implicit help flags
 // appear (drop's own flags live one slot deeper).
 TEST(FlagCompletionTest, TopicParentDashListsHelpFlags)

@@ -346,7 +346,8 @@ if(BAGWIZ_WITH_SLAM)
     src/core/slam/cloud_odometry.cpp
     src/core/slam/cloud_mapper.cpp
     src/commands/slam.cpp
-    src/commands/slam_run.cpp)
+    src/commands/slam_run.cpp
+    src/commands/slam_vis.cpp)
   target_link_libraries(bagwiz PRIVATE glim::glim gtsam_points::gtsam_points)
   target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_SLAM)
 endif()
