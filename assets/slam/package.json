@@ -1,0 +1,23 @@
+{
+  "name": "bagwiz-map-viewer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "TypeScript sources for the `bagwiz slam` browser map viewer. Compiled to ES modules at build time (see CMakeLists.txt) and embedded into the binary; three.js is resolved from a CDN at runtime via an import map, and is a devDependency here only for type checking.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "@types/three": "0.169.0",
+    "eslint": "^9.13.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.11.0",
+    "three": "0.169.0",
+    "typescript": "~5.6.3",
+    "typescript-eslint": "^8.10.0"
+  }
+}

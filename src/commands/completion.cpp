@@ -969,19 +969,21 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
   return {};
 }
 
-// `slam` is a command group whose sole action verb is `run`; the verb adds one
-// positional slot, shifting every argument one word to the right of the old flat
-// command:
+// `slam` is a command group with two action verbs, `run` and `vis`. The verb
+// adds one positional slot, shifting every argument one word to the right of a
+// flat command:
 //
 //   run: `slam`(0) `run`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
 //        [--imu <topic>] [--map-resolution <m>] [--without-global-optim] [-w|--overwrite]
+//   vis: `slam`(0) `vis`(1) `<map>`(2)
 //
-// At the action slot (word 1) the only candidate is `run` (or the help flags for
-// a `-` word). Past it, the positional <pcd_topic> slot is completed earlier by
-// try_topic_completion via kTopicBindings (PointCloud2 topics only); here we
-// surface `run`'s flags for any `-` word and complete the value of `--imu` from
-// the bag's sensor_msgs/msg/Imu topics. <input> and <output_root> are paths that
-// fall through to the shell's file completion.
+// At the action slot (word 1) the candidates are `run` and `vis` (or the help
+// flags for a `-` word). Past it, the positional <pcd_topic> slot is completed
+// earlier by try_topic_completion via kTopicBindings (PointCloud2 topics only);
+// here we surface `run`'s flags for any `-` word and complete the value of
+// `--imu` from the bag's sensor_msgs/msg/Imu topics. `vis` has no value-bearing
+// flags and its single <map> positional is a path that falls through to the
+// shell's file completion, as do `run`'s <input> and <output_root>.
 std::vector<std::string> complete_slam(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -989,13 +991,22 @@ std::vector<std::string> complete_slam(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"run"}, current);
+    return matching({"run", "vis"}, current);
   }
 
   // Reaching here implies cursor_word >= kSecondCommandArgWord (cursor_word == 0
   // is handled by the caller and == kFirstCommandArgWord above), so words[1]
-  // exists (parse_request clamps cursor_word to words.size()). Only `run` has
-  // flags or a bag to complete from.
+  // exists (parse_request clamps cursor_word to words.size()).
+  //
+  // `vis` only takes a <map> path: offer the implicit help flags for a `-` word,
+  // otherwise leave the path to the shell's file completion.
+  if (request.words[kFirstCommandArgWord] == "vis") {
+    if (current.starts_with("-")) {
+      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
+    }
+    return {};
+  }
+  // Only `run` has flags or a bag to complete from.
   if (request.words[kFirstCommandArgWord] != "run") {
     return {};
   }

@@ -18,6 +18,7 @@
 #include "bagwiz/core/slam/gnss_sample.hpp"
 #include "bagwiz/core/slam/imu_sample.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
+#include "bagwiz/core/slam/map_viewer.hpp"
 #include "bagwiz/core/slam/point_cloud_io.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
 #include "bagwiz/core/tf_chain.hpp"
@@ -696,6 +697,16 @@ private:
       return 1;
     }
     core::slam::write_ply(map_out, map.points, map.intensities);
+    // Flush and close before the good() check and before --vis serves the file.
+    // An open ofstream keeps the final partial (<8 KiB) block in its user-space
+    // buffer, so until the stream is destroyed the on-disk file is short of its
+    // own header's vertex count. serve_map_viewer() (below) blocks while map_out
+    // is still in scope, so without this close it would read a too-small
+    // file_size, send a truncated body, and the browser's PLY loader would fail
+    // with "Offset is outside the bounds of the DataView". close() also surfaces
+    // a flush failure (e.g. disk full) through good() below, which the prior
+    // mid-write good() check could not see.
+    map_out.close();
     if (!map_out.good()) {
       BAGWIZ_LOG_ERROR(kLogger, "write failed: %s", map_path_.c_str());
       return 1;
@@ -723,6 +734,19 @@ private:
           "and the submaps.",
           args_.gnss_topic.c_str(), std::to_string(gnss_count).c_str());
       }
+    }
+
+    // --vis: serve the map.ply just written and open the browser. This blocks
+    // until the user interrupts the viewer. CLI parsing already rejects
+    // --vis together with --without-global-optim, so a map always exists here.
+    if (args_.vis) {
+#ifdef BAGWIZ_WITH_MAP_VIEWER
+      return core::slam::serve_map_viewer(map_path_);
+#else
+      BAGWIZ_LOG_ERROR(
+        kLogger, "--vis is unavailable: this binary was built without the map viewer");
+      return 1;
+#endif
     }
     return 0;
   }

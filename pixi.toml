@@ -41,6 +41,7 @@ cxx-compiler = "*"            # conda-forge g++; sets CXX on activation
 pkg-config = "*"
 colcon-common-extensions = "*"
 git = "*"                     # CMake FetchContent (CLI11/fmt/rang) clones at configure time
+nodejs = "*"                  # npm + tsc: compiles the map viewer's TypeScript at build time (BAGWIZ_WITH_MAP_VIEWER)
 geographiclib-cpp = "*"       # GeographicLib C++ library (conda-forge); NOT the python `geographiclib`
 nlohmann_json = "*"
 sqlite = "*"
@@ -85,7 +86,7 @@ scripts = ["scripts/pixi-activate.sh"]
 [tasks.build]
 args = [{ arg = "build_type", default = "Release" }]
 cmd = 'colcon build --symlink-install --packages-up-to bagwiz --build-base "build/$PIXI_ENVIRONMENT_NAME" --install-base "install/$PIXI_ENVIRONMENT_NAME" --cmake-args -DCMAKE_BUILD_TYPE={{ build_type }} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && ln -sfn "$PIXI_ENVIRONMENT_NAME/compile_commands.json" build/compile_commands.json'
-inputs = ["src", "include", "test", "CMakeLists.txt", "package.xml"]
+inputs = ["src", "include", "test", "assets", "CMakeLists.txt", "package.xml"]
 
 # Build the GLIM SLAM dependency stack (GTSAM + gtsam_points + glim) once into
 # install/<distro>/glim-deps. The script is idempotent: it no-ops when the

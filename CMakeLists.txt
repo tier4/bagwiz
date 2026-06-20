@@ -222,6 +222,7 @@ add_library(bagwiz_core
   src/core/slam/gnss_alignment.cpp
   src/core/slam/point_cloud_io.cpp
   src/core/slam/cloud_filters.cpp
+  src/core/slam/map_viewer_open.cpp
   src/core/video/frame_rate.cpp
   src/core/video/video_encoder.cpp
   src/core/tui/layout.cpp
@@ -352,9 +353,91 @@ if(BAGWIZ_WITH_SLAM)
     src/core/slam/cloud_odometry.cpp
     src/core/slam/cloud_mapper.cpp
     src/commands/slam.cpp
-    src/commands/slam_run.cpp)
+    src/commands/slam_run.cpp
+    src/commands/slam_vis.cpp)
   target_link_libraries(bagwiz PRIVATE glim::glim gtsam_points::gtsam_points gtsam)
   target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_SLAM)
+endif()
+
+# --- Optional browser map viewer for `bagwiz slam run --vis` ------------------
+# The viewer (a cpp-httplib loopback server + embedded Three.js assets + a
+# browser launch) is entirely GLIM-free, so it gets its own option that simply
+# DEFAULTS to BAGWIZ_WITH_SLAM: a normal build pulls in neither cpp-httplib nor
+# this code, a `build-slam` build gains the viewer, and the viewer can be built
+# and tested on its own with -DBAGWIZ_WITH_MAP_VIEWER=ON (no GLIM needed).
+option(BAGWIZ_WITH_MAP_VIEWER
+  "Build the `slam run --vis` browser map viewer (fetches cpp-httplib)"
+  ${BAGWIZ_WITH_SLAM})
+if(BAGWIZ_WITH_MAP_VIEWER)
+  FetchContent_Declare(
+    httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.18.3
+    GIT_SHALLOW TRUE
+  )
+  # Header-only (no split compile) and, crucially, no install() rules: httplib's
+  # own install export otherwise collides with ament_cmake_symlink_install.
+  set(HTTPLIB_COMPILE OFF CACHE BOOL "" FORCE)
+  set(HTTPLIB_INSTALL OFF CACHE BOOL "" FORCE)
+  set(HTTPLIB_REQUIRE_OPENSSL OFF CACHE BOOL "" FORCE)
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+  FetchContent_MakeAvailable(httplib)
+  unset(CMAKE_POLICY_VERSION_MINIMUM)
+
+  # The viewer client is TypeScript (assets/slam/*.ts). Compile it to ES modules
+  # at configure time, then embed the generated JS (HTML + JS) into the binary as
+  # string_view literals via configure_file (@ONLY so the assets' own ${...}/;
+  # characters are left untouched). three.js is only a devDependency for type
+  # checking — it is loaded from a CDN at runtime — so its types are installed
+  # first. npm/tsc come from the pixi `nodejs` dependency. Editing a .ts/.html or
+  # tsconfig retriggers configure (and thus tsc) through CONFIGURE_DEPENDS.
+  set(_viewer_assets_dir "${CMAKE_CURRENT_SOURCE_DIR}/assets/slam")
+  set(_viewer_gen_dir "${CMAKE_CURRENT_BINARY_DIR}/generated_viewer")
+  set(_viewer_js_dir "${_viewer_gen_dir}/js")
+
+  find_program(NPM_EXECUTABLE npm REQUIRED)
+  if(NOT EXISTS "${_viewer_assets_dir}/node_modules")
+    message(STATUS "bagwiz: installing map-viewer TypeScript toolchain (npm ci)")
+    execute_process(
+      COMMAND "${NPM_EXECUTABLE}" ci --no-audit --no-fund
+      WORKING_DIRECTORY "${_viewer_assets_dir}"
+      RESULT_VARIABLE _npm_result)
+    if(NOT _npm_result EQUAL 0)
+      message(FATAL_ERROR "bagwiz: npm ci failed for the map viewer (exit ${_npm_result}); "
+        "remove ${_viewer_assets_dir}/node_modules and retry with network access")
+    endif()
+  endif()
+  execute_process(
+    COMMAND "${_viewer_assets_dir}/node_modules/.bin/tsc" -p tsconfig.json
+            --outDir "${_viewer_js_dir}"
+    WORKING_DIRECTORY "${_viewer_assets_dir}"
+    RESULT_VARIABLE _tsc_result)
+  if(NOT _tsc_result EQUAL 0)
+    message(FATAL_ERROR "bagwiz: TypeScript compile of the map viewer failed (exit ${_tsc_result})")
+  endif()
+
+  file(READ "${_viewer_assets_dir}/map_viewer.html" VIEWER_HTML)
+  file(READ "${_viewer_js_dir}/map_viewer.js" VIEWER_JS)
+  file(READ "${_viewer_js_dir}/map_colormaps.js" VIEWER_COLORMAPS)
+  configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/map_viewer_assets.hpp.in"
+    "${_viewer_gen_dir}/bagwiz/core/slam/map_viewer_assets.hpp"
+    @ONLY)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${_viewer_assets_dir}/map_viewer.html"
+    "${_viewer_assets_dir}/map_viewer.ts"
+    "${_viewer_assets_dir}/map_colormaps.ts"
+    "${_viewer_assets_dir}/tsconfig.json")
+
+  target_sources(bagwiz_core PRIVATE src/core/slam/map_viewer.cpp)
+  target_include_directories(bagwiz_core PRIVATE "${_viewer_gen_dir}")
+  # Header-only httplib: pull its include dir (not a link) so the uninstallable
+  # FetchContent target never lands in bagwiz_core's export set, mirroring fmt.
+  target_include_directories(bagwiz_core PRIVATE
+    $<TARGET_PROPERTY:httplib::httplib,INTERFACE_INCLUDE_DIRECTORIES>)
+  target_compile_definitions(bagwiz_core PRIVATE BAGWIZ_WITH_MAP_VIEWER)
+  # slam_run.cpp lives on the bagwiz executable and guards its --vis call on this.
+  target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_MAP_VIEWER)
 endif()
 
 install(TARGETS bagwiz RUNTIME DESTINATION bin)
@@ -450,6 +533,19 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_slam_gnss_alignment_test test/core/slam/gnss_alignment_test.cpp)
   target_link_libraries(bagwiz_slam_gnss_alignment_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_slam_map_viewer_open_test test/core/slam/map_viewer_open_test.cpp)
+  target_link_libraries(bagwiz_slam_map_viewer_open_test bagwiz_core)
+
+  # Viewer HTTP server: route + verbatim-streaming test. Gated like its source on
+  # the (GLIM-free) viewer option, so it runs in a -DBAGWIZ_WITH_MAP_VIEWER=ON
+  # build as well as a full SLAM build.
+  if(BAGWIZ_WITH_MAP_VIEWER)
+    ament_add_gtest(bagwiz_slam_map_viewer_server_test test/core/slam/map_viewer_server_test.cpp)
+    target_link_libraries(bagwiz_slam_map_viewer_server_test bagwiz_core)
+    target_include_directories(bagwiz_slam_map_viewer_server_test PRIVATE
+      $<TARGET_PROPERTY:httplib::httplib,INTERFACE_INCLUDE_DIRECTORIES>)
+  endif()
 
   # GLIM-linked integration test for the odometry wrapper; only when SLAM is on
   # (find_package(glim) ran in the BAGWIZ_WITH_SLAM block above).

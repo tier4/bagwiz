@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>bagwiz — map.ply</title>
+    <style>
+      :root {
+        --bg: #101014;
+        --panel: rgba(20, 22, 28, 0.86);
+        --panel-border: rgba(255, 255, 255, 0.08);
+        --text: #e7e7ea;
+        --muted: #9a9aa3;
+        --accent: #4ea1ff;
+        --field: rgba(255, 255, 255, 0.06);
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          13px/1.4 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
+      }
+      #panel {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        width: 232px;
+        max-height: calc(100vh - 24px);
+        overflow-y: auto;
+        padding: 12px 14px 14px;
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 10px;
+        backdrop-filter: blur(8px);
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+      }
+      #panel h1 {
+        margin: 0 0 10px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        color: var(--text);
+      }
+      .field {
+        margin-bottom: 11px;
+      }
+      .field > label {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      select,
+      input[type="number"] {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 5px 6px;
+        color: var(--text);
+        background: var(--field);
+        border: 1px solid var(--panel-border);
+        border-radius: 6px;
+        font: inherit;
+      }
+      input[type="range"] {
+        width: 100%;
+        accent-color: var(--accent);
+      }
+      .row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .row > * {
+        flex: 1;
+      }
+      .inline {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .val {
+        color: var(--accent);
+      }
+      button {
+        width: 100%;
+        padding: 6px 8px;
+        margin-top: 2px;
+        color: var(--text);
+        background: var(--field);
+        border: 1px solid var(--panel-border);
+        border-radius: 6px;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .check {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        color: var(--muted);
+        text-transform: none;
+        letter-spacing: 0;
+        font-size: 12px;
+      }
+      #colorbar {
+        display: block;
+        width: 100%;
+        height: 12px;
+        border-radius: 3px;
+        margin-top: 2px;
+      }
+      .cbticks {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 3px;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .hint {
+        margin-top: 2px;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      #status {
+        position: fixed;
+        bottom: 12px;
+        left: 12px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: var(--text);
+        background: rgba(0, 0, 0, 0.45);
+        border-radius: 4px;
+        pointer-events: none;
+      }
+    </style>
+    <!--
+      Three.js is loaded from a CDN via an import map (map.ply itself is always
+      served locally by bagwiz). Viewing therefore needs internet access; run
+      without --vis to skip the viewer entirely.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="panel">
+      <h1>map.ply viewer</h1>
+
+      <div class="field">
+        <label for="scalar">Color by</label>
+        <select id="scalar">
+          <option value="x">x</option>
+          <option value="y">y</option>
+          <option value="z" selected>z (height)</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="colormap">Colormap</label>
+        <select id="colormap"></select>
+        <canvas id="colorbar" width="204" height="12"></canvas>
+        <div class="cbticks"><span id="cbMin">0</span><span id="cbMax">1</span></div>
+      </div>
+
+      <div class="field">
+        <label class="check"
+          ><input type="checkbox" id="autoRange" checked /> Auto value range</label
+        >
+        <div class="row" style="margin-top: 6px">
+          <input type="number" id="rangeMin" step="any" disabled />
+          <input type="number" id="rangeMax" step="any" disabled />
+        </div>
+        <button id="resetRange">Reset range to data</button>
+      </div>
+
+      <div class="field">
+        <div class="inline">
+          <label for="subsample">Subsample</label><span class="val" id="subsampleVal">1.00</span>
+        </div>
+        <input type="range" id="subsample" min="0.01" max="1" step="0.01" value="1" />
+      </div>
+
+      <div class="field">
+        <div class="inline">
+          <label for="pointSize">Point size</label><span class="val" id="pointSizeVal">0.050</span>
+        </div>
+        <input type="range" id="pointSize" min="0.005" max="0.5" step="0.005" value="0.05" />
+      </div>
+
+      <div class="field">
+        <button id="viewMode">View: 3D free</button>
+        <button id="resetView">Reset view</button>
+        <div class="hint">Double-click a point to recenter on it.</div>
+      </div>
+    </div>
+
+    <div id="status">Loading…</div>
+
+    <!-- map.ply is fetched with a relative URL, so no server port is templated in. -->
+    <script type="module" src="map_viewer.js"></script>
+  </body>
+</html>

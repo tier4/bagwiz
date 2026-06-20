@@ -54,6 +54,7 @@ bagwiz slam run [OPTIONS] <input> <pcd_topic> <output_root>
 | `--gnss <topic>`         | `sensor_msgs/msg/NavSatFix` topic. Adds GNSS global constraints (horizontal translation priors on submap poses) during global mapping to pin the world frame to GNSS and curb drift. Fixes are projected to a local ENU frame internally; the antenna lever-arm is resolved from the bag's static TF (cloud ← NavSatFix `frame_id`) and removed so the prior constrains the sensor origin, not the antenna (a missing TF only warns). Requires global mapping — rejected with `--without-global-optim`. |
 | `--map-resolution <m>`   | Exported map voxel size in meters (default `0.2`; must be positive). Controls only the exported map's density, never the optimization or trajectory. The LiDAR preprocessor's ~0.15 m input voxel bounds the real density.                                                                                                                                                                                                                                                                              |
 | `--without-global-optim` | Skip global mapping and write only the raw odometry trajectory (`traj.tum`). No point-cloud map is produced.                                                                                                                                                                                                                                                                                                                                                                                            |
+| `--vis`                  | After writing `map.ply`, serve it over a loopback HTTP server and open the default browser to a Three.js point-cloud viewer. Blocks until interrupted (`Ctrl-C`). Cannot be combined with `--without-global-optim`.                                                                                                                                                                                                                                                                                     |
 | `-w`, `--overwrite`      | Overwrite the output file(s) if they already exist. Without it, an existing output file stops the run.                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ### Outputs
@@ -106,6 +107,16 @@ Written under `<output_root>`:
   unless `-w`/`--overwrite` is given, and the map stream is opened before the
   trajectory is committed so a map path that cannot be opened leaves no orphaned
   trajectory.
+- **`--vis` (browser map viewer).** Once `map.ply` is written, bagwiz starts a
+  loopback-only HTTP server (`127.0.0.1`, an OS-assigned port) that serves an
+  embedded Three.js viewer page plus the `map.ply` bytes, and opens the host's
+  default browser at it (Linux `xdg-open`, macOS `open`, Windows `start`). The
+  command then **blocks until you interrupt it** (`Ctrl-C`), at which point the
+  server stops and the run exits. The map is streamed from disk, not buffered, so
+  large clouds load incrementally. Points are colored by height. The Three.js
+  library itself loads from a CDN, so the viewer needs internet access at view
+  time; run without `--vis` to skip it entirely. `--vis` is rejected together
+  with `--without-global-optim`, which produces no map.
 - **CPU backend.** SLAM runs on GLIM's CPU backend; a GPU backend is a later
   milestone.
 
@@ -128,6 +139,9 @@ bagwiz slam run drive_dir/ /points out/ --without-global-optim
 
 # Denser exported map, overwriting previous outputs.
 bagwiz slam run drive.mcap /points out/ --map-resolution 0.1 --overwrite
+
+# Build the map, then open it in the browser (blocks until Ctrl-C).
+bagwiz slam run drive.mcap /points out/ --vis
 ```
 
 ## Exit status

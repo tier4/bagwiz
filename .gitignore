@@ -34,6 +34,9 @@ rosbag2_*/
 *.3gp
 *.ogv
 *.ts
+# ...but the map viewer's TypeScript sources are real source code, not MPEG-TS
+# video; keep them tracked.
+!assets/slam/*.ts
 
 # Generated ROS files
 *.idl
@@ -100,8 +103,11 @@ CLAUDE.local.md
 # Antigravity
 .antigravitycli/
 
-# Trajectory outputs (produced by bagwiz traj dump)
+# Trajectory outputs (produced by bagwiz traj dump / slam run)
 *.tum
+
+# Point-cloud map exports (produced by bagwiz slam run)
+*.ply
 
 # Log files
 *.log
