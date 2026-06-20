@@ -11,6 +11,7 @@
 #include "bagwiz/core/slam/cloud_filters.hpp"
 #include "bagwiz/core/slam/glim_estimator.hpp"
 #include "bagwiz/core/slam/gnss_alignment.hpp"
+#include "bagwiz/core/slam/gnss_sample.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
 #include "bagwiz/core/trajectory.hpp"
 

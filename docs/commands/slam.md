@@ -91,8 +91,8 @@ Written under `<output_root>`:
   constrains the sensor origin rather than the antenna; when that TF is absent the
   run still succeeds (warned) using the raw antenna position. Each prior is
   weighted by that fix's reported `position_covariance` — rotated into the world
-  frame, inflated, floored, and wrapped in a Huber robust kernel — so a metre-level
-  SBAS fix is trusted less than a centimetre-level RTK fix; a fix whose covariance
+  frame, inflated, floored, and wrapped in a Huber robust kernel — so a meter-level
+  SBAS fix is trusted less than a centimeter-level RTK fix; a fix whose covariance
   type is `UNKNOWN` falls back to a fixed per-axis precision. Height stays
   effectively unconstrained (GNSS's weakest axis). With too little motion or no
   temporal overlap, no constraints are added and the run warns but still succeeds.

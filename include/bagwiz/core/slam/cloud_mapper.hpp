@@ -90,9 +90,9 @@ struct CloudMapperConfig
   bool gnss_use_covariance = true;
 
   // Lower bound [m] on each horizontal stddev of a covariance-derived prior, added
-  // isotropically (sigma_floor^2 on the diagonal). Guards against an
-  // over-optimistic receiver covariance dominating the graph. Unused by the
-  // fixed-precision fallback.
+  // as an isotropic floor (sigma_floor^2 on each horizontal diagonal). Guards
+  // against an over-optimistic receiver covariance dominating the graph. Unused by
+  // the fixed-precision fallback.
   double gnss_horizontal_sigma_floor = 0.05;
 
   // Multiplicative inflation (>=1) on a covariance-derived stddev. GNSS formal

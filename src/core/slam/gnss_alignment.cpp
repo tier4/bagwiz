@@ -178,10 +178,10 @@ std::array<double, 9> gnss_world_prior_covariance(
 
   // Inflate (formal covariance is optimistic / time-correlated), then add an
   // isotropic noise floor to the horizontal diagonal (PSD-preserving).
-  const double infl2 = inflation * inflation;
-  w00 *= infl2;
-  w01 *= infl2;
-  w11 *= infl2;
+  const double inflation_sq = inflation * inflation;
+  w00 *= inflation_sq;
+  w01 *= inflation_sq;
+  w11 *= inflation_sq;
   const double floor_var = floor_sigma * floor_sigma;
   w00 += floor_var;
   w11 += floor_var;

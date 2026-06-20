@@ -256,9 +256,10 @@ TEST(GnssWorldPriorCovariance, FloorRaisesOverOptimisticVariance)
 TEST(GnssWorldPriorCovariance, InflationScalesVarianceBySquare)
 {
   const std::array<double, 4> cov = {0.5, 0.0, 0.0, 0.5};
-  const double infl = 2.0;
-  const auto w = slam::gnss_world_prior_covariance(cov, 1.0, 0.0, 0.0, infl, kUnconstrainedZVar);
-  EXPECT_NEAR(w[0], 0.5 * infl * infl, 1e-12);  // variance scales by inflation^2
+  const double inflation = 2.0;
+  const auto w =
+    slam::gnss_world_prior_covariance(cov, 1.0, 0.0, 0.0, inflation, kUnconstrainedZVar);
+  EXPECT_NEAR(w[0], 0.5 * inflation * inflation, 1e-12);  // variance scales by inflation^2
 }
 
 }  // namespace

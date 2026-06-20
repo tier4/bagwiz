@@ -25,7 +25,9 @@ struct GnssProjector::Impl
   bool origin_set = false;
 };
 
-GnssProjector::GnssProjector() : impl_(std::make_unique<Impl>()) {}
+GnssProjector::GnssProjector() : impl_(std::make_unique<Impl>())
+{
+}
 GnssProjector::~GnssProjector() = default;
 GnssProjector::GnssProjector(GnssProjector &&) noexcept = default;
 GnssProjector & GnssProjector::operator=(GnssProjector &&) noexcept = default;
@@ -46,6 +48,9 @@ std::array<double, 3> GnssProjector::project(double latitude, double longitude, 
   return {east, north, up};
 }
 
-bool GnssProjector::has_origin() const noexcept { return impl_->origin_set; }
+bool GnssProjector::has_origin() const noexcept
+{
+  return impl_->origin_set;
+}
 
 }  // namespace bagwiz::core::slam
