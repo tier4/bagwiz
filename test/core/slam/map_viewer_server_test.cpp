@@ -94,6 +94,15 @@ TEST_F(MapViewerServer, ServesViewerModule)
   EXPECT_NE(res->body.find("PLYLoader"), std::string::npos);
 }
 
+TEST_F(MapViewerServer, ServesColormapsModule)
+{
+  httplib::Client client("127.0.0.1", port_);
+  const auto res = client.Get("/map_colormaps.js");
+  ASSERT_TRUE(res);
+  EXPECT_EQ(res->status, 200);
+  EXPECT_NE(res->body.find("sampleColormap"), std::string::npos);
+}
+
 TEST_F(MapViewerServer, StreamsMapPlyBytesVerbatim)
 {
   httplib::Client client("127.0.0.1", port_);

@@ -383,13 +383,15 @@ if(BAGWIZ_WITH_MAP_VIEWER)
   set(_viewer_gen_dir "${CMAKE_CURRENT_BINARY_DIR}/generated_viewer")
   file(READ "${_viewer_assets_dir}/map_viewer.html" VIEWER_HTML)
   file(READ "${_viewer_assets_dir}/map_viewer.js" VIEWER_JS)
+  file(READ "${_viewer_assets_dir}/map_colormaps.js" VIEWER_COLORMAPS)
   configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/map_viewer_assets.hpp.in"
     "${_viewer_gen_dir}/bagwiz/core/slam/map_viewer_assets.hpp"
     @ONLY)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${_viewer_assets_dir}/map_viewer.html"
-    "${_viewer_assets_dir}/map_viewer.js")
+    "${_viewer_assets_dir}/map_viewer.js"
+    "${_viewer_assets_dir}/map_colormaps.js")
 
   target_sources(bagwiz_core PRIVATE src/core/slam/map_viewer.cpp)
   target_include_directories(bagwiz_core PRIVATE "${_viewer_gen_dir}")
