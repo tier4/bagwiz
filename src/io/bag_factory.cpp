@@ -52,8 +52,8 @@ std::string to_lower_copy(std::string s)
 // metadata. Returns nullptr for uncompressed / chunk-compressed-MCAP bags
 // and a shared MessageDecompressor for MESSAGE+zstd bags. Throws on
 // unsupported combinations (SQLite FILE-mode envelopes, non-zstd
-// MESSAGE-mode, unknown modes). Extracted from `open_read` so the
-// dispatcher stays readable.
+// MESSAGE-mode, unknown modes). Kept separate from the `open_read`
+// dispatcher so that dispatcher stays readable.
 std::shared_ptr<MessageDecompressor> select_decompressor(
   const BagMetadata & md, const std::filesystem::path & path)
 {

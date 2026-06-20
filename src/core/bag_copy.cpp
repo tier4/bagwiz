@@ -22,9 +22,9 @@
 // pipeline seam: they build the matching pure-copy Processor, run it on the
 // caller-selected Backend (Sequential by default; the pure-copy trio asks for
 // Pipelined, overridable via BAGWIZ_BACKEND), then map the generic RewriteCounts
-// back onto the command-facing count structs. The historical read/process/write
-// loop now lives in the backends, so these keep working byte-identically while
-// every caller can pick its acceleration strategy.
+// back onto the command-facing count structs. The read/process/write loop lives
+// in the backends, so these keep working byte-identically while every caller can
+// pick its acceleration strategy.
 namespace bagwiz::core
 {
 

@@ -20,6 +20,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -900,15 +901,17 @@ TEST_F(GenerateVideoTest, ResizeScalesPointCloudOverlay)
 }
 
 // Command-level integration test for the point-cloud overlay path against a real
-// rosbag. Skips gracefully when the bag is not available (e.g. CI or another
-// developer's machine).
+// rosbag. The bag path comes from the BAGWIZ_REAL_BAG environment variable; the
+// test skips gracefully when it is unset or the bag is unavailable (e.g. CI), so
+// it only runs on a machine that has the recording. The topic names and expected
+// video geometry below assume that specific recording.
 TEST_F(GenerateVideoTest, PointCloudOverlayOnRealBag)
 {
-  constexpr const char * kRealBag =
-    "/home/otenim/data/rosbags/merged/YuY5LyKH/YuY5LyKH_2026-02-09T16-11-10-0600_110.mcap";
-  if (!std::filesystem::exists(kRealBag)) {
-    GTEST_SKIP() << "Real test bag not available: " << kRealBag;
+  const char * const real_bag_env = std::getenv("BAGWIZ_REAL_BAG");
+  if (real_bag_env == nullptr || !std::filesystem::exists(real_bag_env)) {
+    GTEST_SKIP() << "Real test bag not available; set BAGWIZ_REAL_BAG to run this test";
   }
+  const std::string kRealBag = real_bag_env;
 
   const auto out = tmp_dir_ / "out.avi";
   GenerateVideoArgs args{kRealBag, "/sensing/camera/camera0/image_raw/compressed", out, false};

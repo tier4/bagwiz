@@ -12,7 +12,8 @@
 #   scripts/bench-rewrite.sh [BAG_PATH]
 #
 # Environment overrides:
-#   BAG    input bag (default: canonical 2.5 GB AV fixture under ~/data/rosbags/raw)
+#   BAG    input bag — required; single-file or rosbag2 directory; pass as $1 or
+#          set BAG (a multi-GB bag gives meaningful read/write numbers)
 #   ENV    pixi environment / build to use (default: default)
 #   RUNS   warm timed runs per scenario for the median (default: 3)
 #   OUTDIR scratch dir for rewrite outputs (default: /tmp/bagwiz-bench)
@@ -25,7 +26,7 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO" || exit 1
 
-BAG="${1:-${BAG:-$HOME/data/rosbags/raw/8Q6aVzvu_4V2JAmyk_2025-11-30T17-24-59+0900_27.mcap}}"
+BAG="${1:-${BAG:?set BAG or pass an input bag path as the first argument}}"
 ENV="${ENV:-default}"
 RUNS="${RUNS:-3}"
 OUTDIR="${OUTDIR:-/tmp/bagwiz-bench}"
@@ -33,7 +34,7 @@ TOPIC="${TOPIC:-/tf_static}"
 BIN="install/$ENV/bagwiz/bin/bagwiz"
 TIMEV=/usr/bin/time
 
-[ -f "$BAG" ] || {
+[ -f "$BAG" ] || [ -d "$BAG" ] || {
     echo "bench: bag not found: $BAG" >&2
     exit 1
 }
@@ -43,14 +44,32 @@ TIMEV=/usr/bin/time
 }
 mkdir -p "$OUTDIR"
 
-inbytes=$(stat -c %s "$BAG")
+inbytes=$(du -sb "$BAG" | cut -f1) # total bytes; handles single-file and directory bags
 gitrev=$(git rev-parse --short HEAD 2>/dev/null || echo '?')
+
+# Describe the input bag's recorded compression for the banner. rosbag2 stores it
+# in metadata.yaml (directory bags); a standalone bag file carries no sidecar, so
+# fall back to a storage-level note rather than guessing.
+meta=""
+{ [ -d "$BAG" ] && [ -f "$BAG/metadata.yaml" ]; } && meta="$BAG/metadata.yaml"
+[ -f "$BAG.metadata.yaml" ] && meta="$BAG.metadata.yaml"
+if [ -n "$meta" ]; then
+    cfmt=$(grep -m1 'compression_format:' "$meta" | sed -E 's/.*compression_format:[[:space:]]*"?([^"]*)"?.*/\1/')
+    cmode=$(grep -m1 'compression_mode:' "$meta" | sed -E 's/.*compression_mode:[[:space:]]*"?([^"]*)"?.*/\1/')
+    if [ -z "$cfmt" ] || [ "$cmode" = "NONE" ]; then
+        comp="uncompressed"
+    else
+        comp="$cfmt-compressed ($cmode mode)"
+    fi
+else
+    comp="compression per storage format"
+fi
 
 echo "================================================================"
 echo "bagwiz rewrite benchmark   $(date)"
 echo "host : $(nproc) cores   git $gitrev   env $ENV"
 echo "bag  : $BAG"
-echo "size : $(du -h "$BAG" | cut -f1)  ($inbytes bytes, zstd-compressed chunks)"
+echo "size : $(du -h "$BAG" | cut -f1)  ($inbytes bytes, $comp)"
 echo "runs : $RUNS warm timed run(s) per scenario; median reported"
 echo "================================================================"
 

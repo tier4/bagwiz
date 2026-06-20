@@ -14,7 +14,7 @@ directly, with no ROS node or pub/sub. Subcommands:
 > the GLIM stack and is compiled only with `-DBAGWIZ_WITH_SLAM=ON`. Build it with:
 >
 > ```bash
-> pixi run -e humble build-slam   # or: jazzy | lyrical
+> pixi run -e humble build-slam   # or: jazzy
 > ```
 >
 > The first `build-slam` builds the GLIM dependency stack (GTSAM, gtsam_points,

@@ -16,7 +16,7 @@ per-stage read/write split comes from the env-gated `BAGWIZ_PROFILE` instrumenta
 | Commit            | `16cbc79` (profiler re-applied onto current `main`)                                  |
 | Host              | 24 cores / 62 GB                                                                     |
 | Build             | `pixi run -e default build` (Release, Humble)                                        |
-| Canonical fixture | `~/data/rosbags/raw/8Q6aVzvu_4V2JAmyk_2025-11-30T17-24-59+0900_27.mcap`              |
+| Canonical fixture | A 2.5 GB automotive MCAP recording (smallest of the local `raw/` set)                |
 | Fixture size      | 2.5 GB (2,677,294,482 bytes), zstd-compressed chunks; 31,678 msgs; 2,835 MiB payload |
 | Cache             | warm (OS page cache primed before timed runs)                                        |
 
@@ -86,8 +86,8 @@ fanning out decode buys little while adding decoder thread-safety risk.
 - **#1 (profiler placement):** the `BAGWIZ_PROFILE` profiler is now on current
   `main` (re-applied from the stale branch via `951b9c1` → `16cbc79`); baselines
   are taken from the up-to-date binary. **Resolved.**
-- **#4 (canonical fixture):** `8Q6aVzvu_4V2JAmyk_2025-11-30T17-24-59+0900_27.mcap`
-  (2.5 GB) is the canonical fixture; the **warm** full-rewrite number is the
+- **#4 (canonical fixture):** the 2.5 GB automotive MCAP recording
+  is the canonical fixture; the **warm** full-rewrite number is the
   headline metric. Cold-cache (read ≈ 6 s, ~85 % disk I/O) is recorded separately
   and excluded from the headline, since it measures the disk, not bagwiz.
   **Resolved.**

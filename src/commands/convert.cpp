@@ -149,10 +149,10 @@ private:
       "> input bag's detected storage. Directory-layout outputs without --storage\n"
       "therefore inherit the input's backend.\n"
       "Compression: rosbag2 MESSAGE-mode (zstd) inputs are decompressed on read;\n"
-      "MCAP chunk compression is handled transparently by libmcap. The output bag\n"
-      "is always written uncompressed. SQLite3 FILE-mode bags (whole-database\n"
-      ".zstd envelopes) are rejected — run `ros2 bag convert --compression-mode\n"
-      "none` first.");
+      "MCAP chunk compression is handled transparently by libmcap. SQLite3 FILE-mode\n"
+      "bags (whole-database .zstd envelopes) are decompressed to a temporary .db3 on\n"
+      "read (only zstd FILE-level compression is supported). The output bag is always\n"
+      "written uncompressed.");
     sub->callback([this]() { selected_ = Subcommand::kFormat; });
   }
 

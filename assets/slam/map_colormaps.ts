@@ -1,7 +1,7 @@
 // Colormaps for the `bagwiz slam run --vis` viewer. Each is a 256-entry RGB
 // lookup table generated from the matplotlib colormap of the same name (the same
-// source as bagwiz's C++ color_mapper LUTs; see scripts/generate_color_luts.py),
-// so the viewer matches bagwiz's other colorizers. Tables are base64-encoded
+// source as bagwiz's C++ color_mapper LUTs), so the viewer matches bagwiz's other
+// colorizers. Tables are base64-encoded
 // 256*3 bytes (R,G,B per stop) to keep this module small.
 // Formatted by Prettier (pre-commit) and type-checked by tsc at build time.
 

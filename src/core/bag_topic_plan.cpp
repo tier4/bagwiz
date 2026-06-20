@@ -30,11 +30,10 @@ TopicWriteDecision decide_topic_write(
   // of bagwiz_core) and the regular linked fmt mode.
   const std::string target_str(target_topic);
 
-  // The helper used to live in an anon namespace as `find_topic` returning
-  // `const TopicInfo *`, but cppcheck (jazzy) misreads `std::span` as
+  // The search is inlined here (rather than a helper returning
+  // `const TopicInfo *`) because cppcheck (jazzy) misreads `std::span` as
   // owning its data and flags returning `&t` as `returnDanglingLifetime`.
-  // Inlining the search here keeps the analysis local and avoids the
-  // false positive without needing a suppression.
+  // Keeping it local avoids the false positive without needing a suppression.
   const io::TopicInfo * existing = nullptr;
   for (const auto & t : existing_topics) {
     if (t.name == target_topic) {

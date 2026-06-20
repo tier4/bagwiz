@@ -24,11 +24,11 @@ bagwiz generate video [OPTIONS] <input> <img_topic> <output>
 
 ### Positional arguments
 
-| Name            | Description                                                                                                                        |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `input`         | Input ROS 2 rosbag (directory or single-file). Must exist.                                                                         |
-| `<image_topic>` | Image topic to render. Supported types: `sensor_msgs/msg/Image` (`bgr8`, `rgb8`) and `sensor_msgs/msg/CompressedImage` (JPEG/PNG). |
-| `output`        | Output video path. Extension selects the container/codec: `.mp4`/`.mkv`/`.mov` -> H.264, `.avi` -> MJPEG.                          |
+| Name        | Description                                                                                                                        |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `input`     | Input ROS 2 rosbag (directory or single-file). Must exist.                                                                         |
+| `img_topic` | Image topic to render. Supported types: `sensor_msgs/msg/Image` (`bgr8`, `rgb8`) and `sensor_msgs/msg/CompressedImage` (JPEG/PNG). |
+| `output`    | Output video path. Extension selects the container/codec: `.mp4`/`.mkv`/`.mov` -> H.264, `.avi` -> MJPEG.                          |
 
 ### Options
 

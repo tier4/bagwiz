@@ -28,8 +28,8 @@ namespace bagwiz::core::slam
 //   GET /              -> the embedded Three.js viewer page (text/html)
 //   GET /map_viewer.js -> the embedded viewer module (text/javascript)
 //   GET /map.pcd       -> the binary PCD at `map_path`, streamed from disk
-// Split out of serve_map_viewer so the routing is unit-testable with httplib's
-// own client (no browser launch, no blocking listen).
+// Exposed separately from serve_map_viewer so the routing is unit-testable with
+// httplib's own client (no browser launch, no blocking listen).
 void register_map_viewer_routes(httplib::Server & server, const std::filesystem::path & map_path);
 
 // Serve `map_path` over a loopback-only (127.0.0.1) HTTP server on an

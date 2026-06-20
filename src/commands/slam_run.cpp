@@ -86,8 +86,8 @@ core::slam::SensorTransform to_sensor_transform(const geometry_msgs::msg::Transf
 }
 
 // Drives a single `bagwiz slam run` invocation. Holds the parsed arguments plus
-// the output paths derived from output_root, and ports the bag reading + GLIM
-// feeding that used to live on the SlamCommand. One instance per run().
+// the output paths derived from output_root, and owns the bag reading + GLIM
+// feeding. One instance per run().
 class SlamRunner
 {
 public:
