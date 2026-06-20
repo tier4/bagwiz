@@ -100,8 +100,11 @@ CLAUDE.local.md
 # Antigravity
 .antigravitycli/
 
-# Trajectory outputs (produced by bagwiz traj dump)
+# Trajectory outputs (produced by bagwiz traj dump / slam run)
 *.tum
+
+# Point-cloud map exports (produced by bagwiz slam run)
+*.ply
 
 # Log files
 *.log
