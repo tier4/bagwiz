@@ -7,16 +7,20 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 
 #include "bagwiz/core/slam/map_viewer.hpp"
+#include "bagwiz/core/slam/point_cloud_io.hpp"
 
 #include <gtest/gtest.h>
 #include <httplib.h>
 
+#include <array>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <ios>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace
 {
@@ -139,6 +143,80 @@ TEST(MapViewerServerLarge, StreamsAcrossMultipleChunks)
   EXPECT_EQ(res->status, 200);
   ASSERT_EQ(res->body.size(), big.size());
   EXPECT_EQ(res->body, big);
+}
+
+// Spin up a viewer server on `path`, GET /map.ply once, and return the body.
+std::string fetch_map_ply(const std::filesystem::path & path)
+{
+  httplib::Server server;
+  slam::register_map_viewer_routes(server, path);
+  const int port = server.bind_to_any_port("127.0.0.1");
+  EXPECT_GE(port, 0);
+  std::thread server_thread([&server] { server.listen_after_bind(); });
+  for (int i = 0; i < 200 && !server.is_running(); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  EXPECT_TRUE(server.is_running());
+
+  httplib::Client client("127.0.0.1", port);
+  const auto res = client.Get("/map.ply");
+
+  server.stop();
+  server_thread.join();
+
+  EXPECT_TRUE(res);
+  return res ? res->body : std::string{};
+}
+
+// Regression for the `--vis` "Offset is outside the bounds of the DataView"
+// crash: the map writer must flush/close its ofstream before the viewer serves
+// the file. While the producing ofstream is still open, its final partial
+// (<BUFSIZ) block sits in the user-space buffer and has not reached the OS, so
+// file_size() and the served body are short of the PLY header's vertex count and
+// the browser's loader reads past the end. Once closed, the file is complete.
+//
+// The cloud is sized so its binary PLY exceeds the stdio buffer and is not a
+// block multiple (header bytes are not a multiple of 16 while the body is), which
+// guarantees an unflushed tail on libstdc++.
+TEST(MapViewerServerFlush, ServesCompleteMapOnlyAfterWriterCloses)
+{
+  constexpr std::size_t kPoints = 5000;
+  std::vector<std::array<float, 3>> points;
+  std::vector<float> intensities;
+  points.reserve(kPoints);
+  intensities.reserve(kPoints);
+  for (std::size_t i = 0; i < kPoints; ++i) {
+    const auto f = static_cast<float>(i);
+    points.push_back({f, f * 2.0F, f * 3.0F});
+    intensities.push_back(f * 0.5F);
+  }
+
+  const auto path = std::filesystem::temp_directory_path() / "bagwiz_map_viewer_flush_test.ply";
+  std::error_code ec;
+  std::filesystem::remove(path, ec);
+
+  std::ofstream out(path, std::ios::binary);
+  ASSERT_TRUE(out.good());
+  slam::write_ply(out, points, intensities);
+  ASSERT_TRUE(out.good());
+
+  // Served while the writer's stream is still open: this is the buggy state, and
+  // the body is shorter than the eventual file.
+  const std::string while_open = fetch_map_ply(path);
+
+  out.close();  // flush to disk, exactly as the --vis write path now does
+  ASSERT_TRUE(out.good());
+
+  const auto full_size = std::filesystem::file_size(path, ec);
+  ASSERT_FALSE(ec);
+
+  // Served after close: the full, self-consistent file.
+  const std::string after_close = fetch_map_ply(path);
+
+  std::filesystem::remove(path, ec);
+
+  EXPECT_LT(while_open.size(), full_size);   // the bug: truncated body
+  EXPECT_EQ(after_close.size(), full_size);  // the fix: complete body
 }
 
 }  // namespace
