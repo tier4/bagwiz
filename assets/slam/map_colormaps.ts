@@ -3,7 +3,7 @@
 // source as bagwiz's C++ color_mapper LUTs; see scripts/generate_color_luts.py),
 // so the viewer matches bagwiz's other colorizers. Tables are base64-encoded
 // 256*3 bytes (R,G,B per stop) to keep this module small.
-// Linted by ESLint (eslint.config.mjs) and formatted by Prettier.
+// Formatted by Prettier (pre-commit) and type-checked by tsc at build time.
 
 const LUTS_B64: Record<string, string> = {
   turbo:
