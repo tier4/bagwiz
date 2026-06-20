@@ -107,7 +107,7 @@ CLAUDE.local.md
 *.tum
 
 # Point-cloud map exports (produced by bagwiz slam run)
-*.ply
+*.pcd
 
 # Log files
 *.log

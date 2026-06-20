@@ -156,7 +156,7 @@ public:
     // Global mapping is the default; derive the map path unless the user asked to
     // skip it.
     if (!args_.without_global_optim) {
-      map_path_ = args_.output_root / "map.ply";
+      map_path_ = args_.output_root / "map.pcd";
       const auto prepared_map = core::prepare_output_path(map_path_, args_.overwrite);
       if (!prepared_map.ok) {
         BAGWIZ_LOG_ERROR(kLogger, "%s", prepared_map.error.c_str());
@@ -636,7 +636,7 @@ private:
     return 0;
   }
 
-  // Optimized mapping path -> optimized TUM trajectory + binary PLY map.
+  // Optimized mapping path -> optimized TUM trajectory + binary PCD map.
   int run_mapping(
     io::BagReader & reader, const std::optional<core::slam::SensorTransform> & t_lidar_imu)
   {
@@ -696,13 +696,13 @@ private:
     if (!write_trajectory(map.trajectory)) {
       return 1;
     }
-    core::slam::write_ply(map_out, map.points, map.intensities);
+    core::slam::write_pcd(map_out, map.points, map.intensities);
     // Flush and close before the good() check and before --vis serves the file.
     // An open ofstream keeps the final partial (<8 KiB) block in its user-space
     // buffer, so until the stream is destroyed the on-disk file is short of its
     // own header's vertex count. serve_map_viewer() (below) blocks while map_out
     // is still in scope, so without this close it would read a too-small
-    // file_size, send a truncated body, and the browser's PLY loader would fail
+    // file_size, send a truncated body, and the browser's PCD loader would fail
     // with "Offset is outside the bounds of the DataView". close() also surfaces
     // a flush failure (e.g. disk full) through good() below, which the prior
     // mid-write good() check could not see.
@@ -736,7 +736,7 @@ private:
       }
     }
 
-    // --vis: serve the map.ply just written and open the browser. This blocks
+    // --vis: serve the map.pcd just written and open the browser. This blocks
     // until the user interrupts the viewer. CLI parsing already rejects
     // --vis together with --without-global-optim, so a map always exists here.
     if (args_.vis) {
@@ -762,7 +762,7 @@ private:
 
   const SlamRunArgs & args_;
   std::filesystem::path output_path_;  // <output_root>/traj.tum
-  std::filesystem::path map_path_;     // <output_root>/map.ply (mapping mode only)
+  std::filesystem::path map_path_;     // <output_root>/map.pcd (mapping mode only)
 };
 
 }  // namespace

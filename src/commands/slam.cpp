@@ -26,7 +26,7 @@ constexpr const char * kLogger = "bagwiz.cmd.slam";
 // actions are `run` (estimate a trajectory, and by default an optimized
 // point-cloud map, from a single PointCloud2 topic — see run_slam_run for the
 // full behavior, IMU mode, and outputs) and `vis` (open the browser map viewer
-// for an already-written map.ply without re-running SLAM — see run_slam_vis).
+// for an already-written map.pcd without re-running SLAM — see run_slam_vis).
 // Modeling it as a group (require_subcommand(1)) leaves room for further SLAM
 // tools without reshaping the CLI, the same way `topic` and `tf` group their
 // actions.
@@ -77,7 +77,7 @@ private:
       ->add_option(
         "output_root", run_args_.output_root,
         "Output root directory; writes traj.tum and, unless --without-global-optim, "
-        "map.ply")
+        "map.pcd")
       ->required();
     sub->add_option(
       "--imu", run_args_.imu_topic,
@@ -109,7 +109,7 @@ private:
     sub
       ->add_flag(
         "--vis", run_args_.vis,
-        "After writing map.ply, open the default browser to a Three.js point-cloud viewer "
+        "After writing map.pcd, open the default browser to a Three.js point-cloud viewer "
         "served over a loopback HTTP server. Runs until interrupted (Ctrl-C). Cannot be "
         "combined with --without-global-optim, which produces no map.")
       ->excludes(without_optim);
@@ -119,11 +119,11 @@ private:
   void configure_vis(CLI::App & app)
   {
     auto * sub = app.add_subcommand(
-      "vis", "Open the browser map viewer for an existing map.ply (no SLAM run)");
+      "vis", "Open the browser map viewer for an existing map.pcd (no SLAM run)");
     sub
       ->add_option(
         "map", vis_args_.map_path,
-        "Path to a map.ply file, or a directory containing map.ply (e.g. a slam run "
+        "Path to a map.pcd file, or a directory containing map.pcd (e.g. a slam run "
         "output root). Served over a loopback HTTP server with the Three.js viewer; "
         "runs until interrupted (Ctrl-C).")
       ->required()

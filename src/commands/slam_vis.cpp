@@ -21,7 +21,7 @@ namespace bagwiz::commands
 namespace
 {
 constexpr const char * kLogger = "bagwiz.cmd.slam";
-constexpr const char * kMapFileName = "map.ply";
+constexpr const char * kMapFileName = "map.pcd";
 }  // namespace
 
 int run_slam_vis(const SlamVisArgs & args)
@@ -29,7 +29,7 @@ int run_slam_vis(const SlamVisArgs & args)
 #ifdef BAGWIZ_WITH_MAP_VIEWER
   std::filesystem::path map_path = args.map_path;
   std::error_code ec;
-  // Accept either the map.ply file directly or the output directory that holds
+  // Accept either the map.pcd file directly or the output directory that holds
   // it, so `slam vis <output_root>` mirrors `slam run … <output_root>`.
   if (std::filesystem::is_directory(map_path, ec)) {
     map_path /= kMapFileName;

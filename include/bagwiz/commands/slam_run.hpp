@@ -38,7 +38,7 @@ struct SlamRunArgs
   // the raw antenna position.
   std::string gnss_topic;
   // Output root directory; receives traj.tum and, unless without_global_optim,
-  // map.ply.
+  // map.pcd.
   std::filesystem::path output_root;
   // Exported-map voxel size in meters. Controls only the exported map's density,
   // never the optimization or trajectory.
@@ -47,7 +47,7 @@ struct SlamRunArgs
   bool overwrite = false;
   // Skip global mapping and write only the raw odometry trajectory; no map.
   bool without_global_optim = false;
-  // After writing map.ply, serve it over a loopback HTTP server and open the
+  // After writing map.pcd, serve it over a loopback HTTP server and open the
   // default browser to a Three.js viewer. Blocks until interrupted (Ctrl-C).
   // Mutually exclusive with without_global_optim (which produces no map).
   bool vis = false;
@@ -57,7 +57,7 @@ struct SlamRunArgs
 // reads + decodes the bag and feeds GLIM's modules directly, with no ROS node /
 // pub-sub. By default the marginalized frames flow through GLIM's
 // SubMapping -> GlobalMapping so the output is the globally-optimized 6-DoF
-// trajectory (traj.tum) plus an optimized world-frame point-cloud map (map.ply),
+// trajectory (traj.tum) plus an optimized world-frame point-cloud map (map.pcd),
 // both under args.output_root. With args.imu_topic set, odometry switches to
 // GLIM's LiDAR-IMU OdometryEstimationCPU. With args.without_global_optim the
 // global optimization is skipped and only the raw odometry trajectory (traj.tum)

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>bagwiz — map.ply</title>
+    <title>bagwiz — map.pcd</title>
     <style>
       :root {
         --bg: #101014;
@@ -147,7 +147,7 @@
       }
     </style>
     <!--
-      Three.js is loaded from a CDN via an import map (map.ply itself is always
+      Three.js is loaded from a CDN via an import map (map.pcd itself is always
       served locally by bagwiz). Viewing therefore needs internet access; run
       without --vis to skip the viewer entirely.
     -->
@@ -162,7 +162,7 @@
   </head>
   <body>
     <div id="panel">
-      <h1>map.ply viewer</h1>
+      <h1>map.pcd viewer</h1>
 
       <div class="field">
         <label for="scalar">Color by</label>
@@ -214,7 +214,7 @@
 
     <div id="status">Loading…</div>
 
-    <!-- map.ply is fetched with a relative URL, so no server port is templated in. -->
+    <!-- map.pcd is fetched with a relative URL, so no server port is templated in. -->
     <script type="module" src="map_viewer.js"></script>
   </body>
 </html>

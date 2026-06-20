@@ -26,7 +26,7 @@ namespace
 {
 namespace slam = bagwiz::core::slam;
 
-// All 256 byte values, so an exact echo proves the PLY is streamed verbatim
+// All 256 byte values, so an exact echo proves the PCD is streamed verbatim
 // (binary-safe, embedded NULs included) rather than treated as text.
 std::string all_byte_values()
 {
@@ -44,7 +44,7 @@ protected:
   void SetUp() override
   {
     map_bytes_ = all_byte_values();
-    map_path_ = std::filesystem::temp_directory_path() / "bagwiz_map_viewer_server_test.ply";
+    map_path_ = std::filesystem::temp_directory_path() / "bagwiz_map_viewer_server_test.pcd";
     std::ofstream out(map_path_, std::ios::binary);
     out.write(map_bytes_.data(), static_cast<std::streamsize>(map_bytes_.size()));
     out.close();
@@ -91,7 +91,7 @@ TEST_F(MapViewerServer, ServesViewerModule)
   const auto res = client.Get("/map_viewer.js");
   ASSERT_TRUE(res);
   EXPECT_EQ(res->status, 200);
-  EXPECT_NE(res->body.find("PLYLoader"), std::string::npos);
+  EXPECT_NE(res->body.find("PCDLoader"), std::string::npos);
 }
 
 TEST_F(MapViewerServer, ServesColormapsModule)
@@ -103,10 +103,10 @@ TEST_F(MapViewerServer, ServesColormapsModule)
   EXPECT_NE(res->body.find("sampleColormap"), std::string::npos);
 }
 
-TEST_F(MapViewerServer, StreamsMapPlyBytesVerbatim)
+TEST_F(MapViewerServer, StreamsMapPcdBytesVerbatim)
 {
   httplib::Client client("127.0.0.1", port_);
-  const auto res = client.Get("/map.ply");
+  const auto res = client.Get("/map.pcd");
   ASSERT_TRUE(res);
   EXPECT_EQ(res->status, 200);
   EXPECT_EQ(res->body, map_bytes_);
@@ -124,7 +124,7 @@ TEST(MapViewerServerLarge, StreamsAcrossMultipleChunks)
   }
 
   const auto path =
-    std::filesystem::temp_directory_path() / "bagwiz_map_viewer_server_large_test.ply";
+    std::filesystem::temp_directory_path() / "bagwiz_map_viewer_server_large_test.pcd";
   {
     std::ofstream out(path, std::ios::binary);
     out.write(big.data(), static_cast<std::streamsize>(big.size()));
@@ -141,7 +141,7 @@ TEST(MapViewerServerLarge, StreamsAcrossMultipleChunks)
   ASSERT_TRUE(server.is_running());
 
   httplib::Client client("127.0.0.1", port);
-  const auto res = client.Get("/map.ply");
+  const auto res = client.Get("/map.pcd");
 
   server.stop();
   server_thread.join();
@@ -154,8 +154,8 @@ TEST(MapViewerServerLarge, StreamsAcrossMultipleChunks)
   EXPECT_EQ(res->body, big);
 }
 
-// Spin up a viewer server on `path`, GET /map.ply once, and return the body.
-std::string fetch_map_ply(const std::filesystem::path & path)
+// Spin up a viewer server on `path`, GET /map.pcd once, and return the body.
+std::string fetch_map_pcd(const std::filesystem::path & path)
 {
   httplib::Server server;
   slam::register_map_viewer_routes(server, path);
@@ -168,7 +168,7 @@ std::string fetch_map_ply(const std::filesystem::path & path)
   EXPECT_TRUE(server.is_running());
 
   httplib::Client client("127.0.0.1", port);
-  const auto res = client.Get("/map.ply");
+  const auto res = client.Get("/map.pcd");
 
   server.stop();
   server_thread.join();
@@ -181,12 +181,12 @@ std::string fetch_map_ply(const std::filesystem::path & path)
 // crash: the map writer must flush/close its ofstream before the viewer serves
 // the file. While the producing ofstream is still open, its final partial
 // (<BUFSIZ) block sits in the user-space buffer and has not reached the OS, so
-// file_size() and the served body are short of the PLY header's vertex count and
+// file_size() and the served body are short of the PCD header's POINTS count and
 // the browser's loader reads past the end. Once closed, the file is complete.
 //
-// The cloud is sized so its binary PLY exceeds the stdio buffer and is not a
-// block multiple (header bytes are not a multiple of 16 while the body is), which
-// guarantees an unflushed tail on libstdc++.
+// The cloud is sized so its binary PCD exceeds the stdio buffer and its total
+// length is not a buffer-block multiple, which guarantees an unflushed tail on
+// libstdc++.
 TEST(MapViewerServerFlush, ServesCompleteMapOnlyAfterWriterCloses)
 {
   constexpr std::size_t kPoints = 5000;
@@ -200,18 +200,18 @@ TEST(MapViewerServerFlush, ServesCompleteMapOnlyAfterWriterCloses)
     intensities.push_back(f * 0.5F);
   }
 
-  const auto path = std::filesystem::temp_directory_path() / "bagwiz_map_viewer_flush_test.ply";
+  const auto path = std::filesystem::temp_directory_path() / "bagwiz_map_viewer_flush_test.pcd";
   std::error_code ec;
   std::filesystem::remove(path, ec);
 
   std::ofstream out(path, std::ios::binary);
   ASSERT_TRUE(out.good());
-  slam::write_ply(out, points, intensities);
+  slam::write_pcd(out, points, intensities);
   ASSERT_TRUE(out.good());
 
   // Served while the writer's stream is still open: this is the buggy state, and
   // the body is shorter than the eventual file.
-  const std::string while_open = fetch_map_ply(path);
+  const std::string while_open = fetch_map_pcd(path);
 
   out.close();  // flush to disk, exactly as the --vis write path now does
   ASSERT_TRUE(out.good());
@@ -220,7 +220,7 @@ TEST(MapViewerServerFlush, ServesCompleteMapOnlyAfterWriterCloses)
   ASSERT_FALSE(ec);
 
   // Served after close: the full, self-consistent file.
-  const std::string after_close = fetch_map_ply(path);
+  const std::string after_close = fetch_map_pcd(path);
 
   std::filesystem::remove(path, ec);
 

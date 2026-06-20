@@ -63,18 +63,18 @@ void register_map_viewer_routes(httplib::Server & server, const std::filesystem:
     res.set_content(std::string(kMapViewerColormaps), "text/javascript; charset=utf-8");
   });
 
-  server.Get("/map.ply", [map_path](const httplib::Request &, httplib::Response & res) {
+  server.Get("/map.pcd", [map_path](const httplib::Request &, httplib::Response & res) {
     std::error_code ec;
     const auto size = std::filesystem::file_size(map_path, ec);
     if (ec) {
       res.status = 404;
-      res.set_content("map.ply not found", "text/plain");
+      res.set_content("map.pcd not found", "text/plain");
       return;
     }
     auto stream = std::make_shared<std::ifstream>(map_path, std::ios::binary);
     if (!stream->good()) {
       res.status = 500;
-      res.set_content("could not open map.ply", "text/plain");
+      res.set_content("could not open map.pcd", "text/plain");
       return;
     }
     // Stream from disk in chunks rather than buffering the (potentially very

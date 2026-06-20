@@ -1,5 +1,5 @@
 // Browser-side viewer for `bagwiz slam run --vis`. Loads the locally served
-// map.ply and renders it with configurable controls: which scalar drives the
+// map.pcd and renders it with configurable controls: which scalar drives the
 // color (x/y/z/intensity), its value range (auto or manual), the colormap, a
 // subsample rate, point size, a 3D/2D-top view toggle, and double-click-to-anchor
 // recentering. TypeScript source; compiled to map_viewer.js at build time and
@@ -7,7 +7,7 @@
 // runtime via the import map in map_viewer.html.
 
 import * as THREE from "three";
-import { PLYLoader } from "three/addons/loaders/PLYLoader.js";
+import { PCDLoader } from "three/addons/loaders/PCDLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { COLORMAP_NAMES, DEFAULT_COLORMAP, sampleColormap } from "./map_colormaps.js";
 
@@ -404,7 +404,10 @@ function buildUI(): void {
 // ---------------------------------------------------------------------------
 // Load
 // ---------------------------------------------------------------------------
-function onLoad(geometry: THREE.BufferGeometry): void {
+function onLoad(points: THREE.Points): void {
+  // PCDLoader resolves to a THREE.Points (geometry plus a default material we
+  // discard); take its geometry and build our own material/Points below.
+  const geometry = points.geometry;
   state.geometry = geometry;
   const position = geometry.getAttribute("position");
   state.positions = position.array;
@@ -438,21 +441,21 @@ function onLoad(geometry: THREE.BufferGeometry): void {
   updateStatus();
 }
 
-const loader = new PLYLoader();
-// Pull the optional per-point intensity (present for LiDAR maps) into its own
-// attribute so it can be selected as a coloring scalar.
-loader.setCustomPropertyNameMapping({ intensity: ["intensity"] });
-setStatus("Loading map.ply…");
+const loader = new PCDLoader();
+// PCDLoader natively exposes the optional per-point `intensity` field (present
+// for LiDAR maps) as its own geometry attribute, so it can be selected as a
+// coloring scalar with no extra configuration.
+setStatus("Loading map.pcd…");
 loader.load(
-  "map.ply",
+  "map.pcd",
   onLoad,
   (event: ProgressEvent) => {
     if (event.lengthComputable) {
-      setStatus(`Loading map.ply… ${Math.round((event.loaded / event.total) * 100)}%`);
+      setStatus(`Loading map.pcd… ${Math.round((event.loaded / event.total) * 100)}%`);
     }
   },
   (error: unknown) => {
-    setStatus(`Failed to load map.ply: ${String(error)}`);
+    setStatus(`Failed to load map.pcd: ${String(error)}`);
   },
 );
 

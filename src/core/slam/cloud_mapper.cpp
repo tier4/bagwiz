@@ -480,7 +480,7 @@ struct CloudMapper::Impl
   void fill_map(CloudMap & result) const
   {
     // Intensity is all-or-nothing across the whole map (mirrors GLIM's export and
-    // what write_ply expects): keep it only if every frame with points also
+    // what write_pcd expects): keep it only if every frame with points also
     // carried intensities.
     bool any_points = false;
     bool all_intensity = true;

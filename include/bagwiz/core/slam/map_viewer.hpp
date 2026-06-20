@@ -12,7 +12,7 @@
 #include <filesystem>
 
 // Loopback HTTP server backing `bagwiz slam run --vis`: it serves an embedded
-// Three.js viewer page plus the freshly written map.ply, and opens the default
+// Three.js viewer page plus the freshly written map.pcd, and opens the default
 // browser at it. Built only when BAGWIZ_WITH_MAP_VIEWER is on (which defaults to
 // BAGWIZ_WITH_SLAM), so normal builds pull in neither cpp-httplib nor this code.
 // httplib is forward-declared so this header stays dependency-light for callers.
@@ -27,7 +27,7 @@ namespace bagwiz::core::slam
 // Register the viewer routes on `server`:
 //   GET /              -> the embedded Three.js viewer page (text/html)
 //   GET /map_viewer.js -> the embedded viewer module (text/javascript)
-//   GET /map.ply       -> the binary PLY at `map_path`, streamed from disk
+//   GET /map.pcd       -> the binary PCD at `map_path`, streamed from disk
 // Split out of serve_map_viewer so the routing is unit-testable with httplib's
 // own client (no browser launch, no blocking listen).
 void register_map_viewer_routes(httplib::Server & server, const std::filesystem::path & map_path);
@@ -36,7 +36,7 @@ void register_map_viewer_routes(httplib::Server & server, const std::filesystem:
 // OS-assigned port, open the host's default browser to it, then block until
 // interrupted (SIGINT / Ctrl-C), at which point the server is stopped and this
 // returns 0. Returns 1 if no loopback port could be bound. `map_path` must
-// already exist (the caller writes map.ply first).
+// already exist (the caller writes map.pcd first).
 int serve_map_viewer(const std::filesystem::path & map_path);
 
 }  // namespace bagwiz::core::slam

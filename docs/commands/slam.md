@@ -30,7 +30,7 @@ Run LiDAR (or LiDAR-IMU) SLAM over a single `sensor_msgs/msg/PointCloud2` topic
 and write the results under an output directory. By default the marginalized
 frames flow through GLIM's SubMapping → GlobalMapping, so the output is the
 globally-optimized 6-DoF trajectory (`traj.tum`) plus an optimized world-frame
-point-cloud map (`map.ply`).
+point-cloud map (`map.pcd`).
 
 ### Usage
 
@@ -44,7 +44,7 @@ bagwiz slam run [OPTIONS] <input> <pcd_topic> <output_root>
 | ------------- | --------------------------------------------------------------------------------------------------------- |
 | `input`       | Input ROS 2 rosbag (directory or single-file). Must exist.                                                |
 | `pcd_topic`   | `sensor_msgs/msg/PointCloud2` topic to run SLAM on.                                                       |
-| `output_root` | Output directory. Receives `traj.tum` and, unless `--without-global-optim`, `map.ply`. Created if absent. |
+| `output_root` | Output directory. Receives `traj.tum` and, unless `--without-global-optim`, `map.pcd`. Created if absent. |
 
 ### Options
 
@@ -54,7 +54,7 @@ bagwiz slam run [OPTIONS] <input> <pcd_topic> <output_root>
 | `--gnss <topic>`         | `sensor_msgs/msg/NavSatFix` topic. Adds GNSS global constraints (horizontal translation priors on submap poses) during global mapping to pin the world frame to GNSS and curb drift. Fixes are projected to a local ENU frame internally; the antenna lever-arm is resolved from the bag's static TF (cloud ← NavSatFix `frame_id`) and removed so the prior constrains the sensor origin, not the antenna (a missing TF only warns). Requires global mapping — rejected with `--without-global-optim`. |
 | `--map-resolution <m>`   | Exported map voxel size in meters (default `0.2`; must be positive). Controls only the exported map's density, never the optimization or trajectory. The LiDAR preprocessor's ~0.15 m input voxel bounds the real density.                                                                                                                                                                                                                                                                              |
 | `--without-global-optim` | Skip global mapping and write only the raw odometry trajectory (`traj.tum`). No point-cloud map is produced.                                                                                                                                                                                                                                                                                                                                                                                            |
-| `--vis`                  | After writing `map.ply`, serve it over a loopback HTTP server and open the default browser to a Three.js point-cloud viewer. Blocks until interrupted (`Ctrl-C`). Cannot be combined with `--without-global-optim`.                                                                                                                                                                                                                                                                                     |
+| `--vis`                  | After writing `map.pcd`, serve it over a loopback HTTP server and open the default browser to a Three.js point-cloud viewer. Blocks until interrupted (`Ctrl-C`). Cannot be combined with `--without-global-optim`.                                                                                                                                                                                                                                                                                     |
 | `-w`, `--overwrite`      | Overwrite the output file(s) if they already exist. Without it, an existing output file stops the run.                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ### Outputs
@@ -64,7 +64,7 @@ Written under `<output_root>`:
 | File       | When                                             | Format                                                                       |
 | ---------- | ------------------------------------------------ | ---------------------------------------------------------------------------- |
 | `traj.tum` | Always.                                          | TUM trajectory — one `timestamp tx ty tz qx qy qz qw` line per pose.         |
-| `map.ply`  | Default (omitted with `--without-global-optim`). | Binary PLY world-frame point cloud, voxel-downsampled to `--map-resolution`. |
+| `map.pcd`  | Default (omitted with `--without-global-optim`). | Binary PCD world-frame point cloud, voxel-downsampled to `--map-resolution`. |
 
 ### Behavior
 
@@ -72,7 +72,7 @@ Written under `<output_root>`:
   bag; nothing is published or subscribed.
 - **Default (global mapping).** Marginalized frames flow through GLIM's
   SubMapping → GlobalMapping; `traj.tum` is the globally-optimized trajectory and
-  `map.ply` the optimized map.
+  `map.pcd` the optimized map.
 - **`--without-global-optim`.** Only the raw odometry trajectory is written
   (`traj.tum`); no map is produced.
 - **LiDAR-only vs LiDAR-IMU.** Without `--imu`, odometry runs from the cloud
@@ -103,13 +103,13 @@ Written under `<output_root>`:
   simultaneous).
 - **Output directory.** A file at `<output_root>` is an error; an existing
   directory is accepted and the directory is created when absent. Each output
-  file is guarded independently — an existing `traj.tum`/`map.ply` stops the run
+  file is guarded independently — an existing `traj.tum`/`map.pcd` stops the run
   unless `-w`/`--overwrite` is given, and the map stream is opened before the
   trajectory is committed so a map path that cannot be opened leaves no orphaned
   trajectory.
-- **`--vis` (browser map viewer).** Once `map.ply` is written, bagwiz starts a
+- **`--vis` (browser map viewer).** Once `map.pcd` is written, bagwiz starts a
   loopback-only HTTP server (`127.0.0.1`, an OS-assigned port) that serves an
-  embedded Three.js viewer page plus the `map.ply` bytes, and opens the host's
+  embedded Three.js viewer page plus the `map.pcd` bytes, and opens the host's
   default browser at it (Linux `xdg-open`, macOS `open`, Windows `start`). The
   command then **blocks until you interrupt it** (`Ctrl-C`), at which point the
   server stops and the run exits. The map is streamed from disk, not buffered, so

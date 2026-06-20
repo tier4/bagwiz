@@ -22,11 +22,11 @@ namespace
 {
 namespace slam = bagwiz::core::slam;
 
-// Split a PLY stream into its ASCII header (through "end_header\n") and the
+// Split a PCD stream into its ASCII header (through "DATA binary\n") and the
 // binary body that follows.
-std::pair<std::string, std::string> split_ply(const std::string & blob)
+std::pair<std::string, std::string> split_pcd(const std::string & blob)
 {
-  const std::string marker = "end_header\n";
+  const std::string marker = "DATA binary\n";
   const auto pos = blob.find(marker);
   if (pos == std::string::npos) {
     return {blob, ""};
@@ -42,18 +42,20 @@ float read_float(const std::string & body, std::size_t index)
   return value;
 }
 
-TEST(PointCloudIo, WritesXyzPlyHeaderAndBody)
+TEST(PointCloudIo, WritesXyzPcdHeaderAndBody)
 {
   const std::vector<std::array<float, 3>> points = {{1.0F, 2.0F, 3.0F}, {4.0F, 5.0F, 6.0F}};
   std::ostringstream os;
-  slam::write_ply(os, points);
-  const auto [header, body] = split_ply(os.str());
+  slam::write_pcd(os, points);
+  const auto [header, body] = split_pcd(os.str());
 
-  EXPECT_NE(header.find("ply\n"), std::string::npos);
-  EXPECT_NE(header.find("format binary_little_endian 1.0\n"), std::string::npos);
-  EXPECT_NE(header.find("element vertex 2\n"), std::string::npos);
-  EXPECT_NE(header.find("property float x\n"), std::string::npos);
-  EXPECT_NE(header.find("property float z\n"), std::string::npos);
+  EXPECT_NE(header.find("VERSION 0.7\n"), std::string::npos);
+  EXPECT_NE(header.find("FIELDS x y z\n"), std::string::npos);
+  EXPECT_NE(header.find("SIZE 4 4 4\n"), std::string::npos);
+  EXPECT_NE(header.find("TYPE F F F\n"), std::string::npos);
+  EXPECT_NE(header.find("WIDTH 2\n"), std::string::npos);
+  EXPECT_NE(header.find("HEIGHT 1\n"), std::string::npos);
+  EXPECT_NE(header.find("POINTS 2\n"), std::string::npos);
   EXPECT_EQ(header.find("intensity"), std::string::npos);
 
   ASSERT_EQ(body.size(), 2U * 3U * sizeof(float));
@@ -68,10 +70,12 @@ TEST(PointCloudIo, IncludesIntensityWhenSizesMatch)
   const std::vector<std::array<float, 3>> points = {{0.0F, 0.0F, 0.0F}, {1.0F, 1.0F, 1.0F}};
   const std::vector<float> intensities = {10.0F, 20.0F};
   std::ostringstream os;
-  slam::write_ply(os, points, intensities);
-  const auto [header, body] = split_ply(os.str());
+  slam::write_pcd(os, points, intensities);
+  const auto [header, body] = split_pcd(os.str());
 
-  EXPECT_NE(header.find("property float intensity\n"), std::string::npos);
+  EXPECT_NE(header.find("FIELDS x y z intensity\n"), std::string::npos);
+  EXPECT_NE(header.find("SIZE 4 4 4 4\n"), std::string::npos);
+  EXPECT_NE(header.find("TYPE F F F F\n"), std::string::npos);
   ASSERT_EQ(body.size(), 2U * 4U * sizeof(float));
   EXPECT_FLOAT_EQ(read_float(body, 3), 10.0F);  // first point's intensity
   EXPECT_FLOAT_EQ(read_float(body, 7), 20.0F);  // second point's intensity
@@ -82,19 +86,20 @@ TEST(PointCloudIo, OmitsIntensityOnSizeMismatch)
   const std::vector<std::array<float, 3>> points = {{0.0F, 0.0F, 0.0F}, {1.0F, 1.0F, 1.0F}};
   const std::vector<float> intensities = {10.0F};  // wrong length
   std::ostringstream os;
-  slam::write_ply(os, points, intensities);
-  const auto [header, body] = split_ply(os.str());
+  slam::write_pcd(os, points, intensities);
+  const auto [header, body] = split_pcd(os.str());
 
   EXPECT_EQ(header.find("intensity"), std::string::npos);
   EXPECT_EQ(body.size(), 2U * 3U * sizeof(float));
 }
 
-TEST(PointCloudIo, EmptyCloudWritesZeroVertices)
+TEST(PointCloudIo, EmptyCloudWritesZeroPoints)
 {
   std::ostringstream os;
-  slam::write_ply(os, {});
-  const auto [header, body] = split_ply(os.str());
-  EXPECT_NE(header.find("element vertex 0\n"), std::string::npos);
+  slam::write_pcd(os, {});
+  const auto [header, body] = split_pcd(os.str());
+  EXPECT_NE(header.find("WIDTH 0\n"), std::string::npos);
+  EXPECT_NE(header.find("POINTS 0\n"), std::string::npos);
   EXPECT_TRUE(body.empty());
 }
 

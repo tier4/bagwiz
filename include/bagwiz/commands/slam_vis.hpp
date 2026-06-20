@@ -18,15 +18,15 @@ namespace bagwiz::commands
 // (src/commands/slam.cpp) and consumed by run_slam_vis.
 struct SlamVisArgs
 {
-  // Path to an existing map.ply file, or a directory containing map.ply (e.g. a
+  // Path to an existing map.pcd file, or a directory containing map.pcd (e.g. a
   // `slam run` output root). run_slam_vis resolves the directory form to
-  // <dir>/map.ply.
+  // <dir>/map.pcd.
   std::filesystem::path map_path;
 };
 
 // Open the same browser viewer as `slam run --vis` for an ALREADY written
-// point-cloud map, without re-running SLAM: resolve args.map_path (a .ply file
-// or a directory holding map.ply), then serve it over a loopback HTTP server and
+// point-cloud map, without re-running SLAM: resolve args.map_path (a .pcd file
+// or a directory holding map.pcd), then serve it over a loopback HTTP server and
 // open the host's default browser, blocking until interrupted (Ctrl-C). This is
 // the cheap, repeatable way to revisit a map produced by an earlier `slam run`.
 //

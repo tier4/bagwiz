@@ -13,18 +13,20 @@
 #include <ostream>
 #include <span>
 
-// GLIM-free point-cloud writers used by `bagwiz slam --map`. Kept free of GLIM /
+// GLIM-free point-cloud writers used by `bagwiz slam run`. Kept free of GLIM /
 // Eigen / gtsam_points types so the writer (and its test) build in every
 // configuration, not only when BAGWIZ_WITH_SLAM is on.
 namespace bagwiz::core::slam
 {
 
-// Write `points` as a binary-little-endian PLY mesh with no faces: each vertex
-// carries `x y z` as float32, and an `intensity` float32 property when
-// `intensities` is non-empty AND exactly `points.size()` long (otherwise it is
-// omitted). Mirrors `core::write_tum`'s void shape — the caller checks the
+// Write `points` as a binary PCD v0.7 point cloud: each point carries `x y z`
+// as float32, and an `intensity` float32 field when `intensities` is non-empty
+// AND exactly `points.size()` long (otherwise it is omitted). The body is
+// tightly packed (no struct padding), so the implied field offsets match what
+// both PCL (`pcl::io::loadPCDFile`) and three.js' `PCDLoader` reconstruct from
+// the header. Mirrors `core::write_tum`'s void shape — the caller checks the
 // stream state afterwards. Assumes a little-endian host (bagwiz targets x86).
-void write_ply(
+void write_pcd(
   std::ostream & os, std::span<const std::array<float, 3>> points,
   std::span<const float> intensities = {});
 

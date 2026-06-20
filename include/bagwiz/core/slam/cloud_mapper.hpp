@@ -135,7 +135,7 @@ struct GnssPoint
 };
 
 // Result of CloudMapper::finish(). All fields are GLIM-free plain data so the
-// caller can hand them straight to write_ply / write_tum.
+// caller can hand them straight to write_pcd / write_tum.
 struct CloudMap
 {
   // Globally-optimized LiDAR poses in the world frame, sorted by timestamp.
