@@ -641,24 +641,15 @@ CloudMap CloudMapper::finish()
   }
 
   // The on_smoother_update slot is process-global, so register our injector only
-  // around our own optimize() and remove it right after. RAII removal also
-  // guards against a throwing optimize() leaving a dangling `impl` callback on
-  // the slot (which would fire — and dereference freed memory — for any later
-  // mapper instance in the same process, e.g. across tests).
-  struct ScopedGnssCallback
-  {
-    int id = -1;
-    ~ScopedGnssCallback()
-    {
-      if (id >= 0) {
-        glim::GlobalMappingCallbacks::on_smoother_update.remove(id);
-      }
-    }
-  } gnss_callback;
-
+  // around our own optimize() and remove it right after. Register first, capturing
+  // the slot id, then hand it to an RAII guard whose destructor removes it. The
+  // guard also protects against a throwing optimize() leaving a dangling `impl`
+  // callback on the slot (which would fire — and dereference freed memory — for any
+  // later mapper instance in the same process, e.g. across tests).
+  int gnss_slot_id = -1;
   if (gnss_count > 0) {
     Impl * impl = impl_.get();
-    gnss_callback.id = glim::GlobalMappingCallbacks::on_smoother_update.add(
+    gnss_slot_id = glim::GlobalMappingCallbacks::on_smoother_update.add(
       [impl](gtsam_points::ISAM2Ext &, gtsam::NonlinearFactorGraph & new_factors, gtsam::Values &) {
         // GlobalMapping::optimize() fires on_smoother_update exactly once, and
         // all submap poses X(i) already exist in iSAM2 by now, so the translation
@@ -670,6 +661,18 @@ CloudMap CloudMapper::finish()
         }
       });
   }
+  // id is the slot handle from the registration above (or -1 when no injector was
+  // registered), so the destructor's guard is genuinely conditional.
+  struct ScopedGnssCallback
+  {
+    int id;
+    ~ScopedGnssCallback()
+    {
+      if (id >= 0) {
+        glim::GlobalMappingCallbacks::on_smoother_update.remove(id);
+      }
+    }
+  } gnss_callback{gnss_slot_id};
 
   // Heavy step: global matching-based iSAM2 optimization. Updates each held
   // submap's T_world_origin in place (GlobalMapping::update_submaps). With the
