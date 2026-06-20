@@ -25,13 +25,14 @@
 #include <glim/preprocess/cloud_preprocessor.hpp>
 #include <glim/util/raw_points.hpp>
 #include <glim/util/time_keeper.hpp>
+#include <gtsam_points/types/point_cloud.hpp>
+
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/linear/NoiseModel.h>
 #include <gtsam/nonlinear/NonlinearFactor.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/slam/PoseTranslationPrior.h>
-#include <gtsam_points/types/point_cloud.hpp>
 
 #include <algorithm>
 #include <array>
@@ -299,14 +300,27 @@ struct CloudMapper::Impl
       return;
     }
 
-    std::sort(gnss_points.begin(), gnss_points.end(), [](const GnssMetric & a, const GnssMetric & b) {
-      return a.stamp < b.stamp;
-    });
+    std::sort(
+      gnss_points.begin(), gnss_points.end(),
+      [](const GnssMetric & a, const GnssMetric & b) { return a.stamp < b.stamp; });
     const double t_lo = gnss_points.front().stamp;
     const double t_hi = gnss_points.back().stamp;
 
+    // Antenna lever-arm in the submap-origin sensor frame. config.gnss_antenna_offset
+    // is the antenna phase center in the cloud (LiDAR) frame; the submap origin X(i)
+    // is the LiDAR pose for the CT backend but the IMU pose for the CPU backend, so
+    // re-express the antenna point in the IMU frame there (p_imu = T_imu_lidar *
+    // p_lidar). {0,0,0} leaves it zero -> identical to the no-correction path.
+    Eigen::Vector3d lever_origin(
+      config.gnss_antenna_offset[0], config.gnss_antenna_offset[1], config.gnss_antenna_offset[2]);
+    if (config.t_lidar_imu) {
+      const Eigen::Isometry3d T_lidar_imu = detail::to_isometry(*config.t_lidar_imu);
+      lever_origin = T_lidar_imu.inverse() * lever_origin;
+    }
+
     std::vector<std::uint64_t> ids;
     std::vector<std::array<double, 3>> est;
+    std::vector<std::array<double, 3>> offsets;  // per-submap antenna offset in world
     std::vector<std::array<double, 3>> gnss;
     for (const auto & entry : entries) {
       if (!entry.submap || entry.frames.empty()) {
@@ -320,9 +334,14 @@ struct CloudMapper::Impl
       }
       const double t_mid = entry.frames[entry.frames.size() / 2].stamp;
       const Eigen::Vector3d origin = entry.submap->T_world_origin.translation();
+      // Rotate the body-fixed lever-arm into the world frame with the submap's
+      // pre-optimization orientation (Option A: the heading used for the offset is
+      // frozen at build time; iSAM2 then moves the origin under the prior).
+      const Eigen::Vector3d offset_world = entry.submap->T_world_origin.rotation() * lever_origin;
       const Eigen::Vector3d fix = interpolate_gnss(t_mid);
       ids.push_back(static_cast<std::uint64_t>(entry.submap->id));
       est.push_back({origin.x(), origin.y(), origin.z()});
+      offsets.push_back({offset_world.x(), offset_world.y(), offset_world.z()});
       gnss.push_back({fix.x(), fix.y(), fix.z()});
     }
     if (ids.size() < 2) {
@@ -338,9 +357,11 @@ struct CloudMapper::Impl
       return;
     }
 
-    // Estimate the world<-GNSS transform and map each fix into the world frame;
-    // that mapped position is the submap's translation-prior target.
-    const std::vector<std::array<double, 3>> world = align_gnss_to_world(est, gnss);
+    // Estimate the world<-GNSS transform (antenna-to-antenna so the lever-arm does
+    // not contaminate the fit) and map each fix back onto its submap origin; that
+    // mapped position is the submap's translation-prior target. With a zero offset
+    // this reduces to align_gnss_to_world(est, gnss).
+    const std::vector<std::array<double, 3>> world = gnss_targets_with_offset(est, offsets, gnss);
     if (world.size() != ids.size()) {
       return;
     }
@@ -568,8 +589,7 @@ CloudMap CloudMapper::finish()
   if (gnss_count > 0) {
     Impl * impl = impl_.get();
     gnss_callback.id = glim::GlobalMappingCallbacks::on_smoother_update.add(
-      [impl](
-        gtsam_points::ISAM2Ext &, gtsam::NonlinearFactorGraph & new_factors, gtsam::Values &) {
+      [impl](gtsam_points::ISAM2Ext &, gtsam::NonlinearFactorGraph & new_factors, gtsam::Values &) {
         // GlobalMapping::optimize() fires on_smoother_update exactly once, and
         // all submap poses X(i) already exist in iSAM2 by now, so the translation
         // priors are valid. Clearing after adding is a belt-and-suspenders guard

@@ -383,6 +383,140 @@ private:
     return true;
   }
 
+  // First decodable header.frame_id of the cloud and GNSS topics in one bounded
+  // pass. Returns false only on a reopen failure; a topic that never decodes
+  // leaves its frame empty for the caller to handle.
+  bool peek_cloud_and_gnss_frames(std::string & cloud_frame, std::string & gnss_frame)
+  {
+    std::unique_ptr<io::BagReader> reader;
+    try {
+      reader = io::open_read(args_.input_path);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_WARN(
+        kLogger, "Could not reopen %s to peek the GNSS frame: %s", args_.input_path.c_str(),
+        e.what());
+      return false;
+    }
+    io::ReadFilter filter;
+    filter.topics.push_back(args_.cloud_topic);
+    filter.topics.push_back(args_.gnss_topic);
+    reader->set_filter(filter);
+
+    io::RawMessage raw;
+    while ((cloud_frame.empty() || gnss_frame.empty()) && reader->next(raw)) {
+      if (cloud_frame.empty() && raw.topic->name == args_.cloud_topic) {
+        const auto parsed = core::pointcloud::parse_pointcloud2(raw.payload);
+        if (parsed.ok()) {
+          cloud_frame = parsed.cloud->frame_id;
+        }
+      } else if (gnss_frame.empty() && raw.topic->name == args_.gnss_topic) {
+        const auto parsed = core::slam::parse_navsatfix(raw.payload);
+        if (parsed.ok()) {
+          gnss_frame = parsed.sample->frame_id;
+        }
+      }
+    }
+    return true;
+  }
+
+  // True if the bag carries at least one static TF topic (…tf_static). Lets the
+  // GNSS lever-arm resolution skip build_static_tf_buffer's hard-error path (which
+  // is fatal for the IMU extrinsic) and degrade gracefully instead.
+  bool bag_has_static_tf()
+  {
+    std::unique_ptr<io::BagReader> reader;
+    try {
+      reader = io::open_read(args_.input_path);
+    } catch (const std::exception &) {
+      return false;
+    }
+    for (const auto & t : reader->topics()) {
+      if (t.type == kTfMessageType && is_static_tf_topic(t.name)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Resolve the GNSS antenna lever-arm T_cloud_gnss.translation() from the bag's
+  // static TF (cloud frame <- NavSatFix frame_id). Unlike the IMU extrinsic this
+  // is NON-FATAL: GNSS still works without it, just uncorrected, so every failure
+  // path logs a warning and returns {0,0,0} (no correction) rather than aborting.
+  std::array<double, 3> resolve_gnss_offset()
+  {
+    const std::array<double, 3> kZero{0.0, 0.0, 0.0};
+
+    std::string cloud_frame;
+    std::string gnss_frame;
+    if (!peek_cloud_and_gnss_frames(cloud_frame, gnss_frame) || cloud_frame.empty()) {
+      BAGWIZ_LOG_WARN(
+        kLogger,
+        "Could not read cloud/GNSS frame_ids; GNSS constraints use the raw antenna position "
+        "(no lever-arm correction).");
+      return kZero;
+    }
+    if (gnss_frame.empty()) {
+      BAGWIZ_LOG_WARN(
+        kLogger,
+        "NavSatFix on '%s' has an empty header.frame_id; cannot resolve the antenna lever-arm "
+        "from static TF — GNSS constraints use the raw antenna position.",
+        args_.gnss_topic.c_str());
+      return kZero;
+    }
+    if (cloud_frame == gnss_frame) {
+      fmt::print(
+        stdout, "GNSS and cloud share frame '{}'; antenna lever-arm is zero\n", cloud_frame);
+      return kZero;
+    }
+    if (!bag_has_static_tf()) {
+      BAGWIZ_LOG_WARN(
+        kLogger,
+        "Bag has no static TF (…tf_static) to resolve the GNSS antenna lever-arm ('%s' <- '%s'); "
+        "GNSS constraints use the raw antenna position.",
+        cloud_frame.c_str(), gnss_frame.c_str());
+      return kZero;
+    }
+
+    tf2::BufferCore buffer{kTfBufferCacheTime};
+    if (!build_static_tf_buffer(buffer)) {
+      BAGWIZ_LOG_WARN(
+        kLogger,
+        "Could not read static TF for the GNSS antenna lever-arm; GNSS constraints use the raw "
+        "antenna position.");
+      return kZero;
+    }
+    const auto missing = core::missing_frames(buffer, cloud_frame, gnss_frame);
+    if (!missing.empty()) {
+      std::string names;
+      for (std::size_t i = 0; i < missing.size(); ++i) {
+        names += (i ? ", " : "") + missing[i];
+      }
+      BAGWIZ_LOG_WARN(
+        kLogger,
+        "GNSS frame(s) absent from the bag's static TF tree: %s; GNSS constraints use the raw "
+        "antenna position.",
+        names.c_str());
+      return kZero;
+    }
+
+    try {
+      const auto ts = buffer.lookupTransform(cloud_frame, gnss_frame, tf2::TimePointZero);
+      const auto t = to_sensor_transform(ts);
+      fmt::print(
+        stdout,
+        "Resolved GNSS antenna lever-arm from static TF ('{}' <- '{}'): "
+        "({:.3f}, {:.3f}, {:.3f}) m\n",
+        cloud_frame, gnss_frame, t.translation[0], t.translation[1], t.translation[2]);
+      return t.translation;
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_WARN(
+        kLogger,
+        "No static TF chain from '%s' to '%s' (%s); GNSS constraints use the raw antenna position.",
+        cloud_frame.c_str(), gnss_frame.c_str(), e.what());
+      return kZero;
+    }
+  }
+
   // Read the cloud (and, in IMU mode, IMU) topic in log order, dispatching each
   // message by type. Returns false on a fatal read error or when no scan decoded
   // (both logged); otherwise fills the counters.
@@ -509,6 +643,12 @@ private:
     config.map_resolution = args_.map_resolution;
     config.t_lidar_imu = t_lidar_imu;
     config.enable_gnss = !args_.gnss_topic.empty();
+    // Resolve the antenna lever-arm (T_cloud_gnss) from static TF so the GNSS prior
+    // constrains the sensor origin, not the antenna. Non-fatal: a missing TF leaves
+    // the offset zero (raw-antenna behavior) with a warning.
+    if (config.enable_gnss) {
+      config.gnss_antenna_offset = resolve_gnss_offset();
+    }
     core::slam::CloudMapper mapper(config);
 
     // Projects each NavSatFix to a local ENU frame (origin = first fix) before

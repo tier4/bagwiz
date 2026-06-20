@@ -79,6 +79,18 @@ struct CloudMapperConfig
   // axis); x/y at 1e3 pulls the submaps onto the GNSS track. Mirrors
   // prior_inf_scale.
   std::array<double, 3> gnss_prior_inf_scale{1e3, 1e3, 0.0};
+
+  // GNSS antenna lever-arm: the antenna phase-center position expressed in the
+  // cloud (LiDAR) frame, i.e. T_cloud_gnss.translation(). A NavSatFix reports the
+  // ANTENNA position, but the GNSS prior constrains the submap-origin sensor pose,
+  // so without this offset a non-trivial antenna mount biases every prior by a
+  // heading-dependent amount that the rigid world<-GNSS fit cannot absorb. The
+  // command layer resolves it from the bag's static TF (cloud frame <- NavSatFix
+  // frame_id); {0,0,0} (the default) disables the correction and reproduces the
+  // raw-antenna behavior. For the LiDAR-IMU backend the submap origin is the IMU
+  // pose, so this LiDAR-frame offset is re-expressed in the IMU frame internally
+  // using t_lidar_imu.
+  std::array<double, 3> gnss_antenna_offset{0.0, 0.0, 0.0};
 };
 
 // One GNSS fix already projected into the local metric (ENU) frame the mapper
@@ -86,8 +98,8 @@ struct CloudMapperConfig
 // gnss_projector) and consumed by CloudMapper::insert_gnss.
 struct GnssPoint
 {
-  std::int64_t stamp_ns = 0;          // fix timestamp, nanoseconds since epoch
-  std::array<double, 3> position{};   // local metric meters {east, north, up}
+  std::int64_t stamp_ns = 0;         // fix timestamp, nanoseconds since epoch
+  std::array<double, 3> position{};  // local metric meters {east, north, up}
 };
 
 // Result of CloudMapper::finish(). All fields are GLIM-free plain data so the

@@ -31,8 +31,11 @@ struct SlamRunArgs
   // Optional NavSatFix topic. Empty: no GNSS. Set: adds GNSS global constraints
   // (horizontal translation priors on submap poses) during global mapping,
   // pinning the world frame to GNSS and curbing drift. Requires global mapping,
-  // so it is rejected together with without_global_optim. The fixes are
-  // projected to a local ENU frame internally; no extrinsic/TF is consulted.
+  // so it is rejected together with without_global_optim. The fixes are projected
+  // to a local ENU frame internally. The antenna lever-arm (T_cloud_gnss) is
+  // resolved from the bag's static TF so the prior constrains the sensor origin,
+  // not the antenna; if that TF is absent the run still proceeds (warned) using
+  // the raw antenna position.
   std::string gnss_topic;
   // Output root directory; receives traj.tum and, unless without_global_optim,
   // map.ply.

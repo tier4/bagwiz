@@ -10,8 +10,10 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <vector>
 
 // Unit test for align_gnss_to_world (the closed-form 2-D Procrustes ported from
@@ -90,6 +92,109 @@ TEST(AlignGnssToWorld, RejectsEmptyOrMismatchedInputs)
   const std::vector<std::array<double, 3>> one = {{0.0, 0.0, 0.0}};
   const std::vector<std::array<double, 3>> two = {{0.0, 0.0, 0.0}, {1.0, 1.0, 1.0}};
   EXPECT_TRUE(slam::align_gnss_to_world(one, two).empty());
+}
+
+// --- gnss_targets_with_offset: lever-arm-aware variant ---------------------
+
+// An L-shaped trajectory: the first leg heads +x (heading 0), then the vehicle
+// turns and heads +y (heading 90 deg). A body-fixed antenna offset therefore
+// points in DIFFERENT world directions on the two legs, which is exactly the
+// heading-dependent error a single rigid alignment cannot absorb.
+const std::vector<std::array<double, 3>> kLOrigins = {
+  {0.0, 0.0, 0.0}, {10.0, 0.0, 0.0}, {20.0, 0.0, 0.0}, {20.0, 10.0, 0.0}, {20.0, 20.0, 0.0}};
+// Per-submap heading (rad): three submaps facing +x, two facing +y.
+const std::vector<double> kLHeadings = {0.0, 0.0, 0.0, M_PI / 2, M_PI / 2};
+
+// Rotate a body-frame lever arm into the world frame for each heading (2-D yaw;
+// z carried through). This is what cloud_mapper computes as R_world_origin·lever.
+std::vector<std::array<double, 3>> offsets_for(
+  const std::vector<double> & headings, double lx, double ly, double lz)
+{
+  std::vector<std::array<double, 3>> out;
+  out.reserve(headings.size());
+  for (const double h : headings) {
+    const double c = std::cos(h);
+    const double s = std::sin(h);
+    out.push_back({c * lx - s * ly, s * lx + c * ly, lz});
+  }
+  return out;
+}
+
+std::vector<std::array<double, 3>> add_points(
+  const std::vector<std::array<double, 3>> & a, const std::vector<std::array<double, 3>> & b)
+{
+  std::vector<std::array<double, 3>> out;
+  out.reserve(a.size());
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    out.push_back({a[i][0] + b[i][0], a[i][1] + b[i][1], a[i][2] + b[i][2]});
+  }
+  return out;
+}
+
+double max_horizontal_dev(
+  const std::vector<std::array<double, 3>> & a, const std::vector<std::array<double, 3>> & b)
+{
+  double m = 0.0;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    m = std::max(m, std::hypot(a[i][0] - b[i][0], a[i][1] - b[i][1]));
+  }
+  return m;
+}
+
+TEST(GnssTargetsWithOffset, ZeroOffsetMatchesPlainAlignment)
+{
+  // With no lever arm the variant must reproduce align_gnss_to_world exactly.
+  const std::vector<std::array<double, 3>> est = {
+    {0.0, 0.0, 0.5}, {3.0, 0.0, 1.0}, {0.0, 4.0, 1.5}, {3.0, 4.0, 2.0}};
+  const auto gnss = apply_2d_transform(est, 0.3, 10.0, -5.0);
+  const std::vector<std::array<double, 3>> zero_offsets(est.size(), {0.0, 0.0, 0.0});
+
+  const auto plain = slam::align_gnss_to_world(est, gnss);
+  const auto with_offset = slam::gnss_targets_with_offset(est, zero_offsets, gnss);
+
+  expect_points_near(with_offset, plain, 1e-12);
+}
+
+TEST(GnssTargetsWithOffset, RemovesHeadingDependentLeverArm)
+{
+  // Antenna is 1.5 m ahead of the sensor (body +x). The GNSS reports the antenna
+  // position: origin + R_world_origin·lever. The corrected targets must map back
+  // onto the submap origins; ignoring the lever arm cannot.
+  const auto offsets = offsets_for(kLHeadings, 1.5, 0.0, 0.0);
+  const auto gnss = add_points(kLOrigins, offsets);  // perfect antenna fixes, identity datum
+
+  const auto targets = slam::gnss_targets_with_offset(kLOrigins, offsets, gnss);
+  expect_points_near(targets, kLOrigins, 1e-9);
+
+  // Contrast: the plain alignment (no lever-arm awareness) feeds the antenna
+  // positions straight in, so its targets retain a heading-dependent bias well
+  // above a few cm — the very error this variant removes.
+  const auto biased = slam::align_gnss_to_world(kLOrigins, gnss);
+  EXPECT_GT(max_horizontal_dev(biased, kLOrigins), 0.3)
+    << "test setup is degenerate: plain alignment already matched the origins";
+}
+
+TEST(GnssTargetsWithOffset, RecoversThroughDatumYawAndTranslation)
+{
+  // Same lever arm, but the GNSS datum is rotated 0.4 rad and shifted (100, -50):
+  // the antenna-to-antenna fit must still recover, and removing the offset must
+  // still land the targets back on the submap origins.
+  const auto offsets = offsets_for(kLHeadings, 1.5, 0.5, 0.0);
+  const auto antenna = add_points(kLOrigins, offsets);
+  const auto gnss = apply_2d_transform(antenna, 0.4, 100.0, -50.0);
+
+  const auto targets = slam::gnss_targets_with_offset(kLOrigins, offsets, gnss);
+  expect_points_near(targets, kLOrigins, 1e-9);
+}
+
+TEST(GnssTargetsWithOffset, RejectsEmptyOrMismatchedInputs)
+{
+  EXPECT_TRUE(slam::gnss_targets_with_offset({}, {}, {}).empty());
+
+  const std::vector<std::array<double, 3>> two = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+  const std::vector<std::array<double, 3>> one_off = {{0.0, 0.0, 0.0}};
+  // offsets length mismatched with origins/gnss -> empty.
+  EXPECT_TRUE(slam::gnss_targets_with_offset(two, one_off, two).empty());
 }
 
 }  // namespace

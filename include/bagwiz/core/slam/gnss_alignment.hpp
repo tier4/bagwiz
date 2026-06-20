@@ -37,6 +37,23 @@ namespace bagwiz::core::slam
 [[nodiscard]] std::vector<std::array<double, 3>> align_gnss_to_world(
   const std::vector<std::array<double, 3>> & est, const std::vector<std::array<double, 3>> & gnss);
 
+// Lever-arm-aware variant of align_gnss_to_world: the GNSS antenna sits at a
+// rigid offset from the submap-origin sensor, so the value a `NavSatFix` reports
+// is the *antenna* position, not the submap origin. `offsets_world[i]` is that
+// per-submap antenna offset already rotated into the world frame
+// (R_world_origin · lever_arm); passing it lets the rigid world<-GNSS fit run
+// antenna-to-antenna (uncontaminated by the heading-dependent offset), and the
+// per-submap prior target is then mapped back onto the submap origin by removing
+// the same offset.
+//
+// Equivalent to align_gnss_to_world(origins, gnss) when every offset is zero, so
+// a missing/zero lever-arm reproduces the no-correction behavior exactly. Returns
+// an empty vector when the three inputs are empty or of unequal length.
+[[nodiscard]] std::vector<std::array<double, 3>> gnss_targets_with_offset(
+  const std::vector<std::array<double, 3>> & origins,
+  const std::vector<std::array<double, 3>> & offsets_world,
+  const std::vector<std::array<double, 3>> & gnss);
+
 }  // namespace bagwiz::core::slam
 
 #endif  // BAGWIZ__CORE__SLAM__GNSS_ALIGNMENT_HPP_

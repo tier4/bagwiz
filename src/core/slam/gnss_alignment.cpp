@@ -85,4 +85,42 @@ std::vector<std::array<double, 3>> align_gnss_to_world(
   return world;
 }
 
+std::vector<std::array<double, 3>> gnss_targets_with_offset(
+  const std::vector<std::array<double, 3>> & origins,
+  const std::vector<std::array<double, 3>> & offsets_world,
+  const std::vector<std::array<double, 3>> & gnss)
+{
+  std::vector<std::array<double, 3>> targets;
+  if (origins.empty() || origins.size() != gnss.size() || origins.size() != offsets_world.size()) {
+    return targets;
+  }
+
+  // Predicted antenna position per submap = origin + (R_origin · lever_arm). The
+  // rigid world<-GNSS fit then matches antenna-to-antenna, so the heading-
+  // dependent lever-arm no longer leaks into the alignment residual.
+  std::vector<std::array<double, 3>> antenna;
+  antenna.reserve(origins.size());
+  for (std::size_t i = 0; i < origins.size(); ++i) {
+    antenna.push_back(
+      {origins[i][0] + offsets_world[i][0], origins[i][1] + offsets_world[i][1],
+       origins[i][2] + offsets_world[i][2]});
+  }
+
+  const std::vector<std::array<double, 3>> world_antenna = align_gnss_to_world(antenna, gnss);
+  if (world_antenna.size() != origins.size()) {
+    return targets;  // degenerate alignment (guarded inside align_gnss_to_world)
+  }
+
+  // Map each antenna target back onto the submap origin by removing the same
+  // world-frame offset; that origin position is the submap's translation-prior
+  // target, now free of the antenna lever-arm.
+  targets.reserve(origins.size());
+  for (std::size_t i = 0; i < origins.size(); ++i) {
+    targets.push_back(
+      {world_antenna[i][0] - offsets_world[i][0], world_antenna[i][1] - offsets_world[i][1],
+       world_antenna[i][2] - offsets_world[i][2]});
+  }
+  return targets;
+}
+
 }  // namespace bagwiz::core::slam
