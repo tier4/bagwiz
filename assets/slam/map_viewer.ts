@@ -452,7 +452,7 @@ loader.load(
     }
   },
   (error: unknown) => {
-    setStatus(`Failed to load map.ply: ${error}`);
+    setStatus(`Failed to load map.ply: ${String(error)}`);
   },
 );
 

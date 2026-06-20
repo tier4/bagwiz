@@ -80,3 +80,16 @@ repos:
           - --inline-suppr
           - --quiet
           - --error-exitcode=1
+
+  # Type-aware ESLint for the map viewer's TypeScript, run through its own
+  # toolchain (assets/slam/node_modules) so the lint rules and the build-time
+  # tsc share one pinned dependency set. See assets/slam/eslint.config.mjs.
+  - repo: local
+    hooks:
+      - id: eslint-map-viewer
+        name: eslint (map viewer TypeScript)
+        entry: bash assets/slam/run-eslint.sh
+        language: system
+        files: ^assets/slam/.*\.ts$
+        pass_filenames: false
+        require_serial: true
