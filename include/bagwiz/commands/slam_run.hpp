@@ -51,6 +51,15 @@ struct SlamRunArgs
   // default browser to a Three.js viewer. Blocks until interrupted (Ctrl-C).
   // Mutually exclusive with without_global_optim (which produces no map).
   bool vis = false;
+  // Optional trajectory up-sampling spec; affects traj.tum ONLY, never the map.
+  // Empty: disabled (output unchanged). Otherwise a positive magnitude with an
+  // optional, case-insensitive suffix: 'x'/'X' = multiple of the trajectory's
+  // native rate (e.g. "2x"); 'hz'/'HZ'/'Hz' or no suffix = absolute frequency in
+  // Hz (e.g. "20" or "20hz"). Parsed by core::parse_upsample_spec; resampling
+  // interpolates position linearly and orientation by SLERP within the original
+  // time span only (no extrapolation). A target at or below the native rate
+  // leaves the trajectory unchanged (warned, never down-sampled).
+  std::string upsample_traj;
 };
 
 // Run LiDAR SLAM over a single PointCloud2 topic entirely in-process: bagwiz

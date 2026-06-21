@@ -113,6 +113,14 @@ private:
         "served over a loopback HTTP server. Runs until interrupted (Ctrl-C). Cannot be "
         "combined with --without-global-optim, which produces no map.")
       ->excludes(without_optim);
+    sub->add_option(
+      "--upsample-traj", run_args_.upsample_traj,
+      "Resample the output trajectory (traj.tum only; the map is unaffected) onto a uniform, "
+      "denser time grid. Accepts an absolute frequency ('20' or '20hz') or a multiple of the "
+      "trajectory's native rate ('2x'). Position is interpolated linearly and orientation "
+      "slerped, only within the original time span (no extrapolation). A target at or below the "
+      "native rate writes the trajectory unchanged (warned; never down-sampled); gaps between "
+      "poses wider than a few times the median spacing are left un-interpolated.");
     sub->callback([this]() { selected_ = Subcommand::kRun; });
   }
 

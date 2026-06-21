@@ -974,7 +974,8 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 // flat command:
 //
 //   run: `slam`(0) `run`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
-//        [--imu <topic>] [--map-resolution <m>] [--without-global-optim] [-w|--overwrite]
+//        [--imu <topic>] [--gnss <topic>] [--map-resolution <m>] [--upsample-traj <spec>]
+//        [--vis] [--without-global-optim] [-w|--overwrite]
 //   vis: `slam`(0) `vis`(1) `<map>`(2)
 //
 // At the action slot (word 1) the candidates are `run` and `vis` (or the help
@@ -1013,7 +1014,9 @@ std::vector<std::string> complete_slam(const CompletionRequest & request)
 
   if (current.starts_with("-")) {
     return matching(
-      with_help({"--imu", "--map-resolution", "--overwrite", "--without-global-optim", "-w"}),
+      with_help(
+        {"--gnss", "--imu", "--map-resolution", "--overwrite", "--upsample-traj", "--vis",
+         "--without-global-optim", "-w"}),
       current);
   }
 

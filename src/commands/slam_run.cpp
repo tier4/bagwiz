@@ -42,6 +42,7 @@
 #include <fstream>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -95,6 +96,22 @@ public:
 
   int run()
   {
+    // Validate the optional --upsample-traj spec up front so a malformed value
+    // fails before any bag work. Empty leaves up-sampling disabled.
+    if (!args_.upsample_traj.empty()) {
+      const auto spec = core::parse_upsample_spec(args_.upsample_traj);
+      if (!spec) {
+        BAGWIZ_LOG_ERROR(
+          kLogger,
+          "Invalid --upsample-traj value '%s'; expected a positive number with an optional "
+          "suffix: 'x' for a multiple of the native rate (e.g. 2x) or 'hz' for a frequency "
+          "(e.g. 20 or 20hz)",
+          args_.upsample_traj.c_str());
+        return 1;
+      }
+      upsample_spec_ = *spec;
+    }
+
     std::unique_ptr<io::BagReader> reader;
     try {
       reader = io::open_read(args_.input_path);
@@ -602,6 +619,34 @@ private:
     return true;
   }
 
+  // Resolve --upsample-traj for the poses destined for traj.tum (the map is
+  // never touched). Returns the poses to write and logs the resampling /
+  // declined / gap notices. Only called when upsample_spec_ is set.
+  std::vector<core::TrajectoryPose> upsample_for_output(std::span<const core::TrajectoryPose> poses)
+  {
+    auto result = core::upsample_trajectory(poses, *upsample_spec_);
+    if (result.resampled) {
+      fmt::print(
+        stdout, "Upsampled trajectory to {:.3f} Hz ({} -> {} poses)\n", result.target_rate_hz,
+        poses.size(), result.poses.size());
+      if (result.skipped_gap_count > 0) {
+        BAGWIZ_LOG_WARN(
+          kLogger,
+          "Did not interpolate across %s gap(s) wider than %.3f s (likely sensor dropouts); the "
+          "trajectory has hole(s) there (%s grid point(s) skipped)",
+          std::to_string(result.skipped_gap_count).c_str(), result.gap_threshold_s,
+          std::to_string(result.skipped_point_count).c_str());
+      }
+    } else if (result.native_rate_hz > 0.0) {
+      BAGWIZ_LOG_WARN(
+        kLogger,
+        "--upsample-traj target (%.3f Hz) is at or below the trajectory's native ~%.3f Hz; wrote "
+        "the trajectory unchanged (no resampling)",
+        result.target_rate_hz, result.native_rate_hz);
+    }
+    return std::move(result.poses);
+  }
+
   // Odometry-only path -> TUM trajectory.
   int run_odometry(
     io::BagReader & reader, const std::optional<core::slam::SensorTransform> & t_lidar_imu)
@@ -620,19 +665,22 @@ private:
       return 1;
     }
 
-    const std::vector<core::TrajectoryPose> poses = odometry.finish();
+    std::vector<core::TrajectoryPose> poses = odometry.finish();
     if (poses.empty()) {
       BAGWIZ_LOG_ERROR(
         kLogger, "SLAM produced no trajectory poses from %s scans", std::to_string(scans).c_str());
       return 1;
     }
-    if (!write_trajectory(poses)) {
+    // --upsample-traj rewrites traj.tum only; there is no map on this path.
+    std::vector<core::TrajectoryPose> out_poses =
+      upsample_spec_ ? upsample_for_output(poses) : std::move(poses);
+    if (!write_trajectory(out_poses)) {
       return 1;
     }
 
     fmt::print(
-      stdout, "Wrote {} trajectory poses from {} scans{} ({} skipped) to {}\n", poses.size(), scans,
-      imu_suffix(imu_count), skipped, output_path_.string());
+      stdout, "Wrote {} trajectory poses from {} scans{} ({} skipped) to {}\n", out_poses.size(),
+      scans, imu_suffix(imu_count), skipped, output_path_.string());
     return 0;
   }
 
@@ -693,7 +741,15 @@ private:
       BAGWIZ_LOG_ERROR(kLogger, "could not open %s for writing", map_path_.c_str());
       return 1;
     }
-    if (!write_trajectory(map.trajectory)) {
+    // --upsample-traj rewrites traj.tum only; map.points below is written
+    // untouched, so the map is identical with or without the option.
+    std::vector<core::TrajectoryPose> upsampled_traj;
+    const std::vector<core::TrajectoryPose> * out_traj = &map.trajectory;
+    if (upsample_spec_) {
+      upsampled_traj = upsample_for_output(map.trajectory);
+      out_traj = &upsampled_traj;
+    }
+    if (!write_trajectory(*out_traj)) {
       return 1;
     }
     core::slam::write_pcd(map_out, map.points, map.intensities);
@@ -716,7 +772,7 @@ private:
       stdout,
       "Wrote {} optimized trajectory poses and a {}-point map from {} scans{} ({} skipped) "
       "to {} and {}\n",
-      map.trajectory.size(), map.points.size(), scans, imu_suffix(imu_count), skipped,
+      out_traj->size(), map.points.size(), scans, imu_suffix(imu_count), skipped,
       output_path_.string(), map_path_.string());
 
     if (!args_.gnss_topic.empty()) {
@@ -763,6 +819,8 @@ private:
   const SlamRunArgs & args_;
   std::filesystem::path output_path_;  // <output_root>/traj.tum
   std::filesystem::path map_path_;     // <output_root>/map.pcd (mapping mode only)
+  // Parsed --upsample-traj spec; std::nullopt leaves up-sampling disabled.
+  std::optional<core::UpsampleSpec> upsample_spec_;
 };
 
 }  // namespace

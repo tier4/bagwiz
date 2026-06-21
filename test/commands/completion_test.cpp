@@ -1022,6 +1022,16 @@ TEST(FlagCompletionTest, SlamVisDashListsHelpFlags)
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "slam", "vis", "-"}), "--help\n-h\n");
 }
 
+// `slam run -` surfaces the run action's flags plus the implicit help flags,
+// sorted. Value-bearing flags (--gnss/--imu/--upsample-traj) appear by name.
+TEST(FlagCompletionTest, SlamRunDashListsRunFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "slam", "run", "-"}),
+    "--gnss\n--help\n--imu\n--map-resolution\n--overwrite\n--upsample-traj\n--vis\n"
+    "--without-global-optim\n-h\n-w\n");
+}
+
 // `bagwiz topic -` is the command-group slot; only the implicit help flags
 // appear (drop's own flags live one slot deeper).
 TEST(FlagCompletionTest, TopicParentDashListsHelpFlags)
