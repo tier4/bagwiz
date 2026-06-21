@@ -1028,8 +1028,7 @@ TEST(FlagCompletionTest, SlamRunDashListsRunFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "slam", "run", "-"}),
-    "--gnss\n--help\n--imu\n--map-resolution\n--overwrite\n--upsample-traj\n--vis\n"
-    "--without-global-optim\n-h\n-w\n");
+    "--gnss\n--help\n--imu\n--map-resolution\n--overwrite\n--upsample-traj\n--vis\n-h\n-w\n");
 }
 
 // `bagwiz topic -` is the command-group slot; only the implicit help flags

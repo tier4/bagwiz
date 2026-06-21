@@ -28,7 +28,7 @@
 // back the optimized global point-cloud map plus the globally-optimized
 // per-scan trajectory.
 //
-// As with CloudOdometry, every GLIM / Eigen / GTSAM type is hidden behind a
+// Every GLIM / Eigen / GTSAM type is hidden behind a
 // pimpl so this header (and the `slam` command that drives it) stays free of
 // GLIM includes; only cloud_mapper.cpp pulls GLIM in, and the whole translation
 // unit is compiled only when BAGWIZ_WITH_SLAM is on. No ROS node / pub-sub is

@@ -14,7 +14,7 @@
 // A GLIM/Eigen-free rigid transform used to carry a sensor extrinsic across the
 // pimpl seam into the SLAM odometry/mapping wrappers. The command layer resolves
 // the LiDAR↔IMU extrinsic from the bag's static TF (tf2) and hands it over as
-// this plain POD; cloud_odometry.cpp / cloud_mapper.cpp convert it to an
+// this plain POD; cloud_mapper.cpp converts it to an
 // Eigen::Isometry3d internally, keeping the public headers free of GLIM/Eigen.
 //
 // Convention matches GLIM's `T_lidar_imu` (p_lidar = T_lidar_imu * p_imu): the

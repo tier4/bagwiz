@@ -75,9 +75,7 @@ private:
       ->required();
     sub
       ->add_option(
-        "output_root", run_args_.output_root,
-        "Output root directory; writes traj.tum and, unless --without-global-optim, "
-        "map.pcd")
+        "output_root", run_args_.output_root, "Output root directory; writes traj.tum and map.pcd")
       ->required();
     sub->add_option(
       "--imu", run_args_.imu_topic,
@@ -92,7 +90,7 @@ private:
       "lever-arm is resolved from the bag's static TF (cloud <- NavSatFix frame_id) and "
       "removed (a missing TF only warns). Each prior is weighted by the fix's reported "
       "position covariance (falling back to a fixed precision when unknown). Requires "
-      "global mapping (incompatible with --without-global-optim).");
+      "global mapping.");
     sub
       ->add_option(
         "--map-resolution", run_args_.map_resolution,
@@ -100,19 +98,12 @@ private:
         "only the exported map's density, never the optimization or trajectory. The "
         "LiDAR preprocessor's ~0.15 m input voxel bounds the real resolution.")
       ->check(CLI::PositiveNumber);
-    auto * without_optim = sub->add_flag(
-      "--without-global-optim", run_args_.without_global_optim,
-      "Skip global mapping and write only the raw odometry trajectory (traj.tum); "
-      "no point-cloud map is produced");
     sub->add_flag(
       "-w,--overwrite", run_args_.overwrite, "Overwrite the output(s) if they already exist");
-    sub
-      ->add_flag(
-        "--vis", run_args_.vis,
-        "After writing map.pcd, open the default browser to a Three.js point-cloud viewer "
-        "served over a loopback HTTP server. Runs until interrupted (Ctrl-C). Cannot be "
-        "combined with --without-global-optim, which produces no map.")
-      ->excludes(without_optim);
+    sub->add_flag(
+      "--vis", run_args_.vis,
+      "After writing map.pcd, open the default browser to a Three.js point-cloud viewer "
+      "served over a loopback HTTP server. Runs until interrupted (Ctrl-C).");
     sub->add_option(
       "--upsample-traj", run_args_.upsample_traj,
       "Resample the output trajectory (traj.tum only; the map is unaffected) onto a uniform, "

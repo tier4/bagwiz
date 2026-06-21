@@ -13,7 +13,6 @@
 #include "bagwiz/core/output_path.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
 #include "bagwiz/core/slam/cloud_mapper.hpp"
-#include "bagwiz/core/slam/cloud_odometry.hpp"
 #include "bagwiz/core/slam/gnss_projector.hpp"
 #include "bagwiz/core/slam/gnss_sample.hpp"
 #include "bagwiz/core/slam/imu_sample.hpp"
@@ -127,16 +126,6 @@ public:
       return 1;
     }
     if (!args_.gnss_topic.empty()) {
-      // GNSS constraints are added only to the global factor graph, so they are
-      // meaningless without global mapping. Reject the contradictory combination
-      // early rather than silently dropping the topic.
-      if (args_.without_global_optim) {
-        BAGWIZ_LOG_ERROR(
-          kLogger,
-          "--gnss requires global mapping but --without-global-optim was given; GNSS "
-          "constraints only apply during global optimization");
-        return 1;
-      }
       if (!topic_present_with_type(*reader, args_.gnss_topic, kNavSatFixType)) {
         return 1;
       }
@@ -170,15 +159,12 @@ public:
       return 1;
     }
 
-    // Global mapping is the default; derive the map path unless the user asked to
-    // skip it.
-    if (!args_.without_global_optim) {
-      map_path_ = args_.output_root / "map.pcd";
-      const auto prepared_map = core::prepare_output_path(map_path_, args_.overwrite);
-      if (!prepared_map.ok) {
-        BAGWIZ_LOG_ERROR(kLogger, "%s", prepared_map.error.c_str());
-        return 1;
-      }
+    // Derive and guard the map output path.
+    map_path_ = args_.output_root / "map.pcd";
+    const auto prepared_map = core::prepare_output_path(map_path_, args_.overwrite);
+    if (!prepared_map.ok) {
+      BAGWIZ_LOG_ERROR(kLogger, "%s", prepared_map.error.c_str());
+      return 1;
     }
 
     // Resolve the LiDAR<-IMU extrinsic from the bag's static TF before feeding
@@ -193,11 +179,7 @@ public:
       t_lidar_imu = extrinsic;
     }
 
-    // `--without-global-optim` swaps the optimized mapping pipeline for the raw
-    // odometry path; everything up to here (open / validate / prepare outputs /
-    // extrinsic) is shared.
-    return args_.without_global_optim ? run_odometry(*reader, t_lidar_imu)
-                                      : run_mapping(*reader, t_lidar_imu);
+    return run_mapping(*reader, t_lidar_imu);
   }
 
 private:
@@ -647,43 +629,6 @@ private:
     return std::move(result.poses);
   }
 
-  // Odometry-only path -> TUM trajectory.
-  int run_odometry(
-    io::BagReader & reader, const std::optional<core::slam::SensorTransform> & t_lidar_imu)
-  {
-    core::slam::CloudOdometry odometry(t_lidar_imu);
-    std::int64_t scans = 0;
-    std::int64_t skipped = 0;
-    std::int64_t imu_count = 0;
-    // GNSS is rejected together with --without-global-optim, so this path never
-    // sees a GNSS topic; the handler is a no-op and the count stays 0.
-    std::int64_t gnss_count = 0;
-    if (!process_messages(
-          reader, [&](const core::slam::LidarScan & s) { odometry.insert(s); },
-          [&](const core::slam::ImuSample & i) { odometry.insert_imu(i); },
-          [](const core::slam::GnssSample &) {}, scans, skipped, imu_count, gnss_count)) {
-      return 1;
-    }
-
-    std::vector<core::TrajectoryPose> poses = odometry.finish();
-    if (poses.empty()) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "SLAM produced no trajectory poses from %s scans", std::to_string(scans).c_str());
-      return 1;
-    }
-    // --upsample-traj rewrites traj.tum only; there is no map on this path.
-    std::vector<core::TrajectoryPose> out_poses =
-      upsample_spec_ ? upsample_for_output(poses) : std::move(poses);
-    if (!write_trajectory(out_poses)) {
-      return 1;
-    }
-
-    fmt::print(
-      stdout, "Wrote {} trajectory poses from {} scans{} ({} skipped) to {}\n", out_poses.size(),
-      scans, imu_suffix(imu_count), skipped, output_path_.string());
-    return 0;
-  }
-
   // Optimized mapping path -> optimized TUM trajectory + binary PCD map.
   int run_mapping(
     io::BagReader & reader, const std::optional<core::slam::SensorTransform> & t_lidar_imu)
@@ -793,8 +738,7 @@ private:
     }
 
     // --vis: serve the map.pcd just written and open the browser. This blocks
-    // until the user interrupts the viewer. CLI parsing already rejects
-    // --vis together with --without-global-optim, so a map always exists here.
+    // until the user interrupts the viewer.
     if (args_.vis) {
 #ifdef BAGWIZ_WITH_MAP_VIEWER
       return core::slam::serve_map_viewer(map_path_);

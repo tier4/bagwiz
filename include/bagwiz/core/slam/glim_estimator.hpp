@@ -9,11 +9,10 @@
 #ifndef BAGWIZ__CORE__SLAM__GLIM_ESTIMATOR_HPP_
 #define BAGWIZ__CORE__SLAM__GLIM_ESTIMATOR_HPP_
 
-// INTERNAL — this header pulls in GLIM / Eigen. Include it ONLY from the
-// BAGWIZ_WITH_SLAM translation units (cloud_odometry.cpp / cloud_mapper.cpp),
-// never from a GLIM-free public header. It factors out the one piece both the
-// odometry and the mapping wrappers share: turning the GLIM-free extrinsic POD
-// into the right GLIM backend (LiDAR-only CT vs LiDAR-IMU CPU).
+// INTERNAL — this header pulls in GLIM / Eigen. Include it ONLY from a
+// BAGWIZ_WITH_SLAM translation unit (cloud_mapper.cpp), never from a GLIM-free
+// public header. It turns the GLIM-free extrinsic POD into the right GLIM
+// backend (LiDAR-only CT vs LiDAR-IMU CPU).
 
 #include "bagwiz/core/slam/sensor_transform.hpp"
 

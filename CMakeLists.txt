@@ -339,7 +339,7 @@ target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang ${Op
 # OFF by default so normal builds need no GLIM. Enable with `pixi run build-slam`
 # (which builds the GLIM stack into install/<distro>/glim-deps via build-glim
 # and passes -DBAGWIZ_WITH_SLAM=ON plus that prefix on CMAKE_PREFIX_PATH). The
-# GLIM types stay confined to cloud_odometry.cpp / cloud_mapper.cpp (pimpl); the
+# GLIM types stay confined to cloud_mapper.cpp (pimpl); the
 # `slam` command group (slam.cpp) and its `run` action (slam_run.cpp) are GLIM-free.
 option(BAGWIZ_WITH_SLAM "Build the in-process GLIM `bagwiz slam` command" OFF)
 if(BAGWIZ_WITH_SLAM)
@@ -350,7 +350,6 @@ if(BAGWIZ_WITH_SLAM)
   # so depend on it explicitly for its headers and the `gtsam` link target.
   find_package(GTSAM CONFIG REQUIRED)
   target_sources(bagwiz PRIVATE
-    src/core/slam/cloud_odometry.cpp
     src/core/slam/cloud_mapper.cpp
     src/commands/slam.cpp
     src/commands/slam_run.cpp
@@ -547,15 +546,9 @@ if(BUILD_TESTING)
       $<TARGET_PROPERTY:httplib::httplib,INTERFACE_INCLUDE_DIRECTORIES>)
   endif()
 
-  # GLIM-linked integration test for the odometry wrapper; only when SLAM is on
+  # GLIM-linked integration test for the mapping wrapper; only when SLAM is on
   # (find_package(glim) ran in the BAGWIZ_WITH_SLAM block above).
   if(BAGWIZ_WITH_SLAM)
-    ament_add_gtest(bagwiz_slam_cloud_odometry_test
-      test/core/slam/cloud_odometry_test.cpp
-      src/core/slam/cloud_odometry.cpp)
-    target_link_libraries(bagwiz_slam_cloud_odometry_test
-      bagwiz_core glim::glim gtsam_points::gtsam_points)
-
     ament_add_gtest(bagwiz_slam_cloud_mapper_test
       test/core/slam/cloud_mapper_test.cpp
       src/core/slam/cloud_mapper.cpp)

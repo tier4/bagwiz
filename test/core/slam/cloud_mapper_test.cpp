@@ -33,7 +33,6 @@ namespace slam = bagwiz::core::slam;
 
 // A 10 x 10 x ~3 m "room": a floor grid plus four walls. Dense enough geometric
 // structure for scan-to-model matching, expressed in the (static) sensor frame.
-// Mirrors cloud_odometry_test's scene.
 slam::LidarScan make_room_scan(std::int64_t stamp_ns)
 {
   slam::LidarScan scan;

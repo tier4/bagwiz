@@ -585,7 +585,7 @@ void CloudMapper::insert(const LidarScan & scan)
   // A time-less cloud is fed explicit zero per-point times (already
   // motion-undistorted), NOT an empty vector — that would make glim::TimeKeeper
   // synthesize order-based pseudo times and wrongly "deskew" a concatenated
-  // cloud. (Mirrors CloudOdometry::insert.)
+  // cloud.
   if (scan.has_per_point_time && scan.times.size() == num_points) {
     raw->times = scan.times;
   } else {
