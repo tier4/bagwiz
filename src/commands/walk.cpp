@@ -592,9 +592,20 @@ public:
       }
       core::tui::draw_line(out, 2, info, cols);
 
-      // Image region: from row 3 down to the row above the key hint (row `rows`).
+      // Wrap the key legend the way the YAML footer (build_frame) does, so a
+      // narrow terminal shows every key on continuation lines instead of
+      // truncating the row. The wrapped legend is pinned to the bottom and the
+      // image region above shrinks to make room, mirroring how build_frame
+      // derives its body height from the wrapped footer.
+      const std::vector<std::string> legend_lines = core::tui::wrap_to_width(
+        "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [g] first   [G] last   [s] save   "
+        "[i] back   [q] quit",
+        cols);
+      const int legend_top = std::max(1, rows - static_cast<int>(legend_lines.size()) + 1);
+
+      // Image region: from row 3 down to the row above the first legend line.
       const int region_row = 3;
-      const int region_rows = std::max(1, rows - region_row);
+      const int region_rows = std::max(1, legend_top - region_row);
       if (pr.ok()) {
         core::tui::image::CellRegion region;
         region.row = region_row;
@@ -611,11 +622,9 @@ public:
           out, region_row, fmt::format("  cannot decode this message: {}", pr.error), cols);
       }
 
-      core::tui::draw_line(
-        out, rows,
-        "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [g] first   [G] last   [s] save   "
-        "[i] back   [q] quit",
-        cols);
+      for (std::size_t i = 0; i < legend_lines.size(); ++i) {
+        core::tui::draw_line(out, legend_top + static_cast<int>(i), legend_lines[i], cols);
+      }
       // Close the synchronized update: the terminal now reveals the fully
       // assembled frame in one atomic swap.
       core::tui::end_synchronized_update(out);
