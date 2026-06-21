@@ -118,7 +118,7 @@ private:
       "Resample the output trajectory (traj.tum only; the map is unaffected) onto a uniform, "
       "denser time grid. Accepts an absolute frequency ('20' or '20hz') or a multiple of the "
       "trajectory's native rate ('2x'). Position is interpolated linearly and orientation "
-      "slerped, only within the original time span (no extrapolation). A target at or below the "
+      "by SLERP, only within the original time span (no extrapolation). A target at or below the "
       "native rate writes the trajectory unchanged (warned; never down-sampled); gaps between "
       "poses wider than a few times the median spacing are left un-interpolated.");
     sub->callback([this]() { selected_ = Subcommand::kRun; });

@@ -426,7 +426,7 @@ TEST(UpsampleTrajectory, UniformGridStaysWithinSpanWithLinearPosition)
   EXPECT_NEAR(r.poses[2].tx, 0.50, 1e-12);  // t = 0.50 s
 }
 
-TEST(UpsampleTrajectory, SlerpsOrientationAtMidpoint)
+TEST(UpsampleTrajectory, SlerpOrientationAtMidpoint)
 {
   // Identity -> 90 deg about Z; the 2 Hz grid midpoint is the 45 deg rotation.
   const std::vector<TrajectoryPose> in = {
