@@ -54,12 +54,12 @@ meta=""
 { [ -d "$BAG" ] && [ -f "$BAG/metadata.yaml" ]; } && meta="$BAG/metadata.yaml"
 [ -f "$BAG.metadata.yaml" ] && meta="$BAG.metadata.yaml"
 if [ -n "$meta" ]; then
-    cfmt=$(grep -m1 'compression_format:' "$meta" | sed -E 's/.*compression_format:[[:space:]]*"?([^"]*)"?.*/\1/')
-    cmode=$(grep -m1 'compression_mode:' "$meta" | sed -E 's/.*compression_mode:[[:space:]]*"?([^"]*)"?.*/\1/')
-    if [ -z "$cfmt" ] || [ "$cmode" = "NONE" ]; then
+    format=$(grep -m1 'compression_format:' "$meta" | sed -E 's/.*compression_format:[[:space:]]*"?([^"]*)"?.*/\1/')
+    mode=$(grep -m1 'compression_mode:' "$meta" | sed -E 's/.*compression_mode:[[:space:]]*"?([^"]*)"?.*/\1/')
+    if [ -z "$format" ] || [ "$mode" = "NONE" ]; then
         comp="uncompressed"
     else
-        comp="$cfmt-compressed ($cmode mode)"
+        comp="$format-compressed ($mode mode)"
     fi
 else
     comp="compression per storage format"
