@@ -4,16 +4,75 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>bagwiz — map.pcd</title>
+    <!--
+      Fonts: IBM Plex Sans (labels) + IBM Plex Mono (numeric readouts), loaded
+      from Google Fonts. Like three.js this needs internet; offline, the CSS
+      falls back to the system sans/mono stacks declared in --sans / --mono.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&family=IBM+Plex+Sans:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
     <style>
       :root {
+        /* Matches the WebGL scene clear color so the viewport has no seam. */
         --bg: #101014;
-        --panel: rgba(20, 22, 28, 0.86);
-        --panel-border: rgba(255, 255, 255, 0.08);
-        --text: #e7e7ea;
-        --muted: #9a9aa3;
-        --accent: #4ea1ff;
-        --field: rgba(255, 255, 255, 0.06);
+
+        /* Translucent glass surfaces, layered by elevation tier. */
+        --glass-1: rgba(20, 23, 31, 0.5); /* toolbar   */
+        --glass-2: rgba(20, 23, 31, 0.56); /* inspector */
+        --glass-3: rgba(13, 15, 21, 0.58); /* readout   */
+        /* Liquid-glass backdrop: heavy blur plus a saturation + brightness lift,
+           so the cloud's color and light bleed up through the material. */
+        --glass-blur: 22px;
+        --glass-sat: 1.8;
+        --glass-bright: 1.12;
+
+        --edge: rgba(255, 255, 255, 0.14); /* rim border               */
+        --edge-top: rgba(255, 255, 255, 0.5); /* bright top specular edge  */
+        --field: rgba(255, 255, 255, 0.05);
+        --field-edge: rgba(255, 255, 255, 0.1);
+        --field-edge-hover: rgba(255, 255, 255, 0.2);
+
+        --text: #e9ebf1;
+        --muted: #9aa2b1;
+        --faint: #6b7280;
+
+        /* Accent reserved for interactive/active states only. The colormap is
+           the one saturated element in the UI. */
+        --a1: #3fd2c7;
+        --a2: #4ea1ff;
+        --accent: var(--a2);
+        --accent-grad: linear-gradient(90deg, var(--a1), var(--a2));
+
+        --r-lg: 20px;
+        --r-md: 12px;
+        --r-sm: 8px;
+
+        --dur: 160ms;
+        --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+        /* Layered specular + bevel: a bright top edge, a bottom shade, and inner
+           sheen/depth gradients that read as a thick block of refractive glass. */
+        --bevel:
+          inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -1px 0 rgba(0, 0, 0, 0.28),
+          inset 0 16px 30px -16px rgba(255, 255, 255, 0.18),
+          inset 0 -18px 36px -20px rgba(0, 0, 0, 0.45);
+        --shadow-1: 0 12px 36px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+        --shadow-2: 0 22px 60px rgba(0, 0, 0, 0.6), 0 4px 14px rgba(0, 0, 0, 0.4);
+
+        --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        --sans:
+          "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+          sans-serif;
       }
+
+      * {
+        box-sizing: border-box;
+      }
+
       html,
       body {
         margin: 0;
@@ -21,129 +80,466 @@
         overflow: hidden;
         background: var(--bg);
         color: var(--text);
-        font:
-          13px/1.4 ui-monospace,
-          SFMono-Regular,
-          Menlo,
-          Consolas,
-          monospace;
+        font: 13px/1.45 var(--sans);
+        -webkit-font-smoothing: antialiased;
       }
-      #panel {
+
+      /* ---- Glass surface --------------------------------------------------- */
+      .glass {
+        background: var(--glass-1);
+        border: 1px solid var(--edge);
+        border-radius: var(--r-lg);
+        -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat))
+          brightness(var(--glass-bright));
+        backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat))
+          brightness(var(--glass-bright));
+        box-shadow: var(--shadow-1), var(--bevel);
+        transition:
+          box-shadow var(--dur) var(--ease),
+          transform var(--dur) var(--ease);
+      }
+      .glass-2 {
+        background: var(--glass-2);
+      }
+      .glass-3 {
+        background: var(--glass-3);
+      }
+
+      /* Faux-glass fallback: opaque surfaces when the browser can't blur the
+         backdrop or the user prefers reduced transparency. */
+      @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+        .glass {
+          background: #171b24;
+        }
+        .glass-2 {
+          background: #181c26;
+        }
+        .glass-3 {
+          background: #12151c;
+        }
+      }
+      @media (prefers-reduced-transparency: reduce) {
+        .glass {
+          background: #171b24;
+          -webkit-backdrop-filter: none;
+          backdrop-filter: none;
+        }
+        .glass-2 {
+          background: #181c26;
+        }
+        .glass-3 {
+          background: #12151c;
+        }
+      }
+
+      /* ---- Top toolbar ----------------------------------------------------- */
+      #toolbar {
         position: fixed;
         top: 12px;
         left: 12px;
-        width: 232px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 7px 9px 7px 13px;
+        max-width: calc(100vw - 24px);
+        animation: drop var(--dur) var(--ease) both;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .brand .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent-grad);
+        box-shadow: 0 0 8px var(--a1);
+        flex: none;
+      }
+      .brand .title {
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+      .brand .pts {
+        font: 11px/1 var(--mono);
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .tools {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      /* ---- Segmented control ----------------------------------------------- */
+      .seg {
+        display: inline-flex;
+        gap: 2px;
+        padding: 2px;
+        background: var(--field);
+        border: 1px solid var(--field-edge);
+        border-radius: var(--r-md);
+      }
+      .seg button {
+        appearance: none;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        font: 600 12px/1 var(--sans);
+        padding: 5px 12px;
+        border-radius: var(--r-sm);
+        cursor: pointer;
+        transition:
+          color var(--dur) var(--ease),
+          background var(--dur) var(--ease);
+      }
+      .seg button:hover {
+        color: var(--text);
+      }
+      .seg button.active {
+        color: #08131a;
+        background: var(--accent-grad);
+      }
+
+      /* ---- Ghost buttons --------------------------------------------------- */
+      .ghost {
+        appearance: none;
+        background: var(--field);
+        color: var(--text);
+        border: 1px solid var(--field-edge);
+        border-radius: var(--r-md);
+        padding: 6px 12px;
+        font: 12px/1 var(--sans);
+        cursor: pointer;
+        transition:
+          color var(--dur) var(--ease),
+          border-color var(--dur) var(--ease),
+          background var(--dur) var(--ease);
+      }
+      .ghost:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+      .ghost.wide {
+        display: block;
+        width: 100%;
+        margin-top: 9px;
+      }
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      /* Liquid-glass press feedback on interactive controls. */
+      .seg button:active,
+      .ghost:active {
+        transform: translateY(1px) scale(0.985);
+      }
+
+      /* ---- Right inspector ------------------------------------------------- */
+      #inspector {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        width: 250px;
         max-height: calc(100vh - 24px);
         overflow-y: auto;
-        padding: 12px 14px 14px;
-        background: var(--panel);
-        border: 1px solid var(--panel-border);
-        border-radius: 10px;
-        backdrop-filter: blur(8px);
-        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+        padding: 4px 14px 14px;
+        transition: box-shadow var(--dur) var(--ease);
+        animation: slidein var(--dur) var(--ease) both;
       }
-      #panel h1 {
-        margin: 0 0 10px;
-        font-size: 12px;
-        font-weight: 600;
-        letter-spacing: 0.06em;
-        color: var(--text);
+      #inspector:focus-within {
+        box-shadow: var(--shadow-2), var(--bevel);
+      }
+      #inspector::-webkit-scrollbar {
+        width: 8px;
+      }
+      #inspector::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.12);
+        border-radius: 8px;
+      }
+      .grp {
+        padding: 13px 0;
+        border-bottom: 1px solid var(--edge);
+      }
+      .grp:last-of-type {
+        border-bottom: 0;
+      }
+      .grp h2 {
+        margin: 0 0 11px;
+        font: 600 10px/1 var(--sans);
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--faint);
       }
       .field {
         margin-bottom: 11px;
       }
+      .field:last-child {
+        margin-bottom: 0;
+      }
       .field > label {
         display: block;
-        margin-bottom: 4px;
-        font-size: 10px;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
+        margin-bottom: 5px;
+        font-size: 11px;
         color: var(--muted);
-      }
-      select,
-      input[type="number"] {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 5px 6px;
-        color: var(--text);
-        background: var(--field);
-        border: 1px solid var(--panel-border);
-        border-radius: 6px;
-        font: inherit;
-      }
-      input[type="range"] {
-        width: 100%;
-        accent-color: var(--accent);
-      }
-      .row {
-        display: flex;
-        gap: 6px;
-        align-items: center;
-      }
-      .row > * {
-        flex: 1;
       }
       .inline {
         display: flex;
         justify-content: space-between;
-        align-items: center;
+        align-items: baseline;
+        margin-bottom: 6px;
+      }
+      .inline label {
+        font-size: 11px;
+        color: var(--muted);
       }
       .val {
+        font: 12px/1 var(--mono);
         color: var(--accent);
+        font-variant-numeric: tabular-nums;
       }
-      button {
+      .row {
+        display: flex;
+        gap: 8px;
+      }
+      .row > * {
+        flex: 1;
+        min-width: 0;
+      }
+      .hint {
+        margin: 13px 0 0;
+        font-size: 10.5px;
+        line-height: 1.4;
+        color: var(--faint);
+      }
+
+      /* ---- Select + number fields ------------------------------------------ */
+      .sel {
+        position: relative;
+      }
+      .sel::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        right: 11px;
+        width: 6px;
+        height: 6px;
+        border-right: 1.5px solid var(--muted);
+        border-bottom: 1.5px solid var(--muted);
+        transform: translateY(-70%) rotate(45deg);
+        pointer-events: none;
+      }
+      select,
+      input[type="number"] {
         width: 100%;
-        padding: 6px 8px;
-        margin-top: 2px;
+        appearance: none;
+        -webkit-appearance: none;
+        padding: 7px 9px;
         color: var(--text);
         background: var(--field);
-        border: 1px solid var(--panel-border);
-        border-radius: 6px;
-        font: inherit;
+        border: 1px solid var(--field-edge);
+        border-radius: var(--r-sm);
+        font: 12px/1.2 var(--mono);
+        font-variant-numeric: tabular-nums;
+        transition: border-color var(--dur) var(--ease);
+      }
+      select {
+        padding-right: 26px;
         cursor: pointer;
       }
-      button:hover {
+      select:hover,
+      input[type="number"]:hover {
+        border-color: var(--field-edge-hover);
+      }
+      select:focus,
+      input[type="number"]:focus {
+        outline: none;
         border-color: var(--accent);
-        color: var(--accent);
       }
-      .check {
+      input[type="number"]:disabled {
+        color: var(--faint);
+        cursor: not-allowed;
+      }
+      option {
+        background: #14171e;
+        color: var(--text);
+      }
+
+      /* ---- Range sliders --------------------------------------------------- */
+      input[type="range"] {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 100%;
+        height: 16px;
+        background: transparent;
+        cursor: pointer;
+      }
+      input[type="range"]::-webkit-slider-runnable-track {
+        height: 5px;
+        border-radius: 999px;
+        background: linear-gradient(
+          90deg,
+          var(--a1),
+          var(--a2) var(--fill, 0%),
+          var(--field) var(--fill, 0%)
+        );
+      }
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 15px;
+        height: 15px;
+        margin-top: -5px;
+        border-radius: 50%;
+        background: #eef3f8;
+        border: 3px solid var(--a2);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+        transition: transform var(--dur) var(--ease);
+      }
+      input[type="range"]:hover::-webkit-slider-thumb {
+        transform: scale(1.12);
+      }
+      input[type="range"]::-moz-range-track {
+        height: 5px;
+        border-radius: 999px;
+        background: var(--field);
+      }
+      input[type="range"]::-moz-range-progress {
+        height: 5px;
+        border-radius: 999px;
+        background: var(--a2);
+      }
+      input[type="range"]::-moz-range-thumb {
+        width: 13px;
+        height: 13px;
+        border-radius: 50%;
+        background: #eef3f8;
+        border: 3px solid var(--a2);
+      }
+
+      /* ---- Switch (auto-range toggle) -------------------------------------- */
+      .switch {
         display: flex;
-        gap: 6px;
         align-items: center;
-        color: var(--muted);
-        text-transform: none;
-        letter-spacing: 0;
+        gap: 9px;
+        cursor: pointer;
         font-size: 12px;
+        color: var(--text);
       }
+      .switch input {
+        position: absolute;
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+      .switch .track {
+        position: relative;
+        flex: none;
+        width: 34px;
+        height: 18px;
+        border-radius: 999px;
+        background: var(--field);
+        border: 1px solid var(--field-edge);
+        transition: background var(--dur) var(--ease);
+      }
+      .switch .track::after {
+        content: "";
+        position: absolute;
+        top: 1px;
+        left: 1px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--muted);
+        transition:
+          transform var(--dur) var(--ease),
+          background var(--dur) var(--ease);
+      }
+      .switch input:checked + .track {
+        background: var(--accent-grad);
+        border-color: transparent;
+      }
+      .switch input:checked + .track::after {
+        transform: translateX(16px);
+        background: #fff;
+      }
+      .switch input:focus-visible + .track {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      /* ---- Colorbar legend ------------------------------------------------- */
       #colorbar {
         display: block;
         width: 100%;
-        height: 12px;
-        border-radius: 3px;
-        margin-top: 2px;
+        height: 14px;
+        margin-top: 9px;
+        border-radius: 5px;
+        border: 1px solid var(--field-edge);
       }
       .cbticks {
         display: flex;
         justify-content: space-between;
-        margin-top: 3px;
-        font-size: 10px;
+        margin-top: 4px;
+        font: 10px/1 var(--mono);
         color: var(--muted);
+        font-variant-numeric: tabular-nums;
       }
-      .hint {
-        margin-top: 2px;
-        font-size: 10px;
-        color: var(--muted);
-      }
+
+      /* ---- Readout chip ---------------------------------------------------- */
       #status {
         position: fixed;
         bottom: 12px;
         left: 12px;
-        padding: 6px 10px;
-        font-size: 12px;
+        max-width: calc(100vw - 24px);
+        padding: 8px 13px;
+        border-radius: 14px;
+        font: 11.5px/1.3 var(--mono);
+        font-variant-numeric: tabular-nums;
         color: var(--text);
-        background: rgba(0, 0, 0, 0.45);
-        border-radius: 4px;
         pointer-events: none;
+        animation: rise var(--dur) var(--ease) both;
+      }
+
+      /* ---- Entrance motion ------------------------------------------------- */
+      @keyframes drop {
+        from {
+          opacity: 0;
+          transform: translateY(-8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      @keyframes slidein {
+        from {
+          opacity: 0;
+          transform: translateX(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation: none !important;
+          transition: none !important;
+        }
       }
     </style>
     <!--
@@ -161,58 +557,77 @@
     </script>
   </head>
   <body>
-    <div id="panel">
-      <h1>map.pcd viewer</h1>
-
-      <div class="field">
-        <label for="scalar">Color by</label>
-        <select id="scalar">
-          <option value="x">x</option>
-          <option value="y">y</option>
-          <option value="z" selected>z (height)</option>
-        </select>
+    <header id="toolbar" class="glass">
+      <div class="brand">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="title">map.pcd</span>
+        <span class="pts" id="ptCount">—</span>
       </div>
-
-      <div class="field">
-        <label for="colormap">Colormap</label>
-        <select id="colormap"></select>
-        <canvas id="colorbar" width="204" height="12"></canvas>
-        <div class="cbticks"><span id="cbMin">0</span><span id="cbMax">1</span></div>
-      </div>
-
-      <div class="field">
-        <label class="check"
-          ><input type="checkbox" id="autoRange" checked /> Auto value range</label
-        >
-        <div class="row" style="margin-top: 6px">
-          <input type="number" id="rangeMin" step="any" disabled />
-          <input type="number" id="rangeMax" step="any" disabled />
+      <div class="tools">
+        <div class="seg" id="viewSeg" role="group" aria-label="View mode">
+          <button type="button" data-mode="3d" class="active" aria-pressed="true">3D</button>
+          <button type="button" data-mode="2d" aria-pressed="false">Top</button>
         </div>
-        <button id="resetRange">Reset range to data</button>
+        <button type="button" id="resetView" class="ghost">Reset view</button>
       </div>
+    </header>
 
-      <div class="field">
-        <div class="inline">
-          <label for="subsample">Subsample</label><span class="val" id="subsampleVal">1.00</span>
+    <aside id="inspector" class="glass glass-2" aria-label="Map controls">
+      <section class="grp">
+        <h2>Color</h2>
+        <div class="field">
+          <label for="scalar">Field</label>
+          <div class="sel">
+            <select id="scalar">
+              <option value="x">x</option>
+              <option value="y">y</option>
+              <option value="z" selected>z (height)</option>
+            </select>
+          </div>
         </div>
-        <input type="range" id="subsample" min="0.01" max="1" step="0.01" value="1" />
-      </div>
-
-      <div class="field">
-        <div class="inline">
-          <label for="pointSize">Point size</label><span class="val" id="pointSizeVal">0.050</span>
+        <div class="field">
+          <label for="colormap">Colormap</label>
+          <div class="sel"><select id="colormap"></select></div>
+          <canvas id="colorbar" width="240" height="14"></canvas>
+          <div class="cbticks"><span id="cbMin">0</span><span id="cbMax">1</span></div>
         </div>
-        <input type="range" id="pointSize" min="0.005" max="0.5" step="0.005" value="0.05" />
-      </div>
+      </section>
 
-      <div class="field">
-        <button id="viewMode">View: 3D free</button>
-        <button id="resetView">Reset view</button>
-        <div class="hint">Double-click a point to recenter on it.</div>
-      </div>
-    </div>
+      <section class="grp">
+        <h2>Range</h2>
+        <label class="switch">
+          <input type="checkbox" id="autoRange" checked />
+          <span class="track" aria-hidden="true"></span>
+          <span>Auto value range</span>
+        </label>
+        <div class="row" style="margin-top: 9px">
+          <input type="number" id="rangeMin" step="any" disabled aria-label="Range minimum" />
+          <input type="number" id="rangeMax" step="any" disabled aria-label="Range maximum" />
+        </div>
+        <button type="button" id="resetRange" class="ghost wide">Reset to data</button>
+      </section>
 
-    <div id="status">Loading…</div>
+      <section class="grp">
+        <h2>Display</h2>
+        <div class="field">
+          <div class="inline">
+            <label for="subsample">Subsample</label><span class="val" id="subsampleVal">1.00</span>
+          </div>
+          <input type="range" id="subsample" min="0.01" max="1" step="0.01" value="1" />
+        </div>
+        <div class="field">
+          <div class="inline">
+            <label for="pointSize">Point size</label
+            ><span class="val" id="pointSizeVal">0.050</span>
+          </div>
+          <input type="range" id="pointSize" min="0.005" max="0.5" step="0.005" value="0.05" />
+        </div>
+      </section>
+
+      <p class="hint">Double-click a point to recenter the view on it.</p>
+    </aside>
+
+    <div id="status" class="glass glass-3" role="status">Loading…</div>
 
     <!-- map.pcd is fetched with a relative URL, so no server port is templated in. -->
     <script type="module" src="map_viewer.js"></script>

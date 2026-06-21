@@ -113,9 +113,10 @@ Written under `<output_root>`:
   default browser at it (Linux `xdg-open`, macOS `open`, Windows `start`). The
   command then **blocks until you interrupt it** (`Ctrl-C`), at which point the
   server stops and the run exits. The map is streamed from disk, not buffered, so
-  large clouds load incrementally. Points are colored by height. The Three.js
-  library itself loads from a CDN, so the viewer needs internet access at view
-  time; run without `--vis` to skip it entirely. `--vis` is rejected together
+  large clouds load incrementally. Points are colored by height. Three.js and the
+  UI fonts load from a CDN, so the viewer needs internet access at view time (the
+  fonts fall back to the system stack if they cannot load); run without `--vis`
+  to skip it entirely. `--vis` is rejected together
   with `--without-global-optim`, which produces no map.
 - **CPU backend.** SLAM runs on GLIM's CPU backend; a GPU backend is a later
   milestone.

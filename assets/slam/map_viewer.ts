@@ -46,6 +46,35 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
 // ---------------------------------------------------------------------------
+// On-demand rendering
+// ---------------------------------------------------------------------------
+// The scene only repaints when something changes — the camera moved, a control
+// was touched, or the window resized. This keeps the GPU idle while the view is
+// still, which matters because the glass panels' backdrop-filter would otherwise
+// recomposite on every frame. OrbitControls' damping is honored by re-scheduling
+// while `update()` reports the camera is still easing toward its target.
+let frameQueued = false;
+
+function renderFrame(): void {
+  frameQueued = false;
+  const stillEasing = controls.update();
+  renderer.render(scene, camera);
+  if (stillEasing) {
+    requestFrame();
+  }
+}
+
+function requestFrame(): void {
+  if (!frameQueued) {
+    frameQueued = true;
+    window.requestAnimationFrame(renderFrame);
+  }
+}
+
+// Pointer drags and programmatic camera moves both dispatch 'change'.
+controls.addEventListener("change", requestFrame);
+
+// ---------------------------------------------------------------------------
 // Viewer state
 // ---------------------------------------------------------------------------
 type ViewMode = "3d" | "2d";
@@ -144,6 +173,7 @@ function recolor(): void {
   state.colorAttr.needsUpdate = true;
   drawColorbar();
   updateStatus();
+  requestFrame();
 }
 
 // ---------------------------------------------------------------------------
@@ -178,6 +208,7 @@ function applySubsample(): void {
   const shown = Math.max(1, Math.round(state.subsample * state.count));
   state.geometry.setDrawRange(0, shown);
   updateStatus();
+  requestFrame();
 }
 
 // ---------------------------------------------------------------------------
@@ -281,8 +312,9 @@ function drawColorbar(): void {
 // ---------------------------------------------------------------------------
 function updateStatus(): void {
   const shown = Math.max(1, Math.round(state.subsample * state.count));
+  el<HTMLElement>("ptCount").textContent = `${state.count.toLocaleString()} pts`;
   setStatus(
-    `${state.count.toLocaleString()} pts · showing ${shown.toLocaleString()} · ` +
+    `${shown.toLocaleString()} / ${state.count.toLocaleString()} shown · ` +
       `${state.scalar} · ${state.colormap}`,
   );
 }
@@ -301,6 +333,17 @@ function syncAutoRange(): void {
 function setManualRangeEnabled(disabled: boolean): void {
   el<HTMLInputElement>("rangeMin").disabled = disabled;
   el<HTMLInputElement>("rangeMax").disabled = disabled;
+}
+
+// Paint a range slider's filled portion up to its current value. WebKit reads
+// the --fill custom property in the track gradient; Firefox fills natively via
+// ::-moz-range-progress, so this is a no-op there beyond setting the property.
+function setSliderFill(slider: HTMLInputElement): void {
+  const min = parseFloat(slider.min);
+  const max = parseFloat(slider.max);
+  const value = parseFloat(slider.value);
+  const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  slider.style.setProperty("--fill", `${pct}%`);
 }
 
 function buildUI(): void {
@@ -370,9 +413,11 @@ function buildUI(): void {
   const subVal = el<HTMLElement>("subsampleVal");
   subSlider.value = String(state.subsample);
   subVal.textContent = state.subsample.toFixed(2);
+  setSliderFill(subSlider);
   subSlider.addEventListener("input", () => {
     state.subsample = parseFloat(subSlider.value);
     subVal.textContent = state.subsample.toFixed(2);
+    setSliderFill(subSlider);
     applySubsample();
   });
 
@@ -382,17 +427,31 @@ function buildUI(): void {
   if (material) {
     sizeSlider.value = String(material.size);
     sizeVal.textContent = material.size.toFixed(3);
+    setSliderFill(sizeSlider);
     sizeSlider.addEventListener("input", () => {
       material.size = parseFloat(sizeSlider.value);
       sizeVal.textContent = material.size.toFixed(3);
+      setSliderFill(sizeSlider);
+      requestFrame();
     });
   }
 
-  const viewBtn = el<HTMLButtonElement>("viewMode");
-  viewBtn.addEventListener("click", () => {
-    setViewMode(state.viewMode === "3d" ? "2d" : "3d");
-    viewBtn.textContent = state.viewMode === "3d" ? "View: 3D free" : "View: 2D top";
-  });
+  const viewSeg = el<HTMLElement>("viewSeg");
+  const viewButtons = Array.from(viewSeg.querySelectorAll<HTMLButtonElement>("button[data-mode]"));
+  const syncViewSeg = (): void => {
+    for (const button of viewButtons) {
+      const on = button.dataset.mode === state.viewMode;
+      button.classList.toggle("active", on);
+      button.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  };
+  for (const button of viewButtons) {
+    button.addEventListener("click", () => {
+      setViewMode(button.dataset.mode === "2d" ? "2d" : "3d");
+      syncViewSeg();
+    });
+  }
+  syncViewSeg();
 
   el<HTMLButtonElement>("resetView").addEventListener("click", () => {
     if (state.boundingSphere) {
@@ -463,11 +522,8 @@ window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  requestFrame();
 });
 
-function animate(): void {
-  window.requestAnimationFrame(animate);
-  controls.update();
-  renderer.render(scene, camera);
-}
-animate();
+// Kick off the first paint; every later frame is driven on demand (see above).
+requestFrame();
