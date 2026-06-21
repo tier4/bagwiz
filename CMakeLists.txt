@@ -210,6 +210,7 @@ add_library(bagwiz_core
   src/core/image/raw_image.cpp
   src/core/image/compressed_image.cpp
   src/core/image/image_decoder.cpp
+  src/core/image/image_encoder.cpp
   src/core/image/camera_info.cpp
   src/core/image/packed_raster.cpp
   src/core/pointcloud/pointcloud2.cpp
@@ -675,6 +676,13 @@ if(BUILD_TESTING)
     test/core/image/image_fixture.cpp)
   target_include_directories(bagwiz_image_decoder_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/test")
   target_link_libraries(bagwiz_image_decoder_test bagwiz_core PkgConfig::LIBAV)
+
+  # image_encoder lives in bagwiz_core; libav is linked explicitly so the test
+  # resolves the encode symbols under a static-lib build (same reason
+  # image_decoder_test re-links it). The round-trip checks decode the PNG it
+  # produces, so the decoder path is exercised too.
+  ament_add_gtest(bagwiz_image_encoder_test test/core/image/image_encoder_test.cpp)
+  target_link_libraries(bagwiz_image_encoder_test bagwiz_core PkgConfig::LIBAV)
 
   ament_add_gtest(bagwiz_frame_rate_test test/core/video/frame_rate_test.cpp)
   target_link_libraries(bagwiz_frame_rate_test bagwiz_core)
