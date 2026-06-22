@@ -13,6 +13,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <sstream>
@@ -495,6 +496,59 @@ TEST(UpsampleTrajectory, LeavesHoleAcrossLargeGap)
     const bool inside_gap = p.timestamp_ns > 200'000'000LL && p.timestamp_ns < 5'000'000'000LL;
     EXPECT_FALSE(inside_gap) << "stamp " << p.timestamp_ns << " is inside the dropout";
   }
+}
+
+TEST(UpsampleTrajectory, PreservesOriginalTimestampsAndPosesOnNonUniformInput)
+{
+  // Non-uniform spacing (0.07 s then 0.13 s) with deliberately un-round pose
+  // values. Native rate = (3 - 1) / 0.2 s = 10 Hz; request 20 Hz.
+  const TrajectoryPose a{0LL, 0.5, -1.25, 3.0, 0, 0, 0, 1};
+  const TrajectoryPose b{70'000'000LL, 7.5, 2.0, -1.0, 0, 0, kSinPiOver4, kSinPiOver4};
+  const TrajectoryPose c{200'000'000LL, 20.25, -4.5, 6.0, 0, 0, 0, 1};
+  const std::vector<TrajectoryPose> in = {a, b, c};
+
+  const auto r = upsample_trajectory(in, {UpsampleMode::kFrequencyHz, 20.0});
+  ASSERT_TRUE(r.resampled);
+
+  // Every original timestamp is retained, even 70 ms, which a uniform 20 Hz grid
+  // laid from t_start (0, 50, 100, 150, 200 ms) would never land on.
+  auto contains_stamp = [&](std::int64_t ts) {
+    return std::any_of(r.poses.begin(), r.poses.end(), [ts](const TrajectoryPose & p) {
+      return p.timestamp_ns == ts;
+    });
+  };
+  EXPECT_TRUE(contains_stamp(0LL));
+  EXPECT_TRUE(contains_stamp(70'000'000LL));
+  EXPECT_TRUE(contains_stamp(200'000'000LL));
+
+  // The retained originals carry their input values verbatim (endpoints are
+  // copied, never re-interpolated).
+  auto expect_same_pose = [](const TrajectoryPose & got, const TrajectoryPose & want) {
+    EXPECT_EQ(got.timestamp_ns, want.timestamp_ns);
+    EXPECT_DOUBLE_EQ(got.tx, want.tx);
+    EXPECT_DOUBLE_EQ(got.ty, want.ty);
+    EXPECT_DOUBLE_EQ(got.tz, want.tz);
+    EXPECT_DOUBLE_EQ(got.qx, want.qx);
+    EXPECT_DOUBLE_EQ(got.qy, want.qy);
+    EXPECT_DOUBLE_EQ(got.qz, want.qz);
+    EXPECT_DOUBLE_EQ(got.qw, want.qw);
+  };
+  expect_same_pose(r.poses.front(), a);
+  expect_same_pose(r.poses.back(), c);
+  ASSERT_GE(r.poses.size(), 2U);
+  // The second emitted pose is the first original (no interior point fits the
+  // 0.07 s segment at 20 Hz: round(0.07 * 20) == 1 sub-interval).
+  expect_same_pose(r.poses[1], b);
+
+  // Strictly time-increasing, within the original span, no extrapolation.
+  for (std::size_t i = 1; i < r.poses.size(); ++i) {
+    EXPECT_GT(r.poses[i].timestamp_ns, r.poses[i - 1].timestamp_ns);
+    EXPECT_GE(r.poses[i].timestamp_ns, 0LL);
+    EXPECT_LE(r.poses[i].timestamp_ns, 200'000'000LL);
+  }
+  // The 0.13 s segment is subdivided (round(0.13 * 20) == 3 -> 2 interior
+  // points), so densification did happen beyond the three originals.
+  EXPECT_GT(r.poses.size(), in.size());
 }
 
 }  // namespace
