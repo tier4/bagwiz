@@ -113,6 +113,10 @@ private:
       "by SLERP, only within the original time span (no extrapolation). A target at or below the "
       "native rate writes the trajectory unchanged (warned; never down-sampled); gaps between "
       "poses wider than a few times the median spacing are left un-interpolated.");
+    sub->add_flag(
+      "--no-progress", run_args_.no_progress,
+      "Disable the live progress bar. It is also auto-suppressed when stderr is not a "
+      "terminal or NO_COLOR is set, so this is only needed to silence it interactively.");
     sub->callback([this]() { selected_ = Subcommand::kRun; });
   }
 

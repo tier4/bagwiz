@@ -19,6 +19,7 @@
 #include "bagwiz/core/slam/lidar_scan.hpp"
 #include "bagwiz/core/slam/map_viewer.hpp"
 #include "bagwiz/core/slam/point_cloud_io.hpp"
+#include "bagwiz/core/slam/progress_bar.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
 #include "bagwiz/core/tf_chain.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
@@ -31,11 +32,13 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include <fmt/core.h>
+#include <unistd.h>
 
 #include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -523,8 +526,8 @@ private:
   template <typename ScanFn, typename ImuFn, typename GnssFn>
   bool process_messages(
     io::BagReader & reader, ScanFn && on_scan, ImuFn && on_imu, GnssFn && on_gnss,
-    std::int64_t & scans, std::int64_t & skipped, std::int64_t & imu_count,
-    std::int64_t & gnss_count)
+    core::slam::ScanProgress & progress, std::int64_t & scans, std::int64_t & skipped,
+    std::int64_t & imu_count, std::int64_t & gnss_count)
   {
     io::ReadFilter filter;
     filter.topics.push_back(args_.cloud_topic);
@@ -537,8 +540,12 @@ private:
     reader.set_filter(filter);
 
     io::RawMessage raw;
+    // Every next() returns a message on one of the filtered topics, so this
+    // counter tracks bag-read progress against the summed per-topic total.
+    std::int64_t processed = 0;
     try {
       while (reader.next(raw)) {
+        ++processed;
         if (raw.topic->name == args_.cloud_topic) {
           const auto parsed = core::pointcloud::parse_pointcloud2(raw.payload);
           if (!parsed.ok()) {
@@ -571,6 +578,7 @@ private:
           on_gnss(*parsed.sample);
           ++gnss_count;
         }
+        progress.update(processed, scans);
       }
     } catch (const std::exception & e) {
       BAGWIZ_LOG_ERROR(
@@ -660,18 +668,48 @@ private:
       mapper.insert_gnss(point);
     };
 
+    // Live progress bar (stderr) for the long read+feed phase. Auto-suppressed
+    // off a TTY / under NO_COLOR / with --no-progress (progress_enabled), so it
+    // never spams a pipe or log. The total is the number of messages the read
+    // loop will stream; a stats failure only forfeits the determinate bar.
+    const bool progress_on = core::slam::progress_enabled(
+      ::isatty(STDERR_FILENO) != 0, std::getenv("NO_COLOR") != nullptr, args_.no_progress);
+    std::int64_t progress_total_msgs = 0;
+    if (progress_on) {
+      std::vector<std::string> progress_topics{args_.cloud_topic};
+      if (!args_.imu_topic.empty()) {
+        progress_topics.push_back(args_.imu_topic);
+      }
+      if (!args_.gnss_topic.empty()) {
+        progress_topics.push_back(args_.gnss_topic);
+      }
+      try {
+        progress_total_msgs = core::slam::progress_total(reader.compute_stats(), progress_topics);
+      } catch (const std::exception & e) {
+        BAGWIZ_LOG_WARN(
+          kLogger, "Could not read bag stats for the progress bar (%s); using an indeterminate bar",
+          e.what());
+      }
+    }
+    core::slam::ScanProgress progress(progress_total_msgs, progress_on);
+
     std::int64_t scans = 0;
     std::int64_t skipped = 0;
     std::int64_t imu_count = 0;
     std::int64_t gnss_count = 0;
     if (!process_messages(
           reader, [&](const core::slam::LidarScan & s) { mapper.insert(s); },
-          [&](const core::slam::ImuSample & i) { mapper.insert_imu(i); }, on_gnss, scans, skipped,
-          imu_count, gnss_count)) {
+          [&](const core::slam::ImuSample & i) { mapper.insert_imu(i); }, on_gnss, progress, scans,
+          skipped, imu_count, gnss_count)) {
       return 1;
     }
+    progress.done();
 
+    // finish() runs the blocking global optimization with no per-step progress;
+    // animate an indeterminate spinner on a worker thread until it returns.
+    core::slam::FinalizeSpinner finalize_spinner("Optimizing global map", progress_on);
     const core::slam::CloudMap map = mapper.finish();
+    finalize_spinner.stop();
     if (map.trajectory.empty()) {
       BAGWIZ_LOG_ERROR(
         kLogger, "SLAM produced no trajectory poses from %s scans", std::to_string(scans).c_str());

@@ -350,12 +350,35 @@ if(BAGWIZ_WITH_SLAM)
   # GTSAM directly (PoseTranslationPrior / noise models for the GNSS constraint),
   # so depend on it explicitly for its headers and the `gtsam` link target.
   find_package(GTSAM CONFIG REQUIRED)
+
+  # Header-only progress bar for `slam run` (p-ranav/indicators). indicators
+  # auto-detects it is a subproject (PROJECT_NAME already set) and skips its own
+  # install()/export rules, so unlike cpp-httplib below it needs no install
+  # toggle and links cleanly into the (non-exported) bagwiz executable.
+  FetchContent_Declare(
+    indicators
+    GIT_REPOSITORY https://github.com/p-ranav/indicators.git
+    GIT_TAG v2.3
+    GIT_SHALLOW TRUE
+  )
+  set(INDICATORS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(INDICATORS_SAMPLES OFF CACHE BOOL "" FORCE)
+  set(INDICATORS_DEMO OFF CACHE BOOL "" FORCE)
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+  FetchContent_MakeAvailable(indicators)
+  unset(CMAKE_POLICY_VERSION_MINIMUM)
+
   target_sources(bagwiz PRIVATE
     src/core/slam/cloud_mapper.cpp
+    src/core/slam/progress_bar.cpp
     src/commands/slam.cpp
     src/commands/slam_run.cpp
     src/commands/slam_viewer.cpp)
   target_link_libraries(bagwiz PRIVATE glim::glim gtsam_points::gtsam_points gtsam)
+  # Header-only: pull indicators' include dir as SYSTEM (not a link) so its own
+  # -Wshadow chatter stays out of our build, mirroring httplib below.
+  target_include_directories(bagwiz SYSTEM PRIVATE
+    $<TARGET_PROPERTY:indicators::indicators,INTERFACE_INCLUDE_DIRECTORIES>)
   target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_SLAM)
 endif()
 
@@ -555,6 +578,16 @@ if(BUILD_TESTING)
       src/core/slam/cloud_mapper.cpp)
     target_link_libraries(bagwiz_slam_cloud_mapper_test
       bagwiz_core glim::glim gtsam_points::gtsam_points gtsam)
+
+    # Progress-bar helpers + no-op-when-disabled behavior. GLIM-free, but gated
+    # on SLAM since that is where indicators is fetched; its include dir is
+    # pulled like the viewer server test pulls httplib's.
+    ament_add_gtest(bagwiz_slam_progress_bar_test
+      test/core/slam/progress_bar_test.cpp
+      src/core/slam/progress_bar.cpp)
+    target_link_libraries(bagwiz_slam_progress_bar_test bagwiz_core)
+    target_include_directories(bagwiz_slam_progress_bar_test SYSTEM PRIVATE
+      $<TARGET_PROPERTY:indicators::indicators,INTERFACE_INCLUDE_DIRECTORIES>)
   endif()
 
   ament_add_gtest(bagwiz_decoder_test test/core/decoder/decoder_test.cpp)

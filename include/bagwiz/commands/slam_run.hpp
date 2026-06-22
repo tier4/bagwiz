@@ -46,6 +46,10 @@ struct SlamRunArgs
   // After writing map.pcd, serve it over a loopback HTTP server and open the
   // default browser to a Three.js viewer. Blocks until interrupted (Ctrl-C).
   bool viewer = false;
+  // Disable the live progress bar. The bar is also auto-suppressed when stderr
+  // is not a TTY or NO_COLOR is set, so this flag is only needed to silence it
+  // on an interactive terminal.
+  bool no_progress = false;
   // Optional trajectory up-sampling spec; affects traj.tum ONLY, never the map.
   // Empty: disabled (output unchanged). Otherwise a positive magnitude with an
   // optional, case-insensitive suffix: 'x'/'X' = multiple of the trajectory's
