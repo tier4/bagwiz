@@ -119,6 +119,16 @@ to keep this file itself consistent over time.
   calls scattered through the body, or `try` / `catch` blocks whose
   only job is cleanup.
 
+### 8. Temporary Scratch Files
+
+- When you generate code or data purely for temporary, single-use
+  purposes — throwaway scripts, scratch experiments, synthetic or
+  mock test data, and similar artifacts not intended to become part
+  of the repository — write them under `/tmp` rather than inside the
+  working tree. Delete them as soon as they are no longer needed so
+  they do not accumulate, leak into a commit, or clutter the project
+  directory.
+
 ## Project-Specific Rules
 
 Each subsection below scopes its rules to a specific surface of
