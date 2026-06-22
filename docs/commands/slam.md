@@ -111,7 +111,11 @@ Written under `<output_root>`:
   default browser at it (Linux `xdg-open`, macOS `open`, Windows `start`). The
   command then **blocks until you interrupt it** (`Ctrl-C`), at which point the
   server stops and the run exits. The map is streamed from disk, not buffered, so
-  large clouds load incrementally. Points are colored by height. Three.js and the
+  large clouds load incrementally. Points are colored by height. A toolbar toggles
+  between a 3D perspective view and a 2D top-down bird's-eye view — orthographic by
+  default (no perspective foreshortening, switchable to perspective), so coincident
+  points overlay exactly to help check cross-LiDAR alignment from directly above.
+  Three.js and the
   UI fonts load from a CDN, so the viewer needs internet access at view time (the
   fonts fall back to the system stack if they cannot load); run without `--viewer`
   to skip it entirely.

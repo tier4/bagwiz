@@ -1,7 +1,9 @@
 // Browser-side viewer for `bagwiz slam run --viewer`. Loads the locally served
 // map.pcd and renders it with configurable controls: which scalar drives the
 // color (x/y/z/intensity), its value range (auto or manual), the colormap, a
-// subsample rate, point size, a 3D/2D-top view toggle, and double-click-to-anchor
+// subsample rate, point size, a 3D / 2D view toggle (2D is a top-down bird's-eye
+// view, switchable between orthographic and perspective projection), and
+// double-click-to-anchor
 // recentering. TypeScript source; compiled to map_viewer.js at build time and
 // embedded into bagwiz (see CMakeLists.txt). three.js is resolved from a CDN at
 // runtime via the import map in map_viewer.html.
@@ -27,15 +29,40 @@ function setStatus(text: string): void {
   statusEl.textContent = text;
 }
 
+// Toolbar segmented controls (present in the fixed markup). Looked up once so
+// view/projection state can be mirrored onto them from anywhere.
+const projSeg = el<HTMLElement>("projSeg");
+const viewButtons = Array.from(
+  el<HTMLElement>("viewSeg").querySelectorAll<HTMLButtonElement>("button[data-mode]"),
+);
+const projButtons = Array.from(projSeg.querySelectorAll<HTMLButtonElement>("button[data-proj]"));
+
 // ---------------------------------------------------------------------------
 // Scene, renderer, camera, controls
 // ---------------------------------------------------------------------------
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x101014);
 
-// The SLAM map is Z-up (sensor/world frame); tell the camera so up stays up.
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100000);
-camera.up.set(0, 0, 1);
+// The SLAM map is Z-up (sensor/world frame); tell every camera so up stays up.
+// PERSP_FOV is the vertical field of view shared by the 3D view and 2D's
+// perspective option, kept in one place so the framing math stays consistent.
+const PERSP_FOV = 60;
+const perspCamera = new THREE.PerspectiveCamera(
+  PERSP_FOV,
+  window.innerWidth / window.innerHeight,
+  0.1,
+  100000,
+);
+perspCamera.up.set(0, 0, 1);
+
+// Backs 2D mode's default parallel projection. The frustum is sized to the cloud
+// before the first 2D frame; these placeholder extents are overwritten then.
+const orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 100000);
+orthoCamera.up.set(0, 0, 1);
+
+// Whichever projection is currently active. `applyView` swaps it; every
+// render / raycast / resize path reads this single reference.
+let camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = perspCamera;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
@@ -78,6 +105,7 @@ controls.addEventListener("change", requestFrame);
 // Viewer state
 // ---------------------------------------------------------------------------
 type ViewMode = "3d" | "2d";
+type Projection2D = "ortho" | "persp";
 
 interface ViewerState {
   geometry: THREE.BufferGeometry | null;
@@ -96,6 +124,7 @@ interface ViewerState {
   rangeMax: number;
   subsample: number; // 1.0 = draw every point
   viewMode: ViewMode;
+  projection2d: Projection2D; // 2D projection: parallel (ortho) or perspective
 }
 
 const state: ViewerState = {
@@ -115,6 +144,7 @@ const state: ViewerState = {
   rangeMax: 1,
   subsample: 1.0,
   viewMode: "3d",
+  projection2d: "ortho",
 };
 
 // ---------------------------------------------------------------------------
@@ -212,45 +242,164 @@ function applySubsample(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Camera modes
+// Cameras, view modes, and framing
 // ---------------------------------------------------------------------------
+const DEG2RAD = Math.PI / 180;
+
+function aspect(): number {
+  return window.innerWidth / window.innerHeight;
+}
+
 function defaultPointSize(radius: number): number {
   return Math.min(Math.max(radius * 0.001, 0.02), 0.3);
 }
 
-// Position the camera around `target` at `dist`, honoring the active view mode.
-function placeCamera(target: THREE.Vector3, dist: number): void {
-  if (state.viewMode === "2d") {
-    // Bird's-eye: straight above, looking down -Z, north (y) up, no rotation.
-    camera.up.set(0, 1, 0);
-    camera.position.set(target.x, target.y, target.z + dist);
-    controls.enableRotate = false;
+// 2D bird's-eye pose. `TOP_OFFSET` is the unit direction from the target to the
+// camera (straight up, looking down -Z); `TOP_UP` keeps north (+y) upright.
+const TOP_OFFSET = new THREE.Vector3(0, 0, 1);
+const TOP_UP = new THREE.Vector3(0, 1, 0);
+
+// Set the ortho frustum left/right/top/bottom from a half-height, fitting the
+// viewport aspect. Leaves zoom and near/far untouched.
+function setOrthoExtent(halfHeight: number): void {
+  const a = aspect();
+  orthoCamera.top = halfHeight;
+  orthoCamera.bottom = -halfHeight;
+  orthoCamera.right = halfHeight * a;
+  orthoCamera.left = -halfHeight * a;
+  orthoCamera.updateProjectionMatrix();
+}
+
+// Half-height that fits a sphere of `radius` in the viewport's smaller dimension.
+function fitHalfHeight(radius: number): number {
+  const a = aspect();
+  const r = radius * 1.1; // margin so the cloud is not flush to the edges
+  return a >= 1 ? r : r / a;
+}
+
+// Perspective distance at which a sphere of `radius` fills the view (both axes).
+function fitDistance(radius: number): number {
+  const t = Math.tan((PERSP_FOV * DEG2RAD) / 2);
+  return (radius * 1.1) / (t * Math.min(1, aspect()));
+}
+
+function setNearFar(cam: THREE.PerspectiveCamera | THREE.OrthographicCamera, radius: number): void {
+  cam.near = Math.max(radius / 1000, 0.01);
+  cam.far = radius * 100;
+}
+
+// The active camera follows state: 3D and 2D-perspective share the perspective
+// camera (different poses); 2D-orthographic uses the ortho camera.
+function activeCamera(): THREE.PerspectiveCamera | THREE.OrthographicCamera {
+  return state.viewMode === "2d" && state.projection2d === "ortho" ? orthoCamera : perspCamera;
+}
+
+// Sync `controls`, the active camera reference, and the toolbar to `state`.
+// Camera poses are set by frameView / setProjection2d; this only swaps which
+// camera is live and refreshes the UI, so it is safe to call after any change.
+function applyView(): void {
+  camera = activeCamera();
+  controls.object = camera;
+  controls.enableRotate = true;
+  controls.update();
+  syncToolbar();
+  requestFrame();
+}
+
+// Frame the whole cloud from the current mode/plane/projection's canonical pose.
+function frameView(): void {
+  const sphere = state.boundingSphere;
+  if (!sphere) {
+    return;
+  }
+  const { center, radius } = sphere;
+  controls.target.copy(center);
+
+  if (state.viewMode === "3d") {
+    setNearFar(perspCamera, radius);
+    perspCamera.up.set(0, 0, 1);
+    const dist = radius * 2.2;
+    perspCamera.position.set(center.x + dist * 0.7, center.y - dist * 0.7, center.z + dist * 0.5);
+    perspCamera.updateProjectionMatrix();
   } else {
-    camera.up.set(0, 0, 1);
-    camera.position.set(target.x + dist * 0.7, target.y - dist * 0.7, target.z + dist * 0.5);
-    controls.enableRotate = true;
+    if (state.projection2d === "ortho") {
+      setNearFar(orthoCamera, radius);
+      orthoCamera.up.copy(TOP_UP);
+      orthoCamera.position.copy(center).addScaledVector(TOP_OFFSET, radius * 2);
+      orthoCamera.zoom = 1;
+      setOrthoExtent(fitHalfHeight(radius));
+    } else {
+      setNearFar(perspCamera, radius);
+      perspCamera.up.copy(TOP_UP);
+      perspCamera.position.copy(center).addScaledVector(TOP_OFFSET, fitDistance(radius));
+      perspCamera.updateProjectionMatrix();
+    }
+  }
+  controls.update();
+  requestFrame();
+}
+
+// Switch the view mode (3D <-> 2D) and reframe from its canonical pose.
+function setViewMode(mode: ViewMode): void {
+  if (state.viewMode === mode) {
+    return;
+  }
+  state.viewMode = mode;
+  frameView();
+  applyView();
+}
+
+// Toggle 2D between parallel (ortho) and perspective, preserving the current
+// viewing direction, target, and on-screen scale so only the projection changes.
+function setProjection2d(projection: Projection2D): void {
+  if (state.viewMode !== "2d" || state.projection2d === projection) {
+    return;
+  }
+  const radius = state.boundingSphere ? state.boundingSphere.radius : 10;
+  const from = activeCamera();
+  const target = controls.target;
+  const dir = from.position.clone().sub(target);
+  const dist = dir.length() || radius * 2;
+  dir.normalize();
+
+  state.projection2d = projection;
+  if (projection === "ortho") {
+    // Match the ortho half-height to perspective's visible half-height at the
+    // target distance, so the cloud keeps its on-screen size.
+    setNearFar(orthoCamera, radius);
+    orthoCamera.up.copy(from.up);
+    orthoCamera.position.copy(from.position);
+    orthoCamera.zoom = 1;
+    setOrthoExtent(dist * Math.tan((PERSP_FOV * DEG2RAD) / 2));
+  } else {
+    // Place the perspective camera at the distance whose visible half-height
+    // equals the current ortho half-height (top / zoom).
+    setNearFar(perspCamera, radius);
+    perspCamera.up.copy(from.up);
+    const halfHeight = orthoCamera.top / orthoCamera.zoom;
+    const d = halfHeight / Math.tan((PERSP_FOV * DEG2RAD) / 2);
+    perspCamera.position.copy(target).addScaledVector(dir, d);
+    perspCamera.updateProjectionMatrix();
+  }
+  applyView();
+}
+
+// Mirror one segmented control's buttons against the active value.
+function syncSeg(buttons: HTMLButtonElement[], isActive: (b: HTMLButtonElement) => boolean): void {
+  for (const button of buttons) {
+    const on = isActive(button);
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-pressed", on ? "true" : "false");
   }
 }
 
-// Frame the whole cloud from the current view mode's canonical pose.
-function frameToSphere(sphere: THREE.Sphere): void {
-  const { center, radius } = sphere;
-  controls.target.copy(center);
-  placeCamera(center, radius * 2.2);
-  camera.near = Math.max(radius / 1000, 0.01);
-  camera.far = radius * 100;
-  camera.updateProjectionMatrix();
-  controls.update();
-}
-
-function setViewMode(mode: ViewMode): void {
-  state.viewMode = mode;
-  const target = controls.target.clone();
-  const radius = state.boundingSphere ? state.boundingSphere.radius : 10;
-  const dist = camera.position.distanceTo(target) || radius * 2.2;
-  placeCamera(target, dist);
-  camera.updateProjectionMatrix();
-  controls.update();
+// Reflect view/projection state onto the toolbar, showing the 2D-only
+// projection toggle only while in 2D.
+function syncToolbar(): void {
+  const is2d = state.viewMode === "2d";
+  syncSeg(viewButtons, (b) => b.dataset.mode === state.viewMode);
+  syncSeg(projButtons, (b) => b.dataset.proj === state.projection2d);
+  projSeg.hidden = !is2d;
 }
 
 // ---------------------------------------------------------------------------
@@ -436,27 +585,20 @@ function buildUI(): void {
     });
   }
 
-  const viewSeg = el<HTMLElement>("viewSeg");
-  const viewButtons = Array.from(viewSeg.querySelectorAll<HTMLButtonElement>("button[data-mode]"));
-  const syncViewSeg = (): void => {
-    for (const button of viewButtons) {
-      const on = button.dataset.mode === state.viewMode;
-      button.classList.toggle("active", on);
-      button.setAttribute("aria-pressed", on ? "true" : "false");
-    }
-  };
   for (const button of viewButtons) {
     button.addEventListener("click", () => {
       setViewMode(button.dataset.mode === "2d" ? "2d" : "3d");
-      syncViewSeg();
     });
   }
-  syncViewSeg();
+  for (const button of projButtons) {
+    button.addEventListener("click", () => {
+      setProjection2d(button.dataset.proj === "persp" ? "persp" : "ortho");
+    });
+  }
+  syncToolbar();
 
   el<HTMLButtonElement>("resetView").addEventListener("click", () => {
-    if (state.boundingSphere) {
-      frameToSphere(state.boundingSphere);
-    }
+    frameView();
   });
 }
 
@@ -494,9 +636,8 @@ function onLoad(points: THREE.Points): void {
   recolor();
   applySubsample();
   buildUI();
-  if (state.boundingSphere) {
-    frameToSphere(state.boundingSphere);
-  }
+  frameView();
+  applyView();
   updateStatus();
 }
 
@@ -519,8 +660,10 @@ loader.load(
 );
 
 window.addEventListener("resize", () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
+  perspCamera.aspect = aspect();
+  perspCamera.updateProjectionMatrix();
+  // Re-fit the ortho frustum's width to the new aspect, preserving zoom/height.
+  setOrthoExtent(orthoCamera.top);
   renderer.setSize(window.innerWidth, window.innerHeight);
   requestFrame();
 });

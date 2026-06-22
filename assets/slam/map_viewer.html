@@ -181,6 +181,10 @@
         border: 1px solid var(--field-edge);
         border-radius: var(--r-md);
       }
+      /* 2D-only sub-control (#projSeg) hides in 3D; override .seg. */
+      .seg[hidden] {
+        display: none;
+      }
       .seg button {
         appearance: none;
         border: 0;
@@ -566,7 +570,11 @@
       <div class="tools">
         <div class="seg" id="viewSeg" role="group" aria-label="View mode">
           <button type="button" data-mode="3d" class="active" aria-pressed="true">3D</button>
-          <button type="button" data-mode="2d" aria-pressed="false">Top</button>
+          <button type="button" data-mode="2d" aria-pressed="false">2D</button>
+        </div>
+        <div class="seg" id="projSeg" role="group" aria-label="Projection type" hidden>
+          <button type="button" data-proj="ortho" class="active" aria-pressed="true">Ortho</button>
+          <button type="button" data-proj="persp" aria-pressed="false">Persp</button>
         </div>
         <button type="button" id="resetView" class="ghost">Reset view</button>
       </div>
