@@ -11,7 +11,7 @@
 
 #include <filesystem>
 
-// Loopback HTTP server backing `bagwiz slam run --vis`: it serves an embedded
+// Loopback HTTP server backing `bagwiz slam run --viewer`: it serves an embedded
 // Three.js viewer page plus the freshly written map.pcd, and opens the default
 // browser at it. Built only when BAGWIZ_WITH_MAP_VIEWER is on (which defaults to
 // BAGWIZ_WITH_SLAM), so normal builds pull in neither cpp-httplib nor this code.

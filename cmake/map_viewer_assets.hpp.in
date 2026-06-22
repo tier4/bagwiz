@@ -2,7 +2,7 @@
 // Edit assets/slam/map_viewer.{html,js} instead; CMake re-embeds them here.
 //
 // The viewer page and module are embedded as string_view literals so the
-// `slam run --vis` HTTP server is self-contained (no runtime asset-path lookup).
+// `slam run --viewer` HTTP server is self-contained (no runtime asset-path lookup).
 
 #ifndef BAGWIZ__CORE__SLAM__MAP_VIEWER_ASSETS_HPP_
 #define BAGWIZ__CORE__SLAM__MAP_VIEWER_ASSETS_HPP_

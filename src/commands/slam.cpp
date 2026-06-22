@@ -9,7 +9,7 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/slam_run.hpp"
-#include "bagwiz/commands/slam_vis.hpp"
+#include "bagwiz/commands/slam_viewer.hpp"
 #include "bagwiz/core/logging.hpp"
 
 #include <string_view>
@@ -25,8 +25,9 @@ constexpr const char * kLogger = "bagwiz.cmd.slam";
 // `bagwiz slam` is a command group for in-process LiDAR SLAM over a rosbag. Its
 // actions are `run` (estimate a trajectory, and by default an optimized
 // point-cloud map, from a single PointCloud2 topic — see run_slam_run for the
-// full behavior, IMU mode, and outputs) and `vis` (open the browser map viewer
-// for an already-written map.pcd without re-running SLAM — see run_slam_vis).
+// full behavior, IMU mode, and outputs) and `viewer` (open the browser map
+// viewer for an already-written map.pcd without re-running SLAM — see
+// run_slam_viewer).
 // Modeling it as a group (require_subcommand(1)) leaves room for further SLAM
 // tools without reshaping the CLI, the same way `topic` and `tf` group their
 // actions.
@@ -40,7 +41,7 @@ public:
   {
     app.require_subcommand(1);
     configure_run(app);
-    configure_vis(app);
+    configure_viewer(app);
   }
 
   int run() override
@@ -48,8 +49,8 @@ public:
     switch (selected_) {
       case Subcommand::kRun:
         return run_slam_run(run_args_);
-      case Subcommand::kVis:
-        return run_slam_vis(vis_args_);
+      case Subcommand::kViewer:
+        return run_slam_viewer(viewer_args_);
       case Subcommand::kNone:
         BAGWIZ_LOG_ERROR(kLogger, "no subcommand selected");
         return 1;
@@ -58,11 +59,11 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kRun, kVis };
+  enum class Subcommand { kNone, kRun, kViewer };
   Subcommand selected_ = Subcommand::kNone;
 
   SlamRunArgs run_args_;
-  SlamVisArgs vis_args_;
+  SlamViewerArgs viewer_args_;
 
   void configure_run(CLI::App & app)
   {
@@ -101,7 +102,7 @@ private:
     sub->add_flag(
       "-w,--overwrite", run_args_.overwrite, "Overwrite the output(s) if they already exist");
     sub->add_flag(
-      "--vis", run_args_.vis,
+      "--viewer", run_args_.viewer,
       "After writing map.pcd, open the default browser to a Three.js point-cloud viewer "
       "served over a loopback HTTP server. Runs until interrupted (Ctrl-C).");
     sub->add_option(
@@ -115,19 +116,19 @@ private:
     sub->callback([this]() { selected_ = Subcommand::kRun; });
   }
 
-  void configure_vis(CLI::App & app)
+  void configure_viewer(CLI::App & app)
   {
     auto * sub = app.add_subcommand(
-      "vis", "Open the browser map viewer for an existing map.pcd (no SLAM run)");
+      "viewer", "Open the browser map viewer for an existing map.pcd (no SLAM run)");
     sub
       ->add_option(
-        "map", vis_args_.map_path,
+        "map", viewer_args_.map_path,
         "Path to a map.pcd file, or a directory containing map.pcd (e.g. a slam run "
         "output root). Served over a loopback HTTP server with the Three.js viewer; "
         "runs until interrupted (Ctrl-C).")
       ->required()
       ->check(CLI::ExistingPath);
-    sub->callback([this]() { selected_ = Subcommand::kVis; });
+    sub->callback([this]() { selected_ = Subcommand::kViewer; });
   }
 };
 

@@ -698,7 +698,7 @@ private:
       return 1;
     }
     core::slam::write_pcd(map_out, map.points, map.intensities);
-    // Flush and close before the good() check and before --vis serves the file.
+    // Flush and close before the good() check and before --viewer serves the file.
     // An open ofstream keeps the final partial (<8 KiB) block in its user-space
     // buffer, so until the stream is destroyed the on-disk file is short of its
     // own header's vertex count. serve_map_viewer() (below) blocks while map_out
@@ -737,14 +737,14 @@ private:
       }
     }
 
-    // --vis: serve the map.pcd just written and open the browser. This blocks
+    // --viewer: serve the map.pcd just written and open the browser. This blocks
     // until the user interrupts the viewer.
-    if (args_.vis) {
+    if (args_.viewer) {
 #ifdef BAGWIZ_WITH_MAP_VIEWER
       return core::slam::serve_map_viewer(map_path_);
 #else
       BAGWIZ_LOG_ERROR(
-        kLogger, "--vis is unavailable: this binary was built without the map viewer");
+        kLogger, "--viewer is unavailable: this binary was built without the map viewer");
       return 1;
 #endif
     }

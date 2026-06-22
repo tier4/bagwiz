@@ -354,19 +354,19 @@ if(BAGWIZ_WITH_SLAM)
     src/core/slam/cloud_mapper.cpp
     src/commands/slam.cpp
     src/commands/slam_run.cpp
-    src/commands/slam_vis.cpp)
+    src/commands/slam_viewer.cpp)
   target_link_libraries(bagwiz PRIVATE glim::glim gtsam_points::gtsam_points gtsam)
   target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_SLAM)
 endif()
 
-# --- Optional browser map viewer for `bagwiz slam run --vis` ------------------
+# --- Optional browser map viewer for `bagwiz slam run --viewer` ---------------
 # The viewer (a cpp-httplib loopback server + embedded Three.js assets + a
 # browser launch) is entirely GLIM-free, so it gets its own option that simply
 # DEFAULTS to BAGWIZ_WITH_SLAM: a normal build pulls in neither cpp-httplib nor
 # this code, a `build-slam` build gains the viewer, and the viewer can be built
 # and tested on its own with -DBAGWIZ_WITH_MAP_VIEWER=ON (no GLIM needed).
 option(BAGWIZ_WITH_MAP_VIEWER
-  "Build the `slam run --vis` browser map viewer (fetches cpp-httplib)"
+  "Build the `slam run --viewer` browser map viewer (fetches cpp-httplib)"
   ${BAGWIZ_WITH_SLAM})
 if(BAGWIZ_WITH_MAP_VIEWER)
   FetchContent_Declare(
@@ -436,7 +436,7 @@ if(BAGWIZ_WITH_MAP_VIEWER)
   target_include_directories(bagwiz_core PRIVATE
     $<TARGET_PROPERTY:httplib::httplib,INTERFACE_INCLUDE_DIRECTORIES>)
   target_compile_definitions(bagwiz_core PRIVATE BAGWIZ_WITH_MAP_VIEWER)
-  # slam_run.cpp lives on the bagwiz executable and guards its --vis call on this.
+  # slam_run.cpp lives on the bagwiz executable and guards its --viewer call on this.
   target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_MAP_VIEWER)
 endif()
 

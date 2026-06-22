@@ -996,30 +996,32 @@ TEST(FlagCompletionTest, TopicSubcommandListsDropKeepAndRename)
     run_completion({"bagwiz", "__complete", "2", "bagwiz", "topic", ""}), "drop\nkeep\nrename\n");
 }
 
-// `bagwiz slam <TAB>` lists the command group's action verbs (run, vis), sorted.
-TEST(FlagCompletionTest, SlamSubcommandListsRunAndVis)
+// `bagwiz slam <TAB>` lists the command group's action verbs (run, viewer),
+// sorted.
+TEST(FlagCompletionTest, SlamSubcommandListsRunAndViewer)
 {
-  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "slam", ""}), "run\nvis\n");
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "slam", ""}), "run\nviewer\n");
 }
 
 // A partial verb narrows the candidates.
-TEST(FlagCompletionTest, SlamSubcommandPrefixNarrowsToVis)
+TEST(FlagCompletionTest, SlamSubcommandPrefixNarrowsToViewer)
 {
-  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "slam", "v"}), "vis\n");
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "slam", "v"}), "viewer\n");
 }
 
-// `slam vis <TAB>`: the <map> positional is a path, left to shell file
+// `slam viewer <TAB>`: the <map> positional is a path, left to shell file
 // completion, so no candidates are emitted.
-TEST(FlagCompletionTest, SlamVisMapSlotDefersToShell)
+TEST(FlagCompletionTest, SlamViewerMapSlotDefersToShell)
 {
-  EXPECT_EQ(run_completion({"bagwiz", "__complete", "3", "bagwiz", "slam", "vis", ""}), "");
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "3", "bagwiz", "slam", "viewer", ""}), "");
 }
 
-// `slam vis -` surfaces only the implicit help flags (vis has no other flags).
-TEST(FlagCompletionTest, SlamVisDashListsHelpFlags)
+// `slam viewer -` surfaces only the implicit help flags (viewer has no other
+// flags).
+TEST(FlagCompletionTest, SlamViewerDashListsHelpFlags)
 {
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "3", "bagwiz", "slam", "vis", "-"}), "--help\n-h\n");
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "slam", "viewer", "-"}), "--help\n-h\n");
 }
 
 // `slam run -` surfaces the run action's flags plus the implicit help flags,
@@ -1028,7 +1030,7 @@ TEST(FlagCompletionTest, SlamRunDashListsRunFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "slam", "run", "-"}),
-    "--gnss\n--help\n--imu\n--map-resolution\n--overwrite\n--upsample-traj\n--vis\n-h\n-w\n");
+    "--gnss\n--help\n--imu\n--map-resolution\n--overwrite\n--upsample-traj\n--viewer\n-h\n-w\n");
 }
 
 // `bagwiz topic -` is the command-group slot; only the implicit help flags

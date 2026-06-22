@@ -1,4 +1,4 @@
-// Browser-side viewer for `bagwiz slam run --vis`. Loads the locally served
+// Browser-side viewer for `bagwiz slam run --viewer`. Loads the locally served
 // map.pcd and renders it with configurable controls: which scalar drives the
 // color (x/y/z/intensity), its value range (auto or manual), the colormap, a
 // subsample rate, point size, a 3D/2D-top view toggle, and double-click-to-anchor

@@ -6,9 +6,10 @@ trajectory and, by default, an optimized point-cloud map. bagwiz reads and
 decodes the bag and feeds [GLIM](https://github.com/koide3/glim)'s modules
 directly, with no ROS node or pub/sub. Subcommands:
 
-| Subcommand                | What it does                                                        |
-| ------------------------- | ------------------------------------------------------------------- |
-| [`run`](#bagwiz-slam-run) | Estimate a trajectory (and optimized map) from a PointCloud2 topic. |
+| Subcommand                      | What it does                                                         |
+| ------------------------------- | -------------------------------------------------------------------- |
+| [`run`](#bagwiz-slam-run)       | Estimate a trajectory (and optimized map) from a PointCloud2 topic.  |
+| [`viewer`](#bagwiz-slam-viewer) | Open the browser map viewer for an existing `map.pcd` (no SLAM run). |
 
 > **Optional build.** `slam` is not part of a normal `pixi run build`; it links
 > the GLIM stack and is compiled only with `-DBAGWIZ_WITH_SLAM=ON`. Build it with:
@@ -53,7 +54,7 @@ bagwiz slam run [OPTIONS] <input> <pcd_topic> <output_root>
 | `--imu <topic>`          | `sensor_msgs/msg/Imu` topic. Switches odometry to LiDAR-IMU (GLIM's `OdometryEstimationCPU`). The LiDAR←IMU extrinsic is resolved from the bag's static TF (`…tf_static`) using the cloud's and IMU's header `frame_id`s.                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `--gnss <topic>`         | `sensor_msgs/msg/NavSatFix` topic. Adds GNSS global constraints (horizontal translation priors on submap poses) during global mapping to pin the world frame to GNSS and curb drift. Fixes are projected to a local ENU frame internally; the antenna lever-arm is resolved from the bag's static TF (cloud ← NavSatFix `frame_id`) and removed so the prior constrains the sensor origin, not the antenna (a missing TF only warns). Requires global mapping.                                                                                                                                                                                                        |
 | `--map-resolution <m>`   | Exported map voxel size in meters (default `0.2`; must be positive). Controls only the exported map's density, never the optimization or trajectory. The LiDAR preprocessor's ~0.15 m input voxel bounds the real density.                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `--vis`                  | After writing `map.pcd`, serve it over a loopback HTTP server and open the default browser to a Three.js point-cloud viewer. Blocks until interrupted (`Ctrl-C`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `--viewer`               | After writing `map.pcd`, serve it over a loopback HTTP server and open the default browser to a Three.js point-cloud viewer. Blocks until interrupted (`Ctrl-C`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `--upsample-traj <spec>` | Resample **`traj.tum` only** (the map is unaffected) onto a uniform, denser time grid. `<spec>` is a positive magnitude with an optional, case-insensitive suffix: `x`/`X` = a multiple of the trajectory's native rate (e.g. `2x`); `hz`/`HZ`/`Hz` or no suffix = an absolute frequency in Hz (e.g. `20` or `20hz`). Position is interpolated linearly and orientation by SLERP, only within the original time span (no extrapolation). A target at or below the native rate writes the trajectory unchanged (warned; never down-sampled); gaps between poses wider than ~3× the median spacing are left un-interpolated so a sensor dropout is not fabricated over. |
 | `-w`, `--overwrite`      | Overwrite the output file(s) if they already exist. Without it, an existing output file stops the run.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
@@ -104,7 +105,7 @@ Written under `<output_root>`:
   unless `-w`/`--overwrite` is given, and the map stream is opened before the
   trajectory is committed so a map path that cannot be opened leaves no orphaned
   trajectory.
-- **`--vis` (browser map viewer).** Once `map.pcd` is written, bagwiz starts a
+- **`--viewer` (browser map viewer).** Once `map.pcd` is written, bagwiz starts a
   loopback-only HTTP server (`127.0.0.1`, an OS-assigned port) that serves an
   embedded Three.js viewer page plus the `map.pcd` bytes, and opens the host's
   default browser at it (Linux `xdg-open`, macOS `open`, Windows `start`). The
@@ -112,7 +113,7 @@ Written under `<output_root>`:
   server stops and the run exits. The map is streamed from disk, not buffered, so
   large clouds load incrementally. Points are colored by height. Three.js and the
   UI fonts load from a CDN, so the viewer needs internet access at view time (the
-  fonts fall back to the system stack if they cannot load); run without `--vis`
+  fonts fall back to the system stack if they cannot load); run without `--viewer`
   to skip it entirely.
 - **CPU backend.** SLAM runs on GLIM's CPU backend; a GPU backend is a later
   milestone.
@@ -141,12 +142,67 @@ bagwiz slam run drive.mcap /points out/ --upsample-traj 100hz
 bagwiz slam run drive.mcap /points out/ --upsample-traj 4x
 
 # Build the map, then open it in the browser (blocks until Ctrl-C).
-bagwiz slam run drive.mcap /points out/ --vis
+bagwiz slam run drive.mcap /points out/ --viewer
 ```
 
-## Exit status
+### Exit status
 
 | Code | Meaning                                                                                                                                                                                                                                                                                                                                                                 |
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | SLAM completed and the output(s) were written.                                                                                                                                                                                                                                                                                                                          |
 | `1`  | The input could not be opened; `<pcd_topic>` (or `--imu`/`--gnss`) was absent or had the wrong type; `<output_root>` was a file or could not be created; an output file collided without `-w`/`--overwrite`; in IMU mode the LiDAR←IMU static-TF chain (or a frame) was absent; no PointCloud2 message decoded; SLAM produced no poses; or a read/write error occurred. |
+
+---
+
+## `bagwiz slam viewer`
+
+Open the browser map viewer for a **previously written** `map.pcd` — the same
+viewer as `slam run --viewer`, but without re-running SLAM. It is the cheap,
+repeatable way to revisit a map produced by an earlier `slam run`.
+
+### Usage
+
+```text
+bagwiz slam viewer <map>
+```
+
+### Positional arguments
+
+| Name  | Description                                                                                                    |
+| ----- | -------------------------------------------------------------------------------------------------------------- |
+| `map` | Path to a `map.pcd` file, or a directory containing `map.pcd` (e.g. a `slam run` `<output_root>`). Must exist. |
+
+### Behavior
+
+- **File or directory.** When `<map>` is a directory, bagwiz serves `map.pcd`
+  from inside it, so `slam viewer out/` mirrors `slam run … out/`; a `.pcd` file
+  path is served directly. A missing file stops the command.
+- **Same viewer as `--viewer`.** Serves the map over a loopback-only HTTP server
+  (`127.0.0.1`, an OS-assigned port) with the embedded Three.js viewer page and
+  opens the host's default browser at it (Linux `xdg-open`, macOS `open`, Windows
+  `start`). The command **blocks until you interrupt it** (`Ctrl-C`), then stops
+  the server and exits. The map is streamed from disk (not buffered), points are
+  colored by height, and Three.js plus the UI fonts load from a CDN, so viewing
+  needs internet access (the fonts fall back to the system stack if they cannot
+  load). This is identical to the [`--viewer`](#bagwiz-slam-run) flag of
+  `slam run`; see that section for the full description.
+- **Requires the map-viewer build.** Available only when bagwiz is built with the
+  map viewer (on by default with `-DBAGWIZ_WITH_SLAM=ON`); a binary built without
+  it reports that `slam viewer` is unavailable.
+
+### Examples
+
+```bash
+# Open a `slam run` output directory (bagwiz finds out/map.pcd).
+bagwiz slam viewer out/
+
+# Or point at the map file directly.
+bagwiz slam viewer out/map.pcd
+```
+
+### Exit status
+
+| Code | Meaning                                                                                                                          |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | The viewer served the map and exited cleanly after an interrupt (`Ctrl-C`).                                                      |
+| `1`  | `<map>` (or `map.pcd` within it) was not found; no loopback port could be bound; or the binary was built without the map viewer. |

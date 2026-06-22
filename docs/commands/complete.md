@@ -149,7 +149,7 @@ source ~/.config/fish/completions/bagwiz.fish
     `tf static` is itself a command group, so `tf static <TAB>` completes its
     actions (`calc`, `cp`) and `tf static -<TAB>` lists just the help flags.
     `generate`, `slam`, and `topic` are likewise command groups:
-    `generate <TAB>` completes `video`, `slam <TAB>` completes `run`, `vis`,
+    `generate <TAB>` completes `video`, `slam <TAB>` completes `run`, `viewer`,
     and `topic <TAB>` completes `drop`, `keep`, `rename`
 - Selected option values are completed where bagwiz has a closed set, such as
   `--storage <mcap|sqlite3>`.

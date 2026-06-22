@@ -45,7 +45,7 @@ struct SlamRunArgs
   bool overwrite = false;
   // After writing map.pcd, serve it over a loopback HTTP server and open the
   // default browser to a Three.js viewer. Blocks until interrupted (Ctrl-C).
-  bool vis = false;
+  bool viewer = false;
   // Optional trajectory up-sampling spec; affects traj.tum ONLY, never the map.
   // Empty: disabled (output unchanged). Otherwise a positive magnitude with an
   // optional, case-insensitive suffix: 'x'/'X' = multiple of the trajectory's

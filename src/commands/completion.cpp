@@ -969,20 +969,20 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
   return {};
 }
 
-// `slam` is a command group with two action verbs, `run` and `vis`. The verb
+// `slam` is a command group with two action verbs, `run` and `viewer`. The verb
 // adds one positional slot, shifting every argument one word to the right of a
 // flat command:
 //
-//   run: `slam`(0) `run`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
-//        [--imu <topic>] [--gnss <topic>] [--map-resolution <m>] [--upsample-traj <spec>]
-//        [--vis] [-w|--overwrite]
-//   vis: `slam`(0) `vis`(1) `<map>`(2)
+//   run:    `slam`(0) `run`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
+//           [--imu <topic>] [--gnss <topic>] [--map-resolution <m>] [--upsample-traj <spec>]
+//           [--viewer] [-w|--overwrite]
+//   viewer: `slam`(0) `viewer`(1) `<map>`(2)
 //
-// At the action slot (word 1) the candidates are `run` and `vis` (or the help
+// At the action slot (word 1) the candidates are `run` and `viewer` (or the help
 // flags for a `-` word). Past it, the positional <pcd_topic> slot is completed
 // earlier by try_topic_completion via kTopicBindings (PointCloud2 topics only);
 // here we surface `run`'s flags for any `-` word and complete the value of
-// `--imu` from the bag's sensor_msgs/msg/Imu topics. `vis` has no value-bearing
+// `--imu` from the bag's sensor_msgs/msg/Imu topics. `viewer` has no value-bearing
 // flags and its single <map> positional is a path that falls through to the
 // shell's file completion, as do `run`'s <input> and <output_root>.
 std::vector<std::string> complete_slam(const CompletionRequest & request)
@@ -992,16 +992,16 @@ std::vector<std::string> complete_slam(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"run", "vis"}, current);
+    return matching({"run", "viewer"}, current);
   }
 
   // Reaching here implies cursor_word >= kSecondCommandArgWord (cursor_word == 0
   // is handled by the caller and == kFirstCommandArgWord above), so words[1]
   // exists (parse_request clamps cursor_word to words.size()).
   //
-  // `vis` only takes a <map> path: offer the implicit help flags for a `-` word,
-  // otherwise leave the path to the shell's file completion.
-  if (request.words[kFirstCommandArgWord] == "vis") {
+  // `viewer` only takes a <map> path: offer the implicit help flags for a `-`
+  // word, otherwise leave the path to the shell's file completion.
+  if (request.words[kFirstCommandArgWord] == "viewer") {
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
@@ -1015,7 +1015,8 @@ std::vector<std::string> complete_slam(const CompletionRequest & request)
   if (current.starts_with("-")) {
     return matching(
       with_help(
-        {"--gnss", "--imu", "--map-resolution", "--overwrite", "--upsample-traj", "--vis", "-w"}),
+        {"--gnss", "--imu", "--map-resolution", "--overwrite", "--upsample-traj", "--viewer",
+         "-w"}),
       current);
   }
 

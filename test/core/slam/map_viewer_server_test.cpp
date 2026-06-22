@@ -177,7 +177,7 @@ std::string fetch_map_pcd(const std::filesystem::path & path)
   return res ? res->body : std::string{};
 }
 
-// Regression for the `--vis` "Offset is outside the bounds of the DataView"
+// Regression for the `--viewer` "Offset is outside the bounds of the DataView"
 // crash: the map writer must flush/close its ofstream before the viewer serves
 // the file. While the producing ofstream is still open, its final partial
 // (<BUFSIZ) block sits in the user-space buffer and has not reached the OS, so
@@ -213,7 +213,7 @@ TEST(MapViewerServerFlush, ServesCompleteMapOnlyAfterWriterCloses)
   // the body is shorter than the eventual file.
   const std::string while_open = fetch_map_pcd(path);
 
-  out.close();  // flush to disk, exactly as the --vis write path now does
+  out.close();  // flush to disk, exactly as the --viewer write path now does
   ASSERT_TRUE(out.good());
 
   const auto full_size = std::filesystem::file_size(path, ec);
