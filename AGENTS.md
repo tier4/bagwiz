@@ -187,6 +187,23 @@ part of the CLI itself.
   that subcommand's help text so users do not have to infer it
   from the signature.
 
+### 3. Progress Indicators
+
+Applies to any bagwiz subcommand or supporting code that renders an
+in-terminal progress bar, spinner, or similar progress UI.
+
+- When a command needs to show progress — a determinate bar, an
+  indeterminate bar, or a spinner — use the
+  [p-ranav/indicators](https://github.com/p-ranav/indicators) library
+  rather than hand-rolling terminal control sequences or introducing a
+  second progress-bar dependency. indicators is already pulled in via
+  `FetchContent` and wrapped by the SLAM progress reporter
+  (`include/bagwiz/core/slam/progress_bar.hpp`,
+  `src/core/slam/progress_bar.cpp`); reuse that library, and the
+  existing wrapper where it fits, so progress output stays visually
+  consistent across commands and the build depends on a single,
+  well-tested implementation.
+
 ## Maintaining These Guidelines
 
 - Keep the rules in this file free of duplication. Each topic should
