@@ -389,41 +389,46 @@ TrajectoryUpsampleResult upsample_trajectory(
     (gap_threshold_s > 0.0) ? gap_threshold_s : kGapMedianFactor * median_interval_seconds(poses);
   result.gap_threshold_s = threshold_s;
 
-  std::int64_t step_ns = std::llround(1e9 / target_hz);
-  if (step_ns < 1) {
-    step_ns = 1;
-  }
-  result.poses.reserve(static_cast<std::size_t>((t_end - t_start) / step_ns) + 1);
+  // Densify by SUBDIVIDING each consecutive segment instead of laying a fresh
+  // grid from t_start: every input pose is emitted verbatim (timestamp and value
+  // bit-exact) and bounds a segment, so the original samples are always retained
+  // and the inserted points only fill the spans between them.
+  result.poses.reserve(static_cast<std::size_t>(span_s * target_hz) + n + 1);
+  result.poses.push_back(poses.front());
 
-  std::size_t i = 0;
-  std::int64_t last_gap_index = -1;
-  for (std::int64_t k = 0;; ++k) {
-    const std::int64_t tk = t_start + k * step_ns;
-    if (tk > t_end) {
-      break;
-    }
-    // Advance the bracket so poses[i].ts <= tk <= poses[i+1].ts. i+1 stays valid
-    // because tk <= t_end == poses[n-1].ts.
-    while (i + 1 < n && poses[i + 1].timestamp_ns < tk) {
-      ++i;
-    }
+  for (std::size_t i = 0; i + 1 < n; ++i) {
     const TrajectoryPose & a = poses[i];
     const TrajectoryPose & b = poses[i + 1];
     const std::int64_t dt = b.timestamp_ns - a.timestamp_ns;
-    // A grid point that lands exactly on a real pose is real data; only points
-    // strictly inside an over-threshold gap are dropped (a dropout, not jitter).
-    const bool on_pose = (tk == a.timestamp_ns) || (tk == b.timestamp_ns);
-    if (!on_pose && static_cast<double>(dt) / 1e9 > threshold_s) {
-      if (static_cast<std::int64_t>(i) != last_gap_index) {
-        ++result.skipped_gap_count;
-        last_gap_index = static_cast<std::int64_t>(i);
-      }
-      ++result.skipped_point_count;
-      continue;
+    const double dt_s = static_cast<double>(dt) / 1e9;
+
+    // Equal sub-intervals that bring this segment to ~target_hz; >= 1 means the
+    // segment itself with no interior points (subdivisions - 1 of those).
+    std::int64_t subdivisions = std::llround(dt_s * target_hz);
+    if (subdivisions < 1) {
+      subdivisions = 1;
     }
-    const double alpha =
-      (dt > 0) ? static_cast<double>(tk - a.timestamp_ns) / static_cast<double>(dt) : 0.0;
-    result.poses.push_back(interpolate_pose(a, b, alpha, tk));
+
+    if (dt_s > threshold_s) {
+      // An over-threshold segment is a sensor dropout: keep the real endpoints
+      // but fabricate nothing across it. Report the interior points declined.
+      if (subdivisions > 1) {
+        ++result.skipped_gap_count;
+        result.skipped_point_count += subdivisions - 1;
+      }
+    } else {
+      for (std::int64_t j = 1; j < subdivisions; ++j) {
+        const std::int64_t tk =
+          a.timestamp_ns + std::llround(static_cast<double>(dt) * j / subdivisions);
+        // Skip a rounded stamp that would collide with either endpoint.
+        if (tk <= a.timestamp_ns || tk >= b.timestamp_ns) {
+          continue;
+        }
+        const double alpha = static_cast<double>(tk - a.timestamp_ns) / static_cast<double>(dt);
+        result.poses.push_back(interpolate_pose(a, b, alpha, tk));
+      }
+    }
+    result.poses.push_back(b);  // segment endpoint, verbatim
   }
 
   result.resampled = true;

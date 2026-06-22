@@ -105,27 +105,32 @@ struct TrajectoryUpsampleResult
   // false: the input was returned unchanged (fewer than two poses, not
   // time-increasing, or the target was at or below the native rate).
   bool resampled = false;
-  // Number of over-threshold gaps left un-interpolated, and the total grid
-  // points dropped inside them (a sensor dropout is not fabricated over).
+  // Number of over-threshold gaps left without interpolated samples, and the
+  // total interior points that would otherwise have been inserted there (a
+  // sensor dropout is not fabricated over).
   int64_t skipped_gap_count = 0;
   int64_t skipped_point_count = 0;
   // Gap threshold actually used, in seconds.
   double gap_threshold_s = 0.0;
 };
 
-// Resample `poses` onto a uniform time grid so the output TUM trajectory has a
-// denser, constant rate. Position is interpolated linearly and orientation by
-// shortest-path SLERP; samples are emitted only within [t_start, t_end] (the
-// original time span — never extrapolated). `spec` gives the target rate as an
-// absolute frequency or a multiple of the native average rate.
+// Densify `poses` for a higher-rate output TUM trajectory by inserting
+// interpolated samples *between* consecutive input poses. Every input pose is
+// emitted verbatim (timestamp and value preserved bit-exactly) and bounds a
+// segment; each segment is subdivided into roughly equal steps to approach the
+// target rate, so the original timestamps are always retained. Position is
+// interpolated linearly and orientation by shortest-path SLERP; nothing is
+// emitted outside [t_start, t_end] (never extrapolated). `spec` gives the target
+// rate as an absolute frequency or a multiple of the native average rate.
 //
 // The input is returned UNCHANGED (resampled == false) when it has fewer than
 // two poses, is not strictly time-increasing end-to-end, or the resolved target
 // rate is at or below the native rate — the trajectory is never down-sampled, so
-// the caller may warn. Across a gap between consecutive input poses wider than
-// `gap_threshold_s` the grid is left empty (a dropout is not fabricated over);
-// the skipped gap/point counts are reported. `gap_threshold_s <= 0` selects an
-// automatic threshold derived from the median inter-sample interval.
+// the caller may warn. A segment between consecutive input poses wider than
+// `gap_threshold_s` is treated as a dropout: its endpoints are kept but no
+// interior samples are fabricated, and the skipped gap/point counts are
+// reported. `gap_threshold_s <= 0` selects an automatic threshold derived from
+// the median inter-sample interval.
 //
 // Preconditions: `poses` sorted by strictly-increasing timestamp_ns (the SLAM
 // pipeline guarantees this via its time-keyed ordering); quaternions normalized.
