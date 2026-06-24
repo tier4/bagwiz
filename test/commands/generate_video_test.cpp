@@ -414,6 +414,75 @@ std::filesystem::path build_bag_with_pointcloud_overlay(
   return path;
 }
 
+// Build an MCAP bag with an image topic, sibling CameraInfo, two PointCloud2
+// topics, and /tf_static edges from the camera frame to each cloud frame.
+std::filesystem::path build_bag_with_two_pointcloud_overlays(
+  const std::filesystem::path & dir, const std::string & image_topic, bool compressed, int frames,
+  std::uint32_t w, std::uint32_t h)
+{
+  const auto path = dir / "input";
+  auto writer = bagwiz::io::open_write(path, mcap_dir_opts());
+
+  const std::string camera_info_topic = [image_topic]() {
+    std::string stem = image_topic;
+    for (const auto & suffix :
+         {"/image_raw/compressed", "/image_rect_color/compressed", "/image_rect_color"}) {
+      if (
+        stem.size() > std::string_view{suffix}.size() &&
+        std::string_view{stem}.substr(stem.size() - std::string_view{suffix}.size()) == suffix) {
+        stem.resize(stem.size() - std::string_view{suffix}.size());
+        break;
+      }
+    }
+    return stem + "/camera_info";
+  }();
+
+  writer->declare_topic(make_topic(image_topic, compressed ? kCompressedType : kImageType));
+  writer->declare_topic(make_topic(camera_info_topic, kCameraInfoType));
+  writer->declare_topic(make_topic("/points/front", "sensor_msgs/msg/PointCloud2"));
+  writer->declare_topic(make_topic("/points/rear", "sensor_msgs/msg/PointCloud2"));
+  writer->declare_topic(bagwiz::core::make_tf_message_topic_info("/tf_static"));
+
+  const std::array<double, 9> k{
+    static_cast<double>(w),
+    0.0,
+    static_cast<double>(w) / 2.0,
+    0.0,
+    static_cast<double>(h),
+    static_cast<double>(h) / 2.0,
+    0.0,
+    0.0,
+    1.0};
+  const auto camera_info_payload = make_camera_info_payload(w, h, k, "cam");
+  writer->write(
+    camera_info_topic, 1'000'000'000LL, {camera_info_payload.data(), camera_info_payload.size()});
+
+  const auto tf_front = make_tf_static_payload("cam", "lidar_front");
+  const auto tf_rear = make_tf_static_payload("cam", "lidar_rear");
+  writer->write("/tf_static", 1'000'000'000LL, {tf_front.data(), tf_front.size()});
+  writer->write("/tf_static", 1'000'000'000LL, {tf_rear.data(), tf_rear.size()});
+
+  for (int i = 0; i < frames; ++i) {
+    const std::int64_t ts = 1'000'000'000LL + static_cast<std::int64_t>(i) * 100'000'000LL;
+    const auto front_payload = make_pointcloud2_payload(ts, "lidar_front", {{0.0f, 0.0f, 5.0f}});
+    const auto rear_payload = make_pointcloud2_payload(ts, "lidar_rear", {{0.0f, 0.0f, 5.0f}});
+    writer->write("/points/front", ts, {front_payload.data(), front_payload.size()});
+    writer->write("/points/rear", ts, {rear_payload.data(), rear_payload.size()});
+
+    if (compressed) {
+      const auto jpeg =
+        bagwiz::test::encode_still_image("jpeg", w, h, static_cast<std::uint8_t>(i * 20), 100, 50);
+      const auto payload = make_compressed_payload("jpeg", {jpeg.data(), jpeg.size()});
+      writer->write(image_topic, ts, {payload.data(), payload.size()});
+    } else {
+      const auto payload = make_image_payload(w, h, "bgr8", static_cast<std::uint8_t>(i * 20));
+      writer->write(image_topic, ts, {payload.data(), payload.size()});
+    }
+  }
+  writer->close();
+  return path;
+}
+
 // True if any entry in `dir` looks like a leftover generate-video temp file.
 bool any_partial_left(const std::filesystem::path & dir)
 {
@@ -739,7 +808,7 @@ TEST_F(GenerateVideoTest, PointCloudTopicWithWrongTypeFails)
   const auto out = tmp_dir_ / "out.avi";
 
   GenerateVideoArgs args{in, kImageTopic, out, false};
-  args.pointcloud_topic = kImageTopic;  // Image, not PointCloud2
+  args.pointcloud_topics = {kImageTopic};  // Image, not PointCloud2
   EXPECT_EQ(run_generate_video(args), 1);
   EXPECT_FALSE(std::filesystem::exists(out));
 }
@@ -750,7 +819,7 @@ TEST_F(GenerateVideoTest, PointCloudTopicNotFoundFails)
   const auto out = tmp_dir_ / "out.avi";
 
   GenerateVideoArgs args{in, kImageTopic, out, false};
-  args.pointcloud_topic = "/nope";
+  args.pointcloud_topics = {"/nope"};
   EXPECT_EQ(run_generate_video(args), 1);
   EXPECT_FALSE(std::filesystem::exists(out));
 }
@@ -761,7 +830,7 @@ TEST_F(GenerateVideoTest, PointCloudOverlayRequiresCameraInfo)
   const auto out = tmp_dir_ / "out.avi";
 
   GenerateVideoArgs args{in, kImageTopic, out, false};
-  args.pointcloud_topic = "/sensing/lidar";
+  args.pointcloud_topics = {"/sensing/lidar"};
   EXPECT_EQ(run_generate_video(args), 1);
   EXPECT_FALSE(std::filesystem::exists(out));
 }
@@ -774,7 +843,7 @@ TEST_F(GenerateVideoTest, PointCloudOverlayWorksOnRawImage)
   const auto out = tmp_dir_ / "out.avi";
 
   GenerateVideoArgs args{in, "/cam/image_rect_color", out, false};
-  args.pointcloud_topic = "/points";
+  args.pointcloud_topics = {"/points"};
   ASSERT_EQ(run_generate_video(args), 0);
 
   ASSERT_TRUE(std::filesystem::exists(out));
@@ -791,7 +860,7 @@ TEST_F(GenerateVideoTest, PointCloudOverlayWorksOnCompressedImage)
   const auto out = tmp_dir_ / "out.avi";
 
   GenerateVideoArgs args{in, "/cam/image_raw/compressed", out, false};
-  args.pointcloud_topic = "/points";
+  args.pointcloud_topics = {"/points"};
   ASSERT_EQ(run_generate_video(args), 0);
 
   ASSERT_TRUE(std::filesystem::exists(out));
@@ -828,7 +897,72 @@ TEST_F(GenerateVideoTest, ThreadedPointCloudOverlayMatchesSynchronous)
   const auto out_sync = tmp_dir_ / "out_sync.avi";
 
   GenerateVideoArgs args{in, "/cam/image_rect_color", out_threaded, false};
-  args.pointcloud_topic = "/points";
+  args.pointcloud_topics = {"/points"};
+  args.enable_threaded_projection = true;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  args.output_path = out_sync;
+  args.enable_threaded_projection = false;
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  std::vector<std::byte> threaded_bytes;
+  std::vector<std::byte> sync_bytes;
+  read_file_bytes(out_threaded, threaded_bytes);
+  read_file_bytes(out_sync, sync_bytes);
+  EXPECT_EQ(threaded_bytes, sync_bytes);
+}
+
+TEST_F(GenerateVideoTest, MultiplePointCloudTopicsOverlayWorks)
+{
+  constexpr int kFrames = 3;
+  const auto in = build_bag_with_two_pointcloud_overlays(
+    tmp_dir_, "/cam/image_rect_color", false, kFrames, 16, 16);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image_rect_color", out, false};
+  args.pointcloud_topics = {"/points/front", "/points/rear"};
+  ASSERT_EQ(run_generate_video(args), 0);
+
+  ASSERT_TRUE(std::filesystem::exists(out));
+  const auto probe = bagwiz::core::video::probe_video(out);
+  ASSERT_TRUE(probe.ok()) << probe.error;
+  EXPECT_EQ(probe.frame_count, kFrames);
+}
+
+TEST_F(GenerateVideoTest, MultiplePointCloudTopicsFailIfOneHasWrongType)
+{
+  const auto in =
+    build_bag_with_pointcloud_overlay(tmp_dir_, "/cam/image_rect_color", false, 2, 16, 16);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image_rect_color", out, false};
+  args.pointcloud_topics = {"/points", "/cam/image_rect_color"};  // one of them is an image
+  EXPECT_EQ(run_generate_video(args), 1);
+  EXPECT_FALSE(std::filesystem::exists(out));
+}
+
+TEST_F(GenerateVideoTest, MultiplePointCloudTopicsFailIfOneMissing)
+{
+  const auto in =
+    build_bag_with_pointcloud_overlay(tmp_dir_, "/cam/image_rect_color", false, 2, 16, 16);
+  const auto out = tmp_dir_ / "out.avi";
+
+  GenerateVideoArgs args{in, "/cam/image_rect_color", out, false};
+  args.pointcloud_topics = {"/points", "/also_missing"};
+  EXPECT_EQ(run_generate_video(args), 1);
+  EXPECT_FALSE(std::filesystem::exists(out));
+}
+
+TEST_F(GenerateVideoTest, ThreadedMultiPointCloudOverlayMatchesSynchronous)
+{
+  constexpr int kFrames = 6;
+  const auto in = build_bag_with_two_pointcloud_overlays(
+    tmp_dir_, "/cam/image_rect_color", false, kFrames, 16, 16);
+  const auto out_threaded = tmp_dir_ / "out_threaded.avi";
+  const auto out_sync = tmp_dir_ / "out_sync.avi";
+
+  GenerateVideoArgs args{in, "/cam/image_rect_color", out_threaded, false};
+  args.pointcloud_topics = {"/points/front", "/points/rear"};
   args.enable_threaded_projection = true;
   ASSERT_EQ(run_generate_video(args), 0);
 
@@ -889,7 +1023,7 @@ TEST_F(GenerateVideoTest, ResizeScalesPointCloudOverlay)
   const auto out = tmp_dir_ / "out.avi";
 
   GenerateVideoArgs args{in, "/cam/image_rect_color", out, false};
-  args.pointcloud_topic = "/points";
+  args.pointcloud_topics = {"/points"};
   args.resize_scale = 0.5f;
   ASSERT_EQ(run_generate_video(args), 0);
 
@@ -915,7 +1049,7 @@ TEST_F(GenerateVideoTest, PointCloudOverlayOnRealBag)
 
   const auto out = tmp_dir_ / "out.avi";
   GenerateVideoArgs args{kRealBag, "/sensing/camera/camera0/image_raw/compressed", out, false};
-  args.pointcloud_topic = "/sensing/lidar/front/seyond_points";
+  args.pointcloud_topics = {"/sensing/lidar/front/seyond_points"};
   ASSERT_EQ(run_generate_video(args), 0);
 
   ASSERT_TRUE(std::filesystem::exists(out));

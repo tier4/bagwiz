@@ -108,15 +108,18 @@ private:
       ->check(CLI::Range(0.01f, 10.0f));
     sub
       ->add_option(
-        "--pcd", video_args_.pointcloud_topic,
-        "PointCloud2 topic to project onto each frame. This implies distortion correction and "
-        "requires a CameraInfo topic and a TF chain from the cloud frame to the camera frame.")
+        "--pcd", video_args_.pointcloud_topics,
+        "PointCloud2 topic(s) to project onto each frame. Repeatable; every listed topic is "
+        "projected into the camera frame and drawn with the same field, color scheme, point size, "
+        "and alpha. Implies distortion correction and requires a CameraInfo topic and a TF chain "
+        "from each cloud frame to the camera frame.")
       ->check([](const std::string & topic) {
         if (topic.empty()) {
           return std::string{"pcd topic must not be empty"};
         }
         return std::string{};
-      });
+      })
+      ->expected(-1);
     const std::map<std::string, core::pointcloud::PointCloudProperty> property_map = {
       {"x", core::pointcloud::PointCloudProperty::kX},
       {"y", core::pointcloud::PointCloudProperty::kY},

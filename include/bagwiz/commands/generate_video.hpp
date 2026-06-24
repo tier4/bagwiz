@@ -17,6 +17,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace bagwiz::commands
 {
@@ -53,7 +54,7 @@ struct GenerateVideoArgs
   float resize_scale = 1.0f;
 
   // Point-cloud overlay options.
-  std::optional<std::string> pointcloud_topic;
+  std::vector<std::string> pointcloud_topics;
   core::pointcloud::PointCloudProperty property = core::pointcloud::PointCloudProperty::kDistance;
   std::optional<double> property_min;
   std::optional<double> property_max;

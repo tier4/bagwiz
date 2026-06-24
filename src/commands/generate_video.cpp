@@ -679,25 +679,35 @@ ProjectionWorkResult project_cloud_for_frame(
   return {std::move(projected.points), {}};
 }
 
-// Fetch, parse, transform, and project the point cloud nearest to `target_ns`.
-// Each call opens its own BagReader so the work can safely run on a background
-// thread; the caller supplies the read-only camera info and TF buffer.
+// Fetch, parse, transform, and project the point clouds nearest to `target_ns`
+// for every listed topic. Each call opens its own BagReader(s) so the work can
+// safely run on a background thread; the caller supplies the read-only camera
+// info and TF buffer.
 ProjectionWorkResult run_projection_work(
-  const std::filesystem::path & input, const std::string & pointcloud_topic,
-  const std::vector<PointCloudIndexEntry> & entries, std::int64_t target_ns,
+  const std::filesystem::path & input, const std::vector<std::string> & pointcloud_topics,
+  const std::vector<std::vector<PointCloudIndexEntry>> & entries_per_topic, std::int64_t target_ns,
   const core::image::CameraInfo & camera_info, tf2::BufferCore & tf_buffer,
   std::uint32_t image_width, std::uint32_t image_height,
   core::pointcloud::PointCloudProperty property, bool use_rectified)
 {
   try {
-    PointCloudFetcher fetcher(input, pointcloud_topic, entries);
-    std::string error;
-    const auto * cloud = fetcher.fetch(target_ns, error);
-    if (cloud == nullptr) {
-      return {{}, std::move(error)};
+    ProjectionWorkResult combined;
+    for (std::size_t i = 0; i < pointcloud_topics.size(); ++i) {
+      PointCloudFetcher fetcher(input, pointcloud_topics[i], entries_per_topic[i]);
+      std::string error;
+      const auto * cloud = fetcher.fetch(target_ns, error);
+      if (cloud == nullptr) {
+        return {{}, std::move(error)};
+      }
+      const auto projected = project_cloud_for_frame(
+        *cloud, camera_info, tf_buffer, image_width, image_height, property, use_rectified);
+      if (!projected.ok()) {
+        return {{}, std::move(projected.error)};
+      }
+      combined.points.insert(
+        combined.points.end(), projected.points.begin(), projected.points.end());
     }
-    return project_cloud_for_frame(
-      *cloud, camera_info, tf_buffer, image_width, image_height, property, use_rectified);
+    return combined;
   } catch (const std::exception & e) {
     return {{}, std::string("point-cloud projection failed: ") + e.what()};
   }
@@ -828,7 +838,7 @@ int run_generate_video(const GenerateVideoArgs & args)
     camera_info_topic = resolve_camera_info_topic(args.topic, reader->topics());
   }
 
-  const bool needs_camera_info = args.undistort || args.pointcloud_topic.has_value();
+  const bool needs_camera_info = args.undistort || !args.pointcloud_topics.empty();
   if (needs_camera_info && !camera_info_topic.has_value()) {
     BAGWIZ_LOG_ERROR(
       kLogger,
@@ -838,9 +848,8 @@ int run_generate_video(const GenerateVideoArgs & args)
     return 1;
   }
 
-  // 2b. Validate the optional point-cloud topic when one was supplied.
-  std::optional<std::string> pointcloud_topic = args.pointcloud_topic;
-  if (pointcloud_topic.has_value()) {
+  // 2b. Validate every optional point-cloud topic.
+  for (const auto & topic : args.pointcloud_topics) {
     std::unique_ptr<io::BagReader> reader;
     try {
       reader = io::open_read(args.input_path);
@@ -851,12 +860,12 @@ int run_generate_video(const GenerateVideoArgs & args)
     }
     bool found = false;
     for (const auto & t : reader->topics()) {
-      if (t.name == *pointcloud_topic) {
+      if (t.name == topic) {
         found = true;
         if (t.type != kPointCloudType) {
           BAGWIZ_LOG_ERROR(
-            kLogger, "pcd topic '%s' has type '%s', expected %s", pointcloud_topic->c_str(),
-            t.type.c_str(), kPointCloudType);
+            kLogger, "pcd topic '%s' has type '%s', expected %s", topic.c_str(), t.type.c_str(),
+            kPointCloudType);
           return 1;
         }
         break;
@@ -864,14 +873,13 @@ int run_generate_video(const GenerateVideoArgs & args)
     }
     if (!found) {
       BAGWIZ_LOG_ERROR(
-        kLogger, "pcd topic '%s' not found in %s", pointcloud_topic->c_str(),
-        args.input_path.string().c_str());
+        kLogger, "pcd topic '%s' not found in %s", topic.c_str(), args.input_path.string().c_str());
       return 1;
     }
   }
 
   // 2c. Point-cloud overlay needs a camera-info topic to project into the image.
-  if (pointcloud_topic.has_value() && !camera_info_topic.has_value()) {
+  if (!args.pointcloud_topics.empty() && !camera_info_topic.has_value()) {
     BAGWIZ_LOG_ERROR(
       kLogger,
       "point-cloud overlay requires a cam-info topic, but none could be derived from '%s'. "
@@ -917,15 +925,30 @@ int run_generate_video(const GenerateVideoArgs & args)
   const auto fps = core::video::derive_frame_rate(span.first_ns, span.last_ns, span.count);
 
   // 5b. Pass 1 for the point-cloud overlay: scan timestamps and the selected
-  //     property's global min/max.
-  PointCloudSpan pcd_span;
-  if (pointcloud_topic.has_value()) {
-    if (
-      scan_pointcloud_span(
-        args.input_path, *pointcloud_topic, args.property, args.property_min, args.property_max,
-        pcd_span) != 0) {
-      return 1;
+  //     property's global min/max across all topics.
+  std::vector<PointCloudSpan> pcd_spans;
+  double global_property_min = 0.0;
+  double global_property_max = 0.0;
+  if (!args.pointcloud_topics.empty()) {
+    pcd_spans.resize(args.pointcloud_topics.size());
+    double running_min = std::numeric_limits<double>::infinity();
+    double running_max = -std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i < args.pointcloud_topics.size(); ++i) {
+      if (
+        scan_pointcloud_span(
+          args.input_path, args.pointcloud_topics[i], args.property, args.property_min,
+          args.property_max, pcd_spans[i]) != 0) {
+        return 1;
+      }
+      if (!args.property_min.has_value()) {
+        running_min = std::min(running_min, pcd_spans[i].property_min);
+      }
+      if (!args.property_max.has_value()) {
+        running_max = std::max(running_max, pcd_spans[i].property_max);
+      }
     }
+    global_property_min = args.property_min.value_or(running_min);
+    global_property_max = args.property_max.value_or(running_max);
   }
 
   // 6. Load camera info if it will be used. Doing this before Pass 2 avoids
@@ -940,10 +963,10 @@ int run_generate_video(const GenerateVideoArgs & args)
     camera_info = core::image::scale_camera_info(*ci.info, static_cast<double>(args.resize_scale));
   }
 
-  // 6b. Load TF data when a point-cloud overlay is requested so the cloud can be
+  // 6b. Load TF data when a point-cloud overlay is requested so each cloud can be
   //     transformed into the camera frame before projection.
   std::optional<tf2::BufferCore> tf_buffer;
-  if (pointcloud_topic.has_value()) {
+  if (!args.pointcloud_topics.empty()) {
     tf_buffer.emplace();
     if (const auto err = load_tf_buffer(args.input_path, *tf_buffer); err.has_value()) {
       BAGWIZ_LOG_ERROR(kLogger, "%s", err->c_str());
@@ -987,7 +1010,7 @@ int run_generate_video(const GenerateVideoArgs & args)
   // the encoder still tracks it to guard against a mid-run geometry change.
   std::string enc_encoding;
   std::uint64_t written = 0;
-  const bool use_rectified = args.undistort || pointcloud_topic.has_value();
+  const bool use_rectified = args.undistort || !args.pointcloud_topics.empty();
 
   // Owned decode buffer that survives across BagReader::next() calls, which
   // invalidate raw payload spans. Used by both the synchronous and the threaded
@@ -1075,7 +1098,7 @@ int run_generate_video(const GenerateVideoArgs & args)
       }
       encoder = std::move(opened.encoder);
 
-      if (args.undistort || pointcloud_topic.has_value()) {
+      if (args.undistort || !args.pointcloud_topics.empty()) {
         undistort_helper = std::make_unique<UndistortHelper>(*camera_info, enc_w, enc_h);
       }
     } else if (frame.width != enc_w || frame.height != enc_h || frame.encoding != enc_encoding) {
@@ -1093,8 +1116,8 @@ int run_generate_video(const GenerateVideoArgs & args)
 
     if (projected != nullptr) {
       cv::Mat overlay_canvas = overlay_points(
-        fdata, frame.width, frame.height, fstep, *projected, pcd_span.property_min,
-        pcd_span.property_max, args.colorscheme, args.point_size, args.alpha);
+        fdata, frame.width, frame.height, fstep, *projected, global_property_min,
+        global_property_max, args.colorscheme, args.point_size, args.alpha);
       fdata = std::span<const std::byte>(
         reinterpret_cast<const std::byte *>(overlay_canvas.data),
         overlay_canvas.total() * overlay_canvas.elemSize());
@@ -1113,15 +1136,28 @@ int run_generate_video(const GenerateVideoArgs & args)
   // of launching a thread and opening a fresh BagReader per frame.
   constexpr std::uint64_t kThreadingMinFrames = 4;
   const bool use_threaded_projection =
-    pointcloud_topic.has_value() && args.enable_threaded_projection &&
+    !args.pointcloud_topics.empty() && args.enable_threaded_projection &&
     span.count >= kThreadingMinFrames && std::thread::hardware_concurrency() > 1;
 
-  // The synchronous path keeps the original cached fetcher for small bags or
+  // The synchronous path keeps one cached fetcher per topic for small bags or
   // when threading is disabled; the async path opens a fresh reader per frame.
-  std::unique_ptr<PointCloudFetcher> pcd_fetcher;
-  if (pointcloud_topic.has_value() && !use_threaded_projection) {
-    pcd_fetcher = std::make_unique<PointCloudFetcher>(
-      args.input_path, *pointcloud_topic, std::move(pcd_span.entries));
+  std::vector<PointCloudFetcher> pcd_fetchers;
+  if (!args.pointcloud_topics.empty() && !use_threaded_projection) {
+    pcd_fetchers.reserve(args.pointcloud_topics.size());
+    for (std::size_t i = 0; i < args.pointcloud_topics.size(); ++i) {
+      pcd_fetchers.emplace_back(
+        args.input_path, args.pointcloud_topics[i], std::move(pcd_spans[i].entries));
+    }
+  }
+
+  // The async path needs the per-topic index entries after moving them out of
+  // pcd_spans; collect them before the encode loop.
+  std::vector<std::vector<PointCloudIndexEntry>> entries_per_topic;
+  if (use_threaded_projection) {
+    entries_per_topic.reserve(pcd_spans.size());
+    for (auto & pcd_span : pcd_spans) {
+      entries_per_topic.push_back(std::move(pcd_span.entries));
+    }
   }
 
   io::RawMessage raw;
@@ -1132,13 +1168,11 @@ int run_generate_video(const GenerateVideoArgs & args)
       auto launch_projection = [&](
                                  std::int64_t target_ns, std::uint32_t w,
                                  std::uint32_t h) -> std::future<ProjectionWorkResult> {
-        return std::async(
-          std::launch::async,
-          [&, target_ns, w, h, topic = *pointcloud_topic, rectified = use_rectified]() {
-            return run_projection_work(
-              args.input_path, topic, pcd_span.entries, target_ns, *camera_info, *tf_buffer, w, h,
-              args.property, rectified);
-          });
+        return std::async(std::launch::async, [&, target_ns, w, h, rectified = use_rectified]() {
+          return run_projection_work(
+            args.input_path, args.pointcloud_topics, entries_per_topic, target_ns, *camera_info,
+            *tf_buffer, w, h, args.property, rectified);
+        });
       };
 
       if (!reader->next(raw)) {
@@ -1217,28 +1251,31 @@ int run_generate_video(const GenerateVideoArgs & args)
           return 1;
         }
 
-        const std::vector<core::pointcloud::ProjectedPoint> * projected_ptr = nullptr;
         std::vector<core::pointcloud::ProjectedPoint> projected_storage;
-        if (pcd_fetcher != nullptr) {
-          std::string pcd_error;
-          const auto * cloud = pcd_fetcher->fetch(raw.timestamp_ns, pcd_error);
-          if (cloud == nullptr) {
-            BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, pcd_error.c_str());
-            encoder.reset();
-            cleanup_tmp();
-            return 1;
-          }
+        const std::vector<core::pointcloud::ProjectedPoint> * projected_ptr = nullptr;
+        if (!pcd_fetchers.empty()) {
+          for (std::size_t i = 0; i < pcd_fetchers.size(); ++i) {
+            std::string pcd_error;
+            const auto * cloud = pcd_fetchers[i].fetch(raw.timestamp_ns, pcd_error);
+            if (cloud == nullptr) {
+              BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, pcd_error.c_str());
+              encoder.reset();
+              cleanup_tmp();
+              return 1;
+            }
 
-          const auto projected = project_cloud_for_frame(
-            *cloud, *camera_info, *tf_buffer, frame->width, frame->height, args.property,
-            use_rectified);
-          if (!projected.ok()) {
-            BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, projected.error.c_str());
-            encoder.reset();
-            cleanup_tmp();
-            return 1;
+            const auto projected = project_cloud_for_frame(
+              *cloud, *camera_info, *tf_buffer, frame->width, frame->height, args.property,
+              use_rectified);
+            if (!projected.ok()) {
+              BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, projected.error.c_str());
+              encoder.reset();
+              cleanup_tmp();
+              return 1;
+            }
+            projected_storage.insert(
+              projected_storage.end(), projected.points.begin(), projected.points.end());
           }
-          projected_storage = std::move(projected.points);
           projected_ptr = &projected_storage;
         }
 
