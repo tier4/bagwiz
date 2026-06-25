@@ -8,9 +8,12 @@
 
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
+#include "bagwiz/core/camera_info_resolver.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
+#include "bagwiz/core/image/camera_info.hpp"
 #include "bagwiz/core/image/image_encoder.hpp"
 #include "bagwiz/core/image/packed_raster.hpp"
+#include "bagwiz/core/image/undistort.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/message_formatter.hpp"
 #include "bagwiz/core/terminal_input.hpp"
@@ -208,6 +211,8 @@ public:
       ->required()
       ->check(CLI::ExistingPath);
     app.add_option("topic", topic_, "Topic name to inspect")->required();
+    app.add_option(
+      "--cam-info", camera_info_topic_, "Explicit CameraInfo topic for undistort preview");
   }
 
   int run() override
@@ -236,6 +241,36 @@ public:
       BAGWIZ_LOG_ERROR(
         kLogger, "Topic '%s' is not present in %s", topic_.c_str(), input_path_.c_str());
       return 1;
+    }
+
+    std::optional<std::string> camera_info_topic;
+    std::optional<core::image::CameraInfo> camera_info;
+    std::string camera_info_error;
+
+    if (camera_info_topic_.has_value()) {
+      if (const auto err =
+            core::camera_info::validate_camera_info_topic(input_path_, *camera_info_topic_);
+          err.has_value()) {
+        camera_info_error = *err;
+      } else {
+        camera_info_topic = *camera_info_topic_;
+      }
+    } else {
+      const auto resolution =
+        core::camera_info::resolve_camera_info_topic(topic_, reader->topics());
+      camera_info_topic = resolution.topic;
+      if (resolution.error.has_value()) {
+        camera_info_error = *resolution.error;
+      }
+    }
+
+    if (camera_info_topic.has_value()) {
+      const auto ci = core::camera_info::load_camera_info(input_path_, *camera_info_topic);
+      if (ci.ok()) {
+        camera_info = *ci.info;
+      } else {
+        camera_info_error = ci.error;
+      }
     }
 
     io::ReadFilter read_filter;
@@ -863,6 +898,7 @@ public:
 private:
   std::filesystem::path input_path_;
   std::string topic_;
+  std::optional<std::string> camera_info_topic_;
 };
 
 BAGWIZ_REGISTER_COMMAND(WalkCommand)
