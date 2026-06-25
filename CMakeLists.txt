@@ -199,6 +199,7 @@ add_library(bagwiz_core
   src/core/pipeline/pipelined_backend.cpp
   src/core/pipeline/backend_select.cpp
   src/core/topic_match.cpp
+  src/core/camera_info_resolver.cpp
   src/core/broken_bag.cpp
   src/core/tf_chain.cpp
   src/core/tf_merge_check.cpp
@@ -671,6 +672,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_topic_match_test test/core/topic_match_test.cpp)
   target_link_libraries(bagwiz_topic_match_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_camera_info_resolver_test test/core/camera_info_resolver_test.cpp)
+  target_link_libraries(bagwiz_camera_info_resolver_test bagwiz_core)
 
   ament_add_gtest(bagwiz_topic_drop_test
     test/commands/topic_drop_test.cpp
