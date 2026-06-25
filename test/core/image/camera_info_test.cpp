@@ -97,4 +97,28 @@ TEST(CameraInfoScale, IdentityScaleLeavesInfoUnchanged)
   EXPECT_EQ(scaled.frame_id, info.frame_id);
 }
 
+TEST(CameraInfoScale, IndependentScales)
+{
+  const auto info = make_test_camera_info();
+  const auto scaled = scale_camera_info(info, 0.5, 0.25);
+
+  EXPECT_DOUBLE_EQ(scaled.k[0], 500.0);  // fx * 0.5
+  EXPECT_DOUBLE_EQ(scaled.k[1], 0.25);   // skew * 0.5
+  EXPECT_DOUBLE_EQ(scaled.k[2], 480.0);  // cx * 0.5
+  EXPECT_DOUBLE_EQ(scaled.k[4], 250.0);  // fy * 0.25
+  EXPECT_DOUBLE_EQ(scaled.k[5], 135.0);  // cy * 0.25
+
+  EXPECT_DOUBLE_EQ(scaled.p[0], 500.0);
+  EXPECT_DOUBLE_EQ(scaled.p[1], 0.25);
+  EXPECT_DOUBLE_EQ(scaled.p[2], 480.0);
+  EXPECT_DOUBLE_EQ(scaled.p[3], -25.0);  // tx * 0.5
+  EXPECT_DOUBLE_EQ(scaled.p[5], 250.0);
+  EXPECT_DOUBLE_EQ(scaled.p[6], 135.0);
+  EXPECT_DOUBLE_EQ(scaled.p[7], 0.0);  // ty * 0.25
+
+  EXPECT_DOUBLE_EQ(scaled.k[8], 1.0);
+  EXPECT_DOUBLE_EQ(scaled.p[10], 1.0);
+  EXPECT_DOUBLE_EQ(scaled.p[11], -0.25);  // tz unchanged
+}
+
 }  // namespace

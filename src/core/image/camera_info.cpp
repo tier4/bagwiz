@@ -129,4 +129,23 @@ CameraInfo scale_camera_info(const CameraInfo & info, double scale)
   return scaled;
 }
 
+CameraInfo scale_camera_info(const CameraInfo & info, double scale_x, double scale_y)
+{
+  CameraInfo scaled = info;
+  scaled.k[0] *= scale_x;
+  scaled.k[1] *= scale_x;
+  scaled.k[2] *= scale_x;
+  scaled.k[4] *= scale_y;
+  scaled.k[5] *= scale_y;
+  scaled.p[0] *= scale_x;
+  scaled.p[1] *= scale_x;
+  scaled.p[2] *= scale_x;
+  scaled.p[3] *= scale_x;
+  scaled.p[4] *= scale_y;
+  scaled.p[5] *= scale_y;
+  scaled.p[6] *= scale_y;
+  scaled.p[7] *= scale_y;
+  return scaled;
+}
+
 }  // namespace bagwiz::core::image

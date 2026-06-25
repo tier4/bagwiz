@@ -56,6 +56,11 @@ struct CameraInfoResult
 // p[10]), and the depth translation in p[11] are left unchanged.
 [[nodiscard]] CameraInfo scale_camera_info(const CameraInfo & info, double scale);
 
+// Return a CameraInfo whose pixel-coordinate entries are scaled by independent
+// x and y factors. Use this when the output image has a different aspect ratio
+// than the original calibration.
+[[nodiscard]] CameraInfo scale_camera_info(const CameraInfo & info, double scale_x, double scale_y);
+
 }  // namespace bagwiz::core::image
 
 #endif  // BAGWIZ__CORE__IMAGE__CAMERA_INFO_HPP_
