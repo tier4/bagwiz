@@ -47,10 +47,9 @@ class CameraCalibrationYamlTest : public ::testing::Test
 protected:
   void SetUp() override
   {
-    tmp_dir_ =
-      std::filesystem::temp_directory_path() /
-      ("bagwiz_camera_calibration_yaml_" +
-       std::to_string(::testing::UnitTest::GetInstance()->current_test_info()->line()));
+    tmp_dir_ = std::filesystem::temp_directory_path() /
+               ("bagwiz_camera_calibration_yaml_" +
+                std::to_string(::testing::UnitTest::GetInstance()->current_test_info()->line()));
     std::filesystem::remove_all(tmp_dir_);
     std::filesystem::create_directories(tmp_dir_);
   }

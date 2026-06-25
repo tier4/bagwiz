@@ -24,12 +24,12 @@ namespace bagwiz::commands
 // overwritten. Every other topic is copied verbatim.
 struct CamInfoReplaceArgs
 {
-  std::filesystem::path input_path;  // bag to rewrite (also the in-place target)
-  std::filesystem::path yaml_path;   // source camera_calibration YAML
-  std::string topic;                 // CameraInfo topic to rewrite
-  std::optional<std::string> frame_id;  // override header.frame_id when set
+  std::filesystem::path input_path;                  // bag to rewrite (also the in-place target)
+  std::filesystem::path yaml_path;                   // source camera_calibration YAML
+  std::string topic;                                 // CameraInfo topic to rewrite
+  std::optional<std::string> frame_id;               // override header.frame_id when set
   std::optional<std::filesystem::path> output_path;  // empty = in-place rewrite
-  bool overwrite = false;            // replace an existing -o/--output path
+  bool overwrite = false;                            // replace an existing -o/--output path
 };
 
 // Run the replacement. Returns the process exit code: 0 on success, 1 on any

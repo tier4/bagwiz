@@ -76,9 +76,10 @@ private:
         "rectification_matrix, projection_matrix)")
       ->required()
       ->check(CLI::ExistingFile);
-    sub->add_option(
-         "topic", replace_args_.topic,
-         "CameraInfo topic to rewrite (its type must be sensor_msgs/msg/CameraInfo)")
+    sub
+      ->add_option(
+        "topic", replace_args_.topic,
+        "CameraInfo topic to rewrite (its type must be sensor_msgs/msg/CameraInfo)")
       ->required();
     sub->add_option(
       "--frame-id", replace_args_.frame_id,

@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace bagwiz::core::image
@@ -35,8 +36,8 @@ namespace
 // function returns false. Never throws (yaml-cpp conversion failures are caught
 // and surfaced through `error`).
 bool read_matrix_block(
-  const YAML::Node & root, const std::string & key, std::size_t expected,
-  std::vector<double> & out, std::string & error)
+  const YAML::Node & root, const std::string & key, std::size_t expected, std::vector<double> & out,
+  std::string & error)
 {
   const YAML::Node block = root[key];
   if (!block) {
@@ -101,13 +102,13 @@ CameraCalibrationResult parse_camera_calibration_yaml(const std::filesystem::pat
   try {
     root = YAML::LoadFile(yaml_path.string());
   } catch (const YAML::Exception & e) {
-    result.error = "failed to parse camera calibration YAML '" + yaml_path.string() +
-                   "': " + e.what();
+    result.error =
+      "failed to parse camera calibration YAML '" + yaml_path.string() + "': " + e.what();
     return result;
   }
   if (!root || !root.IsMap()) {
-    result.error = "camera calibration YAML '" + yaml_path.string() +
-                   "' is empty or not a top-level mapping";
+    result.error =
+      "camera calibration YAML '" + yaml_path.string() + "' is empty or not a top-level mapping";
     return result;
   }
 

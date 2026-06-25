@@ -224,10 +224,9 @@ class CamInfoReplaceTest : public ::testing::Test
 protected:
   void SetUp() override
   {
-    tmp_dir_ =
-      std::filesystem::temp_directory_path() /
-      ("bagwiz_cam_info_replace_" +
-       std::to_string(::testing::UnitTest::GetInstance()->current_test_info()->line()));
+    tmp_dir_ = std::filesystem::temp_directory_path() /
+               ("bagwiz_cam_info_replace_" +
+                std::to_string(::testing::UnitTest::GetInstance()->current_test_info()->line()));
     std::filesystem::remove_all(tmp_dir_);
     std::filesystem::create_directories(tmp_dir_);
     calib_path_ = tmp_dir_ / "calib.yaml";
