@@ -11,8 +11,8 @@
 #include "bagwiz/commands/convert_msg_geo.hpp"
 #include "bagwiz/core/bag_copy.hpp"
 #include "bagwiz/core/logging.hpp"
-#include "bagwiz/core/msg_definition_resolver.hpp"
 #include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
+#include "bagwiz/core/msg_definition_resolver.hpp"
 #include "bagwiz/core/output_path.hpp"
 #include "bagwiz/io/bag_io.hpp"
 

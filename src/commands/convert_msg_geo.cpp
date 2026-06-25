@@ -11,8 +11,8 @@
 #include "bagwiz/core/bag_inplace.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/logging.hpp"
-#include "bagwiz/core/msg_definition_resolver.hpp"
 #include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
+#include "bagwiz/core/msg_definition_resolver.hpp"
 #include "bagwiz/core/output_path.hpp"
 #include "bagwiz/core/pipeline/backend_select.hpp"
 #include "bagwiz/core/pipeline/rewrite_backend.hpp"
@@ -381,8 +381,7 @@ int execute_pass(
   core::pipeline::RewriteCounts counts;
   try {
     auto backend = core::pipeline::make_backend(core::pipeline::BackendKind::Pipelined);
-    counts =
-      core::pipeline::run_pipeline(*reader, *writer, processor, *backend, "convert msg geo");
+    counts = core::pipeline::run_pipeline(*reader, *writer, processor, *backend, "convert msg geo");
   } catch (const std::exception & e) {
     BAGWIZ_LOG_ERROR(kLogger, "convert msg geo read/write failed: %s", e.what());
     return 1;

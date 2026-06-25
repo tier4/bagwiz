@@ -2,9 +2,9 @@
 
 Cross-format bag conversion. Subcommands:
 
-| Subcommand                                   | Direction                                                                           |
-| -------------------------------------------- | ----------------------------------------------------------------------------------- |
-| [`format`](#bagwiz-convert-format)           | ROS 2 rosbag2 repack between MCAP and SQLite3 storage and/or file/directory layout  |
+| Subcommand                           | Direction                                                                           |
+| ------------------------------------ | ----------------------------------------------------------------------------------- |
+| [`format`](#bagwiz-convert-format)   | ROS 2 rosbag2 repack between MCAP and SQLite3 storage and/or file/directory layout  |
 | [`msg geo`](#bagwiz-convert-msg-geo) | Convert a geographic source (`NavSatFix`) into a pose type, projected to ENU or UTM |
 
 `msg` is a command group for message-type conversions; each family of

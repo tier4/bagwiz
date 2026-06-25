@@ -623,8 +623,7 @@ TEST(FlagCompletionTest, ConvertSubcommandListsFormatAndMsg)
 // `bagwiz convert msg <TAB>` lists its single action verb.
 TEST(FlagCompletionTest, ConvertMsgSubcommandListsGeo)
 {
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "3", "bagwiz", "convert", "msg", ""}), "geo\n");
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "3", "bagwiz", "convert", "msg", ""}), "geo\n");
 }
 
 // `bagwiz convert msg geo -` lists the geo flags, sorted, with help merged.
