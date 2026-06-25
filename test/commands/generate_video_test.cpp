@@ -8,6 +8,7 @@
 
 #include "bagwiz/commands/generate_video.hpp"
 
+#include "bagwiz/core/camera_info_resolver.hpp"
 #include "bagwiz/core/tf_message_wire.hpp"
 #include "bagwiz/core/video/video_encoder.hpp"
 #include "bagwiz/io/bag_io.hpp"
@@ -302,19 +303,9 @@ std::filesystem::path build_bag_with_camera_info(
   const auto path = dir / "input";
   auto writer = bagwiz::io::open_write(path, mcap_dir_opts());
 
-  const std::string camera_info_topic = [image_topic]() {
-    std::string stem = image_topic;
-    for (const auto & suffix :
-         {"/image_raw/compressed", "/image_rect_color/compressed", "/image_rect_color"}) {
-      if (
-        stem.size() > std::string_view{suffix}.size() &&
-        std::string_view{stem}.substr(stem.size() - std::string_view{suffix}.size()) == suffix) {
-        stem.resize(stem.size() - std::string_view{suffix}.size());
-        break;
-      }
-    }
-    return stem + "/camera_info";
-  }();
+  const std::string camera_info_topic =
+    bagwiz::core::camera_info::resolve_camera_info_topic_name(image_topic)
+      .value_or(image_topic + "/camera_info");
 
   writer->declare_topic(make_topic(image_topic, compressed ? kCompressedType : kImageType));
   writer->declare_topic(make_topic(camera_info_topic, kCameraInfoType));

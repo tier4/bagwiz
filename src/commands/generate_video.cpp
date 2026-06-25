@@ -8,9 +8,11 @@
 
 #include "bagwiz/commands/generate_video.hpp"
 
+#include "bagwiz/core/camera_info_resolver.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/image/camera_info.hpp"
 #include "bagwiz/core/image/packed_raster.hpp"
+#include "bagwiz/core/image/undistort.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/output_path.hpp"
 #include "bagwiz/core/pointcloud/color_mapper.hpp"
@@ -58,7 +60,6 @@ namespace
 constexpr const char * kLogger = "bagwiz.cmd.generate";
 constexpr const char * kImageType = "sensor_msgs/msg/Image";
 constexpr const char * kCompressedImageType = "sensor_msgs/msg/CompressedImage";
-constexpr const char * kCameraInfoType = "sensor_msgs/msg/CameraInfo";
 constexpr const char * kPointCloudType = "sensor_msgs/msg/PointCloud2";
 constexpr std::string_view kTfStaticSuffix = "tf_static";
 
@@ -127,96 +128,6 @@ struct PointCloudSpan
   double property_max = 0.0;
 };
 
-// Auto-resolve a CameraInfo topic from the image topic name. The rules are
-// deliberately narrow: only the three known image suffixes map to a sibling
-// /camera_info topic.
-std::optional<std::string> resolve_camera_info_topic(
-  const std::string & image_topic, std::span<const io::TopicInfo> topics)
-{
-  constexpr std::string_view kImageRawCompressed = "/image_raw/compressed";
-  constexpr std::string_view kImageRectColorCompressed = "/image_rect_color/compressed";
-  constexpr std::string_view kImageRectColor = "/image_rect_color";
-  constexpr std::string_view kCameraInfoSuffix = "/camera_info";
-
-  std::string_view stem{image_topic};
-  if (stem.ends_with(kImageRawCompressed)) {
-    stem.remove_suffix(kImageRawCompressed.size());
-  } else if (stem.ends_with(kImageRectColorCompressed)) {
-    stem.remove_suffix(kImageRectColorCompressed.size());
-  } else if (stem.ends_with(kImageRectColor)) {
-    stem.remove_suffix(kImageRectColor.size());
-  } else {
-    return std::nullopt;
-  }
-
-  std::string candidate{stem};
-  candidate += kCameraInfoSuffix;
-  for (const auto & t : topics) {
-    if (t.name == candidate && t.type == kCameraInfoType) {
-      return candidate;
-    }
-  }
-  return std::nullopt;
-}
-
-// Validate an explicit camera-info topic: it must exist in the bag and have the
-// expected type. Returns a human-readable error on failure, or std::nullopt on
-// success.
-std::optional<std::string> validate_camera_info_topic(
-  const std::filesystem::path & input, const std::string & topic)
-{
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(input);
-  } catch (const std::exception & e) {
-    return "failed to open '" + input.string() + "': " + e.what();
-  }
-
-  for (const auto & t : reader->topics()) {
-    if (t.name == topic) {
-      if (t.type != kCameraInfoType) {
-        return "topic '" + topic + "' has type '" + t.type + "', but --cam-info requires " +
-               kCameraInfoType;
-      }
-      return std::nullopt;
-    }
-  }
-  return "camera-info topic '" + topic + "' not found in " + input.string();
-}
-
-// Read the first CameraInfo message for `topic` from `input`.
-core::image::CameraInfoResult load_camera_info(
-  const std::filesystem::path & input, const std::string & topic)
-{
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(input);
-  } catch (const std::exception & e) {
-    core::image::CameraInfoResult result;
-    result.error = "failed to open '" + input.string() + "': " + e.what();
-    return result;
-  }
-
-  io::ReadFilter filter;
-  filter.topics.push_back(topic);
-  reader->set_filter(filter);
-
-  io::RawMessage raw;
-  try {
-    if (reader->next(raw)) {
-      return core::image::extract_camera_info(raw.payload);
-    }
-  } catch (const std::exception & e) {
-    core::image::CameraInfoResult result;
-    result.error = "error reading camera-info topic '" + topic + "': " + e.what();
-    return result;
-  }
-
-  core::image::CameraInfoResult result;
-  result.error = "camera-info topic '" + topic + "' has no messages";
-  return result;
-}
-
 // Introduced in Task 6; consumed by the point-cloud overlay path in Task 7.
 // Load /tf and /tf_static into a BufferCore. Returns an error string on failure.
 std::optional<std::string> load_tf_buffer(
@@ -283,60 +194,6 @@ std::optional<std::string> load_tf_buffer(
   }
   return std::nullopt;
 }
-
-// OpenCV undistortion helper. Initializes distortion/rectification maps from
-// the first frame's dimensions and the loaded CameraInfo, then remaps each
-// subsequent frame. Owns the output buffer passed to the video encoder.
-class UndistortHelper
-{
-public:
-  UndistortHelper(const core::image::CameraInfo & info, std::uint32_t width, std::uint32_t height)
-  : width_(width), height_(height)
-  {
-    // cv::Mat's external-data constructor takes a non-const void* even when the
-    // matrix is only read. initUndistortRectifyMap does not mutate these inputs,
-    // so the const_cast is safe and lets us wrap the fixed arrays directly.
-    const cv::Mat k(3, 3, CV_64F, const_cast<double *>(info.k.data()));
-    const cv::Mat r(3, 3, CV_64F, const_cast<double *>(info.r.data()));
-    const cv::Mat p(3, 4, CV_64F, const_cast<double *>(info.p.data()));
-
-    cv::Mat d;
-    if (!info.d.empty()) {
-      d = cv::Mat(static_cast<int>(info.d.size()), 1, CV_64F, const_cast<double *>(info.d.data()));
-    }
-
-    cv::initUndistortRectifyMap(
-      k, d, r, p, cv::Size{static_cast<int>(width), static_cast<int>(height)}, CV_32FC1, map1_,
-      map2_);
-
-    output_.resize(static_cast<std::size_t>(width) * height * 3, std::byte{0});
-  }
-
-  UndistortHelper(const UndistortHelper &) = delete;
-  UndistortHelper & operator=(const UndistortHelper &) = delete;
-  UndistortHelper(UndistortHelper &&) = default;
-  UndistortHelper & operator=(UndistortHelper &&) = default;
-
-  // Apply undistortion to a packed 8-bit BGR/RGB frame. `src_step` is the row
-  // stride in bytes. Returns a span over the packed output buffer.
-  std::span<const std::byte> remap(std::span<const std::byte> src, std::uint32_t src_step)
-  {
-    const cv::Mat in(
-      static_cast<int>(height_), static_cast<int>(width_), CV_8UC3,
-      const_cast<std::byte *>(src.data()), src_step);
-    cv::Mat out(
-      static_cast<int>(height_), static_cast<int>(width_), CV_8UC3, output_.data(), width_ * 3);
-    cv::remap(in, out, map1_, map2_, cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar{});
-    return {output_.data(), output_.size()};
-  }
-
-private:
-  std::uint32_t width_ = 0;
-  std::uint32_t height_ = 0;
-  cv::Mat map1_;
-  cv::Mat map2_;
-  std::vector<std::byte> output_;
-};
 
 // Pass 1: stream the topic's messages reading only their timestamps (no
 // payload decode) to learn the count and time span for the frame-rate estimate.
@@ -821,7 +678,8 @@ int run_generate_video(const GenerateVideoArgs & args)
   // 2. Resolve and validate the camera-info topic when needed.
   std::optional<std::string> camera_info_topic = args.camera_info_topic;
   if (camera_info_topic.has_value()) {
-    if (const auto err = validate_camera_info_topic(args.input_path, *camera_info_topic);
+    if (const auto err =
+          core::camera_info::validate_camera_info_topic(args.input_path, *camera_info_topic);
         err.has_value()) {
       BAGWIZ_LOG_ERROR(kLogger, "%s", err->c_str());
       return 1;
@@ -835,7 +693,8 @@ int run_generate_video(const GenerateVideoArgs & args)
         kLogger, "failed to open '%s': %s", args.input_path.string().c_str(), e.what());
       return 1;
     }
-    camera_info_topic = resolve_camera_info_topic(args.topic, reader->topics());
+    camera_info_topic =
+      core::camera_info::resolve_camera_info_topic(args.topic, reader->topics()).topic;
   }
 
   const bool needs_camera_info = args.undistort || !args.pointcloud_topics.empty();
@@ -955,7 +814,7 @@ int run_generate_video(const GenerateVideoArgs & args)
   //    aborting half-way through the encode.
   std::optional<core::image::CameraInfo> camera_info;
   if (camera_info_topic.has_value()) {
-    auto ci = load_camera_info(args.input_path, *camera_info_topic);
+    auto ci = core::camera_info::load_camera_info(args.input_path, *camera_info_topic);
     if (!ci.ok()) {
       BAGWIZ_LOG_ERROR(kLogger, "%s", ci.error.c_str());
       return 1;
@@ -1003,7 +862,7 @@ int run_generate_video(const GenerateVideoArgs & args)
   // Each message (raw Image or CompressedImage) is normalized to a canonical
   // packed BGR24 raster by core::image::to_packed_raster before encoding.
   std::unique_ptr<core::video::VideoEncoder> encoder;
-  std::unique_ptr<UndistortHelper> undistort_helper;
+  std::unique_ptr<core::image::UndistortHelper> undistort_helper;
   std::uint32_t enc_w = 0;
   std::uint32_t enc_h = 0;
   // to_packed_raster yields canonical BGR24, so every frame's encoding is "bgr8";
@@ -1099,7 +958,8 @@ int run_generate_video(const GenerateVideoArgs & args)
       encoder = std::move(opened.encoder);
 
       if (args.undistort || !args.pointcloud_topics.empty()) {
-        undistort_helper = std::make_unique<UndistortHelper>(*camera_info, enc_w, enc_h);
+        undistort_helper =
+          std::make_unique<core::image::UndistortHelper>(*camera_info, enc_w, enc_h);
       }
     } else if (frame.width != enc_w || frame.height != enc_h || frame.encoding != enc_encoding) {
       BAGWIZ_LOG_ERROR(
