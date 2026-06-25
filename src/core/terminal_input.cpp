@@ -123,6 +123,8 @@ KeyEvent classify_key(std::string_view bytes)
         return KeyEvent::kToggleArrayExpand;
       case 'i':
         return KeyEvent::kTogglePreview;
+      case 'u':
+        return KeyEvent::kToggleUndistort;
       default:
         return KeyEvent::kUnknown;
     }
