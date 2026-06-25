@@ -13,7 +13,7 @@ cleanly on terminal resize. ROS 1 `*.bag` inputs are not supported.
 ## Usage
 
 ```text
-bagwiz walk <input> <topic>
+bagwiz walk <input> <topic> [--cam-info <cam-info-topic>]
 ```
 
 ## Positional arguments
@@ -22,6 +22,12 @@ bagwiz walk <input> <topic>
 | ------- | ----------------------------------------------------------------------- |
 | `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). |
 | `topic` | Topic name to inspect. Must exist in the bag.                           |
+
+## Options
+
+| Flag         | Description                                                                                                                                                                                           |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--cam-info` | Explicit `sensor_msgs/msg/CameraInfo` topic for the preview undistort toggle. When omitted, bagwiz auto-resolves it from `<topic>` using the rules documented for `bagwiz generate video --cam-info`. |
 
 ## Behavior
 
@@ -86,6 +92,10 @@ on resize. Press `i` again or `q` to return to the YAML view.
 - The image is scaled aspect-preserved to fit the body region with a fixed
   padding margin (it never fills edge-to-edge) and is centered. Only the current
   frame is decoded and held; stepping re-decodes on demand.
+- Pressing `u` toggles **undistortion** when a CameraInfo topic was resolved or
+  explicitly provided. The undistorted frame is rendered and saved by `s`. If no
+  CameraInfo is available, `u` shows `undistort: no camera_info` in the status
+  line and leaves the original image on screen.
 - Pressing `i` on a non-image topic shows `(not an image topic)`; pressing it on
   an image topic in an unsupported terminal shows
   `(image preview not supported in this terminal)`.
@@ -158,6 +168,7 @@ not been read into the cache yet (they get pulled in on demand).
 | `s`            | Save as yaml - writes the current message body (prompts for path).                                                                            |
 | `a`            | Toggle full expansion of long primitive arrays (default off).                                                                                 |
 | `i`            | Toggle in-terminal image preview (image topics on a Kitty- or Sixel-capable terminal; hidden otherwise). See [Image preview](#image-preview). |
+| `u`            | Toggle undistortion in the image preview (when CameraInfo is available).                                                                      |
 | `q` / `Ctrl-C` | Quit.                                                                                                                                         |
 
 When the body is taller than the visible window, a `lines X-Y of N`
