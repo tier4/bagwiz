@@ -81,7 +81,7 @@ private:
 std::string take_rmw_error()
 {
   const rcutils_error_state_t * s = rcutils_get_error_state();
-  std::string err = (s != nullptr && s->message != nullptr) ? s->message : "(no error message)";
+  std::string err = (s != nullptr) ? s->message : "(no error message)";
   rcutils_reset_error();
   return err;
 }
