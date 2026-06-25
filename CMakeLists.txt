@@ -51,6 +51,7 @@ find_package(rosidl_typesupport_introspection_cpp REQUIRED)
 # dlopen'd at runtime).
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_msgs REQUIRED)
@@ -212,6 +213,7 @@ add_library(bagwiz_core
   src/core/image/image_decoder.cpp
   src/core/image/image_encoder.cpp
   src/core/image/camera_info.cpp
+  src/core/image/camera_calibration_yaml.cpp
   src/core/image/packed_raster.cpp
   src/core/pointcloud/pointcloud2.cpp
   src/core/pointcloud/color_mapper.cpp
@@ -316,6 +318,8 @@ target_include_directories(bagwiz_core PRIVATE $<TARGET_PROPERTY:fmt::fmt,INTERF
 # ---------------------------------------------------------------------------
 add_executable(bagwiz
   src/main.cpp
+  src/commands/cam_info.cpp
+  src/commands/cam_info_replace.cpp
   src/commands/check.cpp
   src/commands/completion.cpp
   src/commands/convert.cpp
@@ -334,7 +338,10 @@ add_executable(bagwiz
   src/commands/topic_keep.cpp
   src/commands/topic_rename.cpp
 )
-target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang ${OpenCV_LIBS})
+# sensor_msgs is needed only by src/commands/cam_info_replace.cpp, which builds
+# a typed sensor_msgs/msg/CameraInfo to round-trip through rmw_(de)serialize.
+# It is not a bagwiz_core dependency, so link it on the executable directly.
+target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang ${OpenCV_LIBS} ${sensor_msgs_TARGETS})
 
 # --- Optional in-process GLIM SLAM command (`bagwiz slam`) --------------------
 # OFF by default so normal builds need no GLIM. Enable with `pixi run build-slam`
@@ -689,6 +696,11 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_camera_info_test test/core/image/camera_info_test.cpp)
   target_link_libraries(bagwiz_camera_info_test bagwiz_core)
 
+  ament_add_gtest(
+    bagwiz_camera_calibration_yaml_test
+    test/core/image/camera_calibration_yaml_test.cpp)
+  target_link_libraries(bagwiz_camera_calibration_yaml_test bagwiz_core)
+
   ament_add_gtest(bagwiz_compressed_image_test test/core/image/compressed_image_test.cpp)
   target_link_libraries(bagwiz_compressed_image_test bagwiz_core)
 
@@ -794,6 +806,12 @@ if(BUILD_TESTING)
   target_link_libraries(
     bagwiz_convert_msg_geo_test bagwiz_core fmt::fmt ${GeographicLib_LIBRARIES}
     ${sensor_msgs_TARGETS})
+
+  ament_add_gtest(bagwiz_cam_info_replace_test
+    test/commands/cam_info_replace_test.cpp
+    src/commands/cam_info_replace.cpp)
+  target_link_libraries(
+    bagwiz_cam_info_replace_test bagwiz_core fmt::fmt ${sensor_msgs_TARGETS})
 endif()
 
 ament_package()
