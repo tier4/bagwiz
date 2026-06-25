@@ -6,13 +6,13 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/commands/convert_msgtype_geo.hpp"
+#include "bagwiz/commands/convert_msg_geo.hpp"
 
 #include "bagwiz/core/bag_inplace.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/msg_definition_resolver.hpp"
-#include "bagwiz/core/msgtype_convert/geo_pose_convert.hpp"
+#include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
 #include "bagwiz/core/output_path.hpp"
 #include "bagwiz/core/pipeline/backend_select.hpp"
 #include "bagwiz/core/pipeline/rewrite_backend.hpp"
@@ -42,9 +42,9 @@ namespace bagwiz::commands
 namespace
 {
 
-namespace mtc = bagwiz::core::msgtype_convert;
+namespace mtc = bagwiz::core::msg_convert;
 
-constexpr const char * kLogger = "bagwiz.cmd.convert.msgtype.geo";
+constexpr const char * kLogger = "bagwiz.cmd.convert.msg.geo";
 
 // Parse a "lat,lon,alt" string into a GeoOrigin. Returns false (with `err`
 // populated) on a malformed value.
@@ -108,7 +108,7 @@ std::string join_csv(const std::vector<std::string> & names)
 // Implements the two selection modes (explicit --topic vs by --src type).
 // Returns false (after logging) on any selection error.
 bool select_topics(
-  const ConvertMsgtypeGeoArgs & args, std::span<const io::TopicInfo> topics,
+  const ConvertMsgGeoArgs & args, std::span<const io::TopicInfo> topics,
   std::vector<std::string> & selected_out, std::string & source_ros_type_out)
 {
   if (!args.topics.empty()) {
@@ -382,9 +382,9 @@ int execute_pass(
   try {
     auto backend = core::pipeline::make_backend(core::pipeline::BackendKind::Pipelined);
     counts =
-      core::pipeline::run_pipeline(*reader, *writer, processor, *backend, "convert msgtype geo");
+      core::pipeline::run_pipeline(*reader, *writer, processor, *backend, "convert msg geo");
   } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "convert msgtype geo read/write failed: %s", e.what());
+    BAGWIZ_LOG_ERROR(kLogger, "convert msg geo read/write failed: %s", e.what());
     return 1;
   }
 
@@ -402,7 +402,7 @@ int execute_pass(
   const std::uint64_t total_in = counts.copied + counts.skipped;
   BAGWIZ_LOG_INFO(
     kLogger,
-    "convert msgtype geo: converted %" PRIu64 " message(s) to %s, copied %" PRIu64
+    "convert msg geo: converted %" PRIu64 " message(s) to %s, copied %" PRIu64
     " other message(s) (of %" PRIu64 " read).",
     converted, target_type.c_str(), forwarded, total_in);
   if (counts.skipped > 0) {
@@ -413,7 +413,7 @@ int execute_pass(
 
 }  // namespace
 
-int run_convert_msgtype_geo(const ConvertMsgtypeGeoArgs & args)
+int run_convert_msg_geo(const ConvertMsgGeoArgs & args)
 {
   // 1. CRS and target type (the CLI's IsMember checks make these reachable only
   //    with valid tokens, but validate defensively).
@@ -566,7 +566,7 @@ int run_convert_msgtype_geo(const ConvertMsgtypeGeoArgs & args)
         args.input_path, selected_set, *to_ros, target_def, *converter,
         [&]() { return make_inplace_writer(tmp); });
       if (pass_status != 0) {
-        throw std::runtime_error("convert msgtype geo: pass failed; aborting in-place swap");
+        throw std::runtime_error("convert msg geo: pass failed; aborting in-place swap");
       }
     });
   } catch (const std::exception & e) {

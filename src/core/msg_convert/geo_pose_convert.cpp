@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/core/msgtype_convert/geo_pose_convert.hpp"
+#include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
 
 #include "bagwiz/core/introspection_loader.hpp"
 
@@ -34,7 +34,7 @@
 #include <variant>
 #include <vector>
 
-namespace bagwiz::core::msgtype_convert
+namespace bagwiz::core::msg_convert
 {
 
 namespace
@@ -509,4 +509,4 @@ std::vector<std::byte> GeoPoseConverter::convert(const NavSatSample & sample) co
   return serialize_message(msg, impl_->typesupport);
 }
 
-}  // namespace bagwiz::core::msgtype_convert
+}  // namespace bagwiz::core::msg_convert

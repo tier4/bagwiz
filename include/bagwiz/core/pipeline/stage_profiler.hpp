@@ -32,7 +32,7 @@ namespace bagwiz::core::pipeline
 
 // The three logical stages of a rewrite. kProcess is zero-cost for pure-copy
 // commands (drop/keep/rename/convert-format) and non-trivial only for decode
-// /transform commands (convert msgtype geo).
+// /transform commands (convert msg geo).
 enum class Stage : std::uint8_t { kRead, kProcess, kWrite };
 
 // Parse a BAGWIZ_PROFILE value. nullptr, empty, and the common falsey spellings

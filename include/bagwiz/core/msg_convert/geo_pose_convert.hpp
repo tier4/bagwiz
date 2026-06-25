@@ -6,8 +6,8 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#ifndef BAGWIZ__CORE__MSGTYPE_CONVERT__GEO_POSE_CONVERT_HPP_
-#define BAGWIZ__CORE__MSGTYPE_CONVERT__GEO_POSE_CONVERT_HPP_
+#ifndef BAGWIZ__CORE__MSG_CONVERT__GEO_POSE_CONVERT_HPP_
+#define BAGWIZ__CORE__MSG_CONVERT__GEO_POSE_CONVERT_HPP_
 
 #include "bagwiz/core/cdr_walker/value.hpp"
 
@@ -21,7 +21,7 @@
 #include <vector>
 
 // Whitelisted message-type conversions in the "geo" (position) family,
-// backing `bagwiz convert msgtype geo`. The first (and currently only)
+// backing `bagwiz convert msg geo`. The first (and currently only)
 // route family is sensor_msgs/msg/NavSatFix -> a geometry_msgs pose type,
 // projecting WGS84 latitude/longitude/altitude into a Cartesian frame
 // (ENU local tangent plane or UTM) via GeographicLib.
@@ -31,7 +31,7 @@
 // the reverse needs the original datum/zone (absent from a pose bag) and
 // would have to synthesise NavSatFix status fields. Reverse routes are left
 // for a follow-up.
-namespace bagwiz::core::msgtype_convert
+namespace bagwiz::core::msg_convert
 {
 
 // Canonical ROS 2 type names for the route endpoints.
@@ -152,6 +152,6 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace bagwiz::core::msgtype_convert
+}  // namespace bagwiz::core::msg_convert
 
-#endif  // BAGWIZ__CORE__MSGTYPE_CONVERT__GEO_POSE_CONVERT_HPP_
+#endif  // BAGWIZ__CORE__MSG_CONVERT__GEO_POSE_CONVERT_HPP_

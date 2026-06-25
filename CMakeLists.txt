@@ -60,7 +60,7 @@ find_package(tf2_msgs REQUIRED)
 find_package(nlohmann_json REQUIRED)
 
 # GeographicLib provides the WGS84 -> ENU / UTM projections used by
-# `convert msgtype geo` (geo_pose_convert.cpp). It is consumed PRIVATE — an
+# `convert msg geo` (geo_pose_convert.cpp). It is consumed PRIVATE — an
 # implementation detail behind the GeoPoseConverter pimpl that must not leak
 # into bagwiz_core's export set. Two packagings exist and both are supported:
 #   - a CMake CONFIG package (e.g. conda-forge `geographiclib-cpp`, used by the
@@ -206,7 +206,7 @@ add_library(bagwiz_core
   src/core/tf_value_extract.cpp
   src/core/tf_walk_timeline.cpp
   src/core/trajectory.cpp
-  src/core/msgtype_convert/geo_pose_convert.cpp
+  src/core/msg_convert/geo_pose_convert.cpp
   src/core/image/raw_image.cpp
   src/core/image/compressed_image.cpp
   src/core/image/image_decoder.cpp
@@ -319,7 +319,7 @@ add_executable(bagwiz
   src/commands/check.cpp
   src/commands/completion.cpp
   src/commands/convert.cpp
-  src/commands/convert_msgtype_geo.cpp
+  src/commands/convert_msg_geo.cpp
   src/commands/generate.cpp
   src/commands/generate_video.cpp
   src/commands/joke.cpp
@@ -784,15 +784,15 @@ if(BUILD_TESTING)
   # geo_pose_convert lives in bagwiz_core; GeographicLib is linked explicitly so
   # the test still resolves the projection symbols under a static-lib build.
   ament_add_gtest(
-    bagwiz_geo_pose_convert_test test/core/msgtype_convert/geo_pose_convert_test.cpp)
+    bagwiz_geo_pose_convert_test test/core/msg_convert/geo_pose_convert_test.cpp)
   target_link_libraries(
     bagwiz_geo_pose_convert_test bagwiz_core ${GeographicLib_LIBRARIES})
 
-  ament_add_gtest(bagwiz_convert_msgtype_geo_test
-    test/commands/convert_msgtype_geo_test.cpp
-    src/commands/convert_msgtype_geo.cpp)
+  ament_add_gtest(bagwiz_convert_msg_geo_test
+    test/commands/convert_msg_geo_test.cpp
+    src/commands/convert_msg_geo.cpp)
   target_link_libraries(
-    bagwiz_convert_msgtype_geo_test bagwiz_core fmt::fmt ${GeographicLib_LIBRARIES}
+    bagwiz_convert_msg_geo_test bagwiz_core fmt::fmt ${GeographicLib_LIBRARIES}
     ${sensor_msgs_TARGETS})
 endif()
 

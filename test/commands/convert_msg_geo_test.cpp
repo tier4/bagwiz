@@ -6,11 +6,11 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/commands/convert_msgtype_geo.hpp"
+#include "bagwiz/commands/convert_msg_geo.hpp"
 
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/introspection_loader.hpp"
-#include "bagwiz/core/msgtype_convert/geo_pose_convert.hpp"
+#include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
@@ -35,7 +35,7 @@
 namespace
 {
 
-namespace mtc = bagwiz::core::msgtype_convert;
+namespace mtc = bagwiz::core::msg_convert;
 
 constexpr const char * kNavSatFixType = "sensor_msgs/msg/NavSatFix";
 
@@ -201,13 +201,13 @@ std::vector<std::byte> read_other_payload(
   return out;
 }
 
-class ConvertMsgtypeGeoTest : public ::testing::Test
+class ConvertMsgGeoTest : public ::testing::Test
 {
 protected:
   void SetUp() override
   {
     tmp_dir_ = std::filesystem::temp_directory_path() /
-               ("bagwiz_convert_msgtype_geo_" +
+               ("bagwiz_convert_msg_geo_" +
                 std::to_string(::testing::UnitTest::GetInstance()->current_test_info()->line()));
     std::filesystem::remove_all(tmp_dir_);
     std::filesystem::create_directories(tmp_dir_);
@@ -219,20 +219,20 @@ protected:
 
 // -o mode, by --src type: /fix is re-typed to pose_with_covariance_stamped and
 // converted; /other is copied verbatim.
-TEST_F(ConvertMsgtypeGeoTest, ByTypeToOutputConvertsAndCopies)
+TEST_F(ConvertMsgGeoTest, ByTypeToOutputConvertsAndCopies)
 {
   const auto in = tmp_dir_ / "in.mcap";
   const auto out = tmp_dir_ / "out.mcap";
   write_input_bag(in);
 
-  bagwiz::commands::ConvertMsgtypeGeoArgs args;
+  bagwiz::commands::ConvertMsgGeoArgs args;
   args.input_path = in;
   args.src = "nav_sat_fix";
   args.dst = "pose_with_covariance_stamped";
   args.crs = "enu";
   args.origin = "35.0,139.0,10.0";
   args.output_path = out;
-  ASSERT_EQ(bagwiz::commands::run_convert_msgtype_geo(args), 0);
+  ASSERT_EQ(bagwiz::commands::run_convert_msg_geo(args), 0);
 
   const auto fix = read_fix_as_pose(out);
   EXPECT_EQ(fix.type, std::string(mtc::kPoseWithCovarianceStampedType));
@@ -258,13 +258,13 @@ TEST_F(ConvertMsgtypeGeoTest, ByTypeToOutputConvertsAndCopies)
 }
 
 // --topic selection with UTM target; --src ignored.
-TEST_F(ConvertMsgtypeGeoTest, ByTopicToOutputUsesToAndIgnoresFrom)
+TEST_F(ConvertMsgGeoTest, ByTopicToOutputUsesToAndIgnoresFrom)
 {
   const auto in = tmp_dir_ / "in.mcap";
   const auto out = tmp_dir_ / "out.mcap";
   write_input_bag(in);
 
-  bagwiz::commands::ConvertMsgtypeGeoArgs args;
+  bagwiz::commands::ConvertMsgGeoArgs args;
   args.input_path = in;
   args.topics = {"/fix"};
   args.dst = "pose_stamped";
@@ -272,7 +272,7 @@ TEST_F(ConvertMsgtypeGeoTest, ByTopicToOutputUsesToAndIgnoresFrom)
   args.origin = "35.0,139.0,10.0";
   args.frame_id = "utm_local";
   args.output_path = out;
-  ASSERT_EQ(bagwiz::commands::run_convert_msgtype_geo(args), 0);
+  ASSERT_EQ(bagwiz::commands::run_convert_msg_geo(args), 0);
 
   const auto fix = read_fix_as_pose(out);
   EXPECT_EQ(fix.type, std::string(mtc::kPoseStampedType));
@@ -283,18 +283,18 @@ TEST_F(ConvertMsgtypeGeoTest, ByTopicToOutputUsesToAndIgnoresFrom)
 }
 
 // In-place rewrite (no -o) replaces the input bag.
-TEST_F(ConvertMsgtypeGeoTest, InPlaceRewritesInput)
+TEST_F(ConvertMsgGeoTest, InPlaceRewritesInput)
 {
   const auto in = tmp_dir_ / "in.mcap";
   write_input_bag(in);
 
-  bagwiz::commands::ConvertMsgtypeGeoArgs args;
+  bagwiz::commands::ConvertMsgGeoArgs args;
   args.input_path = in;
   args.src = "nav_sat_fix";
   args.dst = "pose_stamped";
   args.crs = "enu";
   args.origin = "35.0,139.0,10.0";
-  ASSERT_EQ(bagwiz::commands::run_convert_msgtype_geo(args), 0);
+  ASSERT_EQ(bagwiz::commands::run_convert_msg_geo(args), 0);
 
   const auto fix = read_fix_as_pose(in);
   EXPECT_EQ(fix.type, std::string(mtc::kPoseStampedType));
@@ -302,19 +302,19 @@ TEST_F(ConvertMsgtypeGeoTest, InPlaceRewritesInput)
 }
 
 // ENU origin auto-derived from the first NavSatFix when --origin is omitted.
-TEST_F(ConvertMsgtypeGeoTest, EnuDerivesOriginFromFirstSample)
+TEST_F(ConvertMsgGeoTest, EnuDerivesOriginFromFirstSample)
 {
   const auto in = tmp_dir_ / "in.mcap";
   const auto out = tmp_dir_ / "out.mcap";
   write_input_bag(in);
 
-  bagwiz::commands::ConvertMsgtypeGeoArgs args;
+  bagwiz::commands::ConvertMsgGeoArgs args;
   args.input_path = in;
   args.src = "nav_sat_fix";
   args.dst = "pose_stamped";
   args.crs = "enu";  // no origin -> first sample (35.0,139.0,10.0)
   args.output_path = out;
-  ASSERT_EQ(bagwiz::commands::run_convert_msgtype_geo(args), 0);
+  ASSERT_EQ(bagwiz::commands::run_convert_msg_geo(args), 0);
 
   const auto fix = read_fix_as_pose(out);
   ASSERT_EQ(fix.poses.size(), 2U);
@@ -324,20 +324,20 @@ TEST_F(ConvertMsgtypeGeoTest, EnuDerivesOriginFromFirstSample)
 
 // --crs is optional and defaults to ENU: omitting it projects to a local
 // East-North-Up frame just as `--crs enu` would.
-TEST_F(ConvertMsgtypeGeoTest, CrsDefaultsToEnu)
+TEST_F(ConvertMsgGeoTest, CrsDefaultsToEnu)
 {
   const auto in = tmp_dir_ / "in.mcap";
   const auto out = tmp_dir_ / "out.mcap";
   write_input_bag(in);
 
-  bagwiz::commands::ConvertMsgtypeGeoArgs args;
+  bagwiz::commands::ConvertMsgGeoArgs args;
   args.input_path = in;
   args.src = "nav_sat_fix";
   args.dst = "pose_stamped";
   // args.crs intentionally left at its default ("enu").
   args.origin = "35.0,139.0,10.0";
   args.output_path = out;
-  ASSERT_EQ(bagwiz::commands::run_convert_msgtype_geo(args), 0);
+  ASSERT_EQ(bagwiz::commands::run_convert_msg_geo(args), 0);
 
   const auto fix = read_fix_as_pose(out);
   ASSERT_EQ(fix.poses.size(), 2U);
@@ -348,14 +348,14 @@ TEST_F(ConvertMsgtypeGeoTest, CrsDefaultsToEnu)
 }
 
 // --overwrite governs clobbering an existing -o path.
-TEST_F(ConvertMsgtypeGeoTest, OverwriteGuardsExistingOutput)
+TEST_F(ConvertMsgGeoTest, OverwriteGuardsExistingOutput)
 {
   const auto in = tmp_dir_ / "in.mcap";
   const auto out = tmp_dir_ / "out.mcap";
   write_input_bag(in);
   write_input_bag(out);  // pre-existing output
 
-  bagwiz::commands::ConvertMsgtypeGeoArgs args;
+  bagwiz::commands::ConvertMsgGeoArgs args;
   args.input_path = in;
   args.src = "nav_sat_fix";
   args.dst = "pose_stamped";
@@ -364,57 +364,57 @@ TEST_F(ConvertMsgtypeGeoTest, OverwriteGuardsExistingOutput)
   args.output_path = out;
 
   // Without --overwrite the run stops.
-  EXPECT_EQ(bagwiz::commands::run_convert_msgtype_geo(args), 1);
+  EXPECT_EQ(bagwiz::commands::run_convert_msg_geo(args), 1);
   // With --overwrite it proceeds.
   args.overwrite = true;
-  EXPECT_EQ(bagwiz::commands::run_convert_msgtype_geo(args), 0);
+  EXPECT_EQ(bagwiz::commands::run_convert_msg_geo(args), 0);
 }
 
 // --- error paths ---
 
-TEST_F(ConvertMsgtypeGeoTest, MissingFromWithoutTopicFails)
+TEST_F(ConvertMsgGeoTest, MissingFromWithoutTopicFails)
 {
   const auto in = tmp_dir_ / "in.mcap";
   write_input_bag(in);
 
-  bagwiz::commands::ConvertMsgtypeGeoArgs args;
+  bagwiz::commands::ConvertMsgGeoArgs args;
   args.input_path = in;
   args.dst = "pose_stamped";
   args.crs = "enu";
   args.origin = "35.0,139.0,10.0";
-  EXPECT_EQ(bagwiz::commands::run_convert_msgtype_geo(args), 1);
+  EXPECT_EQ(bagwiz::commands::run_convert_msg_geo(args), 1);
 }
 
-TEST_F(ConvertMsgtypeGeoTest, MixedTopicTypesFails)
+TEST_F(ConvertMsgGeoTest, MixedTopicTypesFails)
 {
   const auto in = tmp_dir_ / "in.mcap";
   write_input_bag(in);
 
-  bagwiz::commands::ConvertMsgtypeGeoArgs args;
+  bagwiz::commands::ConvertMsgGeoArgs args;
   args.input_path = in;
   args.topics = {"/fix", "/other"};  // NavSatFix + String -> mixed
   args.dst = "pose_stamped";
   args.crs = "enu";
   args.origin = "35.0,139.0,10.0";
-  EXPECT_EQ(bagwiz::commands::run_convert_msgtype_geo(args), 1);
+  EXPECT_EQ(bagwiz::commands::run_convert_msg_geo(args), 1);
 }
 
-TEST_F(ConvertMsgtypeGeoTest, UnsupportedRouteFails)
+TEST_F(ConvertMsgGeoTest, UnsupportedRouteFails)
 {
   const auto in = tmp_dir_ / "in.mcap";
   write_input_bag(in);
 
   // /other is std_msgs/msg/String -> no whitelisted route to a pose type.
-  bagwiz::commands::ConvertMsgtypeGeoArgs args;
+  bagwiz::commands::ConvertMsgGeoArgs args;
   args.input_path = in;
   args.topics = {"/other"};
   args.dst = "pose_stamped";
   args.crs = "enu";
   args.origin = "35.0,139.0,10.0";
-  EXPECT_EQ(bagwiz::commands::run_convert_msgtype_geo(args), 1);
+  EXPECT_EQ(bagwiz::commands::run_convert_msg_geo(args), 1);
 }
 
-TEST_F(ConvertMsgtypeGeoTest, NoMatchingTopicForFromFails)
+TEST_F(ConvertMsgGeoTest, NoMatchingTopicForFromFails)
 {
   const auto in = tmp_dir_ / "in.mcap";
   // A bag with no NavSatFix topic at all.
@@ -431,29 +431,29 @@ TEST_F(ConvertMsgtypeGeoTest, NoMatchingTopicForFromFails)
     writer->close();
   }
 
-  bagwiz::commands::ConvertMsgtypeGeoArgs args;
+  bagwiz::commands::ConvertMsgGeoArgs args;
   args.input_path = in;
   args.src = "nav_sat_fix";
   args.dst = "pose_stamped";
   args.crs = "enu";
   args.origin = "35.0,139.0,10.0";
-  EXPECT_EQ(bagwiz::commands::run_convert_msgtype_geo(args), 1);
+  EXPECT_EQ(bagwiz::commands::run_convert_msg_geo(args), 1);
 }
 
-TEST_F(ConvertMsgtypeGeoTest, MalformedOriginFails)
+TEST_F(ConvertMsgGeoTest, MalformedOriginFails)
 {
   const auto in = tmp_dir_ / "in.mcap";
   const auto out = tmp_dir_ / "out.mcap";
   write_input_bag(in);
 
-  bagwiz::commands::ConvertMsgtypeGeoArgs args;
+  bagwiz::commands::ConvertMsgGeoArgs args;
   args.input_path = in;
   args.src = "nav_sat_fix";
   args.dst = "pose_stamped";
   args.crs = "enu";
   args.origin = "not,a,number";
   args.output_path = out;
-  EXPECT_EQ(bagwiz::commands::run_convert_msgtype_geo(args), 1);
+  EXPECT_EQ(bagwiz::commands::run_convert_msg_geo(args), 1);
 }
 
 }  // namespace

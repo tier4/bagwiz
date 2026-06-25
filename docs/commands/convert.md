@@ -5,9 +5,9 @@ Cross-format bag conversion. Subcommands:
 | Subcommand                                   | Direction                                                                           |
 | -------------------------------------------- | ----------------------------------------------------------------------------------- |
 | [`format`](#bagwiz-convert-format)           | ROS 2 rosbag2 repack between MCAP and SQLite3 storage and/or file/directory layout  |
-| [`msgtype geo`](#bagwiz-convert-msgtype-geo) | Convert a geographic source (`NavSatFix`) into a pose type, projected to ENU or UTM |
+| [`msg geo`](#bagwiz-convert-msg-geo) | Convert a geographic source (`NavSatFix`) into a pose type, projected to ENU or UTM |
 
-`msgtype` is a command group for message-type conversions; each family of
+`msg` is a command group for message-type conversions; each family of
 conversions lives under its own leaf (today: `geo` for position-related types).
 
 ## Common notes
@@ -113,7 +113,7 @@ bagwiz convert format drive.mcap drive_dir/
 
 ---
 
-## `bagwiz convert msgtype geo`
+## `bagwiz convert msg geo`
 
 Convert the message type of selected topics from a geographic source
 (`sensor_msgs/msg/NavSatFix`) into a `geometry_msgs` pose type, projecting
@@ -134,7 +134,7 @@ Whitelisted routes (`--src` → `--dst`):
 ### Usage
 
 ```text
-bagwiz convert msgtype geo [OPTIONS] <input> --dst <type>
+bagwiz convert msg geo [OPTIONS] <input> --dst <type>
 ```
 
 ### Positional arguments
@@ -187,11 +187,11 @@ bagwiz convert msgtype geo [OPTIONS] <input> --dst <type>
 ```bash
 # Convert every NavSatFix topic to PoseWithCovarianceStamped in a local ENU
 # frame (the default CRS), deriving the origin from the first fix; new bag.
-bagwiz convert msgtype geo drive.mcap \
+bagwiz convert msg geo drive.mcap \
   --src nav_sat_fix --dst pose_with_covariance_stamped -o drive_pose.mcap
 
 # Convert one specific topic to PoseStamped in UTM, in place.
-bagwiz convert msgtype geo drive.mcap \
+bagwiz convert msg geo drive.mcap \
   --topic /sensing/gnss/fix --dst pose_stamped --crs utm --origin 35.68,139.76,40.0
 ```
 

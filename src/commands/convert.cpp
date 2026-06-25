@@ -8,11 +8,11 @@
 
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
-#include "bagwiz/commands/convert_msgtype_geo.hpp"
+#include "bagwiz/commands/convert_msg_geo.hpp"
 #include "bagwiz/core/bag_copy.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/msg_definition_resolver.hpp"
-#include "bagwiz/core/msgtype_convert/geo_pose_convert.hpp"
+#include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
 #include "bagwiz/core/output_path.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
@@ -87,7 +87,7 @@ public:
   {
     app.require_subcommand(1);
     configure_format(app);
-    configure_msgtype(app);
+    configure_msg(app);
   }
 
   int run() override
@@ -95,8 +95,8 @@ public:
     switch (selected_) {
       case Subcommand::kFormat:
         return run_format();
-      case Subcommand::kMsgtypeGeo:
-        return run_convert_msgtype_geo(msgtype_geo_args_);
+      case Subcommand::kMsgGeo:
+        return run_convert_msg_geo(msg_geo_args_);
       case Subcommand::kNone:
         BAGWIZ_LOG_ERROR(kLogger, "no subcommand selected");
         return 1;
@@ -105,7 +105,7 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kFormat, kMsgtypeGeo };
+  enum class Subcommand { kNone, kFormat, kMsgGeo };
   Subcommand selected_ = Subcommand::kNone;
 
   struct FormatArgs
@@ -116,7 +116,7 @@ private:
     bool overwrite = false;  // replace any pre-existing output_path
   } format_args_;
 
-  ConvertMsgtypeGeoArgs msgtype_geo_args_;
+  ConvertMsgGeoArgs msg_geo_args_;
 
   void configure_format(CLI::App & app)
   {
@@ -156,57 +156,57 @@ private:
     sub->callback([this]() { selected_ = Subcommand::kFormat; });
   }
 
-  // `msgtype` is a command group, not a leaf: its actions live under families
-  // such as `msgtype geo` (position-related type conversions). Modeling it as a
+  // `msg` is a command group, not a leaf: its actions live under families
+  // such as `msg geo` (position-related type conversions). Modeling it as a
   // group keeps room for further families (e.g. imu) without one flat command
   // accreting every type's options.
-  void configure_msgtype(CLI::App & app)
+  void configure_msg(CLI::App & app)
   {
-    auto * group = app.add_subcommand("msgtype", "Convert the message type of selected topics");
+    auto * group = app.add_subcommand("msg", "Convert the message type of selected topics");
     group->require_subcommand(1);
-    configure_msgtype_geo(*group);
+    configure_msg_geo(*group);
   }
 
-  void configure_msgtype_geo(CLI::App & group)
+  void configure_msg_geo(CLI::App & group)
   {
-    namespace mtc = bagwiz::core::msgtype_convert;
+    namespace mtc = bagwiz::core::msg_convert;
     auto * sub = group.add_subcommand(
       "geo",
       "Convert a geographic source (sensor_msgs/msg/NavSatFix) into a geometry_msgs pose type, "
       "projecting WGS84 lat/lon/alt into a Cartesian frame (ENU or UTM)");
-    sub->add_option("input", msgtype_geo_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+    sub->add_option("input", msg_geo_args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     sub
       ->add_option(
-        "--src", msgtype_geo_args_.src,
+        "--src", msg_geo_args_.src,
         "Source message type (snake_case). Required unless --topic is given; ignored when it is.")
       ->check(CLI::IsMember(mtc::from_snake_choices()));
-    sub->add_option("--dst", msgtype_geo_args_.dst, "Target message type (snake_case). Required.")
+    sub->add_option("--dst", msg_geo_args_.dst, "Target message type (snake_case). Required.")
       ->check(CLI::IsMember(mtc::to_snake_choices()));
     sub->add_option(
-      "--topic", msgtype_geo_args_.topics,
+      "--topic", msg_geo_args_.topics,
       "Convert exactly these topic(s) instead of every topic matching --src. All named topics "
       "must share one message type.");
     sub
       ->add_option(
-        "--crs", msgtype_geo_args_.crs,
+        "--crs", msg_geo_args_.crs,
         "Target Cartesian coordinate system: 'enu' (local tangent plane, needs an origin) or "
         "'utm' (easting/northing). Defaults to 'enu'.")
       ->check(CLI::IsMember({"enu", "utm"}))
       ->capture_default_str();
     sub->add_option(
-      "--origin", msgtype_geo_args_.origin,
+      "--origin", msg_geo_args_.origin,
       "WGS84 datum as <lat>,<lon>,<alt>. Required for ENU unless it can be derived from the "
       "first NavSatFix; an optional offset for UTM.");
     sub->add_option(
-      "--frame-id", msgtype_geo_args_.frame_id,
+      "--frame-id", msg_geo_args_.frame_id,
       "frame_id written onto the converted messages. Defaults to 'map' (enu) or 'utm' (utm).");
     sub->add_option(
-      "-o,--output", msgtype_geo_args_.output_path,
+      "-o,--output", msg_geo_args_.output_path,
       "Write the result to this new bag instead of rewriting <input> in place.");
     sub->add_flag(
-      "-w,--overwrite", msgtype_geo_args_.overwrite,
+      "-w,--overwrite", msg_geo_args_.overwrite,
       "Replace an existing -o/--output path. Without it, an existing output path stops the run.");
     sub->footer(
       "Only the selected topics are re-typed; every other topic is copied verbatim. The source "
@@ -214,7 +214,7 @@ private:
       "position_covariance (3x3) maps into the upper-left block of the pose 6x6 covariance "
       "(pose_with_covariance_stamped only); orientation is set to identity. The conversion is "
       "one-directional (NavSatFix -> pose).");
-    sub->callback([this]() { selected_ = Subcommand::kMsgtypeGeo; });
+    sub->callback([this]() { selected_ = Subcommand::kMsgGeo; });
   }
 
   int run_format()

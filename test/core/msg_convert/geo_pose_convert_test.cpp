@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/core/msgtype_convert/geo_pose_convert.hpp"
+#include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
 
 #include "bagwiz/core/cdr_walker/value.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
@@ -29,7 +29,7 @@
 namespace
 {
 
-namespace mtc = bagwiz::core::msgtype_convert;
+namespace mtc = bagwiz::core::msg_convert;
 namespace cdr = bagwiz::core::cdr_walker;
 
 // --- helpers to build a decoded NavSatFix Value tree ---

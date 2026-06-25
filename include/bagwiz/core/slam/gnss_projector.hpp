@@ -23,7 +23,7 @@
 // GeographicLib is hidden behind a pimpl so this header stays dependency-free
 // (mirroring geo_pose_convert's GeoPoseConverter). The projection itself reuses
 // the same GeographicLib::LocalCartesian forward solve as `bagwiz convert
-// msgtype geo`'s ENU route. Stateful and thread-incompatible; construct one per
+// msg geo`'s ENU route. Stateful and thread-incompatible; construct one per
 // run.
 namespace bagwiz::core::slam
 {

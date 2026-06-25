@@ -6,8 +6,8 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#ifndef BAGWIZ__COMMANDS__CONVERT_MSGTYPE_GEO_HPP_
-#define BAGWIZ__COMMANDS__CONVERT_MSGTYPE_GEO_HPP_
+#ifndef BAGWIZ__COMMANDS__CONVERT_MSG_GEO_HPP_
+#define BAGWIZ__COMMANDS__CONVERT_MSG_GEO_HPP_
 
 #include <filesystem>
 #include <optional>
@@ -17,7 +17,7 @@
 namespace bagwiz::commands
 {
 
-// Parsed arguments for `bagwiz convert msgtype geo`. The command rewrites a
+// Parsed arguments for `bagwiz convert msg geo`. The command rewrites a
 // rosbag, converting the message type of selected topics from a geographic
 // source (sensor_msgs/msg/NavSatFix) into a geometry_msgs pose type, projecting
 // WGS84 lat/lon/alt into the chosen Cartesian frame (ENU or UTM). Every other
@@ -28,7 +28,7 @@ namespace bagwiz::commands
 //     `src` is ignored. All named topics must share one message type.
 //   - `topics` empty: `src` and `dst` are required; every topic whose type
 //     matches `src` is converted.
-struct ConvertMsgtypeGeoArgs
+struct ConvertMsgGeoArgs
 {
   std::filesystem::path input_path;
   std::string src;                      // snake_case source choice; empty allowed when topics given
@@ -46,8 +46,8 @@ struct ConvertMsgtypeGeoArgs
 // invalid origin, decode/serialize failure, or I/O error). Kept as a free
 // function in its own translation unit so the ConvertCommand dispatcher in
 // convert.cpp stays small; declared here so convert.cpp can call it.
-int run_convert_msgtype_geo(const ConvertMsgtypeGeoArgs & args);
+int run_convert_msg_geo(const ConvertMsgGeoArgs & args);
 
 }  // namespace bagwiz::commands
 
-#endif  // BAGWIZ__COMMANDS__CONVERT_MSGTYPE_GEO_HPP_
+#endif  // BAGWIZ__COMMANDS__CONVERT_MSG_GEO_HPP_

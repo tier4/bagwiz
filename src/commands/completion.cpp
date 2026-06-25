@@ -648,10 +648,10 @@ std::vector<std::string> complete_help_only(const CompletionRequest & request)
   return {};
 }
 
-// `convert msgtype` is a nested command group with one action verb, `geo`,
+// `convert msg` is a nested command group with one action verb, `geo`,
 // shifting every argument one word right of the flat `format` subcommand:
 //
-//   geo: `convert`(0) `msgtype`(1) `geo`(2) `<input>`(3) [--src V] [--dst V]
+//   geo: `convert`(0) `msg`(1) `geo`(2) `<input>`(3) [--src V] [--dst V]
 //        [--topic ...] [--crs V] [--origin V] [--frame-id V] [-o <out>]
 //        [-w|--overwrite]
 //
@@ -660,7 +660,7 @@ std::vector<std::string> complete_help_only(const CompletionRequest & request)
 // the same snake_case choice sets the command's CLI::IsMember checks enforce
 // (kept in sync by hand, like the other hard-coded candidate sets here). The
 // `<input>` and `-o` values are paths that fall through to file completion.
-std::vector<std::string> complete_convert_msgtype(
+std::vector<std::string> complete_convert_msg(
   const CompletionRequest & request, const std::string & current)
 {
   if (request.cursor_word == kSecondCommandArgWord) {
@@ -707,15 +707,15 @@ std::vector<std::string> complete_convert(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"format", "msgtype"}, current);
+    return matching({"format", "msg"}, current);
   }
 
   const auto & mode = request.words[kFirstCommandArgWord];
 
-  // `msgtype` is a nested command group (`msgtype geo`); its positional shape
+  // `msg` is a nested command group (`msg geo`); its positional shape
   // differs from the flat `format` subcommand, so it is handled apart.
-  if (mode == "msgtype") {
-    return complete_convert_msgtype(request, current);
+  if (mode == "msg") {
+    return complete_convert_msg(request, current);
   }
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
