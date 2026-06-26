@@ -112,4 +112,133 @@ TEST(VoxelGrid, EmptyGridProducesEmptyOutput)
   EXPECT_TRUE(grid.intensities().empty());
 }
 
+// --- VisibilityFilter (Removert-style dynamic-point removal) ----------------
+
+// Build a dense "wall" of scan returns on the plane x == wall_x, spanning a
+// y/z patch, so a range image has a return in (nearly) every direction bin the
+// test cares about. Points are world-frame; the scan origin is the sensor.
+std::vector<std::array<float, 3>> wall_at(float wall_x, float half_extent, float step)
+{
+  std::vector<std::array<float, 3>> pts;
+  for (float y = -half_extent; y <= half_extent; y += step) {
+    for (float z = -half_extent; z <= half_extent; z += step) {
+      pts.push_back({wall_x, y, z});
+    }
+  }
+  return pts;
+}
+
+slam::VisibilityFilterConfig permissive_config()
+{
+  slam::VisibilityFilterConfig cfg;
+  // Coarse bins so the wall's discrete returns reliably populate the direction
+  // bin of each map point under test (no empty-bin misses).
+  cfg.azimuth_resolution_deg = 5.0;
+  cfg.elevation_resolution_deg = 5.0;
+  cfg.range_margin = 0.3;
+  cfg.min_range = 0.5;
+  cfg.max_range = 50.0;
+  cfg.min_observations = 1;
+  cfg.dynamic_ratio = 0.3;
+  return cfg;
+}
+
+TEST(VisibilityFilter, KeepsAStaticPointObservedAtItsOwnRange)
+{
+  // Map holds one point on the wall at x=10. Every scan observes the wall there,
+  // so the point is supported, never seen through.
+  const std::vector<std::array<float, 3>> map = {{10.0F, 0.0F, 0.0F}};
+  slam::VisibilityFilter filter(permissive_config(), map);
+
+  const auto wall = wall_at(10.0F, 2.0F, 0.1F);
+  for (int i = 0; i < 5; ++i) {
+    filter.add_scan({0.0, 0.0, 0.0}, wall);
+  }
+
+  const auto keep = filter.keep_mask();
+  ASSERT_EQ(keep.size(), 1U);
+  EXPECT_EQ(keep[0], 1);  // kept
+  EXPECT_EQ(filter.removed_count(), 0U);
+}
+
+TEST(VisibilityFilter, RemovesAGhostPointTheScansSeeThrough)
+{
+  // Map holds a "ghost" point floating at x=5 (e.g. a person present in one
+  // earlier frame). Every scan now observes the background wall at x=10 in that
+  // same direction, i.e. it sees straight through x=5 -> dynamic.
+  const std::vector<std::array<float, 3>> map = {{5.0F, 0.0F, 0.0F}};
+  slam::VisibilityFilter filter(permissive_config(), map);
+
+  const auto wall = wall_at(10.0F, 2.0F, 0.1F);
+  for (int i = 0; i < 5; ++i) {
+    filter.add_scan({0.0, 0.0, 0.0}, wall);
+  }
+
+  const auto keep = filter.keep_mask();
+  ASSERT_EQ(keep.size(), 1U);
+  EXPECT_EQ(keep[0], 0);  // removed
+  EXPECT_EQ(filter.removed_count(), 1U);
+}
+
+TEST(VisibilityFilter, DoesNotRemoveAnOccludedPointBehindTheObservedSurface)
+{
+  // A point BEHIND the wall (x=20, wall at x=10): every scan sees a closer
+  // surface, so the point is occluded, never judged -> kept (no false positive).
+  const std::vector<std::array<float, 3>> map = {{20.0F, 0.0F, 0.0F}};
+  slam::VisibilityFilter filter(permissive_config(), map);
+
+  const auto wall = wall_at(10.0F, 2.0F, 0.1F);
+  for (int i = 0; i < 5; ++i) {
+    filter.add_scan({0.0, 0.0, 0.0}, wall);
+  }
+
+  EXPECT_EQ(filter.keep_mask()[0], 1);  // kept (occluded, not seen-through)
+  EXPECT_EQ(filter.removed_count(), 0U);
+}
+
+TEST(VisibilityFilter, RespectsMinObservationsBeforeRemoving)
+{
+  const std::vector<std::array<float, 3>> map = {{5.0F, 0.0F, 0.0F}};
+  slam::VisibilityFilterConfig cfg = permissive_config();
+  cfg.min_observations = 3;
+  slam::VisibilityFilter filter(cfg, map);
+
+  // Only two see-through looks: below the threshold, so the point survives.
+  const auto wall = wall_at(10.0F, 2.0F, 0.1F);
+  filter.add_scan({0.0, 0.0, 0.0}, wall);
+  filter.add_scan({0.0, 0.0, 0.0}, wall);
+  EXPECT_EQ(filter.keep_mask()[0], 1);  // kept (too few observations)
+
+  // A third look crosses min_observations and removes it.
+  filter.add_scan({0.0, 0.0, 0.0}, wall);
+  EXPECT_EQ(filter.keep_mask()[0], 0);  // removed
+}
+
+TEST(VisibilityFilter, MixedMapKeepsStaticAndDropsGhost)
+{
+  // Two map points sharing the same direction from the origin: a ghost at x=5
+  // and the real wall point at x=10. The filter must drop only the ghost.
+  const std::vector<std::array<float, 3>> map = {{5.0F, 0.0F, 0.0F}, {10.0F, 0.0F, 0.0F}};
+  slam::VisibilityFilter filter(permissive_config(), map);
+
+  const auto wall = wall_at(10.0F, 2.0F, 0.1F);
+  for (int i = 0; i < 4; ++i) {
+    filter.add_scan({0.0, 0.0, 0.0}, wall);
+  }
+
+  const auto keep = filter.keep_mask();
+  ASSERT_EQ(keep.size(), 2U);
+  EXPECT_EQ(keep[0], 0);  // ghost removed
+  EXPECT_EQ(keep[1], 1);  // wall kept
+  EXPECT_EQ(filter.removed_count(), 1U);
+}
+
+TEST(VisibilityFilter, EmptyMapProducesEmptyMask)
+{
+  slam::VisibilityFilter filter(permissive_config(), {});
+  filter.add_scan({0.0, 0.0, 0.0}, wall_at(10.0F, 1.0F, 0.2F));
+  EXPECT_TRUE(filter.keep_mask().empty());
+  EXPECT_EQ(filter.removed_count(), 0U);
+}
+
 }  // namespace

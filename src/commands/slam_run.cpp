@@ -643,6 +643,10 @@ private:
   {
     core::slam::CloudMapperConfig config;
     config.map_resolution = args_.map_resolution;
+    config.enable_dynamic_removal = args_.remove_dynamic;
+    config.dynamic_ratio = args_.dynamic_ratio;
+    config.dynamic_min_range = args_.dynamic_min_range;
+    config.dynamic_max_range = args_.dynamic_max_range;
     config.t_lidar_imu = t_lidar_imu;
     config.enable_gnss = !args_.gnss_topic.empty();
     // Resolve the antenna lever-arm (T_cloud_gnss) from static TF so the GNSS prior
@@ -757,6 +761,12 @@ private:
       "to {} and {}\n",
       out_traj->size(), map.points.size(), scans, imu_suffix(imu_count), skipped,
       output_path_.string(), map_path_.string());
+
+    if (args_.remove_dynamic) {
+      fmt::print(
+        stdout, "Removed {} dynamic point(s) from the map (visibility filter)\n",
+        map.dynamic_removed_count);
+    }
 
     if (!args_.gnss_topic.empty()) {
       if (map.gnss_factor_count > 0) {

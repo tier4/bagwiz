@@ -525,6 +525,84 @@ struct CloudMapper::Impl
     }
     result.points = grid.points();
     result.intensities = grid.intensities();
+
+    if (config.enable_dynamic_removal) {
+      remove_dynamic_points(result, with_intensity);
+    }
+  }
+
+  // Removert-style dynamic-point removal over the merged map. Builds a
+  // VisibilityFilter from the map points, replays every frame as a scan viewpoint
+  // (sensor origin = optimized frame translation; observations = that frame's full
+  // world-frame points), then drops the map points the scans see through. Points
+  // and the parallel intensities are filtered together. A no-op for an empty map.
+  void remove_dynamic_points(CloudMap & result, bool with_intensity) const
+  {
+    if (result.points.empty()) {
+      return;
+    }
+
+    VisibilityFilterConfig vf;
+    vf.azimuth_resolution_deg = config.dynamic_azimuth_resolution_deg;
+    vf.elevation_resolution_deg = config.dynamic_elevation_resolution_deg;
+    vf.range_margin = config.dynamic_range_margin;
+    vf.min_range = config.dynamic_min_range;
+    vf.max_range = config.dynamic_max_range;
+    vf.min_observations = config.dynamic_min_observations;
+    vf.dynamic_ratio = config.dynamic_ratio;
+
+    VisibilityFilter filter(vf, result.points);
+
+    // Replay each frame as a scan: its optimized world pose gives both the sensor
+    // origin and the placement of its full points (reusing fill_map's transform).
+    std::vector<std::array<float, 3>> world_points;
+    for (const auto & entry : entries) {
+      if (!entry.submap) {
+        continue;
+      }
+      const Eigen::Isometry3d & T_world_origin = entry.submap->T_world_origin;
+      for (const auto & ref : entry.frames) {
+        if (ref.points.empty()) {
+          continue;
+        }
+        const Eigen::Isometry3d T_world_frame = T_world_origin * ref.T_origin_frame;
+        const Eigen::Vector3d origin = T_world_frame.translation();
+        world_points.clear();
+        world_points.reserve(ref.points.size());
+        for (const auto & p : ref.points) {
+          const Eigen::Vector3d local(p[0], p[1], p[2]);
+          const Eigen::Vector3d world = T_world_frame * local;
+          world_points.push_back(
+            {static_cast<float>(world.x()), static_cast<float>(world.y()),
+             static_cast<float>(world.z())});
+        }
+        filter.add_scan({origin.x(), origin.y(), origin.z()}, world_points);
+      }
+    }
+
+    // Apply the keep-mask in place, compacting points (and intensities, when
+    // present) to the survivors while preserving order.
+    const std::vector<char> keep = filter.keep_mask();
+    std::vector<std::array<float, 3>> kept_points;
+    std::vector<float> kept_intensities;
+    kept_points.reserve(result.points.size());
+    if (with_intensity) {
+      kept_intensities.reserve(result.intensities.size());
+    }
+    std::size_t removed = 0;
+    for (std::size_t i = 0; i < result.points.size(); ++i) {
+      if (keep[i] != 0) {
+        kept_points.push_back(result.points[i]);
+        if (with_intensity) {
+          kept_intensities.push_back(result.intensities[i]);
+        }
+      } else {
+        ++removed;
+      }
+    }
+    result.points = std::move(kept_points);
+    result.intensities = std::move(kept_intensities);
+    result.dynamic_removed_count = removed;
   }
 };
 

@@ -54,6 +54,27 @@ struct CloudMapperConfig
   // grids of overlapping frames (at the cost of a much larger map). Must be > 0.
   double map_resolution = 0.2;
 
+  // Remove dynamic ("see-through") points from the exported map. When true, the
+  // map rebuilt in fill_map is passed through a Removert-style VisibilityFilter:
+  // each optimized scan's points form a range image from its sensor origin, and a
+  // merged map point is dropped when enough scans observe a farther surface along
+  // its line of sight (the space it occupies was seen as free), the signature of
+  // a moving object's ghost trail. Off by default; the trajectory is never
+  // affected — only the exported map's contents. Tuned by the fields below
+  // (defaults mirror VisibilityFilterConfig).
+  bool enable_dynamic_removal = false;
+
+  // Tunables for the dynamic-point filter; only consulted when
+  // enable_dynamic_removal is true. See VisibilityFilterConfig for the meaning of
+  // each field.
+  double dynamic_azimuth_resolution_deg = 0.5;
+  double dynamic_elevation_resolution_deg = 1.0;
+  double dynamic_range_margin = 0.5;
+  double dynamic_min_range = 1.0;
+  double dynamic_max_range = 60.0;
+  int dynamic_min_observations = 2;
+  double dynamic_ratio = 0.3;
+
   // LiDAR↔IMU extrinsic. nullopt → LiDAR-only CT odometry (the M2 behavior; IMU
   // disabled in sub/global mapping). A value → LiDAR-IMU CPU odometry with that
   // extrinsic, and IMU enabled in sub/global mapping; feed IMU via insert_imu().
@@ -152,6 +173,10 @@ struct CloudMap
   // optimization. 0 when GNSS was disabled or could not initialize (no fixes
   // overlapping the submap timespan, or baseline below gnss_min_baseline).
   std::size_t gnss_factor_count = 0;
+
+  // Number of map points dropped by the dynamic-point filter. 0 when
+  // enable_dynamic_removal was off (or nothing was judged dynamic).
+  std::size_t dynamic_removed_count = 0;
 };
 
 class CloudMapper

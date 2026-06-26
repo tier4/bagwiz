@@ -100,6 +100,31 @@ private:
         "LiDAR preprocessor's ~0.15 m input voxel bounds the real resolution.")
       ->check(CLI::PositiveNumber);
     sub->add_flag(
+      "--remove-dynamic", run_args_.remove_dynamic,
+      "Remove dynamic (moving-object) points from the exported map using a Removert-style "
+      "visibility filter: a map point is dropped when enough optimized scans see a farther "
+      "surface along its line of sight (the space it occupies was observed as free). Affects "
+      "map.pcd only, never the optimization or trajectory.");
+    sub
+      ->add_option(
+        "--dynamic-ratio", run_args_.dynamic_ratio,
+        "See-through ratio for --remove-dynamic: drop a map point when this fraction of the "
+        "scans looking along its line of sight see a farther surface (default 0.3; higher = "
+        "keeps more).")
+      ->check(CLI::Range(0.0, 1.0));
+    sub
+      ->add_option(
+        "--dynamic-min-range", run_args_.dynamic_min_range,
+        "Minimum range in meters a scan must observe a map point at before it constrains it "
+        "(default 1.0); drops ego/near-body returns. Only used with --remove-dynamic.")
+      ->check(CLI::PositiveNumber);
+    sub
+      ->add_option(
+        "--dynamic-max-range", run_args_.dynamic_max_range,
+        "Maximum range in meters a scan considers a map point at (default 60.0); bounds the "
+        "search and ignores far, sparse returns. Only used with --remove-dynamic.")
+      ->check(CLI::PositiveNumber);
+    sub->add_flag(
       "-w,--overwrite", run_args_.overwrite, "Overwrite the output(s) if they already exist");
     sub->add_flag(
       "--viewer", run_args_.viewer,

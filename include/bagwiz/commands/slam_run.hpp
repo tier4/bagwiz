@@ -41,6 +41,19 @@ struct SlamRunArgs
   // Exported-map voxel size in meters. Controls only the exported map's density,
   // never the optimization or trajectory.
   double map_resolution = 0.2;
+  // Remove dynamic (moving-object) points from the exported map with a
+  // Removert-style visibility filter. Affects only map.pcd contents, never the
+  // optimization or trajectory. The remaining dynamic_* fields tune the filter
+  // and are consulted only when this is set.
+  bool remove_dynamic = false;
+  // See-through ratio: a map point is dropped when this fraction of the scans
+  // that look along its line of sight observe a farther surface. Higher keeps
+  // more (more conservative).
+  double dynamic_ratio = 0.3;
+  // A scan only judges a map point whose range from the scan origin is within
+  // [dynamic_min_range, dynamic_max_range] meters.
+  double dynamic_min_range = 1.0;
+  double dynamic_max_range = 60.0;
   // Overwrite the output file(s) if they already exist.
   bool overwrite = false;
   // After writing map.pcd, serve it over a loopback HTTP server and open the
