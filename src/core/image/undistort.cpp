@@ -14,6 +14,8 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -22,6 +24,31 @@
 
 namespace bagwiz::core::image
 {
+
+namespace
+{
+
+// CameraInfo.r is the rectification rotation: identity for monocular cameras and
+// a real rotation for stereo-rectified ones. Some publishers leave it zero-filled
+// (or otherwise unset). Feeding a zero / non-finite R to initUndistortRectifyMap
+// produces NaN maps and a black image, so honor R only when it is a genuine,
+// finite matrix and otherwise fall back to identity — matching
+// tier4_perception_dataset, which always passes identity.
+[[nodiscard]] bool is_usable_rotation(const std::array<double, 9> & r)
+{
+  bool all_zero = true;
+  for (const double v : r) {
+    if (!std::isfinite(v)) {
+      return false;
+    }
+    if (v != 0.0) {
+      all_zero = false;
+    }
+  }
+  return !all_zero;
+}
+
+}  // namespace
 
 class UndistortHelper::Impl
 {
@@ -37,8 +64,14 @@ public:
     }
 
     const cv::Mat k(3, 3, CV_64F, scaled.k.data());
-    const cv::Mat r(3, 3, CV_64F, scaled.r.data());
     const cv::Mat p(3, 4, CV_64F, scaled.p.data());
+
+    // An empty R makes initUndistortRectifyMap use identity; only pass an
+    // explicit R when CameraInfo carries a usable rectification rotation.
+    cv::Mat r;
+    if (is_usable_rotation(scaled.r)) {
+      r = cv::Mat(3, 3, CV_64F, scaled.r.data());
+    }
 
     cv::Mat d;
     if (!scaled.d.empty()) {

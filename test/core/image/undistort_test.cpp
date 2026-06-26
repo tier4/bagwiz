@@ -51,6 +51,14 @@ CameraInfo distorted_camera_info(std::uint32_t w, std::uint32_t h)
   return info;
 }
 
+// Some monocular publishers leave CameraInfo.r zero-filled instead of identity.
+CameraInfo zero_rotation_camera_info(std::uint32_t w, std::uint32_t h)
+{
+  CameraInfo info = identity_camera_info(w, h);
+  info.r = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  return info;
+}
+
 std::vector<std::byte> solid_bgr(
   std::uint32_t w, std::uint32_t h, std::uint8_t b, std::uint8_t g, std::uint8_t r)
 {
@@ -86,6 +94,24 @@ TEST(UndistortHelper, ZeroDistortionPreservesCenterColor)
   const auto input = solid_bgr(kW, kH, 100, 150, 200);
   const auto output = helper.remap(input, kW * 3);
   ASSERT_EQ(output.size(), input.size());
+  const std::size_t center = (kH / 2 * kW + kW / 2) * 3;
+  EXPECT_EQ(output[center], input[center]);
+  EXPECT_EQ(output[center + 1], input[center + 1]);
+  EXPECT_EQ(output[center + 2], input[center + 2]);
+}
+
+TEST(UndistortHelper, ZeroRectificationMatrixFallsBackToIdentity)
+{
+  constexpr std::uint32_t kW = 16;
+  constexpr std::uint32_t kH = 16;
+  const auto info = zero_rotation_camera_info(kW, kH);
+  UndistortHelper helper(info, kW, kH);
+  const auto input = solid_bgr(kW, kH, 100, 150, 200);
+  const auto output = helper.remap(input, kW * 3);
+  ASSERT_EQ(output.size(), input.size());
+  // A zero (unset) rectification matrix must be treated as identity, matching
+  // tier4_perception_dataset. Without the guard, initUndistortRectifyMap emits
+  // NaN maps and remap fills the whole image with the border color (black).
   const std::size_t center = (kH / 2 * kW + kW / 2) * 3;
   EXPECT_EQ(output[center], input[center]);
   EXPECT_EQ(output[center + 1], input[center + 1]);
