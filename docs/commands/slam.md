@@ -244,3 +244,24 @@ bagwiz slam viewer out/map.pcd
 | ---- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | The viewer served the map and exited cleanly after an interrupt (`Ctrl-C`).                                                      |
 | `1`  | `<map>` (or `map.pcd` within it) was not found; no loopback port could be bound; or the binary was built without the map viewer. |
+
+---
+
+## Special thanks
+
+`bagwiz slam` would not exist without [**GLIM**](https://github.com/koide3/glim)
+and its companion library [**gtsam_points**](https://github.com/koide3/gtsam_points),
+created by [Kenji Koide (koide3)](https://github.com/koide3). bagwiz does the bag
+reading and decoding, but every bit of the actual SLAM — the LiDAR and LiDAR-IMU
+odometry, the SubMapping and GlobalMapping factor graphs, the GNSS fusion, and the
+deskewing — is GLIM doing the heavy lifting. We feed its modules directly and stand
+entirely on that work.
+
+Our deepest gratitude to the author and contributors for building such a capable,
+well-engineered, and openly available SLAM framework, and for sharing it with the
+community. Please consider citing and starring GLIM if this feature is useful to you:
+
+- GLIM: <https://github.com/koide3/glim>
+- gtsam_points: <https://github.com/koide3/gtsam_points>
+
+Thank you. 🙏
