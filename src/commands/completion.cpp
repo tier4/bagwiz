@@ -975,7 +975,8 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //
 //   run:    `slam`(0) `run`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
 //           [--imu <topic>] [--gnss <topic>] [--map-resolution <m>] [--upsample-traj <spec>]
-//           [--viewer] [-w|--overwrite]
+//           [--remove-dynamic] [--dynamic-ratio <r>] [--dynamic-min-range <m>]
+//           [--dynamic-max-range <m>] [--viewer] [-w|--overwrite]
 //   viewer: `slam`(0) `viewer`(1) `<map>`(2)
 //
 // At the action slot (word 1) the candidates are `run` and `viewer` (or the help
@@ -1015,7 +1016,8 @@ std::vector<std::string> complete_slam(const CompletionRequest & request)
   if (current.starts_with("-")) {
     return matching(
       with_help(
-        {"--gnss", "--imu", "--map-resolution", "--overwrite", "--upsample-traj", "--viewer",
+        {"--dynamic-max-range", "--dynamic-min-range", "--dynamic-ratio", "--gnss", "--imu",
+         "--map-resolution", "--overwrite", "--remove-dynamic", "--upsample-traj", "--viewer",
          "-w"}),
       current);
   }
