@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build-glim-deps.sh - build the GLIM SLAM stack into a vendored prefix.
 #
-# `bagwiz slam` links GLIM (koide3/glim) plus its heavy dependencies GTSAM and
+# `bagwiz map slam` links GLIM (koide3/glim) plus its heavy dependencies GTSAM and
 # gtsam_points. None of the three are packaged on conda-forge/robostack at the
 # versions GLIM needs (GTSAM ships only as alpha git tags, and gtsam_points
 # bundles patched iSAM2 sources that must match), so they are built from source.
@@ -103,7 +103,7 @@ cmake --build "${SRC}/gtsam_points/build" --target install -j"${jobs}"
 #      intensities the preprocessor extracted. Without this, intensity never
 #      reaches sub/global mapping and the exported map (GlobalMapping::
 #      export_points) is xyz-only. Copy intensities onto the frame right after
-#      the times so they propagate through to `bagwiz slam --map`.
+#      the times so they propagate through to `bagwiz map slam`.
 clone https://github.com/koide3/glim "${GLIM_REF}" glim
 ct="${SRC}/glim/src/glim/odometry/odometry_estimation_ct.cpp"
 sed -i \

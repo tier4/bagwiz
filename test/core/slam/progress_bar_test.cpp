@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-// Unit tests for the `slam run` progress helpers. The pure decision functions
+// Unit tests for the `map slam` progress helpers. The pure decision functions
 // (progress_enabled / progress_total) get a truth-table / edge sweep; the RAII
 // reporters are exercised only on the DISABLED path, which must be a complete
 // no-op (no thread, no terminal output) and is the behavior the rest of the

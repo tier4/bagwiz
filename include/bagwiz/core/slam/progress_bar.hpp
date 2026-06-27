@@ -19,7 +19,7 @@
 namespace bagwiz::core::slam
 {
 
-// Decide whether the `slam run` progress UI should render. It is shown only on
+// Decide whether the `map slam` progress UI should render. It is shown only on
 // an interactive stderr, with NO_COLOR unset and the user's --no-progress flag
 // not passed — mirroring `tf`'s "fancy output" gate (src/commands/tf.cpp:178)
 // so piped / CI runs stay free of carriage-return spam. Pure for unit testing.
@@ -34,7 +34,7 @@ bool progress_enabled(bool stderr_is_tty, bool no_color_env_set, bool no_progres
 std::int64_t progress_total(
   const io::BagReader::Stats & stats, std::span<const std::string> topics);
 
-// RAII progress reporter for the bag-read / GLIM-feed phase of `slam run`.
+// RAII progress reporter for the bag-read / GLIM-feed phase of `map slam`.
 // Determinate (with ETA) when the total message count is known; otherwise an
 // indeterminate bar that animates as messages arrive. A no-op when disabled
 // (non-TTY / --no-progress): every method stays safe to call and renders

@@ -95,7 +95,7 @@ inputs = ["src", "include", "test", "assets", "CMakeLists.txt", "package.xml"]
 cmd = 'bash scripts/build-glim-deps.sh'
 inputs = ["scripts/build-glim-deps.sh"]
 
-# Build bagwiz with the opt-in `bagwiz slam` command. Ensures the GLIM prefix
+# Build bagwiz with the opt-in `bagwiz map slam` command. Ensures the GLIM prefix
 # exists, then turns on BAGWIZ_WITH_SLAM and points CMake at the prefix.
 [tasks.build-slam]
 depends-on = ["build-glim"]

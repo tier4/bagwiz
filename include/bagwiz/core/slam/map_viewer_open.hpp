@@ -11,7 +11,7 @@
 
 #include <string>
 
-// GLIM-free helper for `bagwiz slam run --viewer`. Kept separate from the
+// GLIM-free helper for `bagwiz map slam --viewer`. Kept separate from the
 // httplib-backed viewer server so the (pure, dependency-free) command builder
 // builds and is unit-tested in every configuration, not only when
 // BAGWIZ_WITH_SLAM is on.
