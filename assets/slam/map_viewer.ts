@@ -43,6 +43,13 @@ const projButtons = Array.from(projSeg.querySelectorAll<HTMLButtonElement>("butt
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x101014);
 
+// Soft lighting for the metallic anchor axes. PointsMaterial (the cloud) is
+// unlit, so these lights affect only the axes and keep the cloud colors exact.
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const axisKeyLight = new THREE.DirectionalLight(0xffffff, 1.2);
+axisKeyLight.position.set(1, 1, 2);
+scene.add(axisKeyLight);
+
 // The SLAM map is Z-up (sensor/world frame); tell every camera so up stays up.
 // PERSP_FOV is the vertical field of view shared by the 3D view and 2D's
 // perspective option, kept in one place so the framing math stays consistent.
@@ -312,8 +319,8 @@ function applyView(): void {
   requestFrame();
 }
 
-// Build a translucent, glowing world-axis triad that matches the viewer's
-// liquid-glass UI. `length` is the shaft+head reach along each axis.
+// Build an opaque, metallic world-axis triad at the orbit target. `length` is
+// the shaft+head reach along each axis. Lit by the scene lights added above.
 function createAnchorAxes(length: number): THREE.Group {
   const group = new THREE.Group();
   const shaftRadius = length * 0.025;
@@ -322,18 +329,16 @@ function createAnchorAxes(length: number): THREE.Group {
   const shaftLength = length - headLength;
   const up = new THREE.Vector3(0, 1, 0);
 
-  const glassAxisMaterial = (color: number): THREE.MeshBasicMaterial =>
-    new THREE.MeshBasicMaterial({
+  const metallicAxisMaterial = (color: number): THREE.MeshStandardMaterial =>
+    new THREE.MeshStandardMaterial({
       color,
-      transparent: true,
-      opacity: 0.8,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
+      metalness: 0.7,
+      roughness: 0.35,
     });
 
   const addAxis = (color: number, dir: THREE.Vector3): void => {
     const q = new THREE.Quaternion().setFromUnitVectors(up, dir);
-    const material = glassAxisMaterial(color);
+    const material = metallicAxisMaterial(color);
 
     const shaftGeom = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 8);
     shaftGeom.translate(0, shaftLength / 2, 0);
@@ -348,10 +353,10 @@ function createAnchorAxes(length: number): THREE.Group {
     group.add(shaft, head);
   };
 
-  // Softer RGB tints that read as "glass" against the dark scene.
-  addAxis(0xff5f5f, new THREE.Vector3(1, 0, 0));
-  addAxis(0x5fff5f, new THREE.Vector3(0, 1, 0));
-  addAxis(0x5f5fff, new THREE.Vector3(0, 0, 1));
+  // Desaturated metallic RGB tints that sit well against the dark scene.
+  addAxis(0xd95050, new THREE.Vector3(1, 0, 0));
+  addAxis(0x50d950, new THREE.Vector3(0, 1, 0));
+  addAxis(0x5050d0, new THREE.Vector3(0, 0, 1));
 
   return group;
 }
