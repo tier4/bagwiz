@@ -197,7 +197,7 @@ std::vector<char> RemovertFilter::dynamic_mask_for_alpha(
 
   for (const auto & scan : scans_) {
     // Scan range image: closest observed range per pixel.
-    std::vector<float> scan_rimg(pixel_count, kNoPoint);
+    std::vector<float> scan_range_image(pixel_count, kNoPoint);
     for (const auto & p : scan.points) {
       float r = 0.0F;
       const auto [row, col] = project_to_pixel(
@@ -206,13 +206,13 @@ std::vector<char> RemovertFilter::dynamic_mask_for_alpha(
         continue;
       }
       const std::size_t idx = static_cast<std::size_t>(row) * cols + col;
-      if (r < scan_rimg[idx]) {
-        scan_rimg[idx] = r;
+      if (r < scan_range_image[idx]) {
+        scan_range_image[idx] = r;
       }
     }
 
     // Map range image: closest map range and the index of the map point.
-    std::vector<float> map_rimg(pixel_count, kNoPoint);
+    std::vector<float> map_range_image(pixel_count, kNoPoint);
     std::vector<std::int32_t> map_idx(pixel_count, -1);
     for (std::size_t i = 0; i < map_points.size(); ++i) {
       if (candidate_mask != nullptr && (*candidate_mask)[i] == 0) {
@@ -226,8 +226,8 @@ std::vector<char> RemovertFilter::dynamic_mask_for_alpha(
         continue;
       }
       const std::size_t idx = static_cast<std::size_t>(row) * cols + col;
-      if (r < map_rimg[idx]) {
-        map_rimg[idx] = r;
+      if (r < map_range_image[idx]) {
+        map_range_image[idx] = r;
         map_idx[idx] = static_cast<std::int32_t>(i);
       }
     }
@@ -235,8 +235,8 @@ std::vector<char> RemovertFilter::dynamic_mask_for_alpha(
     // Per-pixel adaptive discrepancy rule from upstream removert.
     const float valid_max = static_cast<float>(config_.valid_diff_upper_bound);
     for (std::size_t px = 0; px < pixel_count; ++px) {
-      const float scan_r = scan_rimg[px];
-      const float map_r = map_rimg[px];
+      const float scan_r = scan_range_image[px];
+      const float map_r = map_range_image[px];
       const std::int32_t pt_idx = map_idx[px];
       if (scan_r >= kNoPoint || map_r >= kNoPoint || pt_idx < 0) {
         continue;
