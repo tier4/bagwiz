@@ -485,19 +485,7 @@ function onDoubleClick(event: MouseEvent): void {
     setStatus("No point under cursor — double-click directly on the cloud.");
     return;
   }
-  const hit = hits[0];
-  // Snap the anchor to the exact point coordinate rather than the ray-surface
-  // intersection, so the axes land directly on a point in the cloud.
-  const p = hit.point.clone();
-  if (hit.index !== undefined && state.geometry && state.positions) {
-    const indexAttr = state.geometry.getIndex();
-    const pointIndex = indexAttr ? indexAttr.getX(hit.index) : hit.index;
-    p.set(
-      state.positions[pointIndex * 3],
-      state.positions[pointIndex * 3 + 1],
-      state.positions[pointIndex * 3 + 2],
-    );
-  }
+  const p = hits[0].point;
   // Recenter without changing the viewing direction: move the camera by the same
   // delta as the target so the framing is preserved.
   camera.position.add(p.clone().sub(controls.target));
