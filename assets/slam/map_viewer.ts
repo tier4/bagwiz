@@ -72,9 +72,9 @@ document.body.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = false;
 
-// World-axis triad shown at the orbit target while in 3D mode. Sized to the
-// cloud so it stays visible without dominating the view.
-let axesHelper: THREE.AxesHelper | null = null;
+// World-axis triad shown at the orbit target while in 3D mode. Built from
+// thick shafts and arrowheads so it stays readable against the point cloud.
+let anchorAxes: THREE.Group | null = null;
 
 // ---------------------------------------------------------------------------
 // On-demand rendering
@@ -304,12 +304,45 @@ function applyView(): void {
   camera = activeCamera();
   controls.object = camera;
   controls.enableRotate = state.viewMode !== "2d";
-  if (axesHelper) {
-    axesHelper.visible = state.viewMode === "3d";
+  if (anchorAxes) {
+    anchorAxes.visible = state.viewMode === "3d";
   }
   controls.update();
   syncToolbar();
   requestFrame();
+}
+
+// Build a world-axis triad with thick shafts and arrowheads. `length` is the
+// shaft+head reach along each axis from the origin.
+function createAnchorAxes(length: number): THREE.Group {
+  const group = new THREE.Group();
+  const shaftRadius = length * 0.025;
+  const headRadius = length * 0.07;
+  const headLength = length * 0.2;
+  const shaftLength = length - headLength;
+  const up = new THREE.Vector3(0, 1, 0);
+
+  const addAxis = (color: number, dir: THREE.Vector3): void => {
+    const q = new THREE.Quaternion().setFromUnitVectors(up, dir);
+
+    const shaftGeom = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 8);
+    shaftGeom.translate(0, shaftLength / 2, 0);
+    const shaft = new THREE.Mesh(shaftGeom, new THREE.MeshBasicMaterial({ color }));
+    shaft.setRotationFromQuaternion(q);
+
+    const headGeom = new THREE.ConeGeometry(headRadius, headLength, 8);
+    headGeom.translate(0, shaftLength + headLength / 2, 0);
+    const head = new THREE.Mesh(headGeom, new THREE.MeshBasicMaterial({ color }));
+    head.setRotationFromQuaternion(q);
+
+    group.add(shaft, head);
+  };
+
+  addAxis(0xff0000, new THREE.Vector3(1, 0, 0));
+  addAxis(0x00ff00, new THREE.Vector3(0, 1, 0));
+  addAxis(0x0000ff, new THREE.Vector3(0, 0, 1));
+
+  return group;
 }
 
 // Frame the whole cloud from the current mode/plane/projection's canonical pose.
@@ -321,11 +354,11 @@ function frameView(): void {
   const { center, radius } = sphere;
   controls.target.copy(center);
 
-  if (!axesHelper) {
-    axesHelper = new THREE.AxesHelper(radius * 0.05);
-    scene.add(axesHelper);
+  if (!anchorAxes) {
+    anchorAxes = createAnchorAxes(radius * 0.05);
+    scene.add(anchorAxes);
   }
-  axesHelper.position.copy(center);
+  anchorAxes.position.copy(center);
 
   if (state.viewMode === "3d") {
     setNearFar(perspCamera, radius);
@@ -441,8 +474,8 @@ function onDoubleClick(event: MouseEvent): void {
   // delta as the target so the framing is preserved.
   camera.position.add(p.clone().sub(controls.target));
   controls.target.copy(p);
-  if (axesHelper) {
-    axesHelper.position.copy(p);
+  if (anchorAxes) {
+    anchorAxes.position.copy(p);
   }
   controls.update();
   setStatus(`Anchored at (${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)})`);
