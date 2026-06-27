@@ -299,7 +299,7 @@ function activeCamera(): THREE.PerspectiveCamera | THREE.OrthographicCamera {
 function applyView(): void {
   camera = activeCamera();
   controls.object = camera;
-  controls.enableRotate = true;
+  controls.enableRotate = state.viewMode !== "2d";
   controls.update();
   syncToolbar();
   requestFrame();
