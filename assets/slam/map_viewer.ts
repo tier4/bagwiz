@@ -72,6 +72,10 @@ document.body.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = false;
 
+// Default world-axis triad shown at the orbit target in 3D mode.
+// THREE.AxesHelper uses the conventional red/green/blue line style.
+let axesHelper: THREE.AxesHelper | null = null;
+
 // ---------------------------------------------------------------------------
 // On-demand rendering
 // ---------------------------------------------------------------------------
@@ -84,6 +88,9 @@ let frameQueued = false;
 function renderFrame(): void {
   frameQueued = false;
   const stillEasing = controls.update();
+  if (axesHelper && axesHelper.visible) {
+    axesHelper.position.copy(controls.target);
+  }
   renderer.render(scene, camera);
   if (stillEasing) {
     requestFrame();
@@ -300,6 +307,9 @@ function applyView(): void {
   camera = activeCamera();
   controls.object = camera;
   controls.enableRotate = state.viewMode !== "2d";
+  if (axesHelper) {
+    axesHelper.visible = state.viewMode === "3d";
+  }
   controls.update();
   syncToolbar();
   requestFrame();
@@ -313,6 +323,13 @@ function frameView(): void {
   }
   const { center, radius } = sphere;
   controls.target.copy(center);
+
+  if (!axesHelper) {
+    axesHelper = new THREE.AxesHelper(radius * 0.1);
+    scene.add(axesHelper);
+  }
+  axesHelper.position.copy(center);
+  axesHelper.visible = state.viewMode === "3d";
 
   if (state.viewMode === "3d") {
     setNearFar(perspCamera, radius);
@@ -438,6 +455,9 @@ function onDoubleClick(event: MouseEvent): void {
   // delta as the target so the framing is preserved.
   camera.position.add(p.clone().sub(controls.target));
   controls.target.copy(p);
+  if (axesHelper) {
+    axesHelper.position.copy(p);
+  }
   controls.update();
   setStatus(`Anchored at (${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)})`);
 }
