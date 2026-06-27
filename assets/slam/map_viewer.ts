@@ -129,9 +129,6 @@ let frameQueued = false;
 function renderFrame(): void {
   frameQueued = false;
   const stillEasing = controls.update();
-  if (axesHelper && axesHelper.visible) {
-    axesHelper.position.copy(controls.target);
-  }
   renderer.render(scene, camera);
   if (stillEasing) {
     requestFrame();
