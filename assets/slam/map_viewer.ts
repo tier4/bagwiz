@@ -353,10 +353,10 @@ function createAnchorAxes(length: number): THREE.Group {
     group.add(shaft, head);
   };
 
-  // Desaturated metallic RGB tints that sit well against the dark scene.
-  addAxis(0xd95050, new THREE.Vector3(1, 0, 0));
-  addAxis(0x50d950, new THREE.Vector3(0, 1, 0));
-  addAxis(0x5050d0, new THREE.Vector3(0, 0, 1));
+  // Vivid metallic RGB tints that read clearly against the dark scene.
+  addAxis(0xff3333, new THREE.Vector3(1, 0, 0));
+  addAxis(0x33ff33, new THREE.Vector3(0, 1, 0));
+  addAxis(0x3333ff, new THREE.Vector3(0, 0, 1));
 
   // Small metallic ball at the origin gives the triad a visible "foot" on the
   // point cloud and reduces the floating appearance.
