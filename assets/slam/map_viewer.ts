@@ -363,7 +363,7 @@ function frameView(): void {
   controls.target.copy(center);
 
   if (!axesHelper) {
-    axesHelper = createThickAxes(radius * 0.06);
+    axesHelper = createThickAxes(1.5);
     scene.add(axesHelper);
   }
   axesHelper.position.copy(center);
