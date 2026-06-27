@@ -478,6 +478,16 @@ function syncToolbar(): void {
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 
+// World-space pick radius that corresponds to a few screen pixels at the
+// current camera distance. This keeps double-click anchoring precise even when
+// zoomed in close to the ground.
+function pickThreshold(): number {
+  const distance = camera.position.distanceTo(controls.target);
+  const worldPerPixel = (2 * distance * Math.tan((PERSP_FOV * DEG2RAD) / 2)) / window.innerHeight;
+  const minThreshold = state.boundingSphere ? state.boundingSphere.radius * 0.001 : 0.05;
+  return Math.max(worldPerPixel * 4, minThreshold);
+}
+
 function onDoubleClick(event: MouseEvent): void {
   if (!state.points || !state.boundingSphere) {
     return;
@@ -486,9 +496,9 @@ function onDoubleClick(event: MouseEvent): void {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
-  // World-space radius around the pick ray; scaled to the cloud so it stays a
-  // few pixels on screen at the default framing.
-  raycaster.params.Points = { threshold: state.boundingSphere.radius * 0.02 };
+  // Use an adaptive, pixel-scale threshold so the anchor lands on the point
+  // actually under the cursor rather than a neighbor up to ~1 m away.
+  raycaster.params.Points = { threshold: pickThreshold() };
   const hits = raycaster.intersectObject(state.points, false);
   if (hits.length === 0) {
     setStatus("No point under cursor — double-click directly on the cloud.");
