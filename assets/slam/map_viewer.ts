@@ -326,7 +326,7 @@ function createAnchorAxes(length: number): THREE.Group {
     new THREE.MeshBasicMaterial({
       color,
       transparent: true,
-      opacity: 0.65,
+      opacity: 0.8,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
