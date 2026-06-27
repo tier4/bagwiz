@@ -358,6 +358,15 @@ function createAnchorAxes(length: number): THREE.Group {
   addAxis(0x50d950, new THREE.Vector3(0, 1, 0));
   addAxis(0x5050d0, new THREE.Vector3(0, 0, 1));
 
+  // Small metallic ball at the origin gives the triad a visible "foot" on the
+  // point cloud and reduces the floating appearance.
+  const footGeom = new THREE.SphereGeometry(length * 0.08, 16, 16);
+  const foot = new THREE.Mesh(
+    footGeom,
+    new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.8, roughness: 0.3 }),
+  );
+  group.add(foot);
+
   return group;
 }
 
