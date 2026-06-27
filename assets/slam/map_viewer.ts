@@ -43,13 +43,6 @@ const projButtons = Array.from(projSeg.querySelectorAll<HTMLButtonElement>("butt
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x101014);
 
-// Soft lighting for the metallic anchor axes. PointsMaterial (the cloud) is
-// unlit, so these lights affect only the axes and keep the cloud colors exact.
-scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-const axisKeyLight = new THREE.DirectionalLight(0xffffff, 1.2);
-axisKeyLight.position.set(1, 1, 2);
-scene.add(axisKeyLight);
-
 // The SLAM map is Z-up (sensor/world frame); tell every camera so up stays up.
 // PERSP_FOV is the vertical field of view shared by the 3D view and 2D's
 // perspective option, kept in one place so the framing math stays consistent.
@@ -78,10 +71,6 @@ document.body.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = false;
-
-// World-axis triad shown at the orbit target while in 3D mode. Built from
-// thick shafts and arrowheads so it stays readable against the point cloud.
-let anchorAxes: THREE.Group | null = null;
 
 // ---------------------------------------------------------------------------
 // On-demand rendering
@@ -311,63 +300,9 @@ function applyView(): void {
   camera = activeCamera();
   controls.object = camera;
   controls.enableRotate = state.viewMode !== "2d";
-  if (anchorAxes) {
-    anchorAxes.visible = state.viewMode === "3d";
-  }
   controls.update();
   syncToolbar();
   requestFrame();
-}
-
-// Build an opaque, metallic world-axis triad at the orbit target. `length` is
-// the shaft+head reach along each axis. Lit by the scene lights added above.
-function createAnchorAxes(length: number): THREE.Group {
-  const group = new THREE.Group();
-  const shaftRadius = length * 0.025;
-  const headRadius = length * 0.07;
-  const headLength = length * 0.2;
-  const shaftLength = length - headLength;
-  const up = new THREE.Vector3(0, 1, 0);
-
-  const metallicAxisMaterial = (color: number): THREE.MeshStandardMaterial =>
-    new THREE.MeshStandardMaterial({
-      color,
-      metalness: 0.7,
-      roughness: 0.35,
-    });
-
-  const addAxis = (color: number, dir: THREE.Vector3): void => {
-    const q = new THREE.Quaternion().setFromUnitVectors(up, dir);
-    const material = metallicAxisMaterial(color);
-
-    const shaftGeom = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 8);
-    shaftGeom.translate(0, shaftLength / 2, 0);
-    const shaft = new THREE.Mesh(shaftGeom, material);
-    shaft.setRotationFromQuaternion(q);
-
-    const headGeom = new THREE.ConeGeometry(headRadius, headLength, 8);
-    headGeom.translate(0, shaftLength + headLength / 2, 0);
-    const head = new THREE.Mesh(headGeom, material);
-    head.setRotationFromQuaternion(q);
-
-    group.add(shaft, head);
-  };
-
-  // Pure, vivid metallic RGB tints for maximum readability.
-  addAxis(0xff0000, new THREE.Vector3(1, 0, 0));
-  addAxis(0x00ff00, new THREE.Vector3(0, 1, 0));
-  addAxis(0x0000ff, new THREE.Vector3(0, 0, 1));
-
-  // Small metallic ball at the origin gives the triad a visible "foot" on the
-  // point cloud and reduces the floating appearance.
-  const footGeom = new THREE.SphereGeometry(length * 0.08, 16, 16);
-  const foot = new THREE.Mesh(
-    footGeom,
-    new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.8, roughness: 0.3 }),
-  );
-  group.add(foot);
-
-  return group;
 }
 
 // Frame the whole cloud from the current mode/plane/projection's canonical pose.
@@ -378,12 +313,6 @@ function frameView(): void {
   }
   const { center, radius } = sphere;
   controls.target.copy(center);
-
-  if (!anchorAxes) {
-    anchorAxes = createAnchorAxes(radius * 0.05);
-    scene.add(anchorAxes);
-  }
-  anchorAxes.position.copy(center);
 
   if (state.viewMode === "3d") {
     setNearFar(perspCamera, radius);
@@ -509,9 +438,6 @@ function onDoubleClick(event: MouseEvent): void {
   // delta as the target so the framing is preserved.
   camera.position.add(p.clone().sub(controls.target));
   controls.target.copy(p);
-  if (anchorAxes) {
-    anchorAxes.position.copy(p);
-  }
   controls.update();
   setStatus(`Anchored at (${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)})`);
 }
