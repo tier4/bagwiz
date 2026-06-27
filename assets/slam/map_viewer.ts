@@ -70,7 +70,7 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
+controls.enableDamping = false;
 
 // ---------------------------------------------------------------------------
 // On-demand rendering
@@ -78,8 +78,7 @@ controls.enableDamping = true;
 // The scene only repaints when something changes — the camera moved, a control
 // was touched, or the window resized. This keeps the GPU idle while the view is
 // still, which matters because the glass panels' backdrop-filter would otherwise
-// recomposite on every frame. OrbitControls' damping is honored by re-scheduling
-// while `update()` reports the camera is still easing toward its target.
+// recomposite on every frame.
 let frameQueued = false;
 
 function renderFrame(): void {
