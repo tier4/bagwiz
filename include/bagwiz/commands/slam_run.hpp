@@ -11,6 +11,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace bagwiz::commands
 {
@@ -41,19 +42,24 @@ struct SlamRunArgs
   // Exported-map voxel size in meters. Controls only the exported map's density,
   // never the optimization or trajectory.
   double map_resolution = 0.2;
-  // Remove dynamic (moving-object) points from the exported map with a
-  // Removert-style visibility filter. Affects only map.pcd contents, never the
-  // optimization or trajectory. The remaining dynamic_* fields tune the filter
+  // Remove dynamic (moving-object) points from the exported map with an
+  // original Removert-style filter. Affects only map.pcd contents, never the
+  // optimization or trajectory. The remaining removert_* fields tune the filter
   // and are consulted only when this is set.
-  bool remove_dynamic = false;
-  // See-through ratio: a map point is dropped when this fraction of the scans
-  // that look along its line of sight observe a farther surface. Higher keeps
-  // more (more conservative).
-  double dynamic_ratio = 0.3;
-  // A scan only judges a map point whose range from the scan origin is within
-  // [dynamic_min_range, dynamic_max_range] meters.
-  double dynamic_min_range = 1.0;
-  double dynamic_max_range = 60.0;
+  bool removert = false;
+  // Enable the multi-resolution consensus revert pass.
+  bool removert_revert = true;
+  // Vertical and horizontal field of view for the Removert range images (deg).
+  double removert_vertical_fov_deg = 50.0;
+  double removert_horizontal_fov_deg = 360.0;
+  // Resolution magnifier lists (pixels per degree) for the remove and revert
+  // passes. Processed in order. Defaults use a single resolution each to keep
+  // the filter fast; add finer/coarser values for more aggressive cleaning.
+  std::vector<double> removert_remove_resolutions = {2.0};
+  std::vector<double> removert_revert_resolutions = {1.0};
+  // Adaptive discrepancy coefficient and upper-bound for valid pixel differences.
+  double removert_adaptive_coeff = 0.05;
+  double removert_valid_diff_upper_bound = 200.0;
   // Overwrite the output file(s) if they already exist.
   bool overwrite = false;
   // After writing map.pcd, serve it over a loopback HTTP server and open the

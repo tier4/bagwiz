@@ -14,8 +14,8 @@
 #include <cstddef>
 #include <vector>
 
-// GLIM-free unit tests for the VoxelGrid downsampler that backs the slam
-// command's exported-map density. Always compiled (no SLAM build required).
+// GLIM-free unit tests for the VoxelGrid downsampler and the Removert-style
+// dynamic-point filter that backs the slam command's exported-map cleaning.
 namespace
 {
 namespace slam = bagwiz::core::slam;
@@ -112,7 +112,7 @@ TEST(VoxelGrid, EmptyGridProducesEmptyOutput)
   EXPECT_TRUE(grid.intensities().empty());
 }
 
-// --- VisibilityFilter (Removert-style dynamic-point removal) ----------------
+// --- RemovertFilter (original Removert-style dynamic-point removal) ---------
 
 // Build a dense "wall" of scan returns on the plane x == wall_x, spanning a
 // y/z patch, so a range image has a return in (nearly) every direction bin the
@@ -128,117 +128,183 @@ std::vector<std::array<float, 3>> wall_at(float wall_x, float half_extent, float
   return pts;
 }
 
-slam::VisibilityFilterConfig permissive_config()
+slam::RemovertConfig permissive_config()
 {
-  slam::VisibilityFilterConfig cfg;
-  // Coarse bins so the wall's discrete returns reliably populate the direction
-  // bin of each map point under test (no empty-bin misses).
-  cfg.azimuth_resolution_deg = 5.0;
-  cfg.elevation_resolution_deg = 5.0;
-  cfg.range_margin = 0.3;
-  cfg.min_range = 0.5;
-  cfg.max_range = 50.0;
-  cfg.min_observations = 1;
-  cfg.dynamic_ratio = 0.3;
+  slam::RemovertConfig cfg;
+  cfg.vertical_fov_deg = 50.0;
+  cfg.horizontal_fov_deg = 360.0;
+  cfg.remove_resolutions.clear();
+  cfg.remove_resolutions.push_back(1.0);
+  cfg.revert_resolutions.clear();
+  cfg.adaptive_coeff = 0.05;
+  cfg.valid_diff_upper_bound = 200.0;
+  cfg.enable_revert = false;
   return cfg;
 }
 
-TEST(VisibilityFilter, KeepsAStaticPointObservedAtItsOwnRange)
+TEST(RemovertFilter, KeepsAStaticPoint)
 {
   // Map holds one point on the wall at x=10. Every scan observes the wall there,
   // so the point is supported, never seen through.
   const std::vector<std::array<float, 3>> map = {{10.0F, 0.0F, 0.0F}};
-  slam::VisibilityFilter filter(permissive_config(), map);
+  slam::RemovertFilter filter(permissive_config(), map);
 
   const auto wall = wall_at(10.0F, 2.0F, 0.1F);
   for (int i = 0; i < 5; ++i) {
     filter.add_scan({0.0, 0.0, 0.0}, wall);
   }
 
-  const auto keep = filter.keep_mask();
+  const auto keep = filter.filter();
   ASSERT_EQ(keep.size(), 1U);
-  EXPECT_EQ(keep[0], 1);  // kept
+  EXPECT_EQ(keep[0], 1);
   EXPECT_EQ(filter.removed_count(), 0U);
 }
 
-TEST(VisibilityFilter, RemovesAGhostPointTheScansSeeThrough)
+TEST(RemovertFilter, RemovesAGhostPoint)
 {
-  // Map holds a "ghost" point floating at x=5 (e.g. a person present in one
-  // earlier frame). Every scan now observes the background wall at x=10 in that
-  // same direction, i.e. it sees straight through x=5 -> dynamic.
+  // Map holds a "ghost" point floating at x=5. Every scan now observes the
+  // background wall at x=10 in the same direction, i.e. it sees straight
+  // through x=5 -> dynamic.
   const std::vector<std::array<float, 3>> map = {{5.0F, 0.0F, 0.0F}};
-  slam::VisibilityFilter filter(permissive_config(), map);
+  slam::RemovertFilter filter(permissive_config(), map);
 
   const auto wall = wall_at(10.0F, 2.0F, 0.1F);
   for (int i = 0; i < 5; ++i) {
     filter.add_scan({0.0, 0.0, 0.0}, wall);
   }
 
-  const auto keep = filter.keep_mask();
+  const auto keep = filter.filter();
   ASSERT_EQ(keep.size(), 1U);
-  EXPECT_EQ(keep[0], 0);  // removed
+  EXPECT_EQ(keep[0], 0);
   EXPECT_EQ(filter.removed_count(), 1U);
 }
 
-TEST(VisibilityFilter, DoesNotRemoveAnOccludedPointBehindTheObservedSurface)
+TEST(RemovertFilter, RemovesAnOccludedPoint)
 {
   // A point BEHIND the wall (x=20, wall at x=10): every scan sees a closer
-  // surface, so the point is occluded, never judged -> kept (no false positive).
+  // surface, so the point is occluded. Upstream Removert treats this as
+  // a lack of visible support and removes it.
   const std::vector<std::array<float, 3>> map = {{20.0F, 0.0F, 0.0F}};
-  slam::VisibilityFilter filter(permissive_config(), map);
+  slam::RemovertFilter filter(permissive_config(), map);
 
   const auto wall = wall_at(10.0F, 2.0F, 0.1F);
   for (int i = 0; i < 5; ++i) {
     filter.add_scan({0.0, 0.0, 0.0}, wall);
   }
 
-  EXPECT_EQ(filter.keep_mask()[0], 1);  // kept (occluded, not seen-through)
-  EXPECT_EQ(filter.removed_count(), 0U);
-}
-
-TEST(VisibilityFilter, RespectsMinObservationsBeforeRemoving)
-{
-  const std::vector<std::array<float, 3>> map = {{5.0F, 0.0F, 0.0F}};
-  slam::VisibilityFilterConfig cfg = permissive_config();
-  cfg.min_observations = 3;
-  slam::VisibilityFilter filter(cfg, map);
-
-  // Only two see-through looks: below the threshold, so the point survives.
-  const auto wall = wall_at(10.0F, 2.0F, 0.1F);
-  filter.add_scan({0.0, 0.0, 0.0}, wall);
-  filter.add_scan({0.0, 0.0, 0.0}, wall);
-  EXPECT_EQ(filter.keep_mask()[0], 1);  // kept (too few observations)
-
-  // A third look crosses min_observations and removes it.
-  filter.add_scan({0.0, 0.0, 0.0}, wall);
-  EXPECT_EQ(filter.keep_mask()[0], 0);  // removed
-}
-
-TEST(VisibilityFilter, MixedMapKeepsStaticAndDropsGhost)
-{
-  // Two map points sharing the same direction from the origin: a ghost at x=5
-  // and the real wall point at x=10. The filter must drop only the ghost.
-  const std::vector<std::array<float, 3>> map = {{5.0F, 0.0F, 0.0F}, {10.0F, 0.0F, 0.0F}};
-  slam::VisibilityFilter filter(permissive_config(), map);
-
-  const auto wall = wall_at(10.0F, 2.0F, 0.1F);
-  for (int i = 0; i < 4; ++i) {
-    filter.add_scan({0.0, 0.0, 0.0}, wall);
-  }
-
-  const auto keep = filter.keep_mask();
-  ASSERT_EQ(keep.size(), 2U);
-  EXPECT_EQ(keep[0], 0);  // ghost removed
-  EXPECT_EQ(keep[1], 1);  // wall kept
+  const auto keep = filter.filter();
+  ASSERT_EQ(keep.size(), 1U);
+  EXPECT_EQ(keep[0], 0);
   EXPECT_EQ(filter.removed_count(), 1U);
 }
 
-TEST(VisibilityFilter, EmptyMapProducesEmptyMask)
+TEST(RemovertFilter, EmptyMapProducesEmptyMask)
 {
-  slam::VisibilityFilter filter(permissive_config(), {});
+  slam::RemovertFilter filter(permissive_config(), {});
   filter.add_scan({0.0, 0.0, 0.0}, wall_at(10.0F, 1.0F, 0.2F));
-  EXPECT_TRUE(filter.keep_mask().empty());
-  EXPECT_EQ(filter.removed_count(), 0U);
+  const auto keep = filter.filter();
+  EXPECT_TRUE(keep.empty());
+}
+
+TEST(RemovertFilter, ConsensusRevertRecoversFineFalseNegative)
+{
+  // Map point on the x-axis at x == 10. A fine remove resolution splits the
+  // point's bin from a nearby foreground surface, leaving only a background
+  // return in the point's bin, so it is seen-through and removed. A coarser
+  // revert resolution merges the foreground surface into the same bin, giving
+  // surface support and allowing revert.
+  const std::vector<std::array<float, 3>> map = {{10.0F, 0.0F, 0.0F}};
+
+  slam::RemovertConfig cfg;
+  cfg.vertical_fov_deg = 50.0;
+  cfg.horizontal_fov_deg = 360.0;
+  cfg.remove_resolutions.clear();
+  cfg.remove_resolutions.push_back(2.0);  // 0.5 deg/pixel azimuth
+  cfg.revert_resolutions.clear();
+  cfg.revert_resolutions.push_back(1.0);  // 1.0 deg/pixel azimuth
+  cfg.adaptive_coeff = 0.05;
+  cfg.valid_diff_upper_bound = 200.0;
+  cfg.enable_revert = true;
+
+  slam::RemovertFilter filter(cfg, map);
+
+  // Background return shares the point's fine azimuth bin (around 0 deg).
+  // Foreground return is offset by ~0.3 deg, just enough to fall into the next
+  // fine bin but into the same coarse bin as the point.
+  const std::vector<std::array<float, 3>> scan = {
+    {20.0F, 0.0F, 0.0F},  // background, az ~0 deg, range 20
+    {10.0F, 0.05F, 0.0F}  // foreground, az ~0.3 deg, range ~10
+  };
+  for (int i = 0; i < 3; ++i) {
+    filter.add_scan({0.0, 0.0, 0.0}, scan);
+  }
+
+  const auto keep = filter.filter();
+  ASSERT_EQ(keep.size(), 1U);
+  EXPECT_EQ(keep[0], 1);
+  EXPECT_EQ(filter.reverted_count(), 1U);
+}
+
+TEST(RemovertFilter, ConsensusRevertDoesNotRecoverTrueDynamic)
+{
+  // A point floating in free space in front of a wall is seen-through at every
+  // resolution and must not be reverted.
+  const std::vector<std::array<float, 3>> map = {{5.0F, 0.0F, 0.0F}};
+
+  slam::RemovertConfig cfg;
+  cfg.vertical_fov_deg = 50.0;
+  cfg.horizontal_fov_deg = 360.0;
+  cfg.remove_resolutions.assign({1.0});
+  cfg.revert_resolutions.assign({0.7, 0.5});
+  cfg.adaptive_coeff = 0.05;
+  cfg.valid_diff_upper_bound = 200.0;
+  cfg.enable_revert = true;
+
+  slam::RemovertFilter filter(cfg, map);
+
+  const auto wall = wall_at(10.0F, 2.0F, 0.1F);
+  for (int i = 0; i < 5; ++i) {
+    filter.add_scan({0.0, 0.0, 0.0}, wall);
+  }
+
+  const auto keep = filter.filter();
+  ASSERT_EQ(keep.size(), 1U);
+  EXPECT_EQ(keep[0], 0);
+  EXPECT_EQ(filter.reverted_count(), 0U);
+}
+
+TEST(RemovertFilter, SequentialRemoveTakesUnionAcrossResolutions)
+{
+  // Map point on the x-axis at x == 10. At a fine resolution the foreground
+  // return and background return fall into different azimuth bins, so the point
+  // is supported and would be kept. At a coarser resolution they fall into the
+  // same bin, the point is seen-through, and the union remove pass must still
+  // drop it.
+  const std::vector<std::array<float, 3>> map = {{10.0F, 0.0F, 0.0F}};
+
+  slam::RemovertConfig cfg;
+  cfg.vertical_fov_deg = 50.0;
+  cfg.horizontal_fov_deg = 360.0;
+  cfg.remove_resolutions.assign({2.0, 1.0});  // fine first, then coarse
+  cfg.revert_resolutions.clear();
+  cfg.adaptive_coeff = 0.05;
+  cfg.valid_diff_upper_bound = 200.0;
+  cfg.enable_revert = false;
+
+  slam::RemovertFilter filter(cfg, map);
+
+  const std::vector<std::array<float, 3>> scan = {
+    {20.0F, 0.0F, 0.0F},  // background, az ~0 deg
+    {10.0F, 0.05F, 0.0F}  // foreground, az ~0.3 deg
+  };
+  for (int i = 0; i < 3; ++i) {
+    filter.add_scan({0.0, 0.0, 0.0}, scan);
+  }
+
+  const auto keep = filter.filter();
+  ASSERT_EQ(keep.size(), 1U);
+  EXPECT_EQ(keep[0], 0);
+  EXPECT_EQ(filter.removed_count(), 1U);
 }
 
 }  // namespace

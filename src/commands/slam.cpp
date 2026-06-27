@@ -100,29 +100,60 @@ private:
         "LiDAR preprocessor's ~0.15 m input voxel bounds the real resolution.")
       ->check(CLI::PositiveNumber);
     sub->add_flag(
-      "--remove-dynamic", run_args_.remove_dynamic,
-      "Remove dynamic (moving-object) points from the exported map using a Removert-style "
-      "visibility filter: a map point is dropped when enough optimized scans see a farther "
-      "surface along its line of sight (the space it occupies was observed as free). Affects "
-      "map.pcd only, never the optimization or trajectory.");
+      "--removert", run_args_.removert,
+      "Remove dynamic (moving-object) points from the exported map using an original "
+      "Removert-style filter. Each optimized scan and the merged map are projected into dense "
+      "range images using the configured FOV; a map point is dynamic when "
+      "abs(scan_range - map_range) exceeds the adaptive coefficient times scan_range (and is "
+      "below --removert-valid-diff-max). Affects map.pcd only, never the optimization or "
+      "trajectory.");
+    sub->add_flag(
+      "--removert-revert", run_args_.removert_revert,
+      "Enable the multi-resolution consensus revert pass (default on). Removed points are "
+      "re-checked at coarser resolutions and recovered if they are not dynamic at any of them. "
+      "Use --removert-revert=false to disable. Only used with --removert.");
     sub
       ->add_option(
-        "--dynamic-ratio", run_args_.dynamic_ratio,
-        "See-through ratio for --remove-dynamic: drop a map point when this fraction of the "
-        "scans looking along its line of sight see a farther surface (default 0.3; higher = "
-        "keeps more).")
-      ->check(CLI::Range(0.0, 1.0));
-    sub
-      ->add_option(
-        "--dynamic-min-range", run_args_.dynamic_min_range,
-        "Minimum range in meters a scan must observe a map point at before it constrains it "
-        "(default 1.0); drops ego/near-body returns. Only used with --remove-dynamic.")
+        "--removert-vfov", run_args_.removert_vertical_fov_deg,
+        "Vertical field of view in degrees for the Removert range image (default 50.0). "
+        "Only used with --removert.")
       ->check(CLI::PositiveNumber);
     sub
       ->add_option(
-        "--dynamic-max-range", run_args_.dynamic_max_range,
-        "Maximum range in meters a scan considers a map point at (default 60.0); bounds the "
-        "search and ignores far, sparse returns. Only used with --remove-dynamic.")
+        "--removert-hfov", run_args_.removert_horizontal_fov_deg,
+        "Horizontal field of view in degrees for the Removert range image (default 360.0). "
+        "Only used with --removert.")
+      ->check(CLI::PositiveNumber);
+    sub
+      ->add_option(
+        "--removert-remove-resolutions", run_args_.removert_remove_resolutions,
+        "Comma-separated magnifier ratios for the Removert remove pass "
+        "(default 2.0). Processed in order; each resolution operates on the map left by "
+        "the previous one. Each value must be between 0.01 and 10.0 pixels per degree. "
+        "Only used with --removert.")
+      ->delimiter(',')
+      ->check(CLI::Range(0.01, 10.0));
+    sub
+      ->add_option(
+        "--removert-revert-resolutions", run_args_.removert_revert_resolutions,
+        "Comma-separated magnifier ratios for the Removert consensus revert pass "
+        "(default 1.0). Each value must be between 0.01 and 10.0 pixels per degree. "
+        "Only used with --removert.")
+      ->delimiter(',')
+      ->check(CLI::Range(0.01, 10.0));
+    sub
+      ->add_option(
+        "--removert-adaptive-coeff", run_args_.removert_adaptive_coeff,
+        "Adaptive discrepancy coefficient for Removert: a map point is dynamic when "
+        "abs(scan_range - map_range) > coeff * scan_range (default 0.05). "
+        "Only used with --removert.")
+      ->check(CLI::PositiveNumber);
+    sub
+      ->add_option(
+        "--removert-valid-diff-max", run_args_.removert_valid_diff_upper_bound,
+        "Upper bound on range difference for a valid pixel comparison in Removert "
+        "(default 200.0). Pixels with larger differences are treated as no-point pixels. "
+        "Only used with --removert.")
       ->check(CLI::PositiveNumber);
     sub->add_flag(
       "-w,--overwrite", run_args_.overwrite, "Overwrite the output(s) if they already exist");
@@ -132,16 +163,17 @@ private:
       "served over a loopback HTTP server. Runs until interrupted (Ctrl-C).");
     sub->add_option(
       "--upsample-traj", run_args_.upsample_traj,
-      "Resample the output trajectory (traj.tum only; the map is unaffected) onto a uniform, "
-      "denser time grid. Accepts an absolute frequency ('20' or '20hz') or a multiple of the "
-      "trajectory's native rate ('2x'). Position is interpolated linearly and orientation "
-      "by SLERP, only within the original time span (no extrapolation). A target at or below the "
-      "native rate writes the trajectory unchanged (warned; never down-sampled); gaps between "
-      "poses wider than a few times the median spacing are left un-interpolated.");
+      "Densify traj.tum only (the map is unaffected) to a higher rate. Every original pose is "
+      "kept verbatim and interpolated samples are inserted between consecutive poses. Accepts "
+      "an absolute frequency ('20' or '20hz') or a multiple of the trajectory's native rate "
+      "('2x'). Position is interpolated linearly and orientation by SLERP, only within the "
+      "original time span (no extrapolation). A target at or below the native rate writes the "
+      "trajectory unchanged (warned; never down-sampled); gaps between poses wider than a few "
+      "times the median spacing are left un-interpolated.");
     sub->add_flag(
       "--no-progress", run_args_.no_progress,
-      "Disable the live progress bar. It is also auto-suppressed when stderr is not a "
-      "terminal or NO_COLOR is set, so this is only needed to silence it interactively.");
+      "Disable the live progress bars. They are also auto-suppressed when stderr is not a "
+      "terminal or NO_COLOR is set, so this is only needed to silence them interactively.");
     sub->callback([this]() { selected_ = Subcommand::kRun; });
   }
 

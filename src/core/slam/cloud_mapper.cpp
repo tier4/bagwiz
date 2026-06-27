@@ -525,37 +525,32 @@ struct CloudMapper::Impl
     }
     result.points = grid.points();
     result.intensities = grid.intensities();
-
-    if (config.enable_dynamic_removal) {
-      remove_dynamic_points(result, with_intensity);
-    }
   }
 
-  // Removert-style dynamic-point removal over the merged map. Builds a
-  // VisibilityFilter from the map points, replays every frame as a scan viewpoint
-  // (sensor origin = optimized frame translation; observations = that frame's full
-  // world-frame points), then drops the map points the scans see through. Points
-  // and the parallel intensities are filtered together. A no-op for an empty map.
-  void remove_dynamic_points(CloudMap & result, bool with_intensity) const
+  // Removert-style dynamic-point removal over the merged map. First runs a fine
+  // range-image filter (remove step); then, if enabled, re-evaluates the removed
+  // points at progressively coarser range-image resolutions to recover false-
+  // negative static structure (revert step). Points and parallel intensities are
+  // filtered together. A no-op for an empty map.
+  void apply_removert_filter(CloudMap & result, bool with_intensity) const
   {
     if (result.points.empty()) {
       return;
     }
 
-    VisibilityFilterConfig vf;
-    vf.azimuth_resolution_deg = config.dynamic_azimuth_resolution_deg;
-    vf.elevation_resolution_deg = config.dynamic_elevation_resolution_deg;
-    vf.range_margin = config.dynamic_range_margin;
-    vf.min_range = config.dynamic_min_range;
-    vf.max_range = config.dynamic_max_range;
-    vf.min_observations = config.dynamic_min_observations;
-    vf.dynamic_ratio = config.dynamic_ratio;
+    RemovertConfig rc;
+    rc.vertical_fov_deg = config.removert_vertical_fov_deg;
+    rc.horizontal_fov_deg = config.removert_horizontal_fov_deg;
+    rc.remove_resolutions = config.removert_remove_resolutions;
+    rc.revert_resolutions = config.removert_revert_resolutions;
+    rc.adaptive_coeff = config.removert_adaptive_coeff;
+    rc.valid_diff_upper_bound = config.removert_valid_diff_upper_bound;
+    rc.enable_revert = config.removert_revert;
 
-    VisibilityFilter filter(vf, result.points);
-
-    // Replay each frame as a scan: its optimized world pose gives both the sensor
-    // origin and the placement of its full points (reusing fill_map's transform).
-    std::vector<std::array<float, 3>> world_points;
+    // Transform every frame's full points into world-frame scan views and feed
+    // them directly into RemovertFilter. Using the move overload avoids keeping
+    // an intermediate copy of all scan points.
+    RemovertFilter filter(rc, result.points);
     for (const auto & entry : entries) {
       if (!entry.submap) {
         continue;
@@ -567,7 +562,7 @@ struct CloudMapper::Impl
         }
         const Eigen::Isometry3d T_world_frame = T_world_origin * ref.T_origin_frame;
         const Eigen::Vector3d origin = T_world_frame.translation();
-        world_points.clear();
+        std::vector<std::array<float, 3>> world_points;
         world_points.reserve(ref.points.size());
         for (const auto & p : ref.points) {
           const Eigen::Vector3d local(p[0], p[1], p[2]);
@@ -576,13 +571,15 @@ struct CloudMapper::Impl
             {static_cast<float>(world.x()), static_cast<float>(world.y()),
              static_cast<float>(world.z())});
         }
-        filter.add_scan({origin.x(), origin.y(), origin.z()}, world_points);
+        filter.add_scan({origin.x(), origin.y(), origin.z()}, std::move(world_points));
       }
     }
 
-    // Apply the keep-mask in place, compacting points (and intensities, when
-    // present) to the survivors while preserving order.
-    const std::vector<char> keep = filter.keep_mask();
+    std::vector<char> keep = filter.filter();
+    const std::size_t reverted_count = filter.reverted_count();
+
+    // Apply the final keep mask in place, compacting points (and intensities,
+    // when present) to the survivors while preserving order.
     std::vector<std::array<float, 3>> kept_points;
     std::vector<float> kept_intensities;
     kept_points.reserve(result.points.size());
@@ -602,7 +599,8 @@ struct CloudMapper::Impl
     }
     result.points = std::move(kept_points);
     result.intensities = std::move(kept_intensities);
-    result.dynamic_removed_count = removed;
+    result.removert_removed_count = removed;
+    result.removert_reverted_count = reverted_count;
   }
 };
 
@@ -762,6 +760,16 @@ CloudMap CloudMapper::finish()
   impl_->fill_trajectory(result);
   impl_->fill_map(result);
   return result;
+}
+
+void CloudMapper::apply_removert_filter(CloudMap & map)
+{
+  if (!impl_->config.enable_removert || map.points.empty()) {
+    return;
+  }
+  const bool with_intensity =
+    !map.intensities.empty() && map.intensities.size() == map.points.size();
+  impl_->apply_removert_filter(map, with_intensity);
 }
 
 }  // namespace bagwiz::core::slam

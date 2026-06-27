@@ -94,112 +94,88 @@ private:
   std::vector<Accum> accum_;                             // first-seen order
 };
 
-// Tunables for VisibilityFilter (Removert-style dynamic-point removal). Distances
-// are meters, angles degrees. Defaults are deliberately conservative: a map point
-// is dropped only when a clear fraction of the scans that look along its line of
-// sight see *past* it to a farther surface, which is the signature of a moving
-// object's ghost (the space it occupied in one scan is observed as free in
-// others). Static structure is observed at its own range and kept.
-struct VisibilityFilterConfig
+// Tunables for RemovertFilter. Distances are meters, angles degrees. Defaults
+// mirror the upstream irapkaist/removert KITTI example.
+struct RemovertConfig
 {
-  // Range-image bin sizes. A scan's points are bucketed by their (azimuth,
-  // elevation) direction *from that scan's origin*; a map point is compared
-  // against the closest scan return that fell in the same bin. Too fine and a
-  // background ray lands in an empty bin (missed evidence); too coarse and a
-  // foreground edge hides the background behind it. ~0.5°/1.0° suits common
-  // spinning LiDARs (dense in azimuth, sparser in elevation).
-  double azimuth_resolution_deg = 0.5;
-  double elevation_resolution_deg = 1.0;
+  // Vertical and horizontal field of view used to build the range images.
+  // Vertical FOV is total (e.g., 50 means +/-25 degrees around the horizon).
+  double vertical_fov_deg = 50.0;
+  double horizontal_fov_deg = 360.0;
 
-  // A map point counts as "seen through" by a scan when that scan observed a
-  // surface at least this much farther along the same direction (and nothing
-  // near the point). Also the tolerance band for calling a return "at" the point
-  // (static support). Absorbs range noise and pose error.
-  double range_margin = 0.5;
+  // Resolution magnifiers (pixels per degree) for the map-side remove pass.
+  // Processed in order; each resolution operates on the map left by the previous
+  // one, exactly as upstream does.
+  std::vector<double> remove_resolutions = {2.5, 2.0, 1.5};
 
-  // A scan only constrains a map point whose range from the scan origin is within
-  // [min_range, max_range]. min_range drops ego/near-body returns; max_range
-  // bounds the per-scan candidate search and ignores far, sparse, unreliable
-  // returns.
-  double min_range = 1.0;
-  double max_range = 60.0;
+  // Resolution magnifiers for the consensus revert pass. A removed point is
+  // recovered if it is *not* classified as dynamic at any of these resolutions.
+  std::vector<double> revert_resolutions = {1.0, 0.9, 0.8, 0.7};
 
-  // A map point must be observed (in-range, in an observed direction bin) by at
-  // least this many scans before it can be judged, so a single noisy look cannot
-  // delete a point.
-  int min_observations = 2;
+  // A map point is marked dynamic when abs(scan_range - map_range) is larger
+  // than this fraction of the scan range. Upstream hard-codes 0.05.
+  double adaptive_coeff = 0.05;
 
-  // Remove a map point when seen_through / observed exceeds this ratio. Higher =
-  // more conservative (keeps more). 0.3 removes points the majority-ish of looks
-  // see past while leaving consistently-observed structure intact.
-  double dynamic_ratio = 0.3;
+  // Pixels whose scan/map range difference exceeds this value are treated as
+  // no-point pixels and ignored. Upstream hard-codes 200 meters.
+  double valid_diff_upper_bound = 200.0;
+
+  // Enable the multi-resolution consensus revert pass.
+  bool enable_revert = true;
 };
 
-// Removert-style visibility filter that flags dynamic ("see-through") points in
-// an accumulated map. GLIM-free and streaming so it is unit-testable without the
-// SLAM build, mirroring VoxelGrid: construct it with the merged map points, feed
-// every scan's viewpoint (sensor origin + the world-frame points it observed)
-// via add_scan(), then read keep_mask().
+// Original Removert-style dynamic-point removal. The filter is constructed with
+// the merged map points, every optimized scan's viewpoint is fed via add_scan(),
+// and filter() runs the sequential remove + consensus revert pipeline.
 //
-// The test is purely geometric and needs no sensor orientation: for a scan with
-// origin O, each direction is (p - O) in world axes, so a map point's
-// direction-and-range from O is compared against the closest scan return in the
-// same direction bin. If the scan saw a surface farther than the map point
-// (margin), the line of sight to the point was clear at that time -> evidence the
-// point is dynamic. Evidence is accumulated across all scans; a point is dropped
-// only when the dynamic fraction clears the configured ratio (and it was seen
-// enough times). Static surfaces are observed at their own range and survive.
-//
-// Cost is bounded by a coarse spatial hash (cell = max_range): each scan tests
-// only map points in the 3x3x3 neighborhood of its origin cell, so the work is
-// proportional to locally-visible points rather than the whole map per scan.
-// Deterministic for a deterministic scan stream (map order preserved), keeping
-// the slam command's CPU-reproducibility guarantee.
-class VisibilityFilter
+// The implementation follows the upstream irapkaist/removert algorithm:
+// FOV-based dense range images, closest-return-per-pixel, and a per-pixel
+// adaptive discrepancy rule. It is purely geometric, GLIM-free, and
+// deterministic for a deterministic scan stream.
+class RemovertFilter
 {
 public:
   // `map_points` is the accumulated map to filter (world-frame xyz), copied in.
-  VisibilityFilter(
-    const VisibilityFilterConfig & config, const std::vector<std::array<float, 3>> & map_points);
+  RemovertFilter(
+    const RemovertConfig & config, const std::vector<std::array<float, 3>> & map_points);
 
-  // Accumulate one scan's visibility evidence. `origin` is the scan's sensor
-  // position in the world; `points` are the world-frame points it observed.
+  // Accumulate one scan's viewpoint. `origin` is the scan's sensor position in
+  // the world; `points` are the world-frame points it observed.
   void add_scan(
     const std::array<double, 3> & origin, const std::vector<std::array<float, 3>> & points);
 
-  // Per-map-point keep flag, parallel to the constructor's map_points: 1 = static
-  // (keep), 0 = dynamic (drop). Computed from the evidence gathered so far.
-  [[nodiscard]] std::vector<char> keep_mask() const;
+  // Move overload: avoids copying the scan points when the caller no longer needs
+  // them. `points` is left in a moved-from state.
+  void add_scan(const std::array<double, 3> & origin, std::vector<std::array<float, 3>> && points);
 
-  // Number of map points keep_mask() currently flags as dynamic.
-  [[nodiscard]] std::size_t removed_count() const;
+  // Run the remove + consensus revert pipeline on the accumulated scans and
+  // return a per-map-point keep mask: 1 = static (keep), 0 = dynamic (drop).
+  // Parallel to the constructor's map_points.
+  [[nodiscard]] std::vector<char> filter();
+
+  // Number of map points flagged as dynamic after the last filter() call.
+  [[nodiscard]] std::size_t removed_count() const noexcept { return removed_count_; }
+
+  // Number of points recovered by the consensus revert pass after the last
+  // filter() call.
+  [[nodiscard]] std::size_t reverted_count() const noexcept { return reverted_count_; }
 
 private:
-  struct CellKey
+  struct ScanView
   {
-    std::int32_t x;
-    std::int32_t y;
-    std::int32_t z;
-    bool operator==(const CellKey & other) const
-    {
-      return x == other.x && y == other.y && z == other.z;
-    }
-  };
-  struct CellHash
-  {
-    std::size_t operator()(const CellKey & key) const;
+    std::array<double, 3> origin;
+    std::vector<std::array<float, 3>> points;
   };
 
-  CellKey cell_of(double x, double y, double z) const;
+  [[nodiscard]] std::vector<char> dynamic_mask_for_alpha(
+    const std::vector<std::array<float, 3>> & map_points, double alpha,
+    const std::vector<char> * candidate_mask) const;
 
-  VisibilityFilterConfig config_;
+  RemovertConfig config_;
   std::vector<std::array<float, 3>> map_points_;
-  std::vector<std::uint32_t> observed_;      // per map point: in-range observations
-  std::vector<std::uint32_t> seen_through_;  // per map point: see-through looks
-  // Spatial hash over map points (cell side = max_range) for per-scan candidate
-  // lookup. Built once at construction.
-  std::unordered_map<CellKey, std::vector<std::uint32_t>, CellHash> grid_;
-  double cell_size_;
+  std::vector<ScanView> scans_;
+  std::size_t removed_count_ = 0;
+  std::size_t reverted_count_ = 0;
 };
 
 }  // namespace bagwiz::core::slam
