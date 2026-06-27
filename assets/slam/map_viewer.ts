@@ -72,6 +72,10 @@ document.body.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = false;
 
+// World-axis triad shown at the orbit target while in 3D mode. Sized to the
+// cloud so it stays visible without dominating the view.
+let axesHelper: THREE.AxesHelper | null = null;
+
 // ---------------------------------------------------------------------------
 // On-demand rendering
 // ---------------------------------------------------------------------------
@@ -300,6 +304,9 @@ function applyView(): void {
   camera = activeCamera();
   controls.object = camera;
   controls.enableRotate = state.viewMode !== "2d";
+  if (axesHelper) {
+    axesHelper.visible = state.viewMode === "3d";
+  }
   controls.update();
   syncToolbar();
   requestFrame();
@@ -313,6 +320,12 @@ function frameView(): void {
   }
   const { center, radius } = sphere;
   controls.target.copy(center);
+
+  if (!axesHelper) {
+    axesHelper = new THREE.AxesHelper(radius * 0.05);
+    scene.add(axesHelper);
+  }
+  axesHelper.position.copy(center);
 
   if (state.viewMode === "3d") {
     setNearFar(perspCamera, radius);
@@ -428,6 +441,9 @@ function onDoubleClick(event: MouseEvent): void {
   // delta as the target so the framing is preserved.
   camera.position.add(p.clone().sub(controls.target));
   controls.target.copy(p);
+  if (axesHelper) {
+    axesHelper.position.copy(p);
+  }
   controls.update();
   setStatus(`Anchored at (${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)})`);
 }
