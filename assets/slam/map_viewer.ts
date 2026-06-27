@@ -312,8 +312,8 @@ function applyView(): void {
   requestFrame();
 }
 
-// Build a world-axis triad with thick shafts and arrowheads. `length` is the
-// shaft+head reach along each axis from the origin.
+// Build a translucent, glowing world-axis triad that matches the viewer's
+// liquid-glass UI. `length` is the shaft+head reach along each axis.
 function createAnchorAxes(length: number): THREE.Group {
   const group = new THREE.Group();
   const shaftRadius = length * 0.025;
@@ -322,25 +322,36 @@ function createAnchorAxes(length: number): THREE.Group {
   const shaftLength = length - headLength;
   const up = new THREE.Vector3(0, 1, 0);
 
+  const glassAxisMaterial = (color: number): THREE.MeshBasicMaterial =>
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.65,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+
   const addAxis = (color: number, dir: THREE.Vector3): void => {
     const q = new THREE.Quaternion().setFromUnitVectors(up, dir);
+    const material = glassAxisMaterial(color);
 
     const shaftGeom = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 8);
     shaftGeom.translate(0, shaftLength / 2, 0);
-    const shaft = new THREE.Mesh(shaftGeom, new THREE.MeshBasicMaterial({ color }));
+    const shaft = new THREE.Mesh(shaftGeom, material);
     shaft.setRotationFromQuaternion(q);
 
     const headGeom = new THREE.ConeGeometry(headRadius, headLength, 8);
     headGeom.translate(0, shaftLength + headLength / 2, 0);
-    const head = new THREE.Mesh(headGeom, new THREE.MeshBasicMaterial({ color }));
+    const head = new THREE.Mesh(headGeom, material);
     head.setRotationFromQuaternion(q);
 
     group.add(shaft, head);
   };
 
-  addAxis(0xff0000, new THREE.Vector3(1, 0, 0));
-  addAxis(0x00ff00, new THREE.Vector3(0, 1, 0));
-  addAxis(0x0000ff, new THREE.Vector3(0, 0, 1));
+  // Softer RGB tints that read as "glass" against the dark scene.
+  addAxis(0xff5f5f, new THREE.Vector3(1, 0, 0));
+  addAxis(0x5fff5f, new THREE.Vector3(0, 1, 0));
+  addAxis(0x5f5fff, new THREE.Vector3(0, 0, 1));
 
   return group;
 }
