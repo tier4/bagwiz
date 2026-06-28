@@ -117,6 +117,10 @@ struct CloudMapperConfig
   // pose, so this LiDAR-frame offset is re-expressed in the IMU frame internally
   // using t_lidar_imu.
   std::array<double, 3> gnss_antenna_offset{0.0, 0.0, 0.0};
+
+  // Number of CPU threads passed to GLIM's preprocessor and odometry.
+  // 0 keeps GLIM's built-in defaults (preprocess=2, odometry=4).
+  int num_threads = 0;
 };
 
 // One GNSS fix already projected into the local metric (ENU) frame the mapper

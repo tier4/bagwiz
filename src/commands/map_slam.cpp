@@ -644,6 +644,7 @@ private:
     core::slam::CloudMapperConfig config;
     config.map_resolution = args_.map_resolution;
     config.t_lidar_imu = t_lidar_imu;
+    config.num_threads = args_.num_threads;
     config.enable_gnss = !args_.gnss_topic.empty();
     // Resolve the antenna lever-arm (T_cloud_gnss) from static TF so the GNSS prior
     // constrains the sensor origin, not the antenna. Non-fatal: a missing TF leaves

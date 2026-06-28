@@ -60,6 +60,10 @@ struct MapSlamArgs
   // time span only (no extrapolation). A target at or below the native rate
   // leaves the trajectory unchanged (warned, never down-sampled).
   std::string upsample_traj;
+
+  // Number of CPU threads for GLIM's preprocessor and odometry.
+  // 0 means "use GLIM defaults". Must be non-negative.
+  int num_threads = 0;
 };
 
 // Run LiDAR SLAM over a single PointCloud2 topic entirely in-process: bagwiz
