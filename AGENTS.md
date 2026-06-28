@@ -98,6 +98,8 @@ to keep this file itself consistent over time.
   must go through a pull request. Do not push directly to `main` or
   any other shared branch — open a PR first, even for small fixes
   such as typo corrections, formatting, or one-line changes.
+  メインブランチへの直接のコミットは禁止とし、どんなに小さな変更でも必ずブランチを作成し、
+  PRを作成した上でメインブランチにマージするよう心がけてください。
 - Never merge a pull request unless every required CI check has
   completed successfully. If any CI job is failing, pending, or
   skipped in a way that bypasses required checks, investigate and fix
