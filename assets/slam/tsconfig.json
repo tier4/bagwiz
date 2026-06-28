@@ -12,5 +12,5 @@
     "rootDir": ".",
     "outDir": "./dist"
   },
-  "include": ["map_viewer.ts", "map_colormaps.ts"]
+  "include": ["map_viewer.ts", "map_colormaps.ts", "map_viewer_overlay.ts"]
 }

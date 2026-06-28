@@ -63,6 +63,10 @@ void register_map_viewer_routes(httplib::Server & server, const std::filesystem:
     res.set_content(std::string(kMapViewerColormaps), "text/javascript; charset=utf-8");
   });
 
+  server.Get("/map_viewer_overlay.js", [](const httplib::Request &, httplib::Response & res) {
+    res.set_content(std::string(kMapViewerOverlay), "text/javascript; charset=utf-8");
+  });
+
   server.Get("/map.pcd", [map_path](const httplib::Request &, httplib::Response & res) {
     std::error_code ec;
     const auto size = std::filesystem::file_size(map_path, ec);

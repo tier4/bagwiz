@@ -4,7 +4,9 @@
 // subsample rate, point size, a 3D / 2D view toggle (2D is a top-down bird's-eye
 // view, switchable between orthographic and perspective projection), and
 // double-click-to-anchor
-// recentering. TypeScript source; compiled to map_viewer.js at build time and
+// recentering. A corner orientation gizmo (three.js ViewHelper) shows the global
+// X/Y/Z axes and snaps the view on click, and a scale bar reports the on-screen
+// distance scale. TypeScript source; compiled to map_viewer.js at build time and
 // embedded into bagwiz (see CMakeLists.txt). three.js is resolved from a CDN at
 // runtime via the import map in map_viewer.html.
 
@@ -12,6 +14,7 @@ import * as THREE from "three";
 import { PCDLoader } from "three/addons/loaders/PCDLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { COLORMAP_NAMES, DEFAULT_COLORMAP, sampleColormap } from "./map_colormaps.js";
+import { createOrientationGizmo, createScaleBar } from "./map_viewer_overlay.js";
 
 // Look up a required element by id; a missing id is a programmer error because
 // the markup in map_viewer.html is fixed and this module runs after it parses.
@@ -40,8 +43,11 @@ const projButtons = Array.from(projSeg.querySelectorAll<HTMLButtonElement>("butt
 // ---------------------------------------------------------------------------
 // Scene, renderer, camera, controls
 // ---------------------------------------------------------------------------
+// Matches --bg in map_viewer.html so the canvas has no seam. Also used as the
+// manual clear color, since the gizmo overlay forces autoClear off (see below).
+const BG_COLOR = 0x101014;
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x101014);
+scene.background = new THREE.Color(BG_COLOR);
 
 // The SLAM map is Z-up (sensor/world frame); tell every camera so up stays up.
 // PERSP_FOV is the vertical field of view shared by the 3D view and 2D's
@@ -67,10 +73,21 @@ let camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = perspCamera;
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
+// The corner gizmo overlay renders a second pass, so the scene is cleared
+// manually once per frame (see renderFrame) instead of by each render() call.
+renderer.autoClear = false;
+renderer.setClearColor(BG_COLOR, 1);
 document.body.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = false;
+
+// Bottom-corner overlay widgets (see map_viewer_overlay.ts): the CloudCompare-
+// style orientation gizmo that tracks the camera and snaps the view on click,
+// and the scale bar. `clock` paces the gizmo's click-to-snap animation.
+const clock = new THREE.Clock();
+const gizmo = createOrientationGizmo(camera, renderer.domElement);
+const scaleBar = createScaleBar(el<HTMLElement>("scaleBarLine"), el<HTMLElement>("scaleBarLabel"));
 
 // Default arrow-style world-axis triad shown at the anchor point in 3D mode.
 // Uses unlit default colors (red/green/blue) so it matches the conventional
@@ -120,9 +137,16 @@ let frameQueued = false;
 
 function renderFrame(): void {
   frameQueued = false;
+  let gizmoAnimating = false;
+  if (gizmo.animating()) {
+    gizmoAnimating = gizmo.update(clock.getDelta());
+  }
   const stillEasing = controls.update();
+  renderer.clear();
   renderer.render(scene, camera);
-  if (stillEasing) {
+  gizmo.render(renderer); // overlays the orientation gizmo in the bottom-right
+  scaleBar.update(worldPerPixel());
+  if (stillEasing || gizmoAnimating) {
     requestFrame();
   }
 }
@@ -336,6 +360,7 @@ function activeCamera(): THREE.PerspectiveCamera | THREE.OrthographicCamera {
 function applyView(): void {
   camera = activeCamera();
   controls.object = camera;
+  gizmo.rebind(camera); // rebind the gizmo to the now-active camera
   controls.enableRotate = state.viewMode !== "2d";
   if (axesHelper) {
     axesHelper.visible = state.viewMode === "3d";
@@ -494,6 +519,21 @@ function onDoubleClick(event: MouseEvent): void {
 
 renderer.domElement.addEventListener("dblclick", onDoubleClick);
 
+// Click an axis on the corner gizmo to snap the camera to that view, orbiting
+// around the current target. Restricted to 3D mode: in 2D the bird's-eye
+// constraint owns the camera orientation, so a snap there would break it.
+// handleClick returns false for clicks outside the gizmo, leaving orbit/pan
+// drags that merely end in the corner unaffected.
+renderer.domElement.addEventListener("pointerup", (event: PointerEvent) => {
+  if (state.viewMode !== "3d") {
+    return;
+  }
+  if (gizmo.handleClick(event, controls.target)) {
+    clock.getDelta(); // drop idle time so the first animation step is small
+    requestFrame();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Colorbar legend (reflects scalar + range + colormap)
 // ---------------------------------------------------------------------------
@@ -525,6 +565,20 @@ function updateStatus(): void {
     `${shown.toLocaleString()} / ${state.count.toLocaleString()} shown · ` +
       `${state.scalar} · ${state.colormap}`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Scale bar feed: world metres per CSS pixel at the orbit-target depth (exact
+// for orthographic; measured at the target distance for perspective, like the
+// pick scale). The scale bar widget snaps this to a round on-screen length.
+// ---------------------------------------------------------------------------
+function worldPerPixel(): number {
+  const heightPx = window.innerHeight;
+  if (camera instanceof THREE.OrthographicCamera) {
+    return (camera.top - camera.bottom) / camera.zoom / heightPx;
+  }
+  const dist = camera.position.distanceTo(controls.target);
+  return (2 * dist * Math.tan((PERSP_FOV * DEG2RAD) / 2)) / heightPx;
 }
 
 // ---------------------------------------------------------------------------

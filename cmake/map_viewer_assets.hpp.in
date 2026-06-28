@@ -18,6 +18,8 @@ inline constexpr std::string_view kMapViewerJs = R"BWASSET(@VIEWER_JS@)BWASSET";
 
 inline constexpr std::string_view kMapViewerColormaps = R"BWASSET(@VIEWER_COLORMAPS@)BWASSET";
 
+inline constexpr std::string_view kMapViewerOverlay = R"BWASSET(@VIEWER_OVERLAY@)BWASSET";
+
 }  // namespace bagwiz::core::slam
 
 #endif  // BAGWIZ__CORE__SLAM__MAP_VIEWER_ASSETS_HPP_

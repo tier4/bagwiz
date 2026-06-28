@@ -506,6 +506,34 @@
         animation: rise var(--dur) var(--ease) both;
       }
 
+      /* ---- Scale bar ------------------------------------------------------- */
+      /* Bottom-center distance scale; the WebGL orientation gizmo owns the
+         bottom-right corner, the status chip the bottom-left. */
+      #scaleBar {
+        position: fixed;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        pointer-events: none;
+        font: 11px/1 var(--mono);
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+        animation: rise var(--dur) var(--ease) both;
+      }
+      /* Horizontal rule with end caps; its width is set per frame from JS. */
+      #scaleBarLine {
+        position: relative;
+        height: 6px;
+        border-bottom: 2px solid var(--text);
+        border-left: 2px solid var(--text);
+        border-right: 2px solid var(--text);
+      }
+
       /* ---- Entrance motion ------------------------------------------------- */
       @keyframes drop {
         from {
@@ -632,10 +660,19 @@
         </div>
       </section>
 
-      <p class="hint">Double-click a point to recenter the view on it.</p>
+      <p class="hint">
+        Double-click a point to recenter the view on it. Click an axis on the corner gizmo to snap
+        to that view.
+      </p>
     </aside>
 
     <div id="status" class="glass glass-3" role="status">Loading…</div>
+
+    <!-- Bottom-center distance scale; width + label are set per frame in JS. -->
+    <div id="scaleBar" aria-hidden="true">
+      <span id="scaleBarLine"></span>
+      <span id="scaleBarLabel">—</span>
+    </div>
 
     <!-- map.pcd is fetched with a relative URL, so no server port is templated in. -->
     <script type="module" src="map_viewer.js"></script>

@@ -83,6 +83,8 @@ TEST_F(MapViewerServer, ServesViewerPageAtRoot)
   ASSERT_TRUE(res);
   EXPECT_EQ(res->status, 200);
   EXPECT_NE(res->body.find("map_viewer.js"), std::string::npos);
+  // The scale-bar element must be present for the overlay script to populate it.
+  EXPECT_NE(res->body.find("scaleBarLine"), std::string::npos);
 }
 
 TEST_F(MapViewerServer, ServesViewerModule)
@@ -92,6 +94,9 @@ TEST_F(MapViewerServer, ServesViewerModule)
   ASSERT_TRUE(res);
   EXPECT_EQ(res->status, 200);
   EXPECT_NE(res->body.find("PCDLoader"), std::string::npos);
+  // The viewer module pulls the overlay widgets from a sibling module, so the
+  // compiled JS must reference it (and the server must serve it; see below).
+  EXPECT_NE(res->body.find("map_viewer_overlay.js"), std::string::npos);
 }
 
 TEST_F(MapViewerServer, ServesColormapsModule)
@@ -101,6 +106,17 @@ TEST_F(MapViewerServer, ServesColormapsModule)
   ASSERT_TRUE(res);
   EXPECT_EQ(res->status, 200);
   EXPECT_NE(res->body.find("sampleColormap"), std::string::npos);
+}
+
+TEST_F(MapViewerServer, ServesOverlayModule)
+{
+  httplib::Client client("127.0.0.1", port_);
+  const auto res = client.Get("/map_viewer_overlay.js");
+  ASSERT_TRUE(res);
+  EXPECT_EQ(res->status, 200);
+  // The orientation gizmo is built on three.js's ViewHelper, so its identifier
+  // proves the compiled overlay (gizmo + scale bar) is embedded and served.
+  EXPECT_NE(res->body.find("ViewHelper"), std::string::npos);
 }
 
 TEST_F(MapViewerServer, StreamsMapPcdBytesVerbatim)
