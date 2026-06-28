@@ -19,8 +19,6 @@ to keep this file itself consistent over time.
 ### 1. Code & Documentation
 
 - Always write source code and documentation in English.
-- When modifying source code, update the corresponding documentation
-  (e.g. `README.md`, command-line help text) to reflect the changes.
 - When writing documentation, always consult the corresponding source
   code so that the description does not drift from the actual
   behavior. Verify claims against the implementation rather than
@@ -33,6 +31,14 @@ to keep this file itself consistent over time.
   improves readability, and avoid decorative emoji in source comments,
   generated documentation, commit messages, and pull request
   descriptions.
+- When authoring Markdown files, write mathematical notation as LaTeX
+  (`$...$` for inline math, `$$...$$` for display math) and express
+  diagrams — process flowcharts, architecture diagrams, and similar
+  visuals — as [Mermaid](https://mermaid.js.org/) in `mermaid`-labeled
+  fenced code blocks, rather than as ASCII art or committed image
+  files. GitHub renders both natively in its Markdown, so they stay as
+  plain-text source that is easy to review and edit. Reach for a static
+  image only when a diagram genuinely cannot be expressed in Mermaid.
 - Never write phrases that only make sense within the context of an
   AI–developer conversation. A future contributor or user reading the
   source must be able to understand the reasoning from the code and
@@ -205,6 +211,19 @@ in-terminal progress bar, spinner, or similar progress UI.
   existing wrapper where it fits, so progress output stays visually
   consistent across commands and the build depends on a single,
   well-tested implementation.
+
+### 4. Documentation, Comment & Help Consistency
+
+Applies whenever you change any bagwiz source code, regardless of
+which part of the repository the change touches.
+
+- After making any change to bagwiz's source code, investigate whether
+  the change has introduced inconsistencies in the artifacts that
+  describe that code — the related documentation (e.g. `README.md`),
+  the comments embedded in the source itself, and the help text of
+  every affected `bagwiz` command. Fix each inconsistency you find as
+  part of the same change so these descriptions never drift from the
+  actual behavior.
 
 ## Maintaining These Guidelines
 
