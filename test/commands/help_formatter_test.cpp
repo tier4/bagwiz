@@ -127,7 +127,7 @@ TEST(HelpFormatter, EmptyDescriptionStaysEmpty)
   HelpFormatter fmt;
   CLI::App app;
   std::string sink;
-  CLI::Option * opt = app.add_option("--noticeless", sink);
+  CLI::Option * opt = app.add_option("--undocumented", sink);
 
   EXPECT_EQ(fmt.make_option_desc(opt), "");
 }
