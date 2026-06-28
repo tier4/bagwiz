@@ -12,7 +12,7 @@
 // INTERNAL — this header pulls in GLIM / Eigen. Include it ONLY from a
 // BAGWIZ_WITH_SLAM translation unit (cloud_mapper.cpp), never from a GLIM-free
 // public header. It turns the GLIM-free extrinsic POD into the right GLIM
-// backend (LiDAR-only CT vs LiDAR-IMU CPU).
+// backend (LiDAR-only CT, LiDAR-IMU CPU, or — with --gpu — LiDAR-IMU GPU).
 
 #include "bagwiz/core/slam/sensor_transform.hpp"
 
@@ -20,6 +20,9 @@
 #include <glim/odometry/odometry_estimation_base.hpp>
 #include <glim/odometry/odometry_estimation_cpu.hpp>
 #include <glim/odometry/odometry_estimation_ct.hpp>
+#ifdef BAGWIZ_WITH_SLAM_CUDA
+#include <glim/odometry/odometry_estimation_gpu.hpp>
+#endif
 #include <glim/util/logging.hpp>
 
 #include <spdlog/spdlog.h>
@@ -49,22 +52,48 @@ inline Eigen::Isometry3d to_isometry(const SensorTransform & t)
   return iso;
 }
 
-// Build the odometry backend: LiDAR-IMU CPU when an extrinsic is given (with that
-// T_lidar_imu), else LiDAR-only CT. Returned as the common base so callers stay
+// Build the odometry backend, returned as the common base so callers stay
 // backend-agnostic (insert_frame / insert_imu / get_remaining_frames are virtual).
 // A non-positive num_threads falls back to the default (4).
+//
+// Selection: with an extrinsic -> LiDAR-IMU (GPU when use_gpu, else CPU); without
+// one -> LiDAR-only CT (GLIM has no GPU LiDAR-only backend, so use_gpu changes
+// nothing here — the command layer logs a notice and GPU acceleration applies to
+// sub/global mapping instead).
+// use_gpu in a non-CUDA build is a hard error (the caller pre-flights it, but a
+// direct API caller must also fail loudly rather than silently run on the CPU).
 inline std::unique_ptr<glim::OdometryEstimationBase> make_odometry_estimator(
-  const std::optional<SensorTransform> & t_lidar_imu, int num_threads = 4)
+  const std::optional<SensorTransform> & t_lidar_imu, int num_threads = 4, bool use_gpu = false)
 {
+  const int threads = num_threads > 0 ? num_threads : 4;
+
+  if (use_gpu) {
+#ifdef BAGWIZ_WITH_SLAM_CUDA
+    if (t_lidar_imu.has_value()) {
+      glim::OdometryEstimationGPUParams params;
+      params.T_lidar_imu = to_isometry(*t_lidar_imu);
+      params.num_threads = threads;
+      return std::make_unique<glim::OdometryEstimationGPU>(params);
+    }
+    // --gpu without --imu: GLIM has no GPU LiDAR-only odometry, so odometry stays
+    // on CT (GPU acceleration still applies to sub/global mapping). The command
+    // layer (map_slam.cpp) prints this notice; here we just fall through to CT.
+#else
+    throw std::runtime_error(
+      "--gpu requested but this binary was built without CUDA "
+      "(rebuild with -DBAGWIZ_WITH_SLAM_CUDA=ON / `pixi run build-slam-gpu`).");
+#endif
+  }
+
   if (t_lidar_imu.has_value()) {
     glim::OdometryEstimationCPUParams params;
     params.T_lidar_imu = to_isometry(*t_lidar_imu);
-    params.num_threads = num_threads > 0 ? num_threads : 4;
+    params.num_threads = threads;
     return std::make_unique<glim::OdometryEstimationCPU>(params);
   }
 
   glim::OdometryEstimationCTParams params;
-  params.num_threads = num_threads > 0 ? num_threads : 4;
+  params.num_threads = threads;
   return std::make_unique<glim::OdometryEstimationCT>(params);
 }
 

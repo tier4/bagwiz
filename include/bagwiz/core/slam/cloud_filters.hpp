@@ -62,6 +62,14 @@ public:
   // was constructed with_intensity == false.
   [[nodiscard]] std::vector<float> intensities() const;
 
+  // Fold another grid's voxels into this one, iterating the other grid in its
+  // first-seen order (deterministic). Used to combine per-thread partial grids
+  // when the exported map is voxelized in parallel; both grids must share the
+  // same resolution and with_intensity. Voxels already present have their sums
+  // and counts added; the other's new voxels are appended in its first-seen
+  // order, so a fixed merge order yields a reproducible result per thread count.
+  void merge_from(const VoxelGrid & other);
+
 private:
   struct Key
   {
@@ -92,6 +100,7 @@ private:
   bool with_intensity_;
   std::unordered_map<Key, std::size_t, KeyHash> index_;  // voxel -> slot in accum_
   std::vector<Accum> accum_;                             // first-seen order
+  std::vector<Key> keys_;                                // voxel key per slot, parallel to accum_
 };
 
 // Tunables for RemovertFilter. Distances are meters, angles degrees. Defaults

@@ -354,6 +354,15 @@ target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang ${Op
 # GLIM types stay confined to cloud_mapper.cpp (pimpl); the
 # `map` command group (map.cpp) and its `slam` action (map_slam.cpp) are GLIM-free.
 option(BAGWIZ_WITH_SLAM "Build the in-process GLIM `bagwiz map slam` command" OFF)
+# GPU fast path for `bagwiz map slam --gpu` (CUDA odometry + VGICP_GPU mapping +
+# GPU export voxelization). OFF by default; implies BAGWIZ_WITH_SLAM. Enabled via
+# `pixi run build-slam-gpu`, which builds the CUDA GLIM stack into
+# install/<distro>/glim-deps-cuda and passes -DBAGWIZ_WITH_SLAM_CUDA=ON plus the
+# CUDA toolchain. A normal CPU build leaves this OFF and links no CUDA.
+option(BAGWIZ_WITH_SLAM_CUDA "GPU-accelerate `bagwiz map slam --gpu` (implies BAGWIZ_WITH_SLAM)" OFF)
+if(BAGWIZ_WITH_SLAM_CUDA)
+  set(BAGWIZ_WITH_SLAM ON CACHE BOOL "Implied by BAGWIZ_WITH_SLAM_CUDA" FORCE)
+endif()
 if(BAGWIZ_WITH_SLAM)
   find_package(glim CONFIG REQUIRED)
   find_package(gtsam_points CONFIG REQUIRED)
@@ -381,6 +390,7 @@ if(BAGWIZ_WITH_SLAM)
 
   target_sources(bagwiz PRIVATE
     src/core/slam/cloud_mapper.cpp
+    src/core/slam/cuda_device.cpp
     src/core/slam/progress_bar.cpp
     src/commands/map.cpp
     src/commands/map_filter.cpp
@@ -392,6 +402,33 @@ if(BAGWIZ_WITH_SLAM)
   target_include_directories(bagwiz SYSTEM PRIVATE
     $<TARGET_PROPERTY:indicators::indicators,INTERFACE_INCLUDE_DIRECTORIES>)
   target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_SLAM)
+
+  # GPU fast path: link the CUDA runtime, compile the GPU export voxelizer, and
+  # define the macro that switches on the CUDA code paths. gtsam_points_cuda is
+  # pulled in transitively via gtsam_points::gtsam_points (once the deps are
+  # CUDA-built), so bagwiz needs only CUDA::cudart directly for its own TUs
+  # (cuda_device.cpp + cloud_voxelize_gpu.cu).
+  if(BAGWIZ_WITH_SLAM_CUDA)
+    if(NOT TARGET gtsam_points::gtsam_points_cuda)
+      message(FATAL_ERROR
+        "BAGWIZ_WITH_SLAM_CUDA=ON but gtsam_points has no CUDA target. Rebuild the GLIM deps "
+        "with CUDA: scripts/build-glim-deps.sh --cuda (pixi run build-glim-gpu).")
+    endif()
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+      message(WARNING
+        "CMAKE_CUDA_ARCHITECTURES not set; defaulting to 86 (sm_86 / RTX 30xx). For another GPU "
+        "pass -DCMAKE_CUDA_ARCHITECTURES=<arch> (e.g. 75 = RTX 20xx, 89 = RTX 40xx). The "
+        "voxelize_gpu kernel falls back to CPU on an arch mismatch, but GLIM's VGICP_GPU mapping "
+        "does not — a wrong arch then fails the --gpu run. `pixi run build-slam-gpu` sets 86.")
+      set(CMAKE_CUDA_ARCHITECTURES 86)
+    endif()
+    enable_language(CUDA)
+    find_package(CUDAToolkit REQUIRED)
+    target_sources(bagwiz PRIVATE src/core/slam/cloud_voxelize_gpu.cu)
+    set_source_files_properties(src/core/slam/cloud_voxelize_gpu.cu PROPERTIES LANGUAGE CUDA)
+    target_link_libraries(bagwiz PRIVATE CUDA::cudart)
+    target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_SLAM_CUDA)
+  endif()
 endif()
 
 # --- Optional browser map viewer for `bagwiz map slam --viewer` ---------------
@@ -592,11 +629,31 @@ if(BUILD_TESTING)
   # GLIM-linked integration test for the mapping wrapper; only when SLAM is on
   # (find_package(glim) ran in the BAGWIZ_WITH_SLAM block above).
   if(BAGWIZ_WITH_SLAM)
+    # Compile the same SLAM translation units as the production binary (cloud_mapper
+    # + cuda_device, the latter GPU-free without BAGWIZ_WITH_SLAM_CUDA) so this test
+    # cannot silently diverge from how bagwiz links.
     ament_add_gtest(bagwiz_slam_cloud_mapper_test
       test/core/slam/cloud_mapper_test.cpp
-      src/core/slam/cloud_mapper.cpp)
+      src/core/slam/cloud_mapper.cpp
+      src/core/slam/cuda_device.cpp)
     target_link_libraries(bagwiz_slam_cloud_mapper_test
       bagwiz_core glim::glim gtsam_points::gtsam_points gtsam)
+
+    # GPU variant: only when CUDA SLAM is on. CI never sets BAGWIZ_WITH_SLAM_CUDA,
+    # so this never compiles there; on a GPU-less CUDA build the test body
+    # GTEST_SKIPs at runtime (cudaGetDeviceCount == 0), so it stays green too.
+    if(BAGWIZ_WITH_SLAM_CUDA)
+      ament_add_gtest(bagwiz_slam_cloud_mapper_gpu_test
+        test/core/slam/cloud_mapper_gpu_test.cpp
+        src/core/slam/cloud_mapper.cpp
+        src/core/slam/cuda_device.cpp
+        src/core/slam/cloud_voxelize_gpu.cu)
+      set_source_files_properties(src/core/slam/cloud_voxelize_gpu.cu PROPERTIES LANGUAGE CUDA)
+      target_link_libraries(bagwiz_slam_cloud_mapper_gpu_test
+        bagwiz_core glim::glim gtsam_points::gtsam_points gtsam CUDA::cudart)
+      target_compile_definitions(bagwiz_slam_cloud_mapper_gpu_test PRIVATE
+        BAGWIZ_WITH_SLAM BAGWIZ_WITH_SLAM_CUDA)
+    endif()
 
     # Progress-bar helpers + no-op-when-disabled behavior. GLIM-free, but gated
     # on SLAM since that is where indicators is fetched; its include dir is

@@ -51,7 +51,14 @@ case "${distro}" in
     exit 2
     ;;
 esac
-bin="${BAGWIZ_REPO}/install/${distro}/bagwiz/bin/bagwiz"
+# The GPU build lives in a SEPARATE install base (install/<distro>-gpu) but reuses
+# the SAME pixi env (<distro>) for activation, so split the two: `distro` drives
+# env activation + the snapshot cache, `install_base` indexes the built binary and
+# its colcon setup. BAGWIZ_GPU (or the launcher's baked BAGWIZ_DEFAULT_GPU) selects
+# the GPU base; empty leaves install_base == distro (unchanged CPU behavior).
+gpu="${BAGWIZ_GPU:-${BAGWIZ_DEFAULT_GPU:-}}"
+install_base="${distro}${gpu:+-gpu}"
+bin="${BAGWIZ_REPO}/install/${install_base}/bagwiz/bin/bagwiz"
 
 if [ ! -x "${bin}" ]; then
     echo "bagwiz: no build found for '${distro}' at ${bin}" >&2
@@ -67,7 +74,7 @@ cache="${cache_dir}/env-${distro}-${cache_key}.sh"
 lock="${BAGWIZ_REPO}/pixi.lock"
 # colcon regenerates this prefix-chain setup on every build; activation sources
 # it (see scripts/pixi-activate.sh), so its contents feed the captured AMENT/LD.
-chain_setup="${BAGWIZ_REPO}/install/${distro}/setup.sh"
+chain_setup="${BAGWIZ_REPO}/install/${install_base}/setup.sh"
 
 # The snapshot is stale when it is missing or older than any input that changes
 # what activation produces or how it is captured: the lockfile (dependency set),
@@ -245,6 +252,16 @@ fi
 _bagwiz_glim_lib="${BAGWIZ_REPO}/install/${distro}/glim-deps/lib"
 if [ -d "${_bagwiz_glim_lib}" ]; then
     export LD_LIBRARY_PATH="${_bagwiz_glim_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+fi
+# A GPU build additionally needs the CUDA stack (install/<distro>/glim-deps-cuda:
+# CUDA libglim + libgtsam_points_cuda), placed AHEAD of glim-deps so its CUDA
+# libglim wins over the CPU one. Only for a GPU launcher (gpu set) — a CPU binary
+# must never load the CUDA libglim (it would pull libcudart it never linked).
+if [ -n "${gpu}" ]; then
+    _bagwiz_glim_cuda_lib="${BAGWIZ_REPO}/install/${distro}/glim-deps-cuda/lib"
+    if [ -d "${_bagwiz_glim_cuda_lib}" ]; then
+        export LD_LIBRARY_PATH="${_bagwiz_glim_cuda_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    fi
 fi
 
 exec "${bin}" "$@"

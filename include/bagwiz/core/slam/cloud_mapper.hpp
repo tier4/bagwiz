@@ -122,6 +122,15 @@ struct CloudMapperConfig
   // to the default (4), which matches GLIM's odometry default and avoids the
   // preprocessor's conservative default of 2.
   int num_threads = 4;
+
+  // Route GLIM through its CUDA backends and use GPU export voxelization. With
+  // t_lidar_imu set this selects OdometryEstimationGPU; without it odometry stays
+  // CT (no GPU LiDAR-only backend exists) but sub/global mapping still enable
+  // GPU VGICP. Honored only in a BAGWIZ_WITH_SLAM_CUDA build; constructing with
+  // use_gpu=true in a non-CUDA build throws. The per-frame host stash is int16-
+  // quantized in this mode to roughly halve host memory on large bags. Outside
+  // the CPU reproducibility guarantee.
+  bool use_gpu = false;
 };
 
 // One GNSS fix already projected into the local metric (ENU) frame the mapper

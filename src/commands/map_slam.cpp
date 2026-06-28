@@ -13,6 +13,7 @@
 #include "bagwiz/core/output_path.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
 #include "bagwiz/core/slam/cloud_mapper.hpp"
+#include "bagwiz/core/slam/cuda_device.hpp"
 #include "bagwiz/core/slam/gnss_projector.hpp"
 #include "bagwiz/core/slam/gnss_sample.hpp"
 #include "bagwiz/core/slam/imu_sample.hpp"
@@ -129,6 +130,19 @@ public:
         return 1;
       }
       upsample_spec_ = *spec;
+    }
+
+    // Resolve the effective backend (CPU/GPU) from --backend / --gpu plus a CUDA
+    // device probe, before any bag work. A forced 'gpu' that cannot run errors
+    // here; 'auto' degrades to CPU.
+    if (!resolve_backend()) {
+      return 1;
+    }
+    if (use_gpu_ && args_.imu_topic.empty()) {
+      fmt::print(
+        stdout,
+        "GPU backend without --imu: odometry runs on CPU (CT; GLIM has no GPU LiDAR-only "
+        "backend); GPU acceleration applies to mapping registration and export voxelization.\n");
     }
 
     std::unique_ptr<io::BagReader> reader;
@@ -654,6 +668,55 @@ private:
     return std::move(result.poses);
   }
 
+  // Resolve --backend / --gpu plus a CUDA device probe into use_gpu_. Returns
+  // false (logged) only when 'gpu' was forced but is unavailable; 'auto' silently
+  // uses CPU when GPU is unavailable (announcing the fallback when a CUDA build
+  // merely lacks a usable device). --gpu is the alias for --backend gpu.
+  bool resolve_backend()
+  {
+    const std::string backend = args_.gpu ? std::string("gpu") : args_.backend;
+    const auto cuda = core::slam::query_cuda_device();
+    const bool gpu_runnable = cuda.has_cuda_build && cuda.error.empty() && cuda.device_count > 0;
+
+    if (backend == "cpu") {
+      use_gpu_ = false;
+      return true;
+    }
+    if (backend == "gpu") {
+      if (!cuda.has_cuda_build) {
+        BAGWIZ_LOG_ERROR(
+          kLogger,
+          "--backend gpu requested but this binary was built without CUDA; rebuild with "
+          "-DBAGWIZ_WITH_SLAM_CUDA=ON (pixi run build-slam-gpu), or use --backend auto/cpu.");
+        return false;
+      }
+      if (!cuda.error.empty()) {
+        BAGWIZ_LOG_ERROR(
+          kLogger, "--backend gpu: CUDA device query failed: %s", cuda.error.c_str());
+        return false;
+      }
+      if (cuda.device_count <= 0) {
+        BAGWIZ_LOG_ERROR(kLogger, "--backend gpu requested but no CUDA device is available.");
+        return false;
+      }
+      use_gpu_ = true;
+      fmt::print(stdout, "Backend: GPU (CUDA).\n");
+      return true;
+    }
+    // auto (the default): prefer GPU when runnable, else CPU.
+    use_gpu_ = gpu_runnable;
+    if (use_gpu_) {
+      fmt::print(stdout, "Backend: GPU (CUDA) — auto-selected.\n");
+    } else if (cuda.has_cuda_build) {
+      // CUDA build but no usable device: announce the CPU fallback (a non-CUDA
+      // build under 'auto' is silently CPU, the normal case).
+      fmt::print(
+        stdout, "Backend: CPU — auto (no usable CUDA device{}).\n",
+        cuda.error.empty() ? std::string() : std::string(": ") + cuda.error);
+    }
+    return true;
+  }
+
   // Optimized mapping path -> optimized TUM trajectory + binary PCD map.
   int run_mapping(
     io::BagReader & reader, const std::optional<core::slam::SensorTransform> & t_lidar_imu)
@@ -663,6 +726,7 @@ private:
     config.t_lidar_imu = t_lidar_imu;
     config.num_threads = cap_threads_at_hardware_limit(args_.num_threads);
     config.enable_gnss = !args_.gnss_topic.empty();
+    config.use_gpu = use_gpu_;
     // Resolve the antenna lever-arm (T_cloud_gnss) from static TF so the GNSS prior
     // constrains the sensor origin, not the antenna. Non-fatal: a missing TF leaves
     // the offset zero (raw-antenna behavior) with a warning.
@@ -828,6 +892,8 @@ private:
   std::filesystem::path map_path_;     // <output_root>/map.pcd (mapping mode only)
   // Parsed --upsample-traj spec; std::nullopt leaves up-sampling disabled.
   std::optional<core::UpsampleSpec> upsample_spec_;
+  // Effective backend resolved by resolve_backend() from --backend / --gpu.
+  bool use_gpu_ = false;
 };
 
 }  // namespace

@@ -9,6 +9,9 @@
 #include "bagwiz/core/slam/cloud_mapper.hpp"
 
 #include "bagwiz/core/slam/cloud_filters.hpp"
+#ifdef BAGWIZ_WITH_SLAM_CUDA
+#include "bagwiz/core/slam/cloud_voxelize_gpu.hpp"
+#endif
 #include "bagwiz/core/slam/glim_estimator.hpp"
 #include "bagwiz/core/slam/gnss_alignment.hpp"
 #include "bagwiz/core/slam/gnss_sample.hpp"
@@ -40,9 +43,11 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <map>
 #include <memory>
 #include <optional>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -83,16 +88,28 @@ core::TrajectoryPose to_pose(double stamp, const Eigen::Isometry3d & transform)
 // density is controlled separately, by re-binning the optimized per-frame points
 // (see CloudMapper::Impl::fill_map), so the sub mapping that drives the
 // optimization is left untouched.
-glim::SubMappingParams make_sub_mapping_params(bool enable_imu)
+// use_gpu switches the sub/global registration factor to gtsam_points' GPU VGICP
+// (built on a CUDA voxelmap). enable_gpu lets GLIM allocate the GPU stream/buffers.
+// Both fall back to GLIM's stock CPU VGICP when use_gpu is false, so the CPU path
+// is byte-for-byte unchanged.
+glim::SubMappingParams make_sub_mapping_params(bool enable_imu, bool use_gpu)
 {
   glim::SubMappingParams params;
   params.enable_imu = enable_imu;
+  if (use_gpu) {
+    params.enable_gpu = true;
+    params.registration_error_factor_type = "VGICP_GPU";
+  }
   return params;
 }
-glim::GlobalMappingParams make_global_mapping_params(bool enable_imu)
+glim::GlobalMappingParams make_global_mapping_params(bool enable_imu, bool use_gpu)
 {
   glim::GlobalMappingParams params;
   params.enable_imu = enable_imu;
+  if (use_gpu) {
+    params.enable_gpu = true;
+    params.registration_error_factor_type = "VGICP_GPU";
+  }
   return params;
 }
 
@@ -104,6 +121,74 @@ glim::CloudPreprocessorParams make_preprocessor_params(int num_threads)
   glim::CloudPreprocessorParams params;
   params.num_threads = num_threads > 0 ? num_threads : 4;
   return params;
+}
+
+// Per-frame point geometry held in the stash. Float by default (the CPU export
+// stays byte-identical to the historical output). In use_gpu mode it is
+// int16-quantized about the frame's own centroid (Tier-1c), roughly halving the
+// host stash held across the whole run on a large bag; the quantization error
+// (< ~1 mm at LiDAR range) is far below map_resolution and the GPU path is
+// outside the reproducibility guarantee. Exactly one of `f` / `q` is populated.
+struct FramePoints
+{
+  std::vector<std::array<float, 3>> f;         // float, populated when !use_gpu
+  std::vector<std::array<std::int16_t, 3>> q;  // int16, populated when use_gpu
+  std::array<float, 3> center{0.0F, 0.0F, 0.0F};
+  float scale = 1.0F;
+
+  [[nodiscard]] std::size_t size() const { return q.empty() ? f.size() : q.size(); }
+  [[nodiscard]] bool empty() const { return f.empty() && q.empty(); }
+
+  // Dequantized LiDAR-frame point i as float xyz (identity for the float path).
+  [[nodiscard]] std::array<float, 3> at(std::size_t i) const
+  {
+    if (q.empty()) {
+      return f[i];
+    }
+    return {
+      center[0] + static_cast<float>(q[i][0]) * scale,
+      center[1] + static_cast<float>(q[i][1]) * scale,
+      center[2] + static_cast<float>(q[i][2]) * scale};
+  }
+};
+
+// Build a FramePoints from float LiDAR-frame xyz. !use_gpu keeps the floats
+// verbatim (CPU export byte-identical). use_gpu int16-quantizes about the cloud
+// centroid: center = (min+max)/2, scale = max axis half-extent / 32767.
+FramePoints make_frame_points(std::vector<std::array<float, 3>> && pts, bool use_gpu)
+{
+  FramePoints fp;
+  if (!use_gpu || pts.empty()) {
+    fp.f = std::move(pts);
+    return fp;
+  }
+  std::array<float, 3> lo = pts[0];
+  std::array<float, 3> hi = pts[0];
+  for (const auto & p : pts) {
+    for (int a = 0; a < 3; ++a) {
+      lo[a] = std::min(lo[a], p[a]);
+      hi[a] = std::max(hi[a], p[a]);
+    }
+  }
+  float half_extent = 0.0F;
+  for (int a = 0; a < 3; ++a) {
+    fp.center[a] = 0.5F * (lo[a] + hi[a]);
+    half_extent = std::max(half_extent, 0.5F * (hi[a] - lo[a]));
+  }
+  // 32767 = int16 max; guard a degenerate (zero-extent / single-point) frame.
+  fp.scale = half_extent > 0.0F ? half_extent / 32767.0F : 1.0F;
+  const float inv_scale = 1.0F / fp.scale;
+  fp.q.reserve(pts.size());
+  for (const auto & p : pts) {
+    std::array<std::int16_t, 3> q{};
+    for (int a = 0; a < 3; ++a) {
+      const std::int64_t r =
+        std::clamp<std::int64_t>(std::llround((p[a] - fp.center[a]) * inv_scale), -32767, 32767);
+      q[a] = static_cast<std::int16_t>(r);
+    }
+    fp.q.push_back(q);
+  }
+  return fp;
 }
 
 }  // namespace
@@ -118,8 +203,8 @@ struct CloudMapper::Impl
   // optimized submap-relative pose at capture time.
   struct StashedPoints
   {
-    std::vector<std::array<float, 3>> points;  // LiDAR-frame coordinates
-    std::vector<float> intensities;            // empty unless the scan had intensities
+    FramePoints points;              // LiDAR-frame coordinates (float, or int16 in use_gpu)
+    std::vector<float> intensities;  // empty unless the scan had intensities
   };
 
   // One frame of a submap, captured BEFORE the submap is inserted into global
@@ -133,8 +218,8 @@ struct CloudMapper::Impl
     std::int64_t id = 0;
     double stamp = 0.0;
     Eigen::Isometry3d T_origin_frame = Eigen::Isometry3d::Identity();
-    std::vector<std::array<float, 3>> points;  // LiDAR-frame, full density
-    std::vector<float> intensities;            // parallel to points; may be empty
+    FramePoints points;              // LiDAR-frame, full density (float, or int16 in use_gpu)
+    std::vector<float> intensities;  // parallel to points; may be empty
   };
   struct SubMapEntry
   {
@@ -171,12 +256,13 @@ struct CloudMapper::Impl
   explicit Impl(const CloudMapperConfig & cfg)
   : config(cfg),
     preprocessor(make_preprocessor_params(cfg.num_threads)),
-    odometry(detail::make_odometry_estimator(cfg.t_lidar_imu, cfg.num_threads)),
+    odometry(detail::make_odometry_estimator(cfg.t_lidar_imu, cfg.num_threads, cfg.use_gpu)),
     sub_mapping(
-      std::make_unique<glim::SubMapping>(make_sub_mapping_params(cfg.t_lidar_imu.has_value()))),
+      std::make_unique<glim::SubMapping>(
+        make_sub_mapping_params(cfg.t_lidar_imu.has_value(), cfg.use_gpu))),
     global_mapping(
       std::make_unique<glim::GlobalMapping>(
-        make_global_mapping_params(cfg.t_lidar_imu.has_value())))
+        make_global_mapping_params(cfg.t_lidar_imu.has_value(), cfg.use_gpu)))
   {
   }
 
@@ -205,8 +291,9 @@ struct CloudMapper::Impl
     const Eigen::Isometry3d T_lidar_sensor =
       frame->T_world_lidar.inverse() * frame->T_world_sensor();
 
+    std::vector<std::array<float, 3>> pts;
+    pts.reserve(n);
     StashedPoints stashed;
-    stashed.points.reserve(n);
     // Intensities are sourced from the preprocessed input frame, NOT from
     // cloud->intensities. GLIM's LiDAR-only backend (OdometryEstimationCT) never
     // copies intensities onto its estimation-frame cloud, so cloud->has_intensities()
@@ -221,12 +308,13 @@ struct CloudMapper::Impl
     }
     for (std::size_t i = 0; i < n; ++i) {
       const Eigen::Vector3d p = T_lidar_sensor * cloud->points[i].head<3>();
-      stashed.points.push_back(
+      pts.push_back(
         {static_cast<float>(p.x()), static_cast<float>(p.y()), static_cast<float>(p.z())});
       if (has_intensities) {
         stashed.intensities.push_back(static_cast<float>(frame->raw_frame->intensities[i]));
       }
     }
+    stashed.points = make_frame_points(std::move(pts), config.use_gpu);
     stash[frame->id] = std::move(stashed);
   }
 
@@ -484,17 +572,12 @@ struct CloudMapper::Impl
     }
   }
 
-  // Rebuild the exported map from every frame's full points, placed at the
-  // frame's globally-optimized world pose and merged at config.map_resolution.
-  // This is the density decoupling: the optimization ran at GLIM's stock sub-map
-  // density, but the map we emit is as dense as the requested export voxel allows.
-  void fill_map(CloudMap & result) const
+  // Intensity is all-or-nothing across the whole map (mirrors GLIM's export and
+  // what write_pcd expects): true only if every frame with points also carried
+  // index-aligned intensities.
+  [[nodiscard]] bool detect_with_intensity() const
   {
-    // Intensity is all-or-nothing across the whole map (mirrors GLIM's export and
-    // what write_pcd expects): keep it only if every frame with points also
-    // carried intensities.
     bool any_points = false;
-    bool all_intensity = true;
     for (const auto & entry : entries) {
       for (const auto & ref : entry.frames) {
         if (ref.points.empty()) {
@@ -502,12 +585,40 @@ struct CloudMapper::Impl
         }
         any_points = true;
         if (ref.intensities.size() != ref.points.size()) {
-          all_intensity = false;
+          return false;
         }
       }
     }
-    const bool with_intensity = any_points && all_intensity;
+    return any_points;
+  }
 
+  // Stream one frame's globally-optimized world points into `grid` (dequantizing
+  // the int16 stash via FramePoints::at when in use_gpu mode).
+  void add_frame_to_grid(
+    VoxelGrid & grid, const Eigen::Isometry3d & T_world_frame, const FrameRef & ref,
+    bool with_intensity) const
+  {
+    const std::size_t n = ref.points.size();
+    for (std::size_t i = 0; i < n; ++i) {
+      const std::array<float, 3> local = ref.points.at(i);
+      const Eigen::Vector3d world = T_world_frame * Eigen::Vector3d(local[0], local[1], local[2]);
+      if (with_intensity) {
+        grid.add(
+          static_cast<float>(world.x()), static_cast<float>(world.y()),
+          static_cast<float>(world.z()), ref.intensities[i]);
+      } else {
+        grid.add(
+          static_cast<float>(world.x()), static_cast<float>(world.y()),
+          static_cast<float>(world.z()));
+      }
+    }
+  }
+
+  // Single-grid streaming voxelization in entries/frames order. This is the
+  // historical path, byte-identical to it; used when num_threads <= 1 so the
+  // `--threads 1` reproducibility guarantee is preserved exactly.
+  void fill_map_streaming(CloudMap & result, bool with_intensity) const
+  {
     VoxelGrid grid(config.map_resolution, with_intensity);
     for (const auto & entry : entries) {
       if (!entry.submap) {
@@ -518,24 +629,187 @@ struct CloudMapper::Impl
         if (ref.points.empty()) {
           continue;
         }
-        const Eigen::Isometry3d T_world_frame = T_world_origin * ref.T_origin_frame;
-        for (std::size_t i = 0; i < ref.points.size(); ++i) {
-          const Eigen::Vector3d local(ref.points[i][0], ref.points[i][1], ref.points[i][2]);
-          const Eigen::Vector3d world = T_world_frame * local;
-          if (with_intensity) {
-            grid.add(
-              static_cast<float>(world.x()), static_cast<float>(world.y()),
-              static_cast<float>(world.z()), ref.intensities[i]);
-          } else {
-            grid.add(
-              static_cast<float>(world.x()), static_cast<float>(world.y()),
-              static_cast<float>(world.z()));
-          }
-        }
+        add_frame_to_grid(grid, T_world_origin * ref.T_origin_frame, ref, with_intensity);
       }
     }
     result.points = grid.points();
     result.intensities = grid.intensities();
+  }
+
+  // Parallel voxelization (Tier-1b): partition the frames across num_threads
+  // worker grids, then merge in a fixed order. Deterministic per thread count
+  // (each thread sums sequentially, fixed merge order), so it is run-to-run
+  // reproducible at a given --threads value; it is NOT byte-identical to the
+  // single-thread map (different FP-summation order + voxel order), consistent
+  // with the multithreaded map already being tolerance-only.
+  void fill_map_parallel(CloudMap & result, bool with_intensity) const
+  {
+    struct Job
+    {
+      Eigen::Isometry3d T_world_frame;
+      const FrameRef * ref;
+    };
+    std::vector<Job> jobs;
+    for (const auto & entry : entries) {
+      if (!entry.submap) {
+        continue;
+      }
+      const Eigen::Isometry3d & T_world_origin = entry.submap->T_world_origin;
+      for (const auto & ref : entry.frames) {
+        if (ref.points.empty()) {
+          continue;
+        }
+        jobs.push_back({T_world_origin * ref.T_origin_frame, &ref});
+      }
+    }
+    if (jobs.empty()) {
+      result.points.clear();
+      result.intensities.clear();
+      return;
+    }
+    const int nthreads = std::min<int>(config.num_threads, static_cast<int>(jobs.size()));
+    std::vector<VoxelGrid> grids;
+    grids.reserve(static_cast<std::size_t>(nthreads));
+    for (int t = 0; t < nthreads; ++t) {
+      grids.emplace_back(config.map_resolution, with_intensity);
+    }
+    const auto worker = [&](int t) {
+      const std::size_t lo = jobs.size() * static_cast<std::size_t>(t) / nthreads;
+      const std::size_t hi = jobs.size() * static_cast<std::size_t>(t + 1) / nthreads;
+      for (std::size_t j = lo; j < hi; ++j) {
+        add_frame_to_grid(
+          grids[static_cast<std::size_t>(t)], jobs[j].T_world_frame, *jobs[j].ref, with_intensity);
+      }
+    };
+    // Capture per-thread exceptions (e.g. bad_alloc when a huge map's voxels do
+    // not fit) so a worker failure propagates as a clean exception the caller can
+    // report, instead of std::terminate. jthread auto-joins on scope exit —
+    // including during exception unwinding — closing every terminate path.
+    std::vector<std::exception_ptr> errors(static_cast<std::size_t>(nthreads), nullptr);
+    const auto safe_worker = [&](int t) {
+      try {
+        worker(t);
+      } catch (...) {
+        errors[static_cast<std::size_t>(t)] = std::current_exception();
+      }
+    };
+    {
+      std::vector<std::jthread> pool;
+      pool.reserve(static_cast<std::size_t>(nthreads - 1));
+      for (int t = 1; t < nthreads; ++t) {
+        pool.emplace_back(safe_worker, t);
+      }
+      safe_worker(0);
+    }  // jthread destructors join all background workers here
+    for (const auto & error : errors) {
+      if (error) {
+        std::rethrow_exception(error);
+      }
+    }
+    for (int t = 1; t < nthreads; ++t) {
+      grids[0].merge_from(grids[static_cast<std::size_t>(t)]);
+    }
+    result.points = grids[0].points();
+    result.intensities = grids[0].intensities();
+  }
+
+#ifdef BAGWIZ_WITH_SLAM_CUDA
+  // Flatten every frame's globally-optimized world points (+ intensities) into a
+  // single contiguous array for the GPU voxelizer.
+  void build_world_points(
+    std::vector<std::array<float, 3>> & out_points, std::vector<float> & out_intensities,
+    bool with_intensity) const
+  {
+    std::size_t total = 0;
+    for (const auto & entry : entries) {
+      if (!entry.submap) {
+        continue;
+      }
+      for (const auto & ref : entry.frames) {
+        total += ref.points.size();
+      }
+    }
+    out_points.reserve(total);
+    if (with_intensity) {
+      out_intensities.reserve(total);
+    }
+    for (const auto & entry : entries) {
+      if (!entry.submap) {
+        continue;
+      }
+      const Eigen::Isometry3d & T_world_origin = entry.submap->T_world_origin;
+      for (const auto & ref : entry.frames) {
+        if (ref.points.empty()) {
+          continue;
+        }
+        const Eigen::Isometry3d T_world_frame = T_world_origin * ref.T_origin_frame;
+        const std::size_t n = ref.points.size();
+        for (std::size_t i = 0; i < n; ++i) {
+          const std::array<float, 3> local = ref.points.at(i);
+          const Eigen::Vector3d world =
+            T_world_frame * Eigen::Vector3d(local[0], local[1], local[2]);
+          out_points.push_back(
+            {static_cast<float>(world.x()), static_cast<float>(world.y()),
+             static_cast<float>(world.z())});
+          if (with_intensity) {
+            out_intensities.push_back(ref.intensities[i]);
+          }
+        }
+      }
+    }
+  }
+
+  // CPU voxelization of an already-flattened world array (the GPU fallback path).
+  static void voxelize_flat_cpu(
+    const std::vector<std::array<float, 3>> & pts, const std::vector<float> & ints,
+    double resolution, bool with_intensity, CloudMap & result)
+  {
+    VoxelGrid grid(resolution, with_intensity);
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+      if (with_intensity) {
+        grid.add(pts[i][0], pts[i][1], pts[i][2], ints[i]);
+      } else {
+        grid.add(pts[i][0], pts[i][1], pts[i][2]);
+      }
+    }
+    result.points = grid.points();
+    result.intensities = grid.intensities();
+  }
+#endif
+
+  // Rebuild the exported map from every frame's full points, placed at the
+  // frame's globally-optimized world pose and merged at config.map_resolution.
+  // The optimization ran at GLIM's stock sub-map density; the emitted map is as
+  // dense as the requested export voxel allows. Dispatch:
+  //   - use_gpu (CUDA build): GPU voxelization, CPU fallback on GPU failure;
+  //   - num_threads > 1: parallel CPU voxelization (Tier-1b);
+  //   - else: single-grid streaming (byte-identical to the historical output).
+  void fill_map(CloudMap & result) const
+  {
+    const bool with_intensity = detect_with_intensity();
+
+#ifdef BAGWIZ_WITH_SLAM_CUDA
+    if (config.use_gpu) {
+      std::vector<std::array<float, 3>> world_points;
+      std::vector<float> world_intensities;
+      build_world_points(world_points, world_intensities, with_intensity);
+      if (voxelize_gpu(
+            world_points, world_intensities, config.map_resolution, result.points,
+            result.intensities)) {
+        return;
+      }
+      // GPU unavailable / OOM: voxelize the already-built flat arrays on the CPU.
+      voxelize_flat_cpu(
+        world_points, world_intensities, config.map_resolution, with_intensity, result);
+      return;
+    }
+#endif
+
+    if (config.num_threads > 1) {
+      fill_map_parallel(result, with_intensity);
+    } else {
+      fill_map_streaming(result, with_intensity);
+    }
   }
 };
 

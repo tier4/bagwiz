@@ -64,6 +64,20 @@ struct MapSlamArgs
   // Number of CPU threads for GLIM. 0 or a negative value falls back to the
   // default (4).
   int num_threads = 4;
+
+  // SLAM backend selection: "auto" (default), "cpu", or "gpu".
+  //  - auto: use the CUDA GPU backend when this binary was built with
+  //    -DBAGWIZ_WITH_SLAM_CUDA AND a CUDA device is visible; otherwise CPU.
+  //  - cpu: force the CPU backend (the reproducibility-guaranteed path).
+  //  - gpu: force the CUDA GPU backend; error on a non-CUDA build or no device.
+  // The GPU backend = GLIM's GPU LiDAR-IMU odometry (with --imu; CT without it,
+  // since GLIM has no GPU LiDAR-only backend), GPU VGICP registration in
+  // sub/global mapping, and GPU export-map voxelization. It is OUTSIDE the CPU
+  // reproducibility guarantee. The effective choice is resolved in run_map_slam.
+  std::string backend = "auto";
+
+  // Legacy shorthand for `--backend gpu`; mutually exclusive with --backend.
+  bool gpu = false;
 };
 
 // Run LiDAR SLAM over a single PointCloud2 topic entirely in-process: bagwiz

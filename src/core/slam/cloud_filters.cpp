@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -77,6 +78,7 @@ void VoxelGrid::accumulate(float x, float y, float z, float intensity)
   Accum * cell = nullptr;
   if (found == index_.end()) {
     index_.emplace(key, accum_.size());
+    keys_.push_back(key);  // parallel to accum_, in first-seen order (for merge_from)
     accum_.emplace_back();
     cell = &accum_.back();
   } else {
@@ -116,6 +118,34 @@ std::vector<float> VoxelGrid::intensities() const
     result.push_back(static_cast<float>(cell.sum_intensity / static_cast<double>(cell.count)));
   }
   return result;
+}
+
+void VoxelGrid::merge_from(const VoxelGrid & other)
+{
+  // Both grids must agree on resolution + intensity mode, else merged bins and
+  // intensity means would be silently wrong; the sole caller (fill_map_parallel)
+  // builds every per-thread grid identically. A debug-only guard, zero cost in
+  // release, matching how the codebase asserts internal-helper preconditions.
+  assert(resolution_ == other.resolution_ && with_intensity_ == other.with_intensity_);
+  // Iterate other in first-seen (accum_) order so the merge is deterministic;
+  // its unordered_map index_ would iterate in an unspecified order.
+  for (std::size_t i = 0; i < other.accum_.size(); ++i) {
+    const Key & key = other.keys_[i];
+    const Accum & src = other.accum_[i];
+    const auto found = index_.find(key);
+    if (found == index_.end()) {
+      index_.emplace(key, accum_.size());
+      keys_.push_back(key);
+      accum_.push_back(src);  // copy the other grid's running sums + count verbatim
+    } else {
+      Accum & dst = accum_[found->second];
+      dst.sum_x += src.sum_x;
+      dst.sum_y += src.sum_y;
+      dst.sum_z += src.sum_z;
+      dst.sum_intensity += src.sum_intensity;
+      dst.count += src.count;
+    }
+  }
 }
 
 namespace
