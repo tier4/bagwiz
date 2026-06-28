@@ -9,7 +9,9 @@
 #include "bagwiz/core/slam/cloud_filters.hpp"
 #include "bagwiz/core/slam/cloud_mapper.hpp"
 #include "bagwiz/core/slam/cloud_voxelize_gpu.hpp"
+#include "bagwiz/core/slam/imu_sample.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
+#include "bagwiz/core/slam/sensor_transform.hpp"
 
 #include <cuda_runtime_api.h>
 #include <gtest/gtest.h>
@@ -19,6 +21,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 // GPU-path integration + unit tests. Compiled only under BAGWIZ_WITH_SLAM_CUDA
@@ -67,6 +70,19 @@ slam::LidarScan make_room_scan(std::int64_t stamp_ns)
     }
   }
   return scan;
+}
+
+// Stationary IMU: gravity "down" in the IMU frame, no rotation. Enough to let the
+// LiDAR-IMU backend estimate its gravity-aligned initial state (mirrors the CPU
+// suite's fixture). The 180-deg-X extrinsic below maps it into the LiDAR frame.
+slam::ImuSample make_gravity_imu(std::int64_t stamp_ns)
+{
+  slam::ImuSample imu;
+  imu.stamp_ns = stamp_ns;
+  imu.frame_id = "imu";
+  imu.linear_acceleration = {0.0, 0.0, -9.80665};
+  imu.angular_velocity = {0.0, 0.0, 0.0};
+  return imu;
 }
 
 // Sort a point set lexicographically so two voxelizations (GPU sorted-key order
@@ -181,6 +197,96 @@ TEST(CloudMapperGpu, StationarySensorYieldsMapAndTrajectory)
   for (std::size_t i = 1; i < map.trajectory.size(); ++i) {
     EXPECT_LT(map.trajectory[i - 1].timestamp_ns, map.trajectory[i].timestamp_ns);
   }
+}
+
+// Drive the GPU LiDAR-IMU pipeline (use_gpu + a non-identity extrinsic -> GLIM's
+// OdometryEstimationGPU) over the room scene and return the optimized map. Shared
+// by the two GPU+IMU output-hygiene regression tests below. A 180-deg-X extrinsic
+// (Tamagawa-style mount) selects the LiDAR-IMU backend; 0.5 s of primed gravity
+// IMU lets it estimate its initial state; 120 scans @ 10 Hz (12 s) slides the 5 s
+// smoother window so marginalization runs.
+slam::CloudMap run_gpu_imu_room()
+{
+  slam::SensorTransform t_lidar_imu;
+  t_lidar_imu.rotation_xyzw = {1.0, 0.0, 0.0, 0.0};
+  t_lidar_imu.translation = {0.0, 0.0, 0.0};
+
+  slam::CloudMapperConfig config;
+  config.use_gpu = true;
+  config.t_lidar_imu = t_lidar_imu;
+
+  constexpr std::int64_t kImuDtNs = 5'000'000;     // 200 Hz
+  constexpr std::int64_t kScanDtNs = 100'000'000;  // 10 Hz
+  const std::int64_t base = 1'000'000'000'000'000'000LL;
+  const std::int64_t first_scan = base + 500'000'000LL;
+
+  slam::CloudMapper mapper(config);
+  std::int64_t imu_stamp = base;
+  while (imu_stamp < first_scan) {
+    mapper.insert_imu(make_gravity_imu(imu_stamp));
+    imu_stamp += kImuDtNs;
+  }
+  for (int i = 0; i < 120; ++i) {
+    const std::int64_t scan_stamp = first_scan + static_cast<std::int64_t>(i) * kScanDtNs;
+    while (imu_stamp < scan_stamp) {
+      mapper.insert_imu(make_gravity_imu(imu_stamp));
+      imu_stamp += kImuDtNs;
+    }
+    mapper.insert_imu(make_gravity_imu(scan_stamp));
+    mapper.insert(make_room_scan(scan_stamp));
+  }
+  return mapper.finish();
+}
+
+// Regression: the GPU LiDAR-IMU backend optimizes GPU VGICP matching factors in a
+// fixed-lag smoother on every frame. Those factors only get batched, asynchronous
+// GPU linearization when bagwiz registers a NonlinearFactorSetGPU on gtsam_points'
+// process-global LinearizationHook (CloudMapper's constructor does this for the GPU
+// path). Without it every factor falls back to per-factor *synchronous* GPU
+// linearization, flooding stderr with "performing linearization in sync mode
+// seriously affects the processing speed!!". Assert the pipeline runs AND is silent.
+TEST(CloudMapperGpu, ImuOdometryDoesNotLinearizeInSyncMode)
+{
+  if (!cuda_available()) {
+    GTEST_SKIP() << "no CUDA device";
+  }
+  // "sync mode" is printed to std::cerr by gtsam_points (not GLIM's muted spdlog
+  // logger), so capture fd 2 around the whole run.
+  testing::internal::CaptureStderr();
+  const slam::CloudMap map = run_gpu_imu_room();
+  const std::string captured = testing::internal::GetCapturedStderr();
+
+  // The GPU+IMU pipeline must actually have run (else the assertion below is vacuous).
+  EXPECT_FALSE(map.points.empty());
+  EXPECT_FALSE(map.trajectory.empty());
+  // ... and never on the synchronous fallback.
+  EXPECT_EQ(captured.find("sync mode"), std::string::npos)
+    << "GPU registration factors were linearized in sync mode — the gtsam_points "
+       "GPU LinearizationHook is not registered. Captured stderr:\n"
+    << captured;
+}
+
+// Regression: GLIM's LiDAR-IMU initial-state bootstrap (LooseInitialStateEstimation)
+// hardcodes verbosityLM=SUMMARY and dumps an LM iteration table + "Initial error:"
+// straight to std::cout (not the spdlog logger). CloudMapper mutes std::cout around
+// its GLIM calls (ScopedCoutSilence); without that, the table leaks to stdout.
+// Assert the GPU+IMU run produces a map AND leaves stdout free of GLIM's chatter.
+TEST(CloudMapperGpu, ImuOdometrySuppressesGlimOptimizerChatter)
+{
+  if (!cuda_available()) {
+    GTEST_SKIP() << "no CUDA device";
+  }
+  testing::internal::CaptureStdout();
+  const slam::CloudMap map = run_gpu_imu_room();
+  const std::string out = testing::internal::GetCapturedStdout();
+
+  EXPECT_FALSE(map.points.empty());
+  EXPECT_EQ(out.find("iter      cost"), std::string::npos)
+    << "GLIM's LM iteration table leaked to stdout. Captured stdout:\n"
+    << out;
+  EXPECT_EQ(out.find("Initial error:"), std::string::npos)
+    << "GLIM's initial-state dump leaked to stdout. Captured stdout:\n"
+    << out;
 }
 
 }  // namespace

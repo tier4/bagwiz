@@ -27,9 +27,11 @@
 
 #include <spdlog/spdlog.h>
 
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <streambuf>
 
 namespace bagwiz::core::slam::detail
 {
@@ -118,6 +120,36 @@ public:
 private:
   std::shared_ptr<spdlog::logger> logger_;
   spdlog::level::level_enum previous_;
+};
+
+// RAII redirect of std::cout to a discard sink for the guard's lifetime, restored
+// on destruction. GLIM's LiDAR-IMU initial-state bootstrap (LooseInitialStateEstimation)
+// hardcodes verbosityLM=SUMMARY and dumps an LM iteration table ("iter cost
+// cost_change lambda ...", "Initial error: ...") straight to std::cout — and that
+// is NOT routed through the spdlog logger ScopedLoggerSilence mutes. bagwiz drives
+// GLIM in-process and emits all of its OWN output via fmt::print (C stdio), never
+// std::cout, so muting std::cout around the GLIM calls silences exactly that
+// optimizer chatter and nothing of ours.
+class ScopedCoutSilence
+{
+public:
+  ScopedCoutSilence() : previous_(std::cout.rdbuf(&sink_)) {}
+  ~ScopedCoutSilence() { std::cout.rdbuf(previous_); }
+  ScopedCoutSilence(const ScopedCoutSilence &) = delete;
+  ScopedCoutSilence & operator=(const ScopedCoutSilence &) = delete;
+  ScopedCoutSilence(ScopedCoutSilence &&) = delete;
+  ScopedCoutSilence & operator=(ScopedCoutSilence &&) = delete;
+
+private:
+  // Discards everything written to it (bulk xsputn and single-char overflow).
+  class NullSink : public std::streambuf
+  {
+  protected:
+    std::streamsize xsputn(const char *, std::streamsize n) override { return n; }
+    int_type overflow(int_type c) override { return c; }
+  };
+  NullSink sink_;
+  std::streambuf * previous_;
 };
 
 }  // namespace bagwiz::core::slam::detail

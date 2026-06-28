@@ -30,6 +30,10 @@
 #include <glim/util/raw_points.hpp>
 #include <glim/util/time_keeper.hpp>
 #include <gtsam_points/types/point_cloud.hpp>
+#ifdef BAGWIZ_WITH_SLAM_CUDA
+#include <gtsam_points/cuda/nonlinear_factor_set_gpu_create.hpp>
+#include <gtsam_points/optimizers/linearization_hook.hpp>
+#endif
 
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/inference/Symbol.h>
@@ -46,6 +50,7 @@
 #include <exception>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <thread>
 #include <unordered_map>
@@ -112,6 +117,29 @@ glim::GlobalMappingParams make_global_mapping_params(bool enable_imu, bool use_g
   }
   return params;
 }
+
+#ifdef BAGWIZ_WITH_SLAM_CUDA
+// GLIM's GPU registration factors (VGICP_GPU — used by the --gpu odometry smoother
+// and by GPU sub/global mapping) only get batched, asynchronous GPU linearization
+// when a NonlinearFactorSetGPU is registered on gtsam_points' process-global
+// LinearizationHook. GLIM registers it inside its own executables (offline_viewer,
+// ROS nodes), NOT in the library modules we construct in-process — so we must do
+// it ourselves, exactly once, before the first GLIM module is built (the odometry
+// smoother creates an Ext optimizer in its constructor, and that snapshots the
+// hook list at construction time). Without it every VGICP_GPU factor falls back to
+// per-factor *synchronous* GPU linearization ("performing linearization in sync
+// mode seriously affects the processing speed!!") and the GPU path runs far slower
+// than intended. call_once keeps repeated CloudMapper constructions (e.g. across
+// tests in one process) from stacking duplicate hooks.
+void register_gpu_linearization_hook_once()
+{
+  static std::once_flag flag;
+  std::call_once(flag, [] {
+    gtsam_points::LinearizationHook::register_hook(
+      [] { return gtsam_points::create_nonlinear_factor_set_gpu(); });
+  });
+}
+#endif
 
 // Build preprocessor params. A non-positive num_threads falls back to the
 // default (4) so both stages share the same baseline; otherwise they share
@@ -821,6 +849,14 @@ CloudMapper::CloudMapper(CloudMapperConfig config)
   // shared logger muted for the rest of the process; genuine runtime warnings
   // still surface afterwards.
   const detail::ScopedLoggerSilence silence;
+#ifdef BAGWIZ_WITH_SLAM_CUDA
+  // Must run before Impl builds any GLIM module (its odometry smoother snapshots
+  // gtsam_points' hook list at construction). Gated on use_gpu so a CPU-backend
+  // run never spins up a CUDA context via the GPU factor set.
+  if (config.use_gpu) {
+    register_gpu_linearization_hook_once();
+  }
+#endif
   impl_ = std::make_unique<Impl>(config);
 }
 CloudMapper::~CloudMapper() = default;
@@ -855,6 +891,11 @@ void CloudMapper::insert_gnss(const GnssPoint & gnss)
 
 void CloudMapper::insert(const LidarScan & scan)
 {
+  // GLIM's LiDAR-IMU init bootstrap dumps an LM iteration table to std::cout from
+  // inside odometry->insert_frame; mute std::cout for this call (bagwiz prints via
+  // fmt::print, never std::cout, so only GLIM's chatter is suppressed).
+  const detail::ScopedCoutSilence cout_silence;
+
   auto raw = std::make_shared<glim::RawPoints>();
   raw->stamp = static_cast<double>(scan.stamp_ns) * 1e-9;
 
@@ -898,6 +939,10 @@ void CloudMapper::insert(const LidarScan & scan)
 
 CloudMap CloudMapper::finish()
 {
+  // Mute GLIM's std::cout chatter for the whole flush + global optimization (same
+  // rationale as insert(): bagwiz's own output goes through fmt::print, not cout).
+  const detail::ScopedCoutSilence cout_silence;
+
   // Flush the odometry smoother window — the remaining frames are marginalized
   // exactly as glim's async pipeline does at end of sequence — into sub mapping,
   // then force out the final submap.
