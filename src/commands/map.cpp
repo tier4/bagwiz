@@ -122,6 +122,11 @@ private:
       "--no-progress", slam_args_.no_progress,
       "Disable the live progress bars. They are also auto-suppressed when stderr is not a "
       "terminal or NO_COLOR is set, so this is only needed to silence them interactively.");
+    sub->add_flag(
+      "--no-pipeline", slam_args_.no_pipeline,
+      "Run the feed fully synchronously on one thread instead of overlapping bag read + "
+      "preprocess with odometry + mapping. The pipeline is bit-identical to this serial path, "
+      "so this is mainly for A/B timing or a strictly serial run.");
     const int max_threads = static_cast<int>(std::thread::hardware_concurrency());
     sub
       ->add_option(

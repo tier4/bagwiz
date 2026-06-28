@@ -12,6 +12,7 @@
 #ifdef BAGWIZ_WITH_SLAM_CUDA
 #include "bagwiz/core/slam/cloud_voxelize_gpu.hpp"
 #endif
+#include "bagwiz/core/slam/frame_feed_queue.hpp"
 #include "bagwiz/core/slam/glim_estimator.hpp"
 #include "bagwiz/core/slam/gnss_alignment.hpp"
 #include "bagwiz/core/slam/gnss_sample.hpp"
@@ -66,6 +67,13 @@ namespace
 // emulating the fixed-precision path's zero z-information without an actual
 // singular (infinite-variance) model.
 constexpr double kUnconstrainedZVariance = 1e8;  // ~ (1e4 m)^2
+
+// Max number of preprocessed scans buffered between the pipeline producer
+// (preprocess) and consumer (odometry + mapping). The consumer is ~3x slower per
+// scan, so a small buffer keeps it fed while bounding extra host memory (each
+// buffered frame is the preprocessed cloud, tens of MB on a dense scan). IMU/GNSS
+// events are weight-0 and do not count toward this bound.
+constexpr std::size_t kFeedQueueCapacityScans = 8;
 
 core::TrajectoryPose to_pose(double stamp, const Eigen::Isometry3d & transform)
 {
@@ -280,6 +288,143 @@ struct CloudMapper::Impl
   // GNSS translation-prior factors built in finish() and injected into the
   // global factor graph via the on_smoother_update callback during optimize().
   std::vector<gtsam::NonlinearFactor::shared_ptr> gnss_factors;
+
+  // --- Feed pipeline (active unless config.disable_pipeline) -----------------
+  // One ordered event crossing the producer->consumer queue: a preprocessed scan,
+  // an IMU sample, or a GNSS fix. The consumer replays them in push order (= bag
+  // order), so odometry/sub/global see identical input to the serial path and the
+  // trajectory and map come out bit-identical.
+  struct FeedEvent
+  {
+    enum class Kind { Scan, Imu, Gnss };
+    Kind kind = Kind::Scan;
+    glim::PreprocessedFrame::Ptr frame;  // Scan
+    double imu_stamp = 0.0;              // Imu (seconds)
+    Eigen::Vector3d imu_acc = Eigen::Vector3d::Zero();
+    Eigen::Vector3d imu_gyro = Eigen::Vector3d::Zero();
+    GnssPoint gnss;  // Gnss
+  };
+
+  FrameFeedQueue<FeedEvent> feed_queue{kFeedQueueCapacityScans};
+  std::thread consumer_thread;
+  bool consumer_started = false;
+
+  ~Impl()
+  {
+    // If feeding was interrupted (finish() never called, or an exception) the
+    // consumer is still blocked on pop(); cancel + join so a joinable thread is
+    // never destroyed (which would std::terminate). The thread stops touching the
+    // GLIM modules before they are destroyed (members destruct after this body).
+    if (consumer_thread.joinable()) {
+      feed_queue.cancel();
+      consumer_thread.join();
+    }
+  }
+
+  // Build the GLIM RawPoints for one scan and run TimeKeeper + preprocess. Returns
+  // null when TimeKeeper rejects the scan (same drop as the serial path). Runs on
+  // the producer (caller) thread.
+  glim::PreprocessedFrame::Ptr prepare(const LidarScan & scan)
+  {
+    auto raw = std::make_shared<glim::RawPoints>();
+    raw->stamp = static_cast<double>(scan.stamp_ns) * 1e-9;
+
+    const std::size_t num_points = scan.points.size();
+    raw->points.reserve(num_points);
+    for (const auto & point : scan.points) {
+      raw->points.emplace_back(point[0], point[1], point[2], 1.0);
+    }
+    if (!scan.intensities.empty()) {
+      raw->intensities = scan.intensities;
+    }
+
+    // A time-less cloud is fed explicit zero per-point times (already motion-
+    // undistorted), NOT an empty vector — that would make glim::TimeKeeper
+    // synthesize order-based pseudo times and wrongly "deskew" a concatenated cloud.
+    if (scan.has_per_point_time && scan.times.size() == num_points) {
+      raw->times = scan.times;
+    } else {
+      raw->times.assign(num_points, 0.0);
+    }
+
+    if (!time_keeper.process(raw)) {
+      return nullptr;
+    }
+    return preprocessor.preprocess(raw);
+  }
+
+  // Consumer side of one preprocessed scan: odometry -> stash+sub -> drain. The
+  // active-frame return is intentionally ignored (the trajectory comes from the
+  // globally-optimized submap poses in finish()); only marginalized frames feed
+  // sub mapping. Identical to the serial path's odometry-onward body.
+  void consume_scan(const glim::PreprocessedFrame::Ptr & preprocessed)
+  {
+    std::vector<glim::EstimationFrame::ConstPtr> marginalized;
+    odometry->insert_frame(preprocessed, marginalized);
+    for (const auto & frame : marginalized) {
+      feed_sub_mapping(frame);
+    }
+    drain_submaps();
+  }
+
+  // Consumer side of one IMU sample: route to all three stages (no-ops in
+  // LiDAR-only mode), each of which buffers it in its own preintegrator.
+  void consume_imu(double stamp, const Eigen::Vector3d & acc, const Eigen::Vector3d & gyro)
+  {
+    odometry->insert_imu(stamp, acc, gyro);
+    sub_mapping->insert_imu(stamp, acc, gyro);
+    global_mapping->insert_imu(stamp, acc, gyro);
+  }
+
+  // The consumer thread body: pop events in order and run the odometry-onward
+  // stages. Holds ScopedCoutSilence for its whole lifetime (GLIM's LiDAR-IMU init
+  // dumps an LM table to std::cout from inside odometry->insert_frame). A thrown
+  // GLIM error is latched into the queue so the producer / finish() rethrows it.
+  void consumer_loop()
+  {
+    const detail::ScopedCoutSilence cout_silence;
+    try {
+      FeedEvent event;
+      while (feed_queue.pop(event)) {
+        switch (event.kind) {
+          case FeedEvent::Kind::Scan:
+            consume_scan(event.frame);
+            break;
+          case FeedEvent::Kind::Imu:
+            consume_imu(event.imu_stamp, event.imu_acc, event.imu_gyro);
+            break;
+          case FeedEvent::Kind::Gnss:
+            add_gnss(event.gnss);
+            break;
+        }
+      }
+    } catch (...) {
+      feed_queue.fail(std::current_exception());
+    }
+  }
+
+  // Start the consumer thread on first use. insert/insert_imu/insert_gnss are all
+  // called from the single producer (bag-read) thread, so no lock is needed here.
+  void start_consumer_if_needed()
+  {
+    if (!consumer_started) {
+      consumer_started = true;
+      consumer_thread = std::thread([this] { consumer_loop(); });
+    }
+  }
+
+  // Enqueue one event for the consumer (weight 1 for a scan to bound buffered
+  // scans, 0 for tiny IMU/GNSS). If the consumer has already died, rethrow its
+  // latched exception on the producer thread.
+  void enqueue(FeedEvent event, std::size_t weight)
+  {
+    start_consumer_if_needed();
+    if (!feed_queue.push(std::move(event), weight)) {
+      if (auto error = feed_queue.error()) {
+        std::rethrow_exception(error);
+      }
+    }
+  }
 
   explicit Impl(const CloudMapperConfig & cfg)
   : config(cfg),
@@ -871,11 +1016,19 @@ void CloudMapper::insert_imu(const ImuSample & imu)
   const Eigen::Vector3d angular_vel(
     imu.angular_velocity[0], imu.angular_velocity[1], imu.angular_velocity[2]);
   // Route to all three stages (no-ops in LiDAR-only mode): odometry estimates
-  // motion from it; sub/global mapping use it for their own IMU factors. Each
-  // stage buffers IMU in its own preintegrator.
-  impl_->odometry->insert_imu(stamp, linear_acc, angular_vel);
-  impl_->sub_mapping->insert_imu(stamp, linear_acc, angular_vel);
-  impl_->global_mapping->insert_imu(stamp, linear_acc, angular_vel);
+  // motion from it; sub/global mapping use it for their own IMU factors. In
+  // pipeline mode the sample is queued so the consumer interleaves it with scans
+  // in exact bag order (the order each preintegrator requires).
+  if (impl_->config.disable_pipeline) {
+    impl_->consume_imu(stamp, linear_acc, angular_vel);
+    return;
+  }
+  Impl::FeedEvent event;
+  event.kind = Impl::FeedEvent::Kind::Imu;
+  event.imu_stamp = stamp;
+  event.imu_acc = linear_acc;
+  event.imu_gyro = angular_vel;
+  impl_->enqueue(std::move(event), 0);
 }
 
 void CloudMapper::insert_gnss(const GnssPoint & gnss)
@@ -886,59 +1039,65 @@ void CloudMapper::insert_gnss(const GnssPoint & gnss)
   if (!impl_->config.enable_gnss) {
     return;
   }
-  impl_->add_gnss(gnss);
+  if (impl_->config.disable_pipeline) {
+    impl_->add_gnss(gnss);
+    return;
+  }
+  // Queued (not buffered directly) so the consumer thread stays the sole owner of
+  // gnss_points; order among GNSS fixes does not matter (build_gnss_factors sorts).
+  Impl::FeedEvent event;
+  event.kind = Impl::FeedEvent::Kind::Gnss;
+  event.gnss = gnss;
+  impl_->enqueue(std::move(event), 0);
 }
 
 void CloudMapper::insert(const LidarScan & scan)
 {
-  // GLIM's LiDAR-IMU init bootstrap dumps an LM iteration table to std::cout from
-  // inside odometry->insert_frame; mute std::cout for this call (bagwiz prints via
-  // fmt::print, never std::cout, so only GLIM's chatter is suppressed).
-  const detail::ScopedCoutSilence cout_silence;
-
-  auto raw = std::make_shared<glim::RawPoints>();
-  raw->stamp = static_cast<double>(scan.stamp_ns) * 1e-9;
-
-  const std::size_t num_points = scan.points.size();
-  raw->points.reserve(num_points);
-  for (const auto & point : scan.points) {
-    raw->points.emplace_back(point[0], point[1], point[2], 1.0);
-  }
-  if (!scan.intensities.empty()) {
-    raw->intensities = scan.intensities;
-  }
-
-  // A time-less cloud is fed explicit zero per-point times (already
-  // motion-undistorted), NOT an empty vector — that would make glim::TimeKeeper
-  // synthesize order-based pseudo times and wrongly "deskew" a concatenated
-  // cloud.
-  if (scan.has_per_point_time && scan.times.size() == num_points) {
-    raw->times = scan.times;
-  } else {
-    raw->times.assign(num_points, 0.0);
-  }
-
-  if (!impl_->time_keeper.process(raw)) {
+  if (impl_->config.disable_pipeline) {
+    // Fully synchronous path: preprocess + odometry + sub/global on the caller
+    // thread. GLIM's LiDAR-IMU init bootstrap dumps an LM iteration table to
+    // std::cout from inside odometry->insert_frame; mute std::cout for the whole
+    // call (bagwiz prints via fmt::print, never std::cout, so only GLIM's chatter
+    // is suppressed).
+    const detail::ScopedCoutSilence cout_silence;
+    const auto preprocessed = impl_->prepare(scan);
+    if (preprocessed) {
+      impl_->consume_scan(preprocessed);
+    }
     return;
   }
 
-  const auto preprocessed = impl_->preprocessor.preprocess(raw);
-  std::vector<glim::EstimationFrame::ConstPtr> marginalized;
-  // The active-frame return is intentionally ignored here: the mapper's
-  // trajectory comes from the globally-optimized submap poses in finish(), not
-  // from the odometry estimate. Only the marginalized frames feed sub mapping.
-  impl_->odometry->insert_frame(preprocessed, marginalized);
-
-  // The marginalized odometry frames are this mapper's input to sub mapping; each
-  // one's full points are stashed before sub mapping can drop them.
-  for (const auto & frame : marginalized) {
-    impl_->feed_sub_mapping(frame);
+  // Pipeline producer: build + TimeKeeper + preprocess on this (bag-read) thread,
+  // then hand the preprocessed frame to the consumer thread which runs odometry +
+  // sub/global mapping. std::cout is muted by the consumer for the streaming
+  // duration, so no ScopedCoutSilence is needed here. enqueue() blocks while the
+  // bounded queue is full (keeping the consumer ~one buffer ahead) and rethrows a
+  // latched consumer error.
+  const auto preprocessed = impl_->prepare(scan);
+  if (!preprocessed) {
+    return;
   }
-  impl_->drain_submaps();
+  Impl::FeedEvent event;
+  event.kind = Impl::FeedEvent::Kind::Scan;
+  event.frame = preprocessed;
+  impl_->enqueue(std::move(event), 1);
 }
 
 CloudMap CloudMapper::finish()
 {
+  // Drain the feed pipeline first: stop accepting, let the consumer finish the
+  // queued events, join it, and surface any error it latched. After the join this
+  // thread is the sole owner of the GLIM modules, so the flush + optimize below
+  // run exactly as in the serial path. No-op when the pipeline was never started
+  // (config.disable_pipeline, or finish() called with no inserts).
+  if (impl_->consumer_started) {
+    impl_->feed_queue.close();
+    impl_->consumer_thread.join();
+    if (auto error = impl_->feed_queue.error()) {
+      std::rethrow_exception(error);
+    }
+  }
+
   // Mute GLIM's std::cout chatter for the whole flush + global optimization (same
   // rationale as insert(): bagwiz's own output goes through fmt::print, not cout).
   const detail::ScopedCoutSilence cout_silence;

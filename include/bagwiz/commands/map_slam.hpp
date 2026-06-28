@@ -75,6 +75,12 @@ struct MapSlamArgs
   // sub/global mapping, and GPU export-map voxelization. It is OUTSIDE the CPU
   // reproducibility guarantee. The effective choice is resolved in run_map_slam.
   std::string backend = "auto";
+
+  // Force the fully synchronous (single-thread) feed path instead of the default
+  // read+preprocess / odometry+mapping pipeline. The pipeline only overlaps stages
+  // and is bit-identical to this serial path, so this is mainly an A/B-timing and
+  // strict-serial escape hatch.
+  bool no_pipeline = false;
 };
 
 // Run LiDAR SLAM over a single PointCloud2 topic entirely in-process: bagwiz

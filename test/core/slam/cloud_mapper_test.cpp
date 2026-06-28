@@ -395,4 +395,179 @@ TEST(CloudMapper, GnssInsufficientBaselineAddsNoConstraints)
 // Forcing a second submap here would require an unrealistically long, flaky
 // synthetic trajectory, so it is deliberately left to real-bag validation.
 
+// Feed a deterministic LiDAR-only room sequence (120 scans @ 10 Hz) into `mapper`.
+// Identical input for any mapper, so two mappers differing only in the feed path
+// (serial vs pipeline) must produce identical results at num_threads = 1.
+void feed_room_only(slam::CloudMapper & mapper)
+{
+  constexpr std::int64_t kDtNs = 100'000'000;  // 10 Hz
+  std::int64_t stamp = 1'000'000'000'000'000'000LL;
+  for (int i = 0; i < 120; ++i) {
+    mapper.insert(make_room_scan(stamp));
+    stamp += kDtNs;
+  }
+}
+
+// Feed a deterministic LiDAR-IMU room sequence (200 Hz IMU interleaved with 10 Hz
+// scans, 180-deg-X extrinsic) into `mapper` — mirrors the ImuMode fixtures so the
+// pipeline's IMU/scan interleaving through the queue is exercised.
+void feed_room_imu(slam::CloudMapper & mapper)
+{
+  constexpr std::int64_t kImuDtNs = 5'000'000;     // 200 Hz
+  constexpr std::int64_t kScanDtNs = 100'000'000;  // 10 Hz
+  const std::int64_t base = 1'000'000'000'000'000'000LL;
+
+  std::int64_t imu_stamp = base;
+  const std::int64_t first_scan = base + 500'000'000LL;
+  while (imu_stamp < first_scan) {
+    mapper.insert_imu(make_flipped_gravity_imu(imu_stamp));
+    imu_stamp += kImuDtNs;
+  }
+  for (int i = 0; i < 120; ++i) {
+    const std::int64_t scan_stamp = first_scan + static_cast<std::int64_t>(i) * kScanDtNs;
+    while (imu_stamp < scan_stamp) {
+      mapper.insert_imu(make_flipped_gravity_imu(imu_stamp));
+      imu_stamp += kImuDtNs;
+    }
+    mapper.insert_imu(make_flipped_gravity_imu(scan_stamp));
+    mapper.insert(make_room_scan(scan_stamp));
+  }
+}
+
+// Assert two CloudMaps are identical: the pipeline only overlaps stages, so at
+// num_threads = 1 (GLIM's bit-reproducible path) it must reproduce the serial
+// trajectory and map exactly (modulo float ULPs).
+void expect_maps_identical(const slam::CloudMap & a, const slam::CloudMap & b)
+{
+  ASSERT_EQ(a.trajectory.size(), b.trajectory.size());
+  for (std::size_t i = 0; i < a.trajectory.size(); ++i) {
+    const auto & pa = a.trajectory[i];
+    const auto & pb = b.trajectory[i];
+    EXPECT_EQ(pa.timestamp_ns, pb.timestamp_ns) << "pose " << i;
+    EXPECT_DOUBLE_EQ(pa.tx, pb.tx) << "pose " << i;
+    EXPECT_DOUBLE_EQ(pa.ty, pb.ty) << "pose " << i;
+    EXPECT_DOUBLE_EQ(pa.tz, pb.tz) << "pose " << i;
+    EXPECT_DOUBLE_EQ(pa.qx, pb.qx) << "pose " << i;
+    EXPECT_DOUBLE_EQ(pa.qy, pb.qy) << "pose " << i;
+    EXPECT_DOUBLE_EQ(pa.qz, pb.qz) << "pose " << i;
+    EXPECT_DOUBLE_EQ(pa.qw, pb.qw) << "pose " << i;
+  }
+
+  ASSERT_EQ(a.points.size(), b.points.size());
+  for (std::size_t i = 0; i < a.points.size(); ++i) {
+    EXPECT_FLOAT_EQ(a.points[i][0], b.points[i][0]) << "point " << i;
+    EXPECT_FLOAT_EQ(a.points[i][1], b.points[i][1]) << "point " << i;
+    EXPECT_FLOAT_EQ(a.points[i][2], b.points[i][2]) << "point " << i;
+  }
+
+  ASSERT_EQ(a.intensities.size(), b.intensities.size());
+  for (std::size_t i = 0; i < a.intensities.size(); ++i) {
+    EXPECT_FLOAT_EQ(a.intensities[i], b.intensities[i]) << "intensity " << i;
+  }
+}
+
+// Assert two trajectories agree to within a tolerance: same poses + timestamps,
+// translations within `trans_tol` m and quaternion components within `rot_tol`.
+// Used for the LiDAR-IMU backend, whose GTSAM optimizer is NOT bit-reproducible
+// run-to-run (two serial runs already drift at the ~1e-15 level), so exact parity
+// would be a GLIM-determinism test, not a pipeline-ordering test. A genuine
+// ordering bug in the queue (IMU/scan mis-interleaved) diverges by cm–m, far above
+// these tolerances.
+void expect_trajectories_close(
+  const slam::CloudMap & a, const slam::CloudMap & b, double trans_tol, double rot_tol)
+{
+  ASSERT_EQ(a.trajectory.size(), b.trajectory.size());
+  for (std::size_t i = 0; i < a.trajectory.size(); ++i) {
+    const auto & pa = a.trajectory[i];
+    const auto & pb = b.trajectory[i];
+    EXPECT_EQ(pa.timestamp_ns, pb.timestamp_ns) << "pose " << i;
+    EXPECT_NEAR(pa.tx, pb.tx, trans_tol) << "pose " << i;
+    EXPECT_NEAR(pa.ty, pb.ty, trans_tol) << "pose " << i;
+    EXPECT_NEAR(pa.tz, pb.tz, trans_tol) << "pose " << i;
+    EXPECT_NEAR(pa.qx, pb.qx, rot_tol) << "pose " << i;
+    EXPECT_NEAR(pa.qy, pb.qy, rot_tol) << "pose " << i;
+    EXPECT_NEAR(pa.qz, pb.qz, rot_tol) << "pose " << i;
+    EXPECT_NEAR(pa.qw, pb.qw, rot_tol) << "pose " << i;
+  }
+}
+
+// The default pipeline must be bit-identical to the serial (--no-pipeline) path:
+// the consumer processes events in the same bag order, so odometry/sub/global see
+// identical input. Pinned to num_threads = 1 (GLIM's reproducibility-guaranteed
+// path) so any difference is attributable to the pipeline, not GLIM's own
+// multithreaded non-determinism.
+TEST(CloudMapper, PipelineMatchesSerialLidarOnly)
+{
+  slam::CloudMapperConfig serial_config;
+  serial_config.num_threads = 1;
+  serial_config.disable_pipeline = true;
+  slam::CloudMapper serial_mapper(serial_config);
+  feed_room_only(serial_mapper);
+  const slam::CloudMap serial_map = serial_mapper.finish();
+
+  slam::CloudMapperConfig pipeline_config;
+  pipeline_config.num_threads = 1;
+  pipeline_config.disable_pipeline = false;
+  slam::CloudMapper pipeline_mapper(pipeline_config);
+  feed_room_only(pipeline_mapper);
+  const slam::CloudMap pipeline_map = pipeline_mapper.finish();
+
+  ASSERT_FALSE(serial_map.points.empty());
+  ASSERT_FALSE(serial_map.trajectory.empty());
+  expect_maps_identical(serial_map, pipeline_map);
+}
+
+// Parity check with the LiDAR-IMU backend, which routes IMU samples and scans
+// through the queue interleaved — verifies the pipeline preserves the IMU/scan
+// ordering each preintegrator requires. Compared with a tolerance (not exact):
+// GLIM's IMU optimizer is not bit-reproducible run-to-run (two serial runs already
+// drift ~1e-15), so this asserts the pipeline does not DIVERGE from serial, which
+// it would by cm–m if the queue mis-ordered IMU and scans.
+TEST(CloudMapper, PipelineMatchesSerialImu)
+{
+  slam::SensorTransform t_lidar_imu;
+  t_lidar_imu.rotation_xyzw = {1.0, 0.0, 0.0, 0.0};
+  t_lidar_imu.translation = {0.0, 0.0, 0.0};
+
+  slam::CloudMapperConfig serial_config;
+  serial_config.num_threads = 1;
+  serial_config.disable_pipeline = true;
+  serial_config.t_lidar_imu = t_lidar_imu;
+  slam::CloudMapper serial_mapper(serial_config);
+  feed_room_imu(serial_mapper);
+  const slam::CloudMap serial_map = serial_mapper.finish();
+
+  slam::CloudMapperConfig pipeline_config;
+  pipeline_config.num_threads = 1;
+  pipeline_config.disable_pipeline = false;
+  pipeline_config.t_lidar_imu = t_lidar_imu;
+  slam::CloudMapper pipeline_mapper(pipeline_config);
+  feed_room_imu(pipeline_mapper);
+  const slam::CloudMap pipeline_map = pipeline_mapper.finish();
+
+  ASSERT_FALSE(serial_map.points.empty());
+  ASSERT_FALSE(serial_map.trajectory.empty());
+  // 1 mm / 1e-3 quat: ~1000x above GLIM's run-to-run noise, far below any real
+  // ordering bug.
+  expect_trajectories_close(serial_map, pipeline_map, 1e-3, 1e-3);
+  // The map must still be produced and sane (point geometry tracks the poses, so a
+  // tolerance-equal trajectory yields a near-equal map; assert non-empty + finite).
+  ASSERT_FALSE(pipeline_map.points.empty());
+  for (const auto & p : pipeline_map.points) {
+    ASSERT_TRUE(std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]));
+  }
+}
+
+// finish() with no inserts must not deadlock or start a consumer (the pipeline is
+// lazily started on first insert) and returns an empty map either way.
+TEST(CloudMapper, PipelineFinishWithoutInsertIsEmpty)
+{
+  slam::CloudMapperConfig config;
+  config.num_threads = 1;
+  slam::CloudMapper mapper(config);
+  const slam::CloudMap map = mapper.finish();
+  EXPECT_TRUE(map.trajectory.empty());
+  EXPECT_TRUE(map.points.empty());
+}
+
 }  // namespace

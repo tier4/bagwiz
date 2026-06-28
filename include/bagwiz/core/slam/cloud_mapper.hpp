@@ -131,6 +131,15 @@ struct CloudMapperConfig
   // quantized in this mode to roughly halve host memory on large bags. Outside
   // the CPU reproducibility guarantee.
   bool use_gpu = false;
+
+  // When false (default), insert() runs a two-stage pipeline: the caller thread
+  // does bag read + GLIM preprocess (producer), and an internal worker thread runs
+  // GLIM odometry + sub/global mapping (consumer). The consumer processes events
+  // in strict bag order, so the trajectory and map are bit-identical to the serial
+  // path — it only overlaps the CPU preprocess (and bag read) with the GPU
+  // odometry/mapping to cut wall-clock. Set true to force the fully synchronous
+  // single-thread path (e.g. for A/B timing or a strictly serial run).
+  bool disable_pipeline = false;
 };
 
 // One GNSS fix already projected into the local metric (ENU) frame the mapper
