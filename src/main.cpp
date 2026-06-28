@@ -9,9 +9,11 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/completion.hpp"
+#include "bagwiz/commands/help_formatter.hpp"
 #include "bagwiz/core/logging.hpp"
 
 #include <exception>
+#include <memory>
 #include <string>
 
 namespace
@@ -36,6 +38,11 @@ int main(int argc, char ** argv) noexcept
     CLI::App app{"bagwiz - Fast CLI for analyzing and processing ROS 2 rosbags"};
     app.set_version_flag("--version", kVersion);
     app.require_subcommand(1);
+    // Word-wrap option and subcommand descriptions to the terminal width so
+    // continuation lines align under the description column. Set before adding
+    // subcommands: CLI11 hands the formatter down to each subcommand at
+    // construction.
+    app.formatter(std::make_shared<bagwiz::commands::HelpFormatter>());
 
     const auto & registry = bagwiz::commands::Registry::instance();
     // Selected is set by the top-level subcommand callback; nested subcommands

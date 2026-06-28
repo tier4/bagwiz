@@ -236,6 +236,7 @@ add_library(bagwiz_core
   src/core/tui/screen_scope.cpp
   src/core/tui/signal_handler.cpp
   src/core/tui/width.cpp
+  src/core/tui/word_wrap.cpp
   src/core/tui/image/terminal_image_caps.cpp
   src/core/tui/image/terminal_image_renderer.cpp
   src/commands/registry.cpp
@@ -320,6 +321,7 @@ target_include_directories(bagwiz_core PRIVATE $<TARGET_PROPERTY:fmt::fmt,INTERF
 # ---------------------------------------------------------------------------
 add_executable(bagwiz
   src/main.cpp
+  src/commands/help_formatter.cpp
   src/commands/cam_info.cpp
   src/commands/cam_info_replace.cpp
   src/commands/check.cpp
@@ -520,6 +522,11 @@ if(BUILD_TESTING)
     src/commands/completion.cpp)
   target_link_libraries(bagwiz_completion_test bagwiz_core CLI11::CLI11 fmt::fmt)
 
+  ament_add_gtest(bagwiz_help_formatter_test
+    test/commands/help_formatter_test.cpp
+    src/commands/help_formatter.cpp)
+  target_link_libraries(bagwiz_help_formatter_test bagwiz_core CLI11::CLI11)
+
   ament_add_gtest(bagwiz_tf_static_cp_test
     test/commands/tf_static_cp_test.cpp
     src/commands/tf_static_cp.cpp)
@@ -613,6 +620,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_tui_width_test test/core/tui/width_test.cpp)
   target_link_libraries(bagwiz_tui_width_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_tui_word_wrap_test test/core/tui/word_wrap_test.cpp)
+  target_link_libraries(bagwiz_tui_word_wrap_test bagwiz_core)
 
   ament_add_gtest(bagwiz_jokes_test test/core/joke/jokes_test.cpp)
   target_link_libraries(bagwiz_jokes_test bagwiz_core)

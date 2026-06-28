@@ -9,10 +9,10 @@
 #include "bagwiz/core/joke/joke_layout.hpp"
 
 #include "bagwiz/core/tui/width.hpp"
+#include "bagwiz/core/tui/word_wrap.hpp"
 
 #include <algorithm>
 #include <cstddef>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -79,42 +79,10 @@ std::vector<std::string> split_lines(std::string_view text)
   return lines;
 }
 
-// Greedily wrap `text` onto lines no wider than `max_cols` display columns,
-// breaking only at spaces so words stay intact. A single word wider than
-// max_cols is placed on its own (over-long) line rather than split — jokes
-// are short English sentences, so this stays readable. Always returns at
-// least one line.
-std::vector<std::string> word_wrap(std::string_view text, int max_cols)
-{
-  std::istringstream stream{std::string{text}};
-  std::vector<std::string> lines;
-  std::string current;
-  std::string word;
-  while (stream >> word) {
-    if (current.empty()) {
-      current = word;
-      continue;
-    }
-    // Width with one separating space, computed additively to avoid building
-    // a temporary just to measure it.
-    const int combined = core::tui::display_width(current) + 1 + core::tui::display_width(word);
-    if (combined <= max_cols) {
-      current.append(" ").append(word);
-    } else {
-      lines.push_back(current);
-      current = word;
-    }
-  }
-  lines.push_back(current);
-  return lines;
-}
-
 }  // namespace
 
 // `text` is a std::string_view: cheap to copy, so by value is the
-// guideline-preferred form (F.16). cppcheck's passedByValue fires only
-// because the view is forwarded rather than indexed here — a false positive.
-// cppcheck-suppress passedByValue
+// guideline-preferred form (F.16).
 std::string render_joke(std::string_view text, int terminal_columns)
 {
   const std::vector<std::string> face = split_lines(kFaceArt);
@@ -131,7 +99,7 @@ std::string render_joke(std::string_view text, int terminal_columns)
   const int gap_width = core::tui::display_width(kGap);
   const int available = terminal_columns - face_width - gap_width - kRightMargin;
   const int text_width = std::clamp(available, kMinTextColumns, kMaxTextColumns);
-  const std::vector<std::string> joke = word_wrap(text, text_width);
+  const std::vector<std::string> joke = core::tui::word_wrap(text, text_width);
 
   // Vertically center the joke lines against the face block so the text sits
   // beside the middle of the face rather than its top.
