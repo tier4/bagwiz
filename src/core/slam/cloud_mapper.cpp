@@ -290,10 +290,18 @@ struct CloudMapper::Impl
   std::vector<gtsam::NonlinearFactor::shared_ptr> gnss_factors;
 
   // --- Feed pipeline (active unless config.disable_pipeline) -----------------
-  // One ordered event crossing the producer->consumer queue: a preprocessed scan,
-  // an IMU sample, or a GNSS fix. The consumer replays them in push order (= bag
-  // order), so odometry/sub/global see identical input to the serial path and the
-  // trajectory and map come out bit-identical.
+  // A 3-stage producer/consumer so the CPU preprocess (T1), odometry (T2), and
+  // sub/global mapping (T3) overlap on separate threads. Each GLIM module stays
+  // synchronous and is owned by exactly one thread; the two bounded FIFO queues
+  // preserve bag order, so every module sees the same input sequence as the serial
+  // path (CT output is bit-identical at num_threads=1; IMU/GPU/multithread are
+  // tolerance-only, as for the serial multithreaded path). Stage layout:
+  //   T1 producer (caller thread): build+TimeKeeper+preprocess -> odom_queue
+  //   T2 odometry thread: odometry->insert_frame -> marginalized frames -> map_queue
+  //   T3 mapping thread:  stash + sub_mapping->insert_frame + drain + global insert
+  // IMU/GNSS events ride BOTH queues so each stage applies them in bag order.
+
+  // Q1 event (producer -> odometry): a preprocessed scan, an IMU sample, or a GNSS fix.
   struct FeedEvent
   {
     enum class Kind { Scan, Imu, Gnss };
@@ -305,19 +313,43 @@ struct CloudMapper::Impl
     GnssPoint gnss;  // Gnss
   };
 
-  FrameFeedQueue<FeedEvent> feed_queue{kFeedQueueCapacityScans};
-  std::thread consumer_thread;
-  bool consumer_started = false;
+  // Q2 event (odometry -> mapping): a marginalized odometry frame, or the same
+  // IMU/GNSS forwarded so the mapping stage applies them in order.
+  struct MapEvent
+  {
+    enum class Kind { Frame, Imu, Gnss };
+    Kind kind = Kind::Frame;
+    glim::EstimationFrame::ConstPtr frame;  // Frame (marginalized)
+    double imu_stamp = 0.0;
+    Eigen::Vector3d imu_acc = Eigen::Vector3d::Zero();
+    Eigen::Vector3d imu_gyro = Eigen::Vector3d::Zero();
+    GnssPoint gnss;
+  };
+
+  FrameFeedQueue<FeedEvent> odom_queue{kFeedQueueCapacityScans};
+  FrameFeedQueue<MapEvent> map_queue{kFeedQueueCapacityScans};
+  std::thread odometry_thread;
+  std::thread mapping_thread;
+  bool pipeline_started = false;
+  // One process-wide std::cout mute spanning the whole streaming feed. GLIM's
+  // LiDAR-IMU init dumps an LM table to std::cout from odometry->insert_frame (on
+  // T2); muting from a single (main) thread avoids the cross-thread rdbuf-swap race
+  // that per-thread guards would cause. Released in finish() after the workers join.
+  std::unique_ptr<detail::ScopedCoutSilence> feed_silence;
 
   ~Impl()
   {
     // If feeding was interrupted (finish() never called, or an exception) the
-    // consumer is still blocked on pop(); cancel + join so a joinable thread is
-    // never destroyed (which would std::terminate). The thread stops touching the
-    // GLIM modules before they are destroyed (members destruct after this body).
-    if (consumer_thread.joinable()) {
-      feed_queue.cancel();
-      consumer_thread.join();
+    // workers may be blocked on pop()/push(); cancel both queues + join so a
+    // joinable thread is never destroyed (which would std::terminate). Members
+    // destruct after this body, so the threads stop touching the GLIM modules first.
+    map_queue.cancel();
+    odom_queue.cancel();
+    if (odometry_thread.joinable()) {
+      odometry_thread.join();
+    }
+    if (mapping_thread.joinable()) {
+      mapping_thread.join();
     }
   }
 
@@ -376,51 +408,128 @@ struct CloudMapper::Impl
     global_mapping->insert_imu(stamp, acc, gyro);
   }
 
-  // The consumer thread body: pop events in order and run the odometry-onward
-  // stages. Holds ScopedCoutSilence for its whole lifetime (GLIM's LiDAR-IMU init
-  // dumps an LM table to std::cout from inside odometry->insert_frame). A thrown
-  // GLIM error is latched into the queue so the producer / finish() rethrows it.
-  void consumer_loop()
+  // T2 body: pop odom_queue, run odometry, and forward the marginalized frames +
+  // IMU/GNSS to map_queue in order, then close map_queue. The smoother's *remaining*
+  // (in-window) frames are NOT flushed here — finish() flushes them via
+  // get_remaining_frames() on the main thread after the joins, exactly as the serial
+  // path does; flushing them here too would double-feed sub mapping. A GLIM error (or
+  // a downstream failure) is latched into both queues so the producer / finish()
+  // rethrows it.
+  void odometry_loop()
   {
-    const detail::ScopedCoutSilence cout_silence;
     try {
       FeedEvent event;
-      while (feed_queue.pop(event)) {
+      while (odom_queue.pop(event)) {
         switch (event.kind) {
-          case FeedEvent::Kind::Scan:
-            consume_scan(event.frame);
+          case FeedEvent::Kind::Scan: {
+            std::vector<glim::EstimationFrame::ConstPtr> marginalized;
+            odometry->insert_frame(event.frame, marginalized);
+            for (auto & frame : marginalized) {
+              MapEvent out;
+              out.kind = MapEvent::Kind::Frame;
+              out.frame = std::move(frame);
+              if (!forward_to_map(std::move(out), 1)) {
+                return;
+              }
+            }
             break;
-          case FeedEvent::Kind::Imu:
-            consume_imu(event.imu_stamp, event.imu_acc, event.imu_gyro);
+          }
+          case FeedEvent::Kind::Imu: {
+            odometry->insert_imu(event.imu_stamp, event.imu_acc, event.imu_gyro);
+            MapEvent out;
+            out.kind = MapEvent::Kind::Imu;
+            out.imu_stamp = event.imu_stamp;
+            out.imu_acc = event.imu_acc;
+            out.imu_gyro = event.imu_gyro;
+            if (!forward_to_map(std::move(out), 0)) {
+              return;
+            }
             break;
-          case FeedEvent::Kind::Gnss:
+          }
+          case FeedEvent::Kind::Gnss: {
+            MapEvent out;
+            out.kind = MapEvent::Kind::Gnss;
+            out.gnss = event.gnss;
+            if (!forward_to_map(std::move(out), 0)) {
+              return;
+            }
+            break;
+          }
+        }
+      }
+    } catch (...) {
+      const auto error = std::current_exception();
+      odom_queue.fail(error);  // unblock the producer (T1)
+      map_queue.fail(error);   // unblock the mapping thread (T3)
+      return;
+    }
+    map_queue.close();  // normal end: T3 drains the rest and exits
+  }
+
+  // Push one event to map_queue. Returns false when the mapping thread is gone
+  // (failed or cancelled); on a real downstream error, surface it onto odom_queue so
+  // the producer (T1) unblocks and finish() rethrows it.
+  bool forward_to_map(MapEvent event, std::size_t weight)
+  {
+    if (map_queue.push(std::move(event), weight)) {
+      return true;
+    }
+    if (auto error = map_queue.error()) {
+      odom_queue.fail(error);
+    }
+    return false;
+  }
+
+  // T3 body: pop map_queue and run the mapping stages in order. feed_sub_mapping
+  // stashes the frame's points before sub mapping can drop them, and drain_submaps
+  // captures each completed submap's relative poses before global mapping overwrites
+  // them — the same ordering as the serial path.
+  void mapping_loop()
+  {
+    try {
+      MapEvent event;
+      while (map_queue.pop(event)) {
+        switch (event.kind) {
+          case MapEvent::Kind::Frame:
+            feed_sub_mapping(event.frame);
+            drain_submaps();
+            break;
+          case MapEvent::Kind::Imu:
+            sub_mapping->insert_imu(event.imu_stamp, event.imu_acc, event.imu_gyro);
+            global_mapping->insert_imu(event.imu_stamp, event.imu_acc, event.imu_gyro);
+            break;
+          case MapEvent::Kind::Gnss:
             add_gnss(event.gnss);
             break;
         }
       }
     } catch (...) {
-      feed_queue.fail(std::current_exception());
+      // Latch so T2's forward_to_map fails -> T2 fails odom_queue -> T1 unblocks.
+      map_queue.fail(std::current_exception());
     }
   }
 
-  // Start the consumer thread on first use. insert/insert_imu/insert_gnss are all
-  // called from the single producer (bag-read) thread, so no lock is needed here.
-  void start_consumer_if_needed()
+  // Start the pipeline (both worker threads + the streaming cout mute) on first use.
+  // insert/insert_imu/insert_gnss are all called from the single producer (bag-read)
+  // thread, so no lock is needed here.
+  void start_pipeline_if_needed()
   {
-    if (!consumer_started) {
-      consumer_started = true;
-      consumer_thread = std::thread([this] { consumer_loop(); });
+    if (!pipeline_started) {
+      pipeline_started = true;
+      feed_silence = std::make_unique<detail::ScopedCoutSilence>();
+      odometry_thread = std::thread([this] { odometry_loop(); });
+      mapping_thread = std::thread([this] { mapping_loop(); });
     }
   }
 
-  // Enqueue one event for the consumer (weight 1 for a scan to bound buffered
-  // scans, 0 for tiny IMU/GNSS). If the consumer has already died, rethrow its
-  // latched exception on the producer thread.
-  void enqueue(FeedEvent event, std::size_t weight)
+  // Enqueue one event for the odometry stage (weight 1 for a scan to bound buffered
+  // scans, 0 for tiny IMU/GNSS). If a worker has died, rethrow its latched exception
+  // on the producer thread.
+  void enqueue_odom(FeedEvent event, std::size_t weight)
   {
-    start_consumer_if_needed();
-    if (!feed_queue.push(std::move(event), weight)) {
-      if (auto error = feed_queue.error()) {
+    start_pipeline_if_needed();
+    if (!odom_queue.push(std::move(event), weight)) {
+      if (auto error = odom_queue.error()) {
         std::rethrow_exception(error);
       }
     }
@@ -1028,7 +1137,7 @@ void CloudMapper::insert_imu(const ImuSample & imu)
   event.imu_stamp = stamp;
   event.imu_acc = linear_acc;
   event.imu_gyro = angular_vel;
-  impl_->enqueue(std::move(event), 0);
+  impl_->enqueue_odom(std::move(event), 0);
 }
 
 void CloudMapper::insert_gnss(const GnssPoint & gnss)
@@ -1048,7 +1157,7 @@ void CloudMapper::insert_gnss(const GnssPoint & gnss)
   Impl::FeedEvent event;
   event.kind = Impl::FeedEvent::Kind::Gnss;
   event.gnss = gnss;
-  impl_->enqueue(std::move(event), 0);
+  impl_->enqueue_odom(std::move(event), 0);
 }
 
 void CloudMapper::insert(const LidarScan & scan)
@@ -1080,21 +1189,32 @@ void CloudMapper::insert(const LidarScan & scan)
   Impl::FeedEvent event;
   event.kind = Impl::FeedEvent::Kind::Scan;
   event.frame = preprocessed;
-  impl_->enqueue(std::move(event), 1);
+  impl_->enqueue_odom(std::move(event), 1);
 }
 
 CloudMap CloudMapper::finish()
 {
-  // Drain the feed pipeline first: stop accepting, let the consumer finish the
-  // queued events, join it, and surface any error it latched. After the join this
-  // thread is the sole owner of the GLIM modules, so the flush + optimize below
-  // run exactly as in the serial path. No-op when the pipeline was never started
-  // (config.disable_pipeline, or finish() called with no inserts).
-  if (impl_->consumer_started) {
-    impl_->feed_queue.close();
-    impl_->consumer_thread.join();
-    if (auto error = impl_->feed_queue.error()) {
-      std::rethrow_exception(error);
+  // Drain the 3-stage feed pipeline first: stop input, let odometry (T2) flush its
+  // smoother window into the mapping stage (T3) and close map_queue, then join both
+  // workers. After the joins this thread is the sole owner of the GLIM modules, so
+  // the flush + optimize below run exactly as the serial path. No-op when the
+  // pipeline was never started (config.disable_pipeline, or no inserts).
+  if (impl_->pipeline_started) {
+    impl_->odom_queue.close();
+    impl_->odometry_thread.join();  // closes map_queue after flushing the odom tail
+    impl_->mapping_thread.join();
+    const auto odom_error = impl_->odom_queue.error();
+    const auto map_error = impl_->map_queue.error();
+    // Release the streaming cout mute now the workers are gone — before the finish-
+    // scope mute below, so the two ScopedCoutSilence guards nest/destruct in LIFO
+    // order (resetting the outer one while the inner is alive would corrupt the
+    // saved rdbuf). Done before the rethrows so std::cout is restored on error too.
+    impl_->feed_silence.reset();
+    if (odom_error) {
+      std::rethrow_exception(odom_error);
+    }
+    if (map_error) {
+      std::rethrow_exception(map_error);
     }
   }
 
