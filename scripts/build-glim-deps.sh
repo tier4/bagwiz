@@ -52,12 +52,19 @@ for arg in "$@"; do
 done
 
 if [ "${cuda}" -eq 1 ]; then
-    # CUDA 12.8 nvcc accepts host gcc <= 14 (the conda toolchain is gcc 14.3);
-    # CUDA 12.6 caps at gcc 13 and FAILS the host_config.h gate, so 12.8 is pinned
-    # explicitly (never the /usr/local/cuda alternatives symlink). BAGWIZ_CUDA_HOME
-    # is the single override knob — the pixi build-slam-gpu task reads the same
-    # variable for its cmake flags so the two never drift.
-    CUDA_HOME="${BAGWIZ_CUDA_HOME:-/usr/local/cuda-12.8}"
+    # CUDA toolkit root, by priority: an explicit BAGWIZ_CUDA_HOME > the active pixi
+    # env's conda CUDA ($CONDA_PREFIX/bin/nvcc, installed by the `gpu` feature) > a
+    # system /usr/local/cuda-12.8. So in a *-gpu pixi env CUDA is fully pixi-managed;
+    # BAGWIZ_CUDA_HOME still lets a system toolkit be used. NOTE: do NOT trust the
+    # env's CUDA_HOME — a user profile may point it at an incompatible system CUDA
+    # (e.g. 12.6, which rejects gcc 14). nvcc 12.8 is required for the gcc 14.3 host.
+    if [ -n "${BAGWIZ_CUDA_HOME:-}" ]; then
+        cuda_root="${BAGWIZ_CUDA_HOME}"
+    elif [ -x "${CONDA_PREFIX:-}/bin/nvcc" ]; then
+        cuda_root="${CONDA_PREFIX}"
+    else
+        cuda_root="/usr/local/cuda-12.8"
+    fi
     CUDA_ARCH="86" # RTX 3080 Ti = sm_86; single-arch (no multiarch fatbin) = smaller .so, faster build.
     PREFIX="${REPO}/install/${ENV_NAME}/glim-deps-cuda"
     SRC="${REPO}/build/${ENV_NAME}/glim-src-cuda"
@@ -97,11 +104,15 @@ if [ "${cuda}" -eq 1 ]; then
         echo "  Build the CPU deps first: pixi run -e ${ENV_NAME} build-glim" >&2
         exit 1
     fi
-    if [ ! -x "${CUDA_HOME}/bin/nvcc" ]; then
-        echo "build-glim-deps --cuda: nvcc not found at ${CUDA_HOME}/bin/nvcc" >&2
+    if [ ! -x "${cuda_root}/bin/nvcc" ]; then
+        echo "build-glim-deps --cuda: nvcc not found at ${cuda_root}/bin/nvcc" >&2
+        echo "  In a *-gpu pixi env nvcc comes from the conda env; otherwise set BAGWIZ_CUDA_HOME." >&2
         exit 1
     fi
-    export PATH="${CUDA_HOME}/bin:${PATH}" CUDACXX="${CUDA_HOME}/bin/nvcc"
+    # Override any stale system CUDA_HOME/CUDA_PATH (a user profile may export an
+    # incompatible toolkit) so nvcc and every tool agree on the chosen one.
+    export PATH="${cuda_root}/bin:${PATH}" CUDACXX="${cuda_root}/bin/nvcc"
+    export CUDA_HOME="${cuda_root}" CUDA_PATH="${cuda_root}"
     # Resolve the reused GTSAM at configure time (gtsam_points/glim find_package(GTSAM)).
     export CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${CPU_PREFIX}"
     # nvcc drives the conda g++ host pass; point it at the conda sysroot so the C++
@@ -109,10 +120,10 @@ if [ "${cuda}" -eq 1 ]; then
     export CONDA_BUILD_SYSROOT="${CONDA_BUILD_SYSROOT:-${CONDA_PREFIX:-}/x86_64-conda-linux-gnu/sysroot}"
     cuda_common=(
         -DBUILD_WITH_CUDA=ON -DBUILD_WITH_CUDA_MULTIARCH=OFF
-        -DCMAKE_CUDA_COMPILER="${CUDA_HOME}/bin/nvcc"
+        -DCMAKE_CUDA_COMPILER="${cuda_root}/bin/nvcc"
         -DCMAKE_CUDA_HOST_COMPILER="${CXX_BIN}"
         -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCH}"
-        -DCUDAToolkit_ROOT="${CUDA_HOME}"
+        -DCUDAToolkit_ROOT="${cuda_root}"
         -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON
     )
     gp_cuda=("${cuda_common[@]}")

@@ -132,9 +132,9 @@ public:
       upsample_spec_ = *spec;
     }
 
-    // Resolve the effective backend (CPU/GPU) from --backend / --gpu plus a CUDA
-    // device probe, before any bag work. A forced 'gpu' that cannot run errors
-    // here; 'auto' degrades to CPU.
+    // Resolve the effective backend (CPU/GPU) from --backend plus a CUDA device
+    // probe, before any bag work. A forced 'gpu' that cannot run errors here;
+    // 'auto' degrades to CPU.
     if (!resolve_backend()) {
       return 1;
     }
@@ -668,13 +668,13 @@ private:
     return std::move(result.poses);
   }
 
-  // Resolve --backend / --gpu plus a CUDA device probe into use_gpu_. Returns
-  // false (logged) only when 'gpu' was forced but is unavailable; 'auto' silently
-  // uses CPU when GPU is unavailable (announcing the fallback when a CUDA build
-  // merely lacks a usable device). --gpu is the alias for --backend gpu.
+  // Resolve --backend plus a CUDA device probe into use_gpu_. Returns false
+  // (logged) only when 'gpu' was forced but is unavailable; 'auto' silently uses
+  // CPU when GPU is unavailable (announcing the fallback when a CUDA build merely
+  // lacks a usable device).
   bool resolve_backend()
   {
-    const std::string backend = args_.gpu ? std::string("gpu") : args_.backend;
+    const std::string & backend = args_.backend;
     const auto cuda = core::slam::query_cuda_device();
     const bool gpu_runnable = cuda.has_cuda_build && cuda.error.empty() && cuda.device_count > 0;
 
@@ -892,7 +892,7 @@ private:
   std::filesystem::path map_path_;     // <output_root>/map.pcd (mapping mode only)
   // Parsed --upsample-traj spec; std::nullopt leaves up-sampling disabled.
   std::optional<core::UpsampleSpec> upsample_spec_;
-  // Effective backend resolved by resolve_backend() from --backend / --gpu.
+  // Effective backend resolved by resolve_backend() from --backend.
   bool use_gpu_ = false;
 };
 

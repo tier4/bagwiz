@@ -75,9 +75,6 @@ struct MapSlamArgs
   // sub/global mapping, and GPU export-map voxelization. It is OUTSIDE the CPU
   // reproducibility guarantee. The effective choice is resolved in run_map_slam.
   std::string backend = "auto";
-
-  // Legacy shorthand for `--backend gpu`; mutually exclusive with --backend.
-  bool gpu = false;
 };
 
 // Run LiDAR SLAM over a single PointCloud2 topic entirely in-process: bagwiz

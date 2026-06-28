@@ -46,20 +46,15 @@ if [[ ! ${BAGWIZ_LAUNCH_DISTRO} =~ ^[A-Za-z0-9._-]+$ ]]; then
     exit 1
 fi
 
-# A GPU build (BAGWIZ_GPU set, via `pixi run install-gpu`) installs into a separate
-# base (install/<distro>-gpu) but reuses the <distro> pixi env for activation.
-# Empty -> the ordinary CPU base, so the default install flow is unchanged.
-BAGWIZ_GPU="${BAGWIZ_GPU:-}"
-install_base="${BAGWIZ_LAUNCH_DISTRO}${BAGWIZ_GPU:+-gpu}"
-
 # The freshly built binary, by explicit per-distro path (same path the `run` task
-# uses). `pixi run install` depends on `build`, so it should already exist; guard
-# anyway in case install is invoked without a matching build.
-built_binary="${REPO_DIR}/install/${install_base}/bagwiz/bin/bagwiz"
+# uses). For the GPU build, target a *-gpu environment (e.g. `pixi run -e
+# humble-gpu install-gpu`, or BAGWIZ_DISTRO=humble-gpu). `pixi run install` depends
+# on `build`, so it should already exist; guard anyway.
+built_binary="${REPO_DIR}/install/${BAGWIZ_LAUNCH_DISTRO}/bagwiz/bin/bagwiz"
 if [[ ! -x ${built_binary} ]]; then
-    echo "[install] No build found for '${install_base}' at" >&2
+    echo "[install] No build found for '${BAGWIZ_LAUNCH_DISTRO}' at" >&2
     echo "[install]   ${built_binary}" >&2
-    if [[ -n ${BAGWIZ_GPU} ]]; then
+    if [[ ${BAGWIZ_LAUNCH_DISTRO} == *-gpu ]]; then
         echo "[install] Build the GPU variant first: pixi run -e ${BAGWIZ_LAUNCH_DISTRO} build-slam-gpu" >&2
     else
         echo "[install] Build it first: pixi run -e ${BAGWIZ_LAUNCH_DISTRO} build" >&2
@@ -85,7 +80,7 @@ if [[ ! -d ${BAGWIZ_INSTALL_DIR} ]]; then
 fi
 
 dest="${BAGWIZ_INSTALL_DIR}/bagwiz"
-echo "[install] Installing bagwiz launcher to ${dest} (distro: ${BAGWIZ_LAUNCH_DISTRO}${BAGWIZ_GPU:+, GPU build})"
+echo "[install] Installing bagwiz launcher to ${dest} (distro: ${BAGWIZ_LAUNCH_DISTRO})"
 
 # Shell-quote the runner path so a repo checkout path containing a space, '$',
 # backtick, or quote still produces a launcher that execs the right file.
@@ -102,7 +97,7 @@ cat >"${dest}" <<EOF
 #     lyrical); it must be built first: pixi run -e <distro> build.
 #   - Set BAGWIZ_OVERLAY (colon-separated workspace paths) to layer your own
 #     ROS 2 message packages on top.
-exec env BAGWIZ_DEFAULT_DISTRO="${BAGWIZ_LAUNCH_DISTRO}" BAGWIZ_DEFAULT_GPU="${BAGWIZ_GPU}" \\
+exec env BAGWIZ_DEFAULT_DISTRO="${BAGWIZ_LAUNCH_DISTRO}" \\
     ${runner_q} "\$@"
 EOF
 chmod 0755 "${dest}"

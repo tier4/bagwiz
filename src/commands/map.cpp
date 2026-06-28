@@ -129,18 +129,16 @@ private:
         "Number of CPU threads for GLIM (default: 4). The host's hardware concurrency is the "
         "effective maximum.")
       ->check(CLI::Range(0, max_threads > 0 ? max_threads : 256));
-    auto * backend_opt =
-      sub
-        ->add_option(
-          "--backend", slam_args_.backend,
-          "SLAM backend (default 'auto'). 'auto' uses the CUDA GPU backend when this binary was "
-          "built with -DBAGWIZ_WITH_SLAM_CUDA (pixi run build-slam-gpu) AND a CUDA device is "
-          "visible, else CPU. 'gpu' forces it (errors on a non-CUDA build / no device). 'cpu' "
-          "forces the CPU backend (the reproducibility-guaranteed path). The GPU backend = GPU "
-          "LiDAR-IMU odometry with --imu (CT without it), GPU VGICP mapping, and GPU export "
-          "voxelization; it is OUTSIDE the CPU reproducibility guarantee.")
-        ->check(CLI::IsMember({"auto", "cpu", "gpu"}));
-    sub->add_flag("--gpu", slam_args_.gpu, "Shorthand for --backend gpu.")->excludes(backend_opt);
+    sub
+      ->add_option(
+        "--backend", slam_args_.backend,
+        "SLAM backend (default 'auto'). 'auto' uses the CUDA GPU backend when this binary was "
+        "built with -DBAGWIZ_WITH_SLAM_CUDA (pixi run build-slam-gpu) AND a CUDA device is "
+        "visible, else CPU. 'gpu' forces it (errors on a non-CUDA build / no device). 'cpu' "
+        "forces the CPU backend (the reproducibility-guaranteed path). The GPU backend = GPU "
+        "LiDAR-IMU odometry with --imu (CT without it), GPU VGICP mapping, and GPU export "
+        "voxelization; it is OUTSIDE the CPU reproducibility guarantee.")
+      ->check(CLI::IsMember({"auto", "cpu", "gpu"}));
     sub->callback([this]() { selected_ = Subcommand::kSlam; });
   }
 
