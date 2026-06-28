@@ -89,11 +89,17 @@ cmd = 'colcon build --symlink-install --packages-up-to bagwiz --build-base "buil
 inputs = ["src", "include", "test", "assets", "CMakeLists.txt", "package.xml"]
 
 # Build the GLIM SLAM dependency stack (GTSAM + gtsam_points + glim) once into
-# install/<distro>/glim-deps. The script is idempotent: it no-ops when the
-# prefix already holds the pinned versions. Needed only for the SLAM build.
+# install/<distro>/glim-deps. Needed only for the SLAM build.
+#
+# Intentionally NOT pixi-cached (no `inputs`/`outputs`): the script is already
+# idempotent via its own stamp at install/<distro>/glim-deps/.glim-deps.stamp, so
+# re-running is a sub-second no-op when the prefix is present. A pixi `inputs`
+# cache keyed on the script alone would report a false "cache hit" and skip the
+# script even when the prefix is missing (e.g. after `pixi run clean` wipes
+# install/, which leaves pixi's task cache in .pixi/ untouched), leaving the SLAM
+# build to fail at `find_package(glim)`.
 [tasks.build-glim]
 cmd = 'bash scripts/build-glim-deps.sh'
-inputs = ["scripts/build-glim-deps.sh"]
 
 # Build bagwiz with the opt-in `bagwiz map slam` command. Ensures the GLIM prefix
 # exists, then turns on BAGWIZ_WITH_SLAM and points CMake at the prefix.
