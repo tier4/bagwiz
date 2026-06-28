@@ -52,23 +52,19 @@ inline Eigen::Isometry3d to_isometry(const SensorTransform & t)
 // Build the odometry backend: LiDAR-IMU CPU when an extrinsic is given (with that
 // T_lidar_imu), else LiDAR-only CT. Returned as the common base so callers stay
 // backend-agnostic (insert_frame / insert_imu / get_remaining_frames are virtual).
-// A non-positive num_threads keeps GLIM's built-in defaults.
+// A non-positive num_threads falls back to the default (4).
 inline std::unique_ptr<glim::OdometryEstimationBase> make_odometry_estimator(
-  const std::optional<SensorTransform> & t_lidar_imu, int num_threads = 0)
+  const std::optional<SensorTransform> & t_lidar_imu, int num_threads = 4)
 {
   if (t_lidar_imu.has_value()) {
     glim::OdometryEstimationCPUParams params;
     params.T_lidar_imu = to_isometry(*t_lidar_imu);
-    if (num_threads > 0) {
-      params.num_threads = num_threads;
-    }
+    params.num_threads = num_threads > 0 ? num_threads : 4;
     return std::make_unique<glim::OdometryEstimationCPU>(params);
   }
 
   glim::OdometryEstimationCTParams params;
-  if (num_threads > 0) {
-    params.num_threads = num_threads;
-  }
+  params.num_threads = num_threads > 0 ? num_threads : 4;
   return std::make_unique<glim::OdometryEstimationCT>(params);
 }
 

@@ -118,9 +118,10 @@ struct CloudMapperConfig
   // using t_lidar_imu.
   std::array<double, 3> gnss_antenna_offset{0.0, 0.0, 0.0};
 
-  // Number of CPU threads passed to GLIM's preprocessor and odometry.
-  // 0 keeps GLIM's built-in defaults (preprocess=2, odometry=4).
-  int num_threads = 0;
+  // Number of CPU threads passed to GLIM. 0 or a negative value falls back
+  // to the default (4), which matches GLIM's odometry default and avoids the
+  // preprocessor's conservative default of 2.
+  int num_threads = 4;
 };
 
 // One GNSS fix already projected into the local metric (ENU) frame the mapper

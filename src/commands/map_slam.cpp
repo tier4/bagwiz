@@ -34,6 +34,7 @@
 #include <fmt/core.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -47,6 +48,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -73,6 +75,21 @@ bool is_static_tf_topic(std::string_view topic_name)
   return topic_name.compare(
            topic_name.size() - kTfStaticSuffix.size(), kTfStaticSuffix.size(), kTfStaticSuffix) ==
          0;
+}
+
+// Clamp an explicit --threads value to the host's hardware concurrency so the
+// user cannot oversubscribe the machine. A value <= 0 or a concurrency that
+// cannot be queried leaves the argument unchanged (the caller applies defaults).
+int cap_threads_at_hardware_limit(int num_threads)
+{
+  if (num_threads <= 0) {
+    return num_threads;
+  }
+  const unsigned int hardware = std::thread::hardware_concurrency();
+  if (hardware == 0) {
+    return num_threads;
+  }
+  return std::min(num_threads, static_cast<int>(hardware));
 }
 
 // tf2's lookupTransform(target=cloud, source=imu) yields p_cloud = T * p_imu,
@@ -644,7 +661,7 @@ private:
     core::slam::CloudMapperConfig config;
     config.map_resolution = args_.map_resolution;
     config.t_lidar_imu = t_lidar_imu;
-    config.num_threads = args_.num_threads;
+    config.num_threads = cap_threads_at_hardware_limit(args_.num_threads);
     config.enable_gnss = !args_.gnss_topic.empty();
     // Resolve the antenna lever-arm (T_cloud_gnss) from static TF so the GNSS prior
     // constrains the sensor origin, not the antenna. Non-fatal: a missing TF leaves

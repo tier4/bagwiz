@@ -14,6 +14,7 @@
 #include "bagwiz/core/logging.hpp"
 
 #include <string_view>
+#include <thread>
 
 namespace bagwiz::commands
 {
@@ -121,13 +122,13 @@ private:
       "--no-progress", slam_args_.no_progress,
       "Disable the live progress bars. They are also auto-suppressed when stderr is not a "
       "terminal or NO_COLOR is set, so this is only needed to silence them interactively.");
+    const int max_threads = static_cast<int>(std::thread::hardware_concurrency());
     sub
       ->add_option(
         "--threads", slam_args_.num_threads,
-        "Number of CPU threads for GLIM's preprocessor and odometry (default: GLIM's built-in "
-        "defaults; preprocess=2, odometry=4). Higher values use more cores but may hurt latency "
-        "on shared machines.")
-      ->check(CLI::Range(0, 256));
+        "Number of CPU threads for GLIM (default: 4). The host's hardware concurrency is the "
+        "effective maximum.")
+      ->check(CLI::Range(0, max_threads > 0 ? max_threads : 256));
     sub->callback([this]() { selected_ = Subcommand::kSlam; });
   }
 

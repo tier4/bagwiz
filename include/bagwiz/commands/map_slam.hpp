@@ -61,9 +61,9 @@ struct MapSlamArgs
   // leaves the trajectory unchanged (warned, never down-sampled).
   std::string upsample_traj;
 
-  // Number of CPU threads for GLIM's preprocessor and odometry.
-  // 0 means "use GLIM defaults". Must be non-negative.
-  int num_threads = 0;
+  // Number of CPU threads for GLIM. 0 or a negative value falls back to the
+  // default (4).
+  int num_threads = 4;
 };
 
 // Run LiDAR SLAM over a single PointCloud2 topic entirely in-process: bagwiz

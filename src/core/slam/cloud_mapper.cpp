@@ -96,15 +96,13 @@ glim::GlobalMappingParams make_global_mapping_params(bool enable_imu)
   return params;
 }
 
-// Build preprocessor params. A non-positive num_threads keeps GLIM's defaults
-// so omitting the CLI option is behavior-neutral; otherwise both stages share
-// the same thread budget because they run sequentially.
+// Build preprocessor params. A non-positive num_threads falls back to the
+// default (4) so both stages share the same baseline; otherwise they share
+// the requested thread budget because they run sequentially.
 glim::CloudPreprocessorParams make_preprocessor_params(int num_threads)
 {
   glim::CloudPreprocessorParams params;
-  if (num_threads > 0) {
-    params.num_threads = num_threads;
-  }
+  params.num_threads = num_threads > 0 ? num_threads : 4;
   return params;
 }
 
