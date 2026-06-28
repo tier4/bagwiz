@@ -132,32 +132,38 @@ source ~/.config/fish/completions/bagwiz.fish
 
 - Top-level commands and known nested subcommands are completed statically.
 - Typing `-` and pressing TAB lists the option flags available at the current
-  position. Most commands and subcommands respond, including ones that take
+  position. Every command and subcommand responds, including ones that take
   only positional arguments — in that case the listing falls back to the
-  `-h` / `--help` flags that CLI11 auto-injects. The exceptions are `check`
-  and `cam-info`: they are registered but not flag-completed, so
-  `bagwiz check -<TAB>` and `bagwiz cam-info -<TAB>` yield nothing and fall
-  through to the shell's file completion (they do not list `-h` / `--help`).
-  At the bagwiz top level, `-<TAB>` also surfaces `--version`. The covered
-  positions are:
+  `-h` / `--help` flags that CLI11 auto-injects. At the bagwiz top level,
+  `-<TAB>` also surfaces `--version`. The covered positions are:
   - `bagwiz -<TAB>` → `--help`, `--version`, `-h`
-  - `bagwiz <cmd> -<TAB>` for the flag-completed commands (`complete`,
+  - `bagwiz <cmd> -<TAB>` for every command (`cam-info`, `check`, `complete`,
     `convert`, `generate`, `ls`, `map`, `tf`, `topic`, `traj`, `walk`);
-    `check` and `cam-info` are excluded (see above)
+    `walk -<TAB>` also surfaces `--cam-info`
   - `bagwiz <cmd> <subcommand> -<TAB>` for every nested subcommand
-    (`convert format`, `convert msg`, `convert msg geo`, `generate video`,
-    `map filter removert`, `map slam`,
+    (`cam-info replace`, `check broken`, `convert format`, `convert msg`,
+    `convert msg geo`, `generate video`, `map filter removert`, `map slam`,
     `map viewer`, `tf static calc`, `tf static cp`, `tf tree`, `tf walk`,
     `topic drop`, `topic keep`, `topic rename`, `traj dump`, `traj join`);
+    `cam-info replace -<TAB>` surfaces `--frame-id`, `--output`/`-o`, and
+    `-w`/`--overwrite`; `check broken -<TAB>` surfaces `--rm` and `--deep`;
     `tf static calc -<TAB>` also surfaces `--json`, and `tf static cp -<TAB>`
     surfaces `--output`/`-o` and `-w`/`--overwrite`.
     `tf static` is itself a command group, so `tf static <TAB>` completes its
     actions (`calc`, `cp`) and `tf static -<TAB>` lists just the help flags.
-    `generate`, `map`, and `topic` are likewise command groups:
-    `generate <TAB>` completes `video`, `map <TAB>` completes `filter`, `slam`,
-    `viewer`, and `topic <TAB>` completes `drop`, `keep`, `rename`
+    `cam-info`, `check`, `generate`, `map`, and `topic` are likewise command
+    groups: `cam-info <TAB>` completes `replace`, `check <TAB>` completes
+    `broken`, `generate <TAB>` completes `video`, `map <TAB>` completes
+    `filter`, `slam`, `viewer`, and `topic <TAB>` completes `drop`, `keep`,
+    `rename`
 - Selected option values are completed where bagwiz has a closed set, such as
   `--storage <mcap|sqlite3>`.
+- Flag values that name a bag topic of a specific type are completed by opening
+  `<input>` and offering only topics of that type:
+  - `bagwiz generate video <input> ... --cam-info <topic>` — `sensor_msgs/msg/CameraInfo` topics
+  - `bagwiz generate video <input> ... --pcd <topic>` — `sensor_msgs/msg/PointCloud2` topics
+  - `bagwiz map slam <input> ... --imu <topic>` — `sensor_msgs/msg/Imu` topics
+  - `bagwiz walk <input> <topic> --cam-info <topic>` — `sensor_msgs/msg/CameraInfo` topics
 - Commands that take a `<topic>` positional argument complete it by opening
   `<input>` as a ROS 2 rosbag and listing topics with names that start with
   the current prefix. The currently-covered positions are:
@@ -184,6 +190,9 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz map filter removert <map> <input> <pcd_topic> <traj> <output>` —
     restricted to `sensor_msgs/msg/PointCloud2` topics; topics of any other type
     are omitted
+  - `bagwiz cam-info replace <input> <calib_yaml> <topic>` — restricted to
+    `sensor_msgs/msg/CameraInfo` topics (the only type `cam-info replace`
+    rewrites); topics of any other type are omitted
 
   Paths beginning with `~/` are expanded against the current user's home
   directory before opening the bag. Topic completion is suppressed when the

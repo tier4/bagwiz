@@ -604,12 +604,14 @@ TEST(FlagCompletionTest, LsDashListsHelpFlags)
   EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "ls", "-"}), "--help\n-h\n");
 }
 
-// `walk` has only positional args; its `-` candidates collapse to help.
+// `walk` surfaces its own `--cam-info` flag plus the implicit help flags, sorted.
 // Topic completion is gated off via the `-` prefix, so the binding does
 // not call into the bag reader here.
-TEST(FlagCompletionTest, WalkDashListsHelpFlags)
+TEST(FlagCompletionTest, WalkDashListsWalkFlags)
 {
-  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "walk", "-"}), "--help\n-h\n");
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "walk", "-"}),
+    "--cam-info\n--help\n-h\n");
 }
 
 // The `complete` subcommand defines two flags of its own; with help merged
@@ -1357,6 +1359,124 @@ TEST_F(CompletionTest, GenerateVideoTopicSlotSuppressedWhenInputSlotIsFlag)
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "--unknown-flag"}),
     "");
+}
+
+// `walk <input> <topic> --cam-info <TAB>` offers only the bag's
+// sensor_msgs/msg/CameraInfo topics, mirroring `generate video --cam-info`.
+TEST_F(CompletionTest, WalkCameraInfoFlagListsOnlyCameraInfoTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "walk", "~/cameras.mcap", "/cam/image_raw/compressed",
+       "--cam-info"}),
+    "/cam/camera_info\n");
+}
+
+// A typed prefix narrows the walk `--cam-info` candidates within the CameraInfo set.
+TEST_F(CompletionTest, WalkCameraInfoFlagRespectsPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "walk", "~/cameras.mcap", "/cam/image_raw/compressed",
+       "--cam-info", "/cam/c"}),
+    "/cam/camera_info\n");
+}
+
+// A bag with no CameraInfo topic yields no walk `--cam-info` candidates, so the
+// shell's default file completion takes over.
+TEST_F(CompletionTest, WalkCameraInfoFlagEmptyWhenNoCameraInfoTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_image_topics_fixture(tmp_dir_ / "images.mcap");  // no CameraInfo
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "walk", "~/images.mcap", "/image", "--cam-info"}),
+    "");
+}
+
+// `bagwiz cam-info <TAB>` lists its single subcommand.
+TEST(FlagCompletionTest, CamInfoSubcommandListsReplace)
+{
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "cam-info", ""}), "replace\n");
+}
+
+// `bagwiz cam-info -` lists just the implicit help flags (the group itself defines
+// no flags of its own).
+TEST(FlagCompletionTest, CamInfoParentDashListsHelpFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "cam-info", "-"}), "--help\n-h\n");
+}
+
+// `bagwiz cam-info replace -` lists replace's flags, sorted, with help merged.
+TEST(FlagCompletionTest, CamInfoReplaceDashListsReplaceFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "cam-info", "replace", "-"}),
+    "--frame-id\n--help\n--output\n--overwrite\n-h\n-o\n-w\n");
+}
+
+// `cam-info replace <input> <calib_yaml> <TAB>` (the <topic> slot) lists only the
+// bag's sensor_msgs/msg/CameraInfo topics, excluding the image and PointCloud2
+// topics. The <calib_yaml> word is a placeholder path; only topic metadata drives
+// completion.
+TEST_F(CompletionTest, CamInfoReplaceTopicSlotListsOnlyCameraInfoTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "replace", "~/cameras.mcap",
+       "calib.yaml"}),
+    "/cam/camera_info\n");
+}
+
+// A flag in the input slot must not cause the topic binding to call the bag
+// reader on a flag-shaped path; the binding's earlier-slot guard bails out.
+TEST_F(CompletionTest, CamInfoReplaceTopicSlotSuppressedWhenInputSlotIsFlag)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "replace", "--unknown-flag",
+       "calib.yaml"}),
+    "");
+}
+
+// `bagwiz check <TAB>` lists its single subcommand.
+TEST(FlagCompletionTest, CheckSubcommandListsBroken)
+{
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "check", ""}), "broken\n");
+}
+
+// `bagwiz check -` lists just the implicit help flags (the group itself defines no
+// flags of its own).
+TEST(FlagCompletionTest, CheckParentDashListsHelpFlags)
+{
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "check", "-"}), "--help\n-h\n");
+}
+
+// `bagwiz check broken -` lists broken's flags, sorted, with help merged.
+TEST(FlagCompletionTest, CheckBrokenDashListsBrokenFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "check", "broken", "-"}),
+    "--deep\n--help\n--rm\n-h\n");
 }
 
 TEST(SupportedShellsTest, ListsBashZshAndFish)

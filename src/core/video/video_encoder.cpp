@@ -66,7 +66,7 @@ std::optional<CodecChoice> codec_for_extension(
   if (ext == ".avi") {
     return CodecChoice{AV_CODEC_ID_MJPEG, nullptr, AV_PIX_FMT_YUVJ420P, true, true};
   }
-  error = "unsupported output extension '" + ext + "'; use .mp4/.mkv (H.264) or .avi (MJPEG)";
+  error = "unsupported output extension '" + ext + "'; use .mp4/.mkv/.mov (H.264) or .avi (MJPEG)";
   return std::nullopt;
 }
 

@@ -112,7 +112,7 @@ struct TopicArgBinding
   bool variadic{false};
 };
 
-constexpr std::array<TopicArgBinding, 9> kTopicBindings{{
+constexpr std::array<TopicArgBinding, 10> kTopicBindings{{
   {"walk", "", kFirstCommandArgWord, kSecondCommandArgWord, {}, false},
   {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord, kTrajDumpSupportedTypes, false},
   {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord, {}, false},
@@ -132,6 +132,13 @@ constexpr std::array<TopicArgBinding, 9> kTopicBindings{{
   // slot from the bag's PointCloud2 topics. <input> and <output_root> are paths
   // that fall through to the shell's file completion.
   {"map", "slam", kSecondCommandArgWord, kThirdCommandArgWord, kPointCloud2Type, false},
+  // `cam-info replace <input> <calib_yaml> <topic>`: complete the single <topic>
+  // slot from the bag's CameraInfo topics (the only type `cam-info replace`
+  // rewrites). <input> falls through to file completion, and <calib_yaml> — the
+  // word before <topic> — is a YAML path that also falls through; the binding's
+  // earlier-slot flag guard skips both. The topic sits at word 4 because the
+  // `replace` action verb shifts every positional one slot right.
+  {"cam-info", "replace", kSecondCommandArgWord, kFourthCommandArgWord, kCameraInfoType, false},
 }};
 
 enum class CompletionShell { Bash, Zsh, Fish };
@@ -636,10 +643,10 @@ std::vector<std::string> complete_complete_command(const CompletionRequest & req
 }
 
 // Commands whose only `-` candidates are the implicit CLI11 help flags.
-// `ls` and `walk` are routed here; `ls` has no user-defined flags, and `walk`'s
-// only flag (`--cam-info`) is not yet surfaced here. The parent `tf`, `traj`,
-// and `convert` apps likewise expose only help when the cursor is in the
-// subcommand-name slot.
+// `ls` is routed here; it has no user-defined flags. (`walk` was once routed here
+// too but now has its own complete_walk handler that surfaces `--cam-info`.) The
+// parent `tf`, `traj`, and `convert` apps likewise expose only help when the
+// cursor is in the subcommand-name slot.
 std::vector<std::string> complete_help_only(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -1092,6 +1099,94 @@ std::vector<std::string> complete_map_filter(const CompletionRequest & request)
   return {};
 }
 
+// `walk <input> <topic>` walks a single topic's messages. Its <topic> positional
+// is completed earlier by try_topic_completion via kTopicBindings (every topic in
+// the bag); <input> is a path that falls through to the shell's file completion.
+// Here we surface walk's own `--cam-info` flag (plus the implicit help flags) for
+// any `-` word, and complete the value of `--cam-info` from the bag's CameraInfo
+// topics — mirroring `generate video --cam-info`. The bag path sits at the
+// <input> slot, word 1.
+//
+//   walk: `walk`(0) `<input>`(1) `<topic>`(2) [--cam-info <topic>]
+std::vector<std::string> complete_walk(const CompletionRequest & request)
+{
+  const auto current = current_word(request);
+  if (current.starts_with("-")) {
+    return matching(with_help({"--cam-info"}), current);
+  }
+
+  // Complete the value of `--cam-info` from the bag's CameraInfo topics. Bail out
+  // when the <input> slot is missing or holds a flag, so we never call the bag
+  // reader on something that is not a bag path.
+  if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--cam-info") {
+    if (request.words.size() <= kFirstCommandArgWord) {
+      return {};
+    }
+    const auto & bag_arg = request.words[kFirstCommandArgWord];
+    if (bag_arg.empty() || bag_arg.starts_with("-")) {
+      return {};
+    }
+    return complete_topics(expand_current_user_home(bag_arg), current, kCameraInfoType);
+  }
+  return {};
+}
+
+// `check` is a command group for rosbag integrity checks. Its sole subcommand is
+// `broken`. At the subcommand slot (word 1) the only candidate is `broken` (or the
+// implicit help flags for a `-` word). Past it, `broken`'s flags are surfaced for
+// any `-` word; its single <input> positional is a path that falls through to the
+// shell's file completion.
+//
+//   broken: `check`(0) `broken`(1) `<input>`(2) [--rm] [--deep]
+std::vector<std::string> complete_check(const CompletionRequest & request)
+{
+  const auto current = current_word(request);
+  if (request.cursor_word == kFirstCommandArgWord) {
+    if (current.starts_with("-")) {
+      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
+    }
+    return matching({"broken"}, current);
+  }
+
+  if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
+    const auto & sub = request.words[kFirstCommandArgWord];
+    if (sub == "broken") {
+      return matching(with_help({"--deep", "--rm"}), current);
+    }
+  }
+  return {};
+}
+
+// `cam-info` is a command group for sensor_msgs/msg/CameraInfo operations. Its
+// sole subcommand is `replace`. At the subcommand slot (word 1) the only candidate
+// is `replace` (or the implicit help flags for a `-` word). The <topic> positional
+// is completed earlier by try_topic_completion via kTopicBindings (CameraInfo
+// topics only); <input> and <calib_yaml> are paths that fall through to the
+// shell's file completion. Here we surface `replace`'s flags for any `-` word. The
+// `--frame-id` value is a free-form header override with nothing to suggest, and
+// `-o`/`--output`'s value is an output path, so neither gets value completion.
+//
+//   replace: `cam-info`(0) `replace`(1) `<input>`(2) `<calib_yaml>`(3) `<topic>`(4)
+//            [--frame-id <id>] [-o <out>] [-w|--overwrite]
+std::vector<std::string> complete_cam_info(const CompletionRequest & request)
+{
+  const auto current = current_word(request);
+  if (request.cursor_word == kFirstCommandArgWord) {
+    if (current.starts_with("-")) {
+      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
+    }
+    return matching({"replace"}, current);
+  }
+
+  if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
+    const auto & sub = request.words[kFirstCommandArgWord];
+    if (sub == "replace") {
+      return matching(with_help({"--frame-id", "--output", "--overwrite", "-o", "-w"}), current);
+    }
+  }
+  return {};
+}
+
 std::vector<std::string> complete_request(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -1125,7 +1220,16 @@ std::vector<std::string> complete_request(const CompletionRequest & request)
   if (command == "map") {
     return complete_map(request);
   }
-  if (command == "ls" || command == "walk") {
+  if (command == "cam-info") {
+    return complete_cam_info(request);
+  }
+  if (command == "check") {
+    return complete_check(request);
+  }
+  if (command == "walk") {
+    return complete_walk(request);
+  }
+  if (command == "ls") {
     return complete_help_only(request);
   }
   return {};
