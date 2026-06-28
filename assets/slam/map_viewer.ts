@@ -11,9 +11,6 @@
 import * as THREE from "three";
 import { PCDLoader } from "three/addons/loaders/PCDLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { Line2 } from "three/addons/lines/Line2.js";
-import { LineGeometry } from "three/addons/lines/LineGeometry.js";
-import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { COLORMAP_NAMES, DEFAULT_COLORMAP, sampleColormap } from "./map_colormaps.js";
 
 // Look up a required element by id; a missing id is a programmer error because
@@ -75,46 +72,41 @@ document.body.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = false;
 
-// Default world-axis triad shown at the orbit target in 3D mode. Built from
-// thick `Line2` primitives so the axes stay visible at the default red/green/blue
-// colors while `THREE.AxesHelper` would always render at 1 px.
+// Default arrow-style world-axis triad shown at the anchor point in 3D mode.
+// Uses unlit default colors (red/green/blue) so it matches the conventional
+// axis style without extra scene lights.
 let axesHelper: THREE.Group | null = null;
 
-const AXES_LINE_WIDTH = 3; // screen pixels
-
-function createThickAxes(length: number): THREE.Group {
+function createArrowAxes(length: number): THREE.Group {
   const group = new THREE.Group();
-  const materials: LineMaterial[] = [];
+  const headLength = length * 0.15;
+  const shaftLength = length - headLength;
+  const shaftRadius = length * 0.015;
+  const headRadius = length * 0.04;
+  const up = new THREE.Vector3(0, 1, 0);
 
-  const addAxis = (color: number, end: THREE.Vector3): void => {
-    const positions = new Float32Array([0, 0, 0, end.x, end.y, end.z]);
-    const geometry = new LineGeometry();
-    geometry.setPositions(positions);
-    const material = new LineMaterial({ color, linewidth: AXES_LINE_WIDTH });
-    material.resolution.set(window.innerWidth, window.innerHeight);
-    materials.push(material);
-    group.add(new Line2(geometry, material));
+  const addAxis = (color: number, dir: THREE.Vector3): void => {
+    const material = new THREE.MeshBasicMaterial({ color });
+    const q = new THREE.Quaternion().setFromUnitVectors(up, dir);
+
+    const shaftGeom = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 12);
+    shaftGeom.translate(0, shaftLength / 2, 0);
+    const shaft = new THREE.Mesh(shaftGeom, material);
+    shaft.setRotationFromQuaternion(q);
+
+    const headGeom = new THREE.ConeGeometry(headRadius, headLength, 12);
+    headGeom.translate(0, shaftLength + headLength / 2, 0);
+    const head = new THREE.Mesh(headGeom, material);
+    head.setRotationFromQuaternion(q);
+
+    group.add(shaft, head);
   };
 
-  addAxis(0xff0000, new THREE.Vector3(length, 0, 0));
-  addAxis(0x00ff00, new THREE.Vector3(0, length, 0));
-  addAxis(0x0000ff, new THREE.Vector3(0, 0, length));
+  addAxis(0xff0000, new THREE.Vector3(1, 0, 0));
+  addAxis(0x00ff00, new THREE.Vector3(0, 1, 0));
+  addAxis(0x0000ff, new THREE.Vector3(0, 0, 1));
 
-  group.userData.materials = materials;
   return group;
-}
-
-function updateAxesResolution(): void {
-  if (!axesHelper) {
-    return;
-  }
-  const materials = axesHelper.userData.materials as LineMaterial[] | undefined;
-  if (!materials) {
-    return;
-  }
-  for (const material of materials) {
-    material.resolution.set(window.innerWidth, window.innerHeight);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -363,7 +355,7 @@ function frameView(): void {
   controls.target.copy(center);
 
   if (!axesHelper) {
-    axesHelper = createThickAxes(1.5);
+    axesHelper = createArrowAxes(3.0);
     scene.add(axesHelper);
   }
   axesHelper.position.copy(center);
@@ -732,7 +724,6 @@ window.addEventListener("resize", () => {
   // Re-fit the ortho frustum's width to the new aspect, preserving zoom/height.
   setOrthoExtent(orthoCamera.top);
   renderer.setSize(window.innerWidth, window.innerHeight);
-  updateAxesResolution();
   requestFrame();
 });
 
