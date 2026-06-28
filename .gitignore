@@ -96,8 +96,9 @@ node_modules/
 Thumbs.db
 desktop.ini
 
-# Claude Code / local tooling
-.claude/
+# Claude Code / local tooling — ignore everything except tracked project skills
+.claude/*
+!.claude/skills/
 CLAUDE.local.md
 
 # Antigravity
