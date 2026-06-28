@@ -462,7 +462,7 @@ bagwiz tf walk capture.mcap map base_link
 
 ### Exit status
 
-| Code | Meaning                                                                                                                           |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | The pager ran and the user quit.                                                                                                  |
-| `1`  | Not a TTY, the bag could not be opened, it has no `tf2_msgs/msg/TFMessage` topic, or the TF topics carry no decodable transforms. |
+| Code | Meaning                                                                                                                                                                                                                                                                              |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | The pager ran and the user quit.                                                                                                                                                                                                                                                     |
+| `1`  | Not a TTY, the bag could not be opened, it has no `tf2_msgs/msg/TFMessage` topic, the TF topics carry no decodable transforms, a `<from>`/`<to>` frame absent from the bag's merged TF tree (available frames are listed on stderr), an empty frame id, or a TF load/decode failure. |

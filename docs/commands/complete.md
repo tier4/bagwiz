@@ -132,16 +132,21 @@ source ~/.config/fish/completions/bagwiz.fish
 
 - Top-level commands and known nested subcommands are completed statically.
 - Typing `-` and pressing TAB lists the option flags available at the current
-  position. Every command and subcommand responds, including ones that take
+  position. Most commands and subcommands respond, including ones that take
   only positional arguments — in that case the listing falls back to the
-  `-h` / `--help` flags that CLI11 auto-injects. At the bagwiz top level,
-  `-<TAB>` also surfaces `--version`. The covered positions are:
+  `-h` / `--help` flags that CLI11 auto-injects. The exceptions are `check`
+  and `cam-info`: they are registered but not flag-completed, so
+  `bagwiz check -<TAB>` and `bagwiz cam-info -<TAB>` yield nothing and fall
+  through to the shell's file completion (they do not list `-h` / `--help`).
+  At the bagwiz top level, `-<TAB>` also surfaces `--version`. The covered
+  positions are:
   - `bagwiz -<TAB>` → `--help`, `--version`, `-h`
-  - `bagwiz <cmd> -<TAB>` for every registered command (including
-    `check`, `complete`, `convert`, `generate`, `ls`, `map`, `tf`, `topic`,
-    `traj`, `walk`)
+  - `bagwiz <cmd> -<TAB>` for the flag-completed commands (`complete`,
+    `convert`, `generate`, `ls`, `map`, `tf`, `topic`, `traj`, `walk`);
+    `check` and `cam-info` are excluded (see above)
   - `bagwiz <cmd> <subcommand> -<TAB>` for every nested subcommand
-    (`convert format`, `generate video`, `map filter removert`, `map slam`,
+    (`convert format`, `convert msg`, `convert msg geo`, `generate video`,
+    `map filter removert`, `map slam`,
     `map viewer`, `tf static calc`, `tf static cp`, `tf tree`, `tf walk`,
     `topic drop`, `topic keep`, `topic rename`, `traj dump`, `traj join`);
     `tf static calc -<TAB>` also surfaces `--json`, and `tf static cp -<TAB>`

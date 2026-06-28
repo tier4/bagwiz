@@ -21,7 +21,8 @@ conversions lives under its own leaf (today: `geo` for position-related types).
 - Any pre-existing entry at `<output>` (file or directory) stops the
   run with a clear log line. Pass `-w`/`--overwrite` to replace it instead.
   The flag is supported by every `bagwiz` subcommand that writes a
-  file or directory output (`convert format`, `traj dump`, `traj join -o`).
+  file or directory output (`convert format`, `convert msg geo -o`, `traj dump`,
+  `traj join -o`).
 - `mcap` outputs are written without chunk compression. Re-compress
   afterwards with `ros2 bag convert` if needed.
 
@@ -167,8 +168,8 @@ bagwiz convert msg geo [OPTIONS] <input> --dst <type>
   `utm` projects to UTM easting/northing (the zone/hemisphere come from the
   longitude); an `--origin` shifts the result so coordinates stay small.
 - **Origin.** `--origin` wins when given. For ENU without `--origin`, the first
-  decodable `NavSatFix` in the bag is used and logged so the value can be reused
-  later. UTM tolerates an absent origin (standard UTM).
+  decodable `NavSatFix` among the selected topics is used and logged so the value
+  can be reused later. UTM tolerates an absent origin (standard UTM).
 - **frame_id.** The source sensor `frame_id` is replaced (it names the antenna
   frame, not the world frame); the default is the REP-105 `map` for ENU or the
   `robot_localization` convention `utm` for UTM.

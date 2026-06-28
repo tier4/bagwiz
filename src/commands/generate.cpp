@@ -87,8 +87,8 @@ private:
       ->add_option(
         "--cam-info", video_args_.camera_info_topic,
         "CameraInfo topic for --undistort and --pcd. When omitted, bagwiz derives it from "
-        "<img_topic>: /image_raw/compressed, /image_rect_color, and /image_rect_color/compressed "
-        "map their prefix to /camera_info.")
+        "<img_topic>: /image_raw, /image_raw/compressed, /image_rect_color, and "
+        "/image_rect_color/compressed map their prefix to /camera_info.")
       ->check([](const std::string & topic) {
         if (topic.empty()) {
           return std::string{"cam-info topic must not be empty"};

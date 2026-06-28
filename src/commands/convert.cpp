@@ -73,7 +73,8 @@ io::Format resolve_target_storage(
 
 // `bagwiz convert` is a command group for cross-format bag conversion.
 // Ships `format` (ROS 2 mcap <-> sqlite3 repack, plus file <-> directory
-// layout transitions inferred from the output path).
+// layout transitions inferred from the output path) and `msg geo` (re-type
+// NavSatFix topics into a geometry_msgs pose type).
 class ConvertCommand : public Command
 {
 public:

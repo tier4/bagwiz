@@ -54,7 +54,7 @@ bagwiz map slam [OPTIONS] <input> <pcd_topic> <output_root>
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--imu <topic>`          | `sensor_msgs/msg/Imu` topic. Switches odometry to LiDAR-IMU (GLIM's `OdometryEstimationCPU`). The LiDAR←IMU extrinsic is resolved from the bag's static TF using the cloud and IMU header `frame_id`s.                                                                                                               |
 | `--gnss <topic>`         | `sensor_msgs/msg/NavSatFix` topic. Adds GNSS global constraints during global mapping to pin the world frame to GNSS and curb drift. The antenna lever-arm is resolved from the bag's static TF and removed (a missing TF only warns). Requires global mapping.                                                      |
-| `--map-resolution <m>`   | Exported map voxel size in meters (default `0.2`; must be positive). Controls only the exported map's density, never the optimization or trajectory.                                                                                                                                                                 |
+| `--map-resolution <m>`   | Exported map voxel size in meters (default `0.2`; must be positive). Controls only the exported map's density, never the optimization or trajectory. The LiDAR preprocessor's ~0.15 m input voxel bounds the effective resolution, so values below ~0.15 m do not produce a denser map.                              |
 | `--threads N`            | Number of CPU threads for GLIM (default: 4). The host's hardware concurrency is the effective maximum.                                                                                                                                                                                                               |
 | `--viewer`               | After writing `map.pcd`, serve it over a loopback HTTP server and open the default browser to a Three.js point-cloud viewer. Blocks until interrupted (`Ctrl-C`).                                                                                                                                                    |
 | `--upsample-traj <spec>` | Densify `traj.tum` only (the map is unaffected) to a higher rate. `<spec>` is a positive magnitude: `x`/`X` = multiple of the native rate (e.g. `2x`); `hz` or no suffix = absolute frequency in Hz (e.g. `20` or `20hz`). Position is interpolated linearly and orientation by SLERP within the original time span. |
@@ -80,10 +80,11 @@ Written under `<output_root>`:
 - **LiDAR-only vs LiDAR-IMU.** Without `--imu`, odometry runs from the cloud
   alone. With `--imu`, GLIM's `OdometryEstimationCPU` fuses the IMU, and the
   LiDAR←IMU extrinsic is resolved from the bag's static TF.
-- **GNSS (`--gnss`).** The GNSS-fusion behavior is unchanged from the previous
-  `bagwiz slam run` implementation: fixes are projected to a local ENU frame,
+- **GNSS (`--gnss`).** Fixes are projected to a local ENU frame,
   interpolated at each submap's mid-timestamp, and turned into horizontal
-  translation priors once the SLAM baseline exceeds ~10 m. The antenna lever-arm
+  translation priors once the SLAM baseline exceeds ~10 m. Each prior is
+  weighted by the fix's reported position covariance, falling back to a fixed
+  precision when the covariance is unknown. The antenna lever-arm
   is resolved from the bag's static TF and removed.
 - **Dynamic-point removal.** Removed from `map slam`. Run
   `bagwiz map filter removert` afterwards if you need a cleaned map.

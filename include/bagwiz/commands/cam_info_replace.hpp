@@ -19,9 +19,10 @@ namespace bagwiz::commands
 // Parsed arguments for `bagwiz cam-info replace`. The command rewrites a single
 // sensor_msgs/msg/CameraInfo topic so that every message carries the
 // calibration from a standard ROS camera_calibration YAML file. Each message's
-// header (timestamp and frame_id), binning_x/y, and roi are preserved; only the
-// calibration fields (height, width, distortion_model, d, k, r, p) are
-// overwritten. Every other topic is copied verbatim.
+// header timestamp (and `frame_id` unless `--frame-id` is given), binning_x/y,
+// and roi are preserved; only the calibration fields (height, width,
+// distortion_model, d, k, r, p) are overwritten. Every other topic is copied
+// verbatim.
 struct CamInfoReplaceArgs
 {
   std::filesystem::path input_path;                  // bag to rewrite (also the in-place target)

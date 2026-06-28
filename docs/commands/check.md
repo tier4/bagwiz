@@ -76,7 +76,7 @@ bagwiz check broken ~/data/rosbags/ > broken.txt
 
 ### Exit status
 
-| Code | Meaning                                                           |
-| ---- | ----------------------------------------------------------------- |
-| `0`  | Scan completed (whether or not broken bags were found / deleted). |
-| `1`  | No rosbag was found at `<input>`, or a deletion failed.           |
+| Code | Meaning                                                                                                       |
+| ---- | ------------------------------------------------------------------------------------------------------------- |
+| `0`  | Scan completed (whether or not broken bags were found / deleted).                                             |
+| `1`  | No rosbag was found at `<input>`, a deletion failed, or the broken-bag list could not be written to `stdout`. |

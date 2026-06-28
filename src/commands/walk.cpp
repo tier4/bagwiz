@@ -174,8 +174,8 @@ std::string rainbow_text(std::string_view text)
 // the MCAP carries a `ros2msg` schema).
 //
 // The view is a pager driven by `bagwiz::core::tui::ScrollablePager`:
-// the header (`[i/n+] topic type`, timestamp, size) and footer
-// (index + scroll hint, key legend, status row) are pinned in place,
+// the header (timestamp, size) and footer (index + topic/type + scroll
+// hint, key legend, status row) are pinned in place,
 // and only the body region scrolls.
 //
 // Keys:

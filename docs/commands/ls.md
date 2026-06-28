@@ -48,7 +48,7 @@ bagwiz ls capture.mcap | grep lidar
 
 ## Exit status
 
-| Code | Meaning                              |
-| ---- | ------------------------------------ |
-| `0`  | Success (including empty match set). |
-| `1`  | Failed to open `<input>`.            |
+| Code | Meaning                                   |
+| ---- | ----------------------------------------- |
+| `0`  | Success (including a bag with no topics). |
+| `1`  | Failed to open `<input>`.                 |

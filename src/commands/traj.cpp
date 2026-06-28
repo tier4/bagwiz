@@ -307,6 +307,10 @@ bool decode_pose_sample(
 //             PoseStamped / PoseWithCovarianceStamped, --to is the asserted
 //             body frame (the pose already encodes it, so it does not change
 //             the numbers); --from optionally re-expresses each pose via TF.
+//   join      Embed a trajectory file into a bag as a new TFMessage topic.
+//             Each trajectory row becomes one message on <topic>, with the
+//             message receive time and header.stamp taken from the row's
+//             timestamp.
 class TrajCommand : public Command
 {
 public:

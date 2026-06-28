@@ -95,8 +95,9 @@ std::vector<TfTopic> collect_tf_topics(const io::BagReader & reader)
 // When `conflict_checker` is non-null, every edge is run through it and the
 // first cross-topic conflict (multi-parent, or static/dynamic mix) throws —
 // used by `tf static calc` so several `*tf_static` topics are merged but a
-// contradiction aborts instead of silently last-winning. `tf tree` leaves it
-// null and runs its own forest validation downstream.
+// contradiction aborts instead of silently last-winning. Both `tf static calc`
+// and `tf tree` pass a checker; `tf tree` additionally runs its own forest
+// validation downstream.
 //
 // Decoding goes through the unified open_decoder() path so for MCAP
 // inputs the schema-driven backend handles the work and tf2_msgs no
