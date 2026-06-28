@@ -1053,8 +1053,8 @@ TEST(FlagCompletionTest, MapSlamDashListsSlamFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "map", "slam", "-"}),
-    "--gnss\n--help\n--imu\n--map-resolution\n--no-progress\n--overwrite\n--upsample-traj\n"
-    "--viewer\n-h\n-w\n");
+    "--gnss\n--help\n--imu\n--map-resolution\n--no-progress\n--overwrite\n--threads\n"
+    "--upsample-traj\n--viewer\n-h\n-w\n");
 }
 
 // `map filter <TAB>` lists the filter group's action verbs.
@@ -1229,7 +1229,8 @@ TEST(FlagCompletionTest, GenerateVideoDashListsVideoFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "generate", "video", "-"}),
-    "--cam-info\n--help\n--overwrite\n--pcd\n--undistort\n-h\n-w\n");
+    "--alpha\n--cam-info\n--field\n--help\n--max\n--min\n--overwrite\n--pcd\n--point-size\n"
+    "--resize\n--scheme\n--undistort\n-h\n-w\n");
 }
 
 // `--field <TAB>` offers the valid point-cloud field choices, sorted.

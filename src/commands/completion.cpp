@@ -636,8 +636,9 @@ std::vector<std::string> complete_complete_command(const CompletionRequest & req
 }
 
 // Commands whose only `-` candidates are the implicit CLI11 help flags.
-// `ls` and `walk` have no user-defined flags; the parent `tf`, `traj`, and
-// `convert` apps likewise expose only help when the cursor is in the
+// `ls` and `walk` are routed here; `ls` has no user-defined flags, and `walk`'s
+// only flag (`--cam-info`) is not yet surfaced here. The parent `tf`, `traj`,
+// and `convert` apps likewise expose only help when the cursor is in the
 // subcommand-name slot.
 std::vector<std::string> complete_help_only(const CompletionRequest & request)
 {
@@ -915,10 +916,14 @@ std::vector<std::string> complete_topic(const CompletionRequest & request)
 // `video`. The `<image_topic>` positional is completed earlier by
 // try_topic_completion via kTopicBindings (image topics only); <input>/<output>
 // are paths that fall through to the shell's file completion. Here we surface
-// `video` plus its own flags for any `-` word, and the value for `--cam-info`.
+// `video` plus its own flags for any `-` word, and values for `--cam-info`
+// (CameraInfo topics), `--pcd` (PointCloud2 topics), and the enum choices for
+// `--field` and `--scheme`.
 //
 //   video: `generate`(0) `video`(1) `<input>`(2) `<image_topic>`(3) `<output>`(4)
-//          [--cam-info <topic>] [--undistort] [-w|--overwrite]
+//          [--cam-info <topic>] [--undistort] [--resize <s>] [--pcd <topic>...]
+//          [--field <f>] [--min <v>] [--max <v>] [--scheme <s>] [--point-size <n>]
+//          [--alpha <a>] [-w|--overwrite]
 std::vector<std::string> complete_generate(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -933,7 +938,10 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
     const auto & sub = request.words[kFirstCommandArgWord];
     if (sub == "video") {
       return matching(
-        with_help({"--cam-info", "--overwrite", "--pcd", "--undistort", "-w"}), current);
+        with_help(
+          {"--alpha", "--cam-info", "--field", "--max", "--min", "--overwrite", "--pcd",
+           "--point-size", "--resize", "--scheme", "--undistort", "-w"}),
+        current);
     }
   }
 
@@ -974,8 +982,8 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 // shifting every argument one word to the right of a flat command.
 //
 //   slam:   `map`(0) `slam`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
-//           [--imu <topic>] [--gnss <topic>] [--map-resolution <m>] [--upsample-traj <spec>]
-//           [--viewer] [-w|--overwrite] [--no-progress]
+//           [--imu <topic>] [--gnss <topic>] [--map-resolution <m>] [--threads <N>]
+//           [--upsample-traj <spec>] [--viewer] [-w|--overwrite] [--no-progress]
 //   viewer: `map`(0) `viewer`(1) `<map>`(2)
 //   filter: `map`(0) `filter`(1) `<action>`(2) ...
 //
@@ -1017,8 +1025,8 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
   if (current.starts_with("-")) {
     return matching(
       with_help(
-        {"--gnss", "--imu", "--map-resolution", "--no-progress", "--overwrite", "--upsample-traj",
-         "--viewer", "-w"}),
+        {"--gnss", "--imu", "--map-resolution", "--no-progress", "--overwrite", "--threads",
+         "--upsample-traj", "--viewer", "-w"}),
       current);
   }
 
