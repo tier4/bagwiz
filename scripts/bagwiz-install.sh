@@ -55,7 +55,7 @@ if [[ ! -x ${built_binary} ]]; then
     echo "[install] No build found for '${BAGWIZ_LAUNCH_DISTRO}' at" >&2
     echo "[install]   ${built_binary}" >&2
     if [[ ${BAGWIZ_LAUNCH_DISTRO} == *-gpu ]]; then
-        echo "[install] Build the GPU variant first: pixi run -e ${BAGWIZ_LAUNCH_DISTRO} build-slam-gpu" >&2
+        echo "[install] Build the GPU variant first: pixi run -e ${BAGWIZ_LAUNCH_DISTRO} build-gpu" >&2
     else
         echo "[install] Build it first: pixi run -e ${BAGWIZ_LAUNCH_DISTRO} build" >&2
     fi

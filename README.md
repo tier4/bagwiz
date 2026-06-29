@@ -38,6 +38,14 @@ per distro.
    builds into its own `build/<distro>` and `install/<distro>`, so builds for
    several distros can coexist.
 
+   `build` is a SLAM build on **humble**/**jazzy**: it builds the GLIM dependency
+   stack (GTSAM + gtsam_points + glim) from source the first time, which takes
+   tens of minutes; subsequent builds reuse the vendored prefix and are fast.
+   **lyrical** builds bagwiz without `map slam` (it cannot pin the Eigen version
+   GLIM needs). For the CUDA-accelerated SLAM build, use
+   `pixi run -e humble-gpu build-gpu` (needs an NVIDIA GPU); see
+   [docs/commands/map.md](docs/commands/map.md).
+
 3. Install a `bagwiz` launcher on your `PATH` — plus tab completion — so you can
    run it from anywhere without typing `pixi run`:
 

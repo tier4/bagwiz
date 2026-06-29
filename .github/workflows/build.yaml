@@ -27,6 +27,18 @@ jobs:
           pixi-version: v0.70.2
           environments: ${{ matrix.distro }}
 
+      # `build` is a SLAM build on humble/jazzy: it builds the GLIM stack (GTSAM +
+      # gtsam_points + glim) from source into install/<distro>/glim-deps, which
+      # takes tens of minutes cold. Cache that vendored prefix keyed on the build
+      # script (the pinned GLIM/GTSAM refs live there); on a hit, build-glim-deps.sh
+      # finds its stamp and no-ops. lyrical builds without SLAM, so it has no prefix.
+      - name: Cache GLIM SLAM deps
+        if: matrix.distro != 'lyrical'
+        uses: actions/cache@v4
+        with:
+          path: install/${{ matrix.distro }}/glim-deps
+          key: glim-deps-${{ matrix.distro }}-${{ hashFiles('scripts/build-glim-deps.sh') }}
+
       - name: Build
         run: pixi run -e ${{ matrix.distro }} build
 

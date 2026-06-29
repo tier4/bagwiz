@@ -159,12 +159,18 @@ govern source code or CLI behavior.
   the default environment (Humble). Each distro builds into its own
   `build/<distro>` and `install/<distro>`, so switching distros never reuses
   another distro's CMake cache.
+- `build` is a SLAM build by default: on `humble`/`jazzy` it builds the GLIM
+  stack (via `scripts/bagwiz-build.sh` → `scripts/build-glim-deps.sh`) and links
+  `bagwiz map slam`. `lyrical` cannot pin Eigen 3.4, so its `build` falls back to
+  a non-SLAM bagwiz. The CUDA SLAM build is `pixi run -e <distro>-gpu build-gpu`
+  (humble-gpu/jazzy-gpu; needs an NVIDIA GPU).
 - Run the tests with `pixi run -e <distro> test` and the built binary with
   `pixi run -e <distro> run -- <args>` (or `pixi shell -e <distro>` then
   `bagwiz`). `pixi run install` builds, then installs an optional `bagwiz`
   launcher on `PATH` plus shell completion for your current shell, in one step
   (always overwriting existing copies); it runs the binary in its pixi-managed
-  ROS environment. See `scripts/bagwiz-install.sh`.
+  ROS environment. See `scripts/bagwiz-install.sh`. Each of `test`/`run`/`install`
+  has a `-gpu` variant (`test-gpu`/`run-gpu`/`install-gpu`) targeting `build-gpu`.
 - Prefer the `pixi run` tasks over ad-hoc `colcon build` invocations when
   verifying changes, unless you are reproducing a CI or tooling issue that
   requires a different command line. The task definitions live in `pixi.toml`.
