@@ -1467,6 +1467,23 @@ TEST_F(CompletionTest, CamInfoReplaceTopicSlotSuppressedWhenInputSlotIsFlag)
     "");
 }
 
+// `cam-info replace` takes one-or-more <topic>... operands, so completion fires
+// not only at the first <topic> slot but at every later positional slot too. With
+// a first topic already typed (word 6), the next slot still offers the bag's
+// CameraInfo topics.
+TEST_F(CompletionTest, CamInfoReplaceTopicSlotIsVariadic)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "replace", "~/cameras.mcap", "calib.yaml",
+       "/cam/camera_info"}),
+    "/cam/camera_info\n");
+}
+
 // `bagwiz check <TAB>` lists its single subcommand.
 TEST(FlagCompletionTest, CheckSubcommandListsBroken)
 {

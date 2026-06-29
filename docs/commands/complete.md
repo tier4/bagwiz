@@ -190,9 +190,11 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz map filter removert <map> <input> <pcd_topic> <traj> <output>` —
     restricted to `sensor_msgs/msg/PointCloud2` topics; topics of any other type
     are omitted
-  - `bagwiz cam-info replace <input> <calib_yaml> <topic>` — restricted to
+  - `bagwiz cam-info replace <input> <calib_yaml> <topic>...` — restricted to
     `sensor_msgs/msg/CameraInfo` topics (the only type `cam-info replace`
-    rewrites); topics of any other type are omitted
+    rewrites); topics of any other type are omitted. The `<topic>...` operand is
+    variadic, so every topic slot (the first and each subsequent one) is
+    completed
 
   Paths beginning with `~/` are expanded against the current user's home
   directory before opening the bag. Topic completion is suppressed when the

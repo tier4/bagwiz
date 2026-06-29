@@ -2,9 +2,9 @@
 
 Operations on `sensor_msgs/msg/CameraInfo` topics. Subcommands:
 
-| Subcommand                            | What it does                                                                 |
-| ------------------------------------- | ---------------------------------------------------------------------------- |
-| [`replace`](#bagwiz-cam-info-replace) | Overwrite a CameraInfo topic's calibration with the values from a YAML file. |
+| Subcommand                            | What it does                                                                           |
+| ------------------------------------- | -------------------------------------------------------------------------------------- |
+| [`replace`](#bagwiz-cam-info-replace) | Overwrite one or more CameraInfo topics' calibration with the values from a YAML file. |
 
 ROS 1 `*.bag` inputs are not supported.
 
@@ -12,35 +12,42 @@ ROS 1 `*.bag` inputs are not supported.
 
 ## `bagwiz cam-info replace`
 
-Replace the calibration carried by a single `sensor_msgs/msg/CameraInfo` topic
-with the values from a standard ROS camera calibration YAML file — the kind
-produced by the `camera_calibration` package and consumed by
+Replace the calibration carried by one or more `sensor_msgs/msg/CameraInfo`
+topics with the values from a standard ROS camera calibration YAML file — the
+kind produced by the `camera_calibration` package and consumed by
 `camera_info_manager`. This is the offline equivalent of re-recording the bag
 with a corrected calibration: useful when a bag was captured with a wrong or
 placeholder calibration.
 
-For every message on the chosen topic, the calibration fields are taken from the
-YAML while each message's own `header` timestamp, `header.frame_id` (unless
+When several topics are listed, the **same** YAML calibration is applied to every
+one of them — handy when one calibration is shared across topics (for example a
+`/camera_info` and a republished `/camera_info_throttled`). To give different
+topics different calibrations, run the command once per topic/YAML pair.
+
+For every message on the chosen topic(s), the calibration fields are taken from
+the YAML while each message's own `header` timestamp, `header.frame_id` (unless
 `--frame-id` is given), `binning_x` / `binning_y`, and `roi` are preserved. Every
 other topic in the bag is copied verbatim.
 
 ### Usage
 
 ```text
-bagwiz cam-info replace [OPTIONS] <input> <calib_yaml> <topic>
+bagwiz cam-info replace [OPTIONS] <input> <calib_yaml> <topic>...
 ```
 
 The operand order follows the repository convention (read-side operands first).
 `<input>` doubles as the write-side target: without `-o` the bag is rewritten in
-place, mirroring `bagwiz traj join` and `bagwiz convert msg geo`.
+place, mirroring `bagwiz traj join` and `bagwiz convert msg geo`. One or more
+`<topic>` operands may be given; each must be a `sensor_msgs/msg/CameraInfo`
+topic.
 
 ### Positional arguments
 
-| Name         | Description                                                                         |
-| ------------ | ----------------------------------------------------------------------------------- |
-| `input`      | Input ROS 2 rosbag (directory or single-file). Must exist.                          |
-| `calib_yaml` | Camera calibration YAML in the `camera_calibration` / `camera_info_manager` format. |
-| `topic`      | The CameraInfo topic to rewrite. Its type must be `sensor_msgs/msg/CameraInfo`.     |
+| Name         | Description                                                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `input`      | Input ROS 2 rosbag (directory or single-file). Must exist.                                                                      |
+| `calib_yaml` | Camera calibration YAML in the `camera_calibration` / `camera_info_manager` format.                                             |
+| `topic...`   | One or more CameraInfo topics to rewrite. Each type must be `sensor_msgs/msg/CameraInfo`; the same YAML applies to all of them. |
 
 ### Options
 
@@ -108,10 +115,21 @@ bagwiz cam-info replace drive.mcap left.yaml /camera/left/camera_info \
   --frame-id camera_left_optical_frame -o drive_fixed.mcap
 ```
 
+Apply one calibration to several CameraInfo topics in a single pass:
+
+```bash
+bagwiz cam-info replace drive.mcap shared.yaml \
+  /camera/camera_info /camera/camera_info_throttled
+```
+
 ### Notes
 
-- Only the named topic is rewritten; the topic's message type is unchanged, so
-  the bag's other topics and metadata are preserved exactly.
+- Only the named topics are rewritten; their message type is unchanged, so the
+  bag's other topics and metadata are preserved exactly.
+- The same `<calib_yaml>` is applied to every listed topic. Pass different
+  calibrations by running the command once per topic.
+- Listing a topic more than once is harmless — duplicates are de-duplicated, and
+  a listed topic that carries no messages is reported with a warning.
 - The output bag is always written uncompressed (re-compress later with
   `ros2 bag convert` if needed).
 - In-place mode replaces the input atomically via a sibling temporary bag, in the

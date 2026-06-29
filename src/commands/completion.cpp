@@ -132,13 +132,14 @@ constexpr std::array<TopicArgBinding, 10> kTopicBindings{{
   // slot from the bag's PointCloud2 topics. <input> and <output_root> are paths
   // that fall through to the shell's file completion.
   {"map", "slam", kSecondCommandArgWord, kThirdCommandArgWord, kPointCloud2Type, false},
-  // `cam-info replace <input> <calib_yaml> <topic>`: complete the single <topic>
+  // `cam-info replace <input> <calib_yaml> <topic>...`: complete each <topic>
   // slot from the bag's CameraInfo topics (the only type `cam-info replace`
   // rewrites). <input> falls through to file completion, and <calib_yaml> — the
-  // word before <topic> — is a YAML path that also falls through; the binding's
-  // earlier-slot flag guard skips both. The topic sits at word 4 because the
-  // `replace` action verb shifts every positional one slot right.
-  {"cam-info", "replace", kSecondCommandArgWord, kFourthCommandArgWord, kCameraInfoType, false},
+  // word before the first <topic> — is a YAML path that also falls through; the
+  // binding's earlier-slot flag guard skips both. The first topic sits at word 4
+  // because the `replace` action verb shifts every positional one slot right; the
+  // binding is variadic, so completion fires at word 4 and every later slot.
+  {"cam-info", "replace", kSecondCommandArgWord, kFourthCommandArgWord, kCameraInfoType, true},
 }};
 
 enum class CompletionShell { Bash, Zsh, Fish };
@@ -1164,14 +1165,15 @@ std::vector<std::string> complete_check(const CompletionRequest & request)
 
 // `cam-info` is a command group for sensor_msgs/msg/CameraInfo operations. Its
 // sole subcommand is `replace`. At the subcommand slot (word 1) the only candidate
-// is `replace` (or the implicit help flags for a `-` word). The <topic> positional
-// is completed earlier by try_topic_completion via kTopicBindings (CameraInfo
-// topics only); <input> and <calib_yaml> are paths that fall through to the
-// shell's file completion. Here we surface `replace`'s flags for any `-` word. The
-// `--frame-id` value is a free-form header override with nothing to suggest, and
-// `-o`/`--output`'s value is an output path, so neither gets value completion.
+// is `replace` (or the implicit help flags for a `-` word). The variadic <topic>...
+// positionals are completed earlier by try_topic_completion via kTopicBindings
+// (CameraInfo topics only, at word 4 and every later slot); <input> and
+// <calib_yaml> are paths that fall through to the shell's file completion. Here we
+// surface `replace`'s flags for any `-` word. The `--frame-id` value is a free-form
+// header override with nothing to suggest, and `-o`/`--output`'s value is an output
+// path, so neither gets value completion.
 //
-//   replace: `cam-info`(0) `replace`(1) `<input>`(2) `<calib_yaml>`(3) `<topic>`(4)
+//   replace: `cam-info`(0) `replace`(1) `<input>`(2) `<calib_yaml>`(3) `<topic>...`(4+)
 //            [--frame-id <id>] [-o <out>] [-w|--overwrite]
 std::vector<std::string> complete_cam_info(const CompletionRequest & request)
 {
