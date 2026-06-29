@@ -48,16 +48,16 @@ fi
 
 # The freshly built binary, by explicit per-distro path (same path the `run` task
 # uses). For the GPU build, target a *-gpu environment (e.g. `pixi run -e
-# humble-gpu install-gpu`, or BAGWIZ_DISTRO=humble-gpu). `pixi run install` depends
-# on `build`, so it should already exist; guard anyway.
+# humble-gpu install-cuda`, or BAGWIZ_DISTRO=humble-gpu). `pixi run install` depends
+# on `build-full`, so it should already exist; guard anyway.
 built_binary="${REPO_DIR}/install/${BAGWIZ_LAUNCH_DISTRO}/bagwiz/bin/bagwiz"
 if [[ ! -x ${built_binary} ]]; then
     echo "[install] No build found for '${BAGWIZ_LAUNCH_DISTRO}' at" >&2
     echo "[install]   ${built_binary}" >&2
     if [[ ${BAGWIZ_LAUNCH_DISTRO} == *-gpu ]]; then
-        echo "[install] Build the GPU variant first: pixi run -e ${BAGWIZ_LAUNCH_DISTRO} build-gpu" >&2
+        echo "[install] Build the GPU variant first: pixi run -e ${BAGWIZ_LAUNCH_DISTRO} build-full-cuda" >&2
     else
-        echo "[install] Build it first: pixi run -e ${BAGWIZ_LAUNCH_DISTRO} build" >&2
+        echo "[install] Build it first: pixi run -e ${BAGWIZ_LAUNCH_DISTRO} build-full" >&2
     fi
     exit 1
 fi

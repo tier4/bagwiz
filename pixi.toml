@@ -61,7 +61,7 @@ opencv = "*"
 # renderer .cpp so it never enters bagwiz_core's export set, matching libav.
 libsixel = "*"
 # libboost-devel (conda-forge) supplies Boost for the GLIM SLAM stack built by
-# `pixi run build` (via scripts/build-glim-deps.sh). System Boost is unusable here:
+# `pixi run build-full` (via scripts/build-glim-deps.sh). System Boost is unusable here:
 # conda's gcc excludes /usr/include, so Boost must come from the env. Consumed only
 # by the SLAM build, but cheap enough to keep in the shared base.
 libboost-devel = "*"
@@ -84,36 +84,59 @@ scripts = ["scripts/pixi-activate.sh"]
 # trailing symlink keeps a stable build/compile_commands.json pointing at the
 # last-built distro for editor tooling and manual analysis.
 #
-# Two build tasks, distinguished only by GPU; SLAM is the DEFAULT (the GLIM stack
-# is built automatically before bagwiz). scripts/bagwiz-build.sh picks the profile
-# from the active env: CPU SLAM on humble/jazzy, CUDA SLAM with `build-gpu` in a
-# *-gpu env, and a plain (non-SLAM) build on lyrical (which cannot pin Eigen 3.4,
-# so the GLIM stack is unbuildable there). test/run/install operate on `build`;
-# their -gpu variants operate on `build-gpu`.
+# Builds form a 2x2 matrix over {core, full} x {cpu, cuda}, all dispatched through
+# scripts/bagwiz-build.sh (which picks the profile from the active env). "full" =
+# core + the `map` command group (in-process GLIM SLAM); "core" = every other
+# command group, with NO GLIM/SLAM stack built (the fast build):
+#
+#   * build-core       core bagwiz only (no `map`). No GLIM stack. Any distro.
+#   * build-full       core + `map` CPU SLAM. Builds the GLIM CPU deps first; on
+#                      lyrical (cannot pin Eigen 3.4) it falls back to a core build.
+#   * build-core-cuda  core bagwiz built inside a *-gpu env (install/<env>-gpu base).
+#                      Same binary as build-core (core links no CUDA); exists so the
+#                      matrix is symmetric. humble-gpu/jazzy-gpu.
+#   * build-full-cuda  core + `map` CUDA SLAM (BAGWIZ_WITH_SLAM_CUDA=ON). Builds the
+#                      GLIM CPU then CUDA deps. humble-gpu/jazzy-gpu only.
+#
+# test/run/install operate on the CPU full build (build-full); their -cuda variants
+# (test-cuda/run-cuda/install-cuda) operate on build-full-cuda.
 
-# CPU build (SLAM on humble/jazzy; non-SLAM on lyrical). Builds the GLIM CPU deps
-# first when SLAM applies; the GLIM step is a sub-second no-op once stamped.
-[tasks.build]
+# Core build (no `map` command group): the fast build, no GLIM/SLAM stack. Any distro.
+[tasks.build-core]
+args = [{ arg = "build_type", default = "Release" }]
+cmd = 'bash scripts/bagwiz-build.sh {{ build_type }} --core'
+
+# Full CPU build (core + `map` CPU SLAM). Builds the GLIM CPU deps first; the GLIM
+# step is a sub-second no-op once stamped. lyrical falls back to a core build.
+[tasks.build-full]
 args = [{ arg = "build_type", default = "Release" }]
 cmd = 'bash scripts/bagwiz-build.sh {{ build_type }}'
 
-# GPU build (CUDA SLAM, BAGWIZ_WITH_SLAM_CUDA=ON). Run in a *-gpu environment (e.g.
-# `pixi run -e humble-gpu build-gpu`): the env name IS the build/install base, so
-# the GPU build is fully isolated from the CPU envs. CUDA is pixi-managed from
-# $CONDA_PREFIX (conda-forge cuda-toolkit) + the conda g++ host compiler + single-
-# arch sm_86. Builds the GLIM CPU then CUDA deps first. humble-gpu + jazzy-gpu only.
-[tasks.build-gpu]
+# Core build inside a *-gpu env (install/<env>-gpu base). Same binary content as
+# build-core (core links no CUDA); provides the symmetric core entry of the cpu/cuda
+# matrix. Run in a *-gpu env, e.g. `pixi run -e humble-gpu build-core-cuda`.
+[tasks.build-core-cuda]
 args = [{ arg = "build_type", default = "Release" }]
-cmd = 'bash scripts/bagwiz-build.sh {{ build_type }} --gpu'
+cmd = 'bash scripts/bagwiz-build.sh {{ build_type }} --core --cuda'
+
+# Full CUDA build (core + `map` CUDA SLAM, BAGWIZ_WITH_SLAM_CUDA=ON). Run in a *-gpu
+# environment (e.g. `pixi run -e humble-gpu build-full-cuda`): the env name IS the
+# build/install base, so the GPU build is fully isolated from the CPU envs. CUDA is
+# pixi-managed from $CONDA_PREFIX (conda-forge cuda-toolkit) + the conda g++ host
+# compiler + single-arch sm_86. Builds the GLIM CPU then CUDA deps first. humble-gpu
+# + jazzy-gpu only.
+[tasks.build-full-cuda]
+args = [{ arg = "build_type", default = "Release" }]
+cmd = 'bash scripts/bagwiz-build.sh {{ build_type }} --cuda'
 
 [tasks.test]
-depends-on = ["build"]
+depends-on = ["build-full"]
 cmd = 'colcon test --packages-select bagwiz --build-base "build/$PIXI_ENVIRONMENT_NAME" --install-base "install/$PIXI_ENVIRONMENT_NAME" --event-handlers console_direct+ && colcon test-result --test-result-base "build/$PIXI_ENVIRONMENT_NAME" --verbose'
 
-# Test the GPU build (incl. the GPU-gated cloud_mapper_gpu_test, which self-skips
-# when no CUDA device is present). Run in a *-gpu environment.
-[tasks.test-gpu]
-depends-on = ["build-gpu"]
+# Test the CUDA full build (incl. the GPU-gated cloud_mapper_gpu_test, which
+# self-skips when no CUDA device is present). Run in a *-gpu environment.
+[tasks.test-cuda]
+depends-on = ["build-full-cuda"]
 cmd = 'colcon test --packages-select bagwiz --build-base "build/$PIXI_ENVIRONMENT_NAME" --install-base "install/$PIXI_ENVIRONMENT_NAME" --event-handlers console_direct+ && colcon test-result --test-result-base "build/$PIXI_ENVIRONMENT_NAME" --verbose'
 
 # Run the freshly built binary by explicit (per-distro) path: RoboStack activation
@@ -122,14 +145,14 @@ cmd = 'colcon test --packages-select bagwiz --build-base "build/$PIXI_ENVIRONMEN
 # typesupport, and the .msg lookup all resolve. Pass arguments after `--`,
 # e.g. `pixi run -e jazzy run -- ls x.mcap`.
 [tasks.run]
-depends-on = ["build"]
+depends-on = ["build-full"]
 cmd = 'install/$PIXI_ENVIRONMENT_NAME/bagwiz/bin/bagwiz'
 
-# Run the GPU build's binary so `map slam --backend gpu|auto` can select the CUDA
+# Run the CUDA build's binary so `map slam --backend gpu|auto` can select the CUDA
 # backend (`--backend cpu` still runs on CPU). Run in a *-gpu environment, e.g.
-# `pixi run -e humble-gpu run-gpu -- map slam …`.
-[tasks.run-gpu]
-depends-on = ["build-gpu"]
+# `pixi run -e humble-gpu run-cuda -- map slam …`.
+[tasks.run-cuda]
+depends-on = ["build-full-cuda"]
 cmd = 'install/$PIXI_ENVIRONMENT_NAME/bagwiz/bin/bagwiz'
 
 # Install, in one step, a `bagwiz` launcher on PATH (default ~/.local/bin) AND
@@ -139,16 +162,16 @@ cmd = 'install/$PIXI_ENVIRONMENT_NAME/bagwiz/bin/bagwiz'
 # or BAGWIZ_DISTRO to override the destination or targeted distro. See
 # scripts/bagwiz-install.sh for the details.
 [tasks.install]
-depends-on = ["build"]
+depends-on = ["build-full"]
 cmd = 'bash scripts/bagwiz-install.sh'
 
-# Install an on-PATH `bagwiz` launcher targeting the GPU build, so `bagwiz map slam
+# Install an on-PATH `bagwiz` launcher targeting the CUDA build, so `bagwiz map slam
 # --backend gpu|auto|cpu` switches the backend at runtime. Run in a *-gpu
-# environment (e.g. `pixi run -e humble-gpu install-gpu`): the launcher targets and
+# environment (e.g. `pixi run -e humble-gpu install-cuda`): the launcher targets and
 # activates that env (install/<env>). Overwrites any existing launcher (re-run
 # `pixi run install` from a CPU env to point it back at the CPU build).
-[tasks.install-gpu]
-depends-on = ["build-gpu"]
+[tasks.install-cuda]
+depends-on = ["build-full-cuda"]
 cmd = 'bash scripts/bagwiz-install.sh'
 
 [tasks.clean]
@@ -212,7 +235,7 @@ ros-jazzy-sensor-msgs = "*"
 ros-jazzy-diagnostic-msgs = "*"
 ros-jazzy-builtin-interfaces = "*"
 # Jazzy's default Eigen (5.0.x) breaks the GLIM/GTSAM source build (cascading
-# -Werror / missing-include); pin to 3.4 so `pixi run build` (the SLAM build)
+# -Werror / missing-include); pin to 3.4 so `pixi run build-full` (the SLAM build)
 # works and bagwiz's SLAM translation units share one Eigen with the vendored
 # prefix. Humble already ships 3.4, so it needs no pin.
 eigen = "3.4.*"
@@ -247,8 +270,9 @@ ros-lyrical-builtin-interfaces = "*"
 # 3.4 — ros-lyrical-tf2-eigen-kdl hard-requires eigen-abi 5.0.1, so `eigen=3.4`
 # is unsatisfiable here. SLAM on lyrical would need a vendored Eigen 3.4 fed only
 # to the GLIM build + bagwiz's SLAM units (the Milestone-0 approach); deferred.
-# So `pixi run -e lyrical build` produces a plain (non-SLAM) bagwiz; SLAM (the
-# default `build` / `build-gpu`) is supported on humble + jazzy.
+# So `pixi run -e lyrical build-full` produces a plain (non-SLAM) bagwiz (it falls
+# back to a core build); SLAM (the default `build-full` / `build-full-cuda`) is
+# supported on humble + jazzy.
 
 # ---------------------------------------------------------------------------
 # Optional GPU feature: the conda-forge CUDA toolkit (nvcc, cudart, cccl/thrust,
@@ -268,7 +292,7 @@ cuda = "12"
 # ---------------------------------------------------------------------------
 # One environment per distro. Each solves independently against its own
 # robostack channel (no shared solve-group). `default` aliases humble so a bare
-# `pixi run build` targets Humble. The *-gpu environments add the conda CUDA
+# `pixi run build-full` targets Humble. The *-gpu environments add the conda CUDA
 # toolkit for the GPU SLAM build (humble + jazzy; lyrical stays SLAM-blocked).
 # ---------------------------------------------------------------------------
 [environments]

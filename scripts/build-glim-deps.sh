@@ -9,9 +9,10 @@
 # Rather than rebuild this multi-ten-minute stack on every `colcon build`, it is
 # built ONCE into install/<distro>/glim-deps and then `find_package`d by bagwiz
 # (Approach B - a vendored prefix). This script is run inside the pixi environment
-# by `pixi run -e <distro> build` (and `build-gpu`, which also passes --cuda) via
-# scripts/bagwiz-build.sh, so the conda toolchain (gcc, cmake, ninja) and the env-
-# provided Boost / Eigen / fmt / spdlog / OpenMP are already on the relevant paths.
+# by `pixi run -e <distro> build-full` (and `build-full-cuda`, which also passes
+# --cuda) via scripts/bagwiz-build.sh, so the conda toolchain (gcc, cmake, ninja)
+# and the env-provided Boost / Eigen / fmt / spdlog / OpenMP are already on the
+# relevant paths.
 #
 # Re-running is cheap: if the prefix already holds libglim.so for the current
 # pinned versions it exits immediately. Pass --force to rebuild from scratch.
@@ -37,7 +38,7 @@ ENV_NAME="${PIXI_ENVIRONMENT_NAME:-humble}"
 
 # Args (any order): --force rebuilds from scratch; --cuda builds the optional
 # GPU stack (gtsam_points + glim with CUDA) into a SEPARATE prefix so the default
-# CPU prefix (built by `pixi run build`) stays byte-identical and GPU-free.
+# CPU prefix (built by `pixi run build-full`) stays byte-identical and GPU-free.
 force=0
 cuda=0
 for arg in "$@"; do
@@ -55,14 +56,14 @@ if [ "${cuda}" -eq 1 ]; then
     # The GPU stack must build in a *-gpu pixi environment (humble-gpu / jazzy-gpu):
     # the env name is the install base (install/<env>), kept separate from the CPU
     # build, and it carries the conda CUDA toolkit. Running this under pixi in a CPU
-    # env (e.g. `pixi run build-gpu` without `-e <distro>-gpu`) would share the
+    # env (e.g. `pixi run build-full-cuda` without `-e <distro>-gpu`) would share the
     # CPU build base + cache and fail later with a confusing "no CUDA target" CMake
     # error, so stop now with a clear message. A bare run outside pixi
     # (PIXI_ENVIRONMENT_NAME unset) is left to the caller + BAGWIZ_CUDA_HOME.
     if [ -n "${PIXI_ENVIRONMENT_NAME:-}" ] && [ "${PIXI_ENVIRONMENT_NAME%-gpu}" = "${PIXI_ENVIRONMENT_NAME}" ]; then
         echo "build-glim-deps --cuda must run in a *-gpu pixi environment" \
             "(it ran in '${PIXI_ENVIRONMENT_NAME}')." >&2
-        echo "  Use:  pixi run -e humble-gpu build-gpu   # or: jazzy-gpu" >&2
+        echo "  Use:  pixi run -e humble-gpu build-full-cuda   # or: jazzy-gpu" >&2
         exit 1
     fi
     # CUDA toolkit root, by priority: an explicit BAGWIZ_CUDA_HOME > the active pixi
@@ -81,8 +82,8 @@ if [ "${cuda}" -eq 1 ]; then
     CUDA_ARCH="86" # RTX 3080 Ti = sm_86; single-arch (no multiarch fatbin) = smaller .so, faster build.
     PREFIX="${REPO}/install/${ENV_NAME}/glim-deps-cuda"
     SRC="${REPO}/build/${ENV_NAME}/glim-src-cuda"
-    # The CUDA build REUSES this CPU prefix's GTSAM (GTSAM is CUDA-agnostic),
-    # skipping the multi-ten-minute GTSAM cold build. `pixi run build` (CPU) makes it.
+    # The CUDA build REUSES this CPU prefix's GTSAM (GTSAM is CUDA-agnostic), skipping
+    # the multi-ten-minute GTSAM cold build. `pixi run build-full` (CPU) makes it.
     CPU_PREFIX="${REPO}/install/${ENV_NAME}/glim-deps"
     WANT="gtsam=${GTSAM_REF}(reuse) gtsam_points=${GTSAM_POINTS_REF}+cuda${CUDA_ARCH} glim=${GLIM_REF}+gpu"
 else
@@ -114,7 +115,7 @@ if [ "${cuda}" -eq 1 ]; then
     # Reuse the CPU prefix's GTSAM (the long pole); fail clearly if it is absent.
     if [ ! -f "${CPU_PREFIX}/lib/cmake/GTSAM/GTSAMConfig.cmake" ]; then
         echo "build-glim-deps --cuda reuses GTSAM from ${CPU_PREFIX}, but it is missing." >&2
-        echo "  Build the CPU deps first: pixi run -e ${ENV_NAME} build" >&2
+        echo "  Build the CPU deps first: pixi run -e ${ENV_NAME} build-full-cuda" >&2
         exit 1
     fi
     if [ ! -x "${cuda_root}/bin/nvcc" ]; then

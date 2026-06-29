@@ -348,18 +348,19 @@ add_executable(bagwiz
 target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang ${OpenCV_LIBS} ${sensor_msgs_TARGETS})
 
 # --- Optional in-process GLIM SLAM command (`bagwiz map slam`) ----------------
-# SLAM is the default `pixi run build` (humble/jazzy): it builds the GLIM stack
+# SLAM is the default `pixi run build-full` (humble/jazzy): it builds the GLIM stack
 # into install/<distro>/glim-deps via scripts/build-glim-deps.sh and passes
 # -DBAGWIZ_WITH_SLAM=ON plus that prefix on CMAKE_PREFIX_PATH. (lyrical cannot pin
-# Eigen 3.4, so its `build` leaves this OFF and produces a non-SLAM bagwiz.) The
+# Eigen 3.4, so its `build-full` leaves this OFF and produces a core bagwiz; the
+# `build-core` task leaves it OFF on any distro.) The
 # GLIM types stay confined to cloud_mapper.cpp (pimpl); the
 # `map` command group (map.cpp) and its `slam` action (map_slam.cpp) are GLIM-free.
 option(BAGWIZ_WITH_SLAM "Build the in-process GLIM `bagwiz map slam` command" OFF)
 # GPU fast path for `bagwiz map slam --gpu` (CUDA odometry + VGICP_GPU mapping +
 # GPU export voxelization). OFF by default; implies BAGWIZ_WITH_SLAM. Enabled via
-# `pixi run build-gpu`, which builds the CUDA GLIM stack into
+# `pixi run build-full-cuda`, which builds the CUDA GLIM stack into
 # install/<distro>/glim-deps-cuda and passes -DBAGWIZ_WITH_SLAM_CUDA=ON plus the
-# CUDA toolchain. A CPU build (`pixi run build`) leaves this OFF and links no CUDA.
+# CUDA toolchain. A CPU build (`pixi run build-full`) leaves this OFF and links no CUDA.
 option(BAGWIZ_WITH_SLAM_CUDA "GPU-accelerate `bagwiz map slam --gpu` (implies BAGWIZ_WITH_SLAM)" OFF)
 if(BAGWIZ_WITH_SLAM_CUDA)
   set(BAGWIZ_WITH_SLAM ON CACHE BOOL "Implied by BAGWIZ_WITH_SLAM_CUDA" FORCE)
@@ -413,14 +414,14 @@ if(BAGWIZ_WITH_SLAM)
     if(NOT TARGET gtsam_points::gtsam_points_cuda)
       message(FATAL_ERROR
         "BAGWIZ_WITH_SLAM_CUDA=ON but gtsam_points has no CUDA target. Rebuild the GLIM deps "
-        "with CUDA: scripts/build-glim-deps.sh --cuda (pixi run build-gpu).")
+        "with CUDA: scripts/build-glim-deps.sh --cuda (pixi run build-full-cuda).")
     endif()
     if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
       message(WARNING
         "CMAKE_CUDA_ARCHITECTURES not set; defaulting to 86 (sm_86 / RTX 30xx). For another GPU "
         "pass -DCMAKE_CUDA_ARCHITECTURES=<arch> (e.g. 75 = RTX 20xx, 89 = RTX 40xx). The "
         "voxelize_gpu kernel falls back to CPU on an arch mismatch, but GLIM's VGICP_GPU mapping "
-        "does not — a wrong arch then fails the --gpu run. `pixi run build-gpu` sets 86.")
+        "does not — a wrong arch then fails the --gpu run. `pixi run build-full-cuda` sets 86.")
       set(CMAKE_CUDA_ARCHITECTURES 86)
     endif()
     enable_language(CUDA)
@@ -435,9 +436,9 @@ endif()
 # --- Optional browser map viewer for `bagwiz map slam --viewer` ---------------
 # The viewer (a cpp-httplib loopback server + embedded Three.js assets + a
 # browser launch) is entirely GLIM-free, so it gets its own option that simply
-# DEFAULTS to BAGWIZ_WITH_SLAM: a SLAM build (the default `pixi run build` on
-# humble/jazzy) gains the viewer, a non-SLAM build (lyrical, or BAGWIZ_WITH_SLAM
-# =OFF) pulls in neither cpp-httplib nor this code, and the viewer can be built and
+# DEFAULTS to BAGWIZ_WITH_SLAM: a SLAM build (the default `pixi run build-full` on
+# humble/jazzy) gains the viewer, a core build (lyrical, `build-core`, or
+# BAGWIZ_WITH_SLAM=OFF) pulls in neither cpp-httplib nor this code, and the viewer can be built and
 # tested on its own with -DBAGWIZ_WITH_MAP_VIEWER=ON (no GLIM needed).
 option(BAGWIZ_WITH_MAP_VIEWER
   "Build the `map slam --viewer` browser map viewer (fetches cpp-httplib)"

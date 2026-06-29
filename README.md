@@ -31,19 +31,21 @@ per distro.
    packages and compiles bagwiz; later builds are incremental:
 
    ```bash
-   pixi run -e humble build     # or: jazzy | lyrical
+   pixi run -e humble build-full     # or: jazzy | lyrical
    ```
 
-   `pixi run build` (no `-e`) targets Humble, the default environment. Each distro
-   builds into its own `build/<distro>` and `install/<distro>`, so builds for
-   several distros can coexist.
+   `pixi run build-full` (no `-e`) targets Humble, the default environment. Each
+   distro builds into its own `build/<distro>` and `install/<distro>`, so builds
+   for several distros can coexist.
 
-   `build` is a SLAM build on **humble**/**jazzy**: it builds the GLIM dependency
-   stack (GTSAM + gtsam_points + glim) from source the first time, which takes
-   tens of minutes; subsequent builds reuse the vendored prefix and are fast.
-   **lyrical** builds bagwiz without `map slam` (it cannot pin the Eigen version
-   GLIM needs). For the CUDA-accelerated SLAM build, use
-   `pixi run -e humble-gpu build-gpu` (needs an NVIDIA GPU); see
+   `build-full` includes the `map slam` command, so on **humble**/**jazzy** it
+   builds the GLIM dependency stack (GTSAM + gtsam_points + glim) from source the
+   first time, which takes tens of minutes; subsequent builds reuse the vendored
+   prefix and are fast. If you don't need `map`, `pixi run -e humble build-core`
+   skips the GLIM stack entirely for a much faster build. **lyrical** cannot pin
+   the Eigen version GLIM needs, so its `build-full` falls back to a core build
+   (no `map slam`). For the CUDA-accelerated SLAM build, use
+   `pixi run -e humble-gpu build-full-cuda` (needs an NVIDIA GPU); see
    [docs/commands/map.md](docs/commands/map.md).
 
 3. Install a `bagwiz` launcher on your `PATH` — plus tab completion — so you can

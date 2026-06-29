@@ -55,7 +55,10 @@ bin="${BAGWIZ_REPO}/install/${distro}/bagwiz/bin/bagwiz"
 
 if [ ! -x "${bin}" ]; then
     echo "bagwiz: no build found for '${distro}' at ${bin}" >&2
-    echo "bagwiz: build it first: pixi run -e ${distro} build" >&2
+    case "${distro}" in
+    *-gpu) echo "bagwiz: build it first: pixi run -e ${distro} build-full-cuda" >&2 ;;
+    *) echo "bagwiz: build it first: pixi run -e ${distro} build-full" >&2 ;;
+    esac
     exit 127
 fi
 
@@ -239,9 +242,9 @@ if [ -n "${BAGWIZ_OVERLAY:-}" ]; then
 fi
 
 # When the SLAM build linked the vendored GLIM stack
-# (install/<distro>/glim-deps, produced by `pixi run build`), put its lib
+# (install/<distro>/glim-deps, produced by `pixi run build-full`), put its lib
 # dir on LD_LIBRARY_PATH so `bagwiz map slam` resolves libglim / libgtsam* at run
-# time. No-op for non-SLAM builds (e.g. lyrical): the directory simply does not exist.
+# time. No-op for core builds (e.g. lyrical): the directory simply does not exist.
 _bagwiz_glim_lib="${BAGWIZ_REPO}/install/${distro}/glim-deps/lib"
 if [ -d "${_bagwiz_glim_lib}" ]; then
     export LD_LIBRARY_PATH="${_bagwiz_glim_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"

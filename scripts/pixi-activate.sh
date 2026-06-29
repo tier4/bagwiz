@@ -23,10 +23,10 @@
 
 # Workspace root: pixi exposes it under different names across versions.
 _bagwiz_ws="${PIXI_PROJECT_ROOT:-${PIXI_WORKSPACE_ROOT:-$PWD}}"
-# Each distro installs into its own base (install/<distro>); see [tasks.build].
+# Each distro installs into its own base (install/<distro>); see [tasks.build-full].
 _bagwiz_env="${PIXI_ENVIRONMENT_NAME:-default}"
 
-# 1. bagwiz's own overlay for this distro (exists only after `pixi run build`).
+# 1. bagwiz's own overlay for this distro (exists only after `pixi run build-full`).
 if [ -f "${_bagwiz_ws}/install/${_bagwiz_env}/setup.sh" ]; then
     # shellcheck disable=SC1090,SC1091
     . "${_bagwiz_ws}/install/${_bagwiz_env}/setup.sh"
