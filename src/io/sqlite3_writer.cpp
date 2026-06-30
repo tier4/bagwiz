@@ -174,6 +174,16 @@ public:
       return;
     }
     commit_transaction();
+    // Build the (topic_id, timestamp) covering index in one bulk pass now that
+    // every row is inserted, rather than maintaining it on each insert (which
+    // would slow the write hot path). It lets `bagwiz ls -l` / compute_stats()
+    // answer per-topic COUNT and MIN/MAX(timestamp) straight from the index,
+    // without scanning the BLOB-laden messages rows. rosbag2 itself never
+    // creates this index but readers ignore the extra one, so round-trips stay
+    // compatible. See SqliteFileReader::compute_stats() for the read side.
+    exec_or_throw(
+      db_.get(),
+      "CREATE INDEX IF NOT EXISTS topic_timestamp_idx ON messages (topic_id, timestamp);");
     closed_ = true;
   }
 

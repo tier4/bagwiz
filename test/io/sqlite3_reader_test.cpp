@@ -89,6 +89,41 @@ std::filesystem::path write_fixture_db3(const std::filesystem::path & dir)
   return path;
 }
 
+// Same shape as `write_fixture_db3` but with zero message rows. Exercises the
+// empty-bag branch of compute_stats(), where MIN/MAX(timestamp) are SQL NULL
+// and start_ns/end_ns must stay 0.
+std::filesystem::path write_fixture_db3_no_messages(const std::filesystem::path & dir)
+{
+  std::filesystem::create_directories(dir);
+  const auto path = dir / "bag_0.db3";
+
+  sqlite3 * db = nullptr;
+  EXPECT_EQ(sqlite3_open(path.string().c_str(), &db), SQLITE_OK);
+
+  const char * schema =
+    "CREATE TABLE topics("
+    "  id INTEGER PRIMARY KEY,"
+    "  name TEXT NOT NULL,"
+    "  type TEXT NOT NULL,"
+    "  serialization_format TEXT NOT NULL,"
+    "  offered_qos_profiles TEXT NOT NULL);"
+    "CREATE TABLE messages("
+    "  id INTEGER PRIMARY KEY,"
+    "  topic_id INTEGER NOT NULL,"
+    "  timestamp INTEGER NOT NULL,"
+    "  data BLOB NOT NULL);"
+    "CREATE INDEX timestamp_idx ON messages (timestamp ASC);"
+    "INSERT INTO topics(id, name, type, serialization_format, offered_qos_profiles) VALUES"
+    "  (1, '/foo', 'std_msgs/msg/String', 'cdr', '');";
+  char * errmsg = nullptr;
+  EXPECT_EQ(sqlite3_exec(db, schema, nullptr, nullptr, &errmsg), SQLITE_OK)
+    << (errmsg ? errmsg : "");
+  sqlite3_free(errmsg);
+
+  sqlite3_close(db);
+  return path;
+}
+
 // Iron+ schema_version=4 fixture. Same row data as `write_fixture_db3`
 // but with the v4 column on `topics` and the `message_definitions`
 // table populated, so the reader can backfill schema_text /
@@ -383,6 +418,23 @@ TEST_F(Sqlite3ReaderTest, Stats)
   EXPECT_EQ(stats.per_topic.at("/bar"), 2);
   EXPECT_EQ(stats.start_ns, 1'000'000'000LL);
   EXPECT_EQ(stats.end_ns, 2'000'000'001LL);
+}
+
+TEST_F(Sqlite3ReaderTest, StatsEmptyBag)
+{
+  // A bag with no message rows: MIN/MAX(timestamp) come back as SQL NULL, so
+  // compute_stats() must leave the time extent at 0 (rather than reading a
+  // bogus 0 out of a NULL column) and report zero counts.
+  const auto path = write_fixture_db3_no_messages(tmp_dir_ / "empty");
+
+  auto reader = bagwiz::io::open_read(path);
+  const auto stats = reader->compute_stats();
+
+  EXPECT_FALSE(stats.from_summary);
+  EXPECT_EQ(stats.total_messages, 0);
+  EXPECT_TRUE(stats.per_topic.empty());
+  EXPECT_EQ(stats.start_ns, 0);
+  EXPECT_EQ(stats.end_ns, 0);
 }
 
 TEST_F(Sqlite3ReaderTest, DirectoryStatsServedFromMetadataWithoutOpeningShards)

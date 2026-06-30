@@ -94,7 +94,7 @@ invocation. Click through for full usage, options, and examples:
 
 | Command                                        | What it does                                                                                                    |
 | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| [`bagwiz ls`](docs/commands/ls.md)             | List topics in a ROS 2 rosbag with counts and average frequencies.                                              |
+| [`bagwiz ls`](docs/commands/ls.md)             | List topics in a ROS 2 rosbag (add `-l` for per-topic counts and average frequencies).                          |
 | [`bagwiz walk`](docs/commands/walk.md)         | Interactively walk a ROS 2 topic's messages as decoded YAML.                                                    |
 | [`bagwiz convert`](docs/commands/convert.md)   | Repack a ROS 2 rosbag between storage backends/layouts, or convert topic message types (NavSatFix → pose).      |
 | [`bagwiz topic`](docs/commands/topic.md)       | Keep (`keep`), drop (`drop`), or rename (`rename`) topics in a ROS 2 rosbag.                                    |

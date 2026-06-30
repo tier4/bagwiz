@@ -643,20 +643,6 @@ std::vector<std::string> complete_complete_command(const CompletionRequest & req
   return {};
 }
 
-// Commands whose only `-` candidates are the implicit CLI11 help flags.
-// `ls` is routed here; it has no user-defined flags. (`walk` was once routed here
-// too but now has its own complete_walk handler that surfaces `--cam-info`.) The
-// parent `tf`, `traj`, and `convert` apps likewise expose only help when the
-// cursor is in the subcommand-name slot.
-std::vector<std::string> complete_help_only(const CompletionRequest & request)
-{
-  const auto current = current_word(request);
-  if (current.starts_with("-")) {
-    return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
-  }
-  return {};
-}
-
 // `convert msg` is a nested command group with one action verb, `geo`,
 // shifting every argument one word right of the flat `format` subcommand:
 //
@@ -1105,6 +1091,20 @@ std::vector<std::string> complete_map_filter(const CompletionRequest & request)
   return {};
 }
 
+// `ls <input>` lists topics. Its only flag is `-l/--long` (per-topic COUNT and
+// HZ); <input> is a path that falls through to the shell's file completion. We
+// surface `--long` plus the implicit help flags for any `-` word.
+//
+//   ls: `ls`(0) `<input>`(1) [-l|--long]
+std::vector<std::string> complete_ls(const CompletionRequest & request)
+{
+  const auto current = current_word(request);
+  if (current.starts_with("-")) {
+    return matching(with_help({"--long"}), current);
+  }
+  return {};
+}
+
 // `walk <input> <topic>` walks a single topic's messages. Its <topic> positional
 // is completed earlier by try_topic_completion via kTopicBindings (every topic in
 // the bag); <input> is a path that falls through to the shell's file completion.
@@ -1237,7 +1237,7 @@ std::vector<std::string> complete_request(const CompletionRequest & request)
     return complete_walk(request);
   }
   if (command == "ls") {
-    return complete_help_only(request);
+    return complete_ls(request);
   }
   return {};
 }

@@ -597,11 +597,11 @@ TEST(FlagCompletionTest, TopLevelDashListsHelpAndVersion)
     run_completion({"bagwiz", "__complete", "1", "bagwiz", "-"}), "--help\n--version\n-h\n");
 }
 
-// `ls` defines no user-level options, so `-` should at minimum surface
-// the CLI11-injected help flags (previously: nothing).
-TEST(FlagCompletionTest, LsDashListsHelpFlags)
+// `ls` surfaces its own `--long` flag plus the implicit help flags, sorted.
+TEST(FlagCompletionTest, LsDashListsLsFlags)
 {
-  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "ls", "-"}), "--help\n-h\n");
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "ls", "-"}), "--help\n--long\n-h\n");
 }
 
 // `walk` surfaces its own `--cam-info` flag plus the implicit help flags, sorted.

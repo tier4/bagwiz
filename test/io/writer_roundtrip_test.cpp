@@ -403,6 +403,53 @@ TEST_F(WriterRoundTripTest, Sqlite3WritesIronCompatibleV4Layout)
   sqlite3_close(db);
 }
 
+TEST_F(WriterRoundTripTest, Sqlite3WritesTopicTimestampIndex)
+{
+  // bagwiz adds a (topic_id, timestamp) index that rosbag2 itself does not
+  // create. It turns `ls -l` / compute_stats()'s per-topic COUNT and
+  // MIN/MAX(timestamp) into a covering-index lookup instead of a scan over the
+  // BLOB-laden messages rows. Verify the index exists and covers the expected
+  // columns in order.
+  const auto path = tmp_dir_ / "indexed.db3";
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Sqlite3;
+  options.layout = bagwiz::io::Layout::SingleFile;
+  write_fixture(path, options, topics_, messages_);
+
+  sqlite3 * db = nullptr;
+  ASSERT_EQ(sqlite3_open(path.string().c_str(), &db), SQLITE_OK);
+
+  // The index exists on the messages table.
+  sqlite3_stmt * stmt = nullptr;
+  ASSERT_EQ(
+    sqlite3_prepare_v2(
+      db,
+      "SELECT 1 FROM sqlite_master WHERE type='index' AND name='topic_timestamp_idx' "
+      "AND tbl_name='messages'",
+      -1, &stmt, nullptr),
+    SQLITE_OK);
+  EXPECT_EQ(sqlite3_step(stmt), SQLITE_ROW) << "topic_timestamp_idx missing";
+  sqlite3_finalize(stmt);
+
+  // It covers (topic_id, timestamp) in that column order.
+  std::vector<std::string> cols;
+  ASSERT_EQ(
+    sqlite3_prepare_v2(db, "PRAGMA index_info('topic_timestamp_idx')", -1, &stmt, nullptr),
+    SQLITE_OK);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    cols.emplace_back(reinterpret_cast<const char *>(sqlite3_column_text(stmt, 2)));
+  }
+  sqlite3_finalize(stmt);
+  ASSERT_EQ(cols.size(), 2U);
+  EXPECT_EQ(cols[0], "topic_id");
+  EXPECT_EQ(cols[1], "timestamp");
+
+  sqlite3_close(db);
+
+  // The index must not change what compute_stats() reports.
+  verify_round_trip(path);
+}
+
 // rosbag2's metadata reader (rosbag2_storage humble 0.15.16
 // metadata_io.cpp::convert<BagMetadata>::decode) requires the `files:`
 // sequence whenever `version >= 5`, throwing

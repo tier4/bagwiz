@@ -124,41 +124,47 @@ public:
   Stats compute_stats() override
   {
     Stats stats;
-    // SQLite does not keep a pre-computed summary; aggregates scan the
-    // messages table (index-assisted but still O(n) for COUNT).
+    // SQLite keeps no pre-computed summary, so the numbers come from the
+    // messages table rather than an index/summary record.
     stats.from_summary = false;
 
-    auto stmt = sqlite_prepare_or_throw(
-      db_.get(),
-      "SELECT topic_id, COUNT(*), MIN(timestamp), MAX(timestamp) "
-      "FROM messages GROUP BY topic_id");
-
-    bool first = true;
+    // Per-topic counts. bagwiz-written bags carry a (topic_id, timestamp)
+    // index (see SqliteFileWriter::close()), which turns this GROUP BY into a
+    // covering-index scan that never reads the BLOB-laden message rows. Bags
+    // from other tools lack that index and fall back to a full table scan —
+    // the reason `bagwiz ls` keeps per-topic stats behind `-l`. We select only
+    // topic_id here (not MIN/MAX) so the covering index can satisfy the query.
+    auto count_stmt = sqlite_prepare_or_throw(
+      db_.get(), "SELECT topic_id, COUNT(*) FROM messages GROUP BY topic_id");
     for (;;) {
-      const int rc = sqlite3_step(stmt.get());
+      const int rc = sqlite3_step(count_stmt.get());
       if (rc == SQLITE_DONE) {
         break;
       }
       if (rc != SQLITE_ROW) {
         throw std::runtime_error("stats query failed: " + sqlite_errmsg(db_.get()));
       }
-      const int64_t topic_id = sqlite3_column_int64(stmt.get(), 0);
-      const int64_t count = sqlite3_column_int64(stmt.get(), 1);
-      const int64_t min_ts = sqlite3_column_int64(stmt.get(), 2);
-      const int64_t max_ts = sqlite3_column_int64(stmt.get(), 3);
+      const int64_t topic_id = sqlite3_column_int64(count_stmt.get(), 0);
+      const int64_t count = sqlite3_column_int64(count_stmt.get(), 1);
 
       auto idx_it = topic_id_to_idx_.find(topic_id);
       if (idx_it != topic_id_to_idx_.end()) {
         stats.per_topic[topics_[idx_it->second].name] = count;
       }
       stats.total_messages += count;
-      if (first || min_ts < stats.start_ns) {
-        stats.start_ns = min_ts;
-      }
-      if (first || max_ts > stats.end_ns) {
-        stats.end_ns = max_ts;
-      }
-      first = false;
+    }
+
+    // Bag-level time extent. timestamp_idx is present in every rosbag2 SQLite
+    // bag, so SQLite answers MIN/MAX from the index ends in O(1) — no scan,
+    // even on bags that lack the topic_id index. MIN/MAX are NULL for an empty
+    // bag, in which case start_ns/end_ns stay 0.
+    auto extent_stmt =
+      sqlite_prepare_or_throw(db_.get(), "SELECT MIN(timestamp), MAX(timestamp) FROM messages");
+    if (
+      sqlite3_step(extent_stmt.get()) == SQLITE_ROW &&
+      sqlite3_column_type(extent_stmt.get(), 0) != SQLITE_NULL) {
+      stats.start_ns = sqlite3_column_int64(extent_stmt.get(), 0);
+      stats.end_ns = sqlite3_column_int64(extent_stmt.get(), 1);
     }
     return stats;
   }
