@@ -8,7 +8,7 @@
 #
 #   pixi run -e humble build       # build against ROS 2 Humble (the default env)
 #   pixi run -e jazzy test         # build + test against Jazzy
-#   pixi run -e lyrical run -- --help
+#   pixi run -e jazzy run -- --help
 #   pixi shell -e jazzy            # interactive shell with `bagwiz` on PATH
 #
 # To layer your own message packages on top of any distro, point BAGWIZ_OVERLAY
@@ -90,8 +90,7 @@ scripts = ["scripts/pixi-activate.sh"]
 # command group, with NO GLIM/SLAM stack built (the fast build):
 #
 #   * build-core       core bagwiz only (no `map`). No GLIM stack. Any distro.
-#   * build-full       core + `map` CPU SLAM. Builds the GLIM CPU deps first; on
-#                      lyrical (cannot pin Eigen 3.4) it falls back to a core build.
+#   * build-full       core + `map` CPU SLAM. Builds the GLIM CPU deps first.
 #   * build-core-cuda  core bagwiz built inside a *-gpu env (install/<env>-gpu base).
 #                      Same binary as build-core (core links no CUDA); exists so the
 #                      matrix is symmetric. humble-gpu/jazzy-gpu.
@@ -107,7 +106,7 @@ args = [{ arg = "build_type", default = "Release" }]
 cmd = 'bash scripts/bagwiz-build.sh {{ build_type }} --core'
 
 # Full CPU build (core + `map` CPU SLAM). Builds the GLIM CPU deps first; the GLIM
-# step is a sub-second no-op once stamped. lyrical falls back to a core build.
+# step is a sub-second no-op once stamped.
 [tasks.build-full]
 args = [{ arg = "build_type", default = "Release" }]
 cmd = 'bash scripts/bagwiz-build.sh {{ build_type }}'
@@ -240,40 +239,6 @@ ros-jazzy-builtin-interfaces = "*"
 # prefix. Humble already ships 3.4, so it needs no pin.
 eigen = "3.4.*"
 
-[feature.lyrical]
-channels = [{ channel = "https://prefix.dev/robostack-lyrical", priority = 1 }]
-[feature.lyrical.dependencies]
-ros-lyrical-ros-base = "*"
-ros-lyrical-ament-cmake = "*"
-ros-lyrical-ament-index-cpp = "*"
-ros-lyrical-rcutils = "*"
-ros-lyrical-rmw = "*"
-ros-lyrical-rmw-implementation = "*"
-ros-lyrical-rmw-cyclonedds-cpp = "*"
-ros-lyrical-rosidl-runtime-c = "*"
-ros-lyrical-rosidl-runtime-cpp = "*"
-ros-lyrical-rosidl-typesupport-introspection-cpp = "*"
-ros-lyrical-geometry-msgs = "*"
-ros-lyrical-nav-msgs = "*"
-ros-lyrical-std-msgs = "*"
-ros-lyrical-tf2 = "*"
-ros-lyrical-tf2-msgs = "*"
-ros-lyrical-mcap-vendor = "*"
-ros-lyrical-yaml-cpp-vendor = "*"
-ros-lyrical-zstd-cmake-module = "*"   # Lyrical replaced zstd_vendor with zstd_cmake_module
-zstd = "*"                            # the cmake module finds conda-forge libzstd
-ros-lyrical-ament-cmake-gtest = "*"
-ros-lyrical-sensor-msgs = "*"
-ros-lyrical-diagnostic-msgs = "*"
-ros-lyrical-builtin-interfaces = "*"
-# NOTE: SLAM is not wired for lyrical. Unlike jazzy, lyrical cannot pin Eigen to
-# 3.4 — ros-lyrical-tf2-eigen-kdl hard-requires eigen-abi 5.0.1, so `eigen=3.4`
-# is unsatisfiable here. SLAM on lyrical would need a vendored Eigen 3.4 fed only
-# to the GLIM build + bagwiz's SLAM units (the Milestone-0 approach); deferred.
-# So `pixi run -e lyrical build-full` produces a plain (non-SLAM) bagwiz (it falls
-# back to a core build); SLAM (the default `build-full` / `build-full-cuda`) is
-# supported on humble + jazzy.
-
 # ---------------------------------------------------------------------------
 # Optional GPU feature: the conda-forge CUDA toolkit (nvcc, cudart, cccl/thrust,
 # cusolver/cublas — gtsam_points' GPU code uses cusolver) so the GPU SLAM build
@@ -293,13 +258,12 @@ cuda = "12"
 # One environment per distro. Each solves independently against its own
 # robostack channel (no shared solve-group). `default` aliases humble so a bare
 # `pixi run build-full` targets Humble. The *-gpu environments add the conda CUDA
-# toolkit for the GPU SLAM build (humble + jazzy; lyrical stays SLAM-blocked).
+# toolkit for the GPU SLAM build (humble + jazzy).
 # ---------------------------------------------------------------------------
 [environments]
 default = ["humble"]
 humble = ["humble"]
 jazzy = ["jazzy"]
-lyrical = ["lyrical"]
 humble-gpu = ["humble", "gpu"]
 jazzy-gpu = ["jazzy", "gpu"]
 

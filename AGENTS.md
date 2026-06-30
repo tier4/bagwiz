@@ -155,7 +155,7 @@ govern source code or CLI behavior.
   install is required. pixi provisions ROS 2 from RoboStack (one conda channel
   per distro) and the C/C++ toolchain from conda-forge. Build with
   `pixi run -e <distro> build-full` from the repository root, where `<distro>` is
-  one of `humble`, `jazzy`, or `lyrical`; a bare `pixi run build-full` targets
+  `humble` or `jazzy`; a bare `pixi run build-full` targets
   the default environment (Humble). Each distro builds into its own
   `build/<distro>` and `install/<distro>`, so switching distros never reuses
   another distro's CMake cache.
@@ -163,8 +163,7 @@ govern source code or CLI behavior.
   full build: on `humble`/`jazzy` it builds the GLIM stack (via
   `scripts/bagwiz-build.sh` → `scripts/build-glim-deps.sh`) and links the `map`
   command group (`bagwiz map slam`). `build-core` builds every command group
-  EXCEPT `map`, with no GLIM stack — the fast build, on any distro. `lyrical`
-  cannot pin Eigen 3.4, so its `build-full` falls back to a core build. The CUDA
+  EXCEPT `map`, with no GLIM stack — the fast build, on any distro. The CUDA
   SLAM build is `pixi run -e <distro>-gpu build-full-cuda` (humble-gpu/jazzy-gpu;
   needs an NVIDIA GPU); `build-core-cuda` is the core build inside a `*-gpu` env.
 - Run the tests with `pixi run -e <distro> test` and the built binary with

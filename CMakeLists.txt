@@ -22,8 +22,8 @@ find_package(SQLite3 REQUIRED)
 # zstd is used by message_decompressor.cpp to handle rosbag2 MESSAGE-mode
 # (per-message zstd) bags transparently. The vendor/module package below wires
 # up CMAKE_MODULE_PATH so the inner find_package(zstd) can locate the imported
-# `zstd::zstd` target. Humble and Jazzy ship zstd_vendor; Lyrical and
-# newer replaced it with zstd_cmake_module (a thin module over the system
+# `zstd::zstd` target. Humble and Jazzy ship zstd_vendor; newer (rolling) ROS
+# distros replaced it with zstd_cmake_module (a thin module over the system
 # libzstd). Both expose the same zstd::zstd target, so try zstd_vendor first and
 # fall back.
 find_package(zstd_vendor QUIET)
@@ -141,9 +141,9 @@ FetchContent_Declare(
   GIT_SHALLOW TRUE
 )
 # rang (and older CLI11) declare cmake_minimum_required below the floor CMake
-# 4.0 still accepts, which is a hard error on newer toolchains such as the ROS 2
-# Lyrical image. Give the fetched subprojects a compatibility floor. Older CMake
-# (Humble/Jazzy) does not know this variable and simply ignores it.
+# 4.0 still accepts, which is a hard error on newer toolchains. Give the fetched
+# subprojects a compatibility floor. Older CMake (Humble/Jazzy) does not know
+# this variable and simply ignores it.
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 FetchContent_MakeAvailable(cli11 fmt rang)
 unset(CMAKE_POLICY_VERSION_MINIMUM)
@@ -259,9 +259,9 @@ target_include_directories(bagwiz_core
     "${BAGWIZ_GENERATED_INCLUDE_DIR}"
 )
 # ROS package dependencies of bagwiz_core. ament_target_dependencies links each
-# package's include dirs and libraries, but it was removed in Lyrical (rolling)
-# in favour of the per-package modern CMake targets. Humble/Jazzy still provide
-# the macro and keep using it; on Lyrical and newer, link the exported
+# package's include dirs and libraries, but newer (rolling) ROS distros removed
+# it in favour of the per-package modern CMake targets. Humble/Jazzy still
+# provide the macro and keep using it; where it is absent, link the exported
 # ${pkg}_TARGETS instead (each was found via find_package above).
 set(bagwiz_core_ros_deps
   ament_index_cpp
@@ -350,9 +350,8 @@ target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang ${Op
 # --- Optional in-process GLIM SLAM command (`bagwiz map slam`) ----------------
 # SLAM is the default `pixi run build-full` (humble/jazzy): it builds the GLIM stack
 # into install/<distro>/glim-deps via scripts/build-glim-deps.sh and passes
-# -DBAGWIZ_WITH_SLAM=ON plus that prefix on CMAKE_PREFIX_PATH. (lyrical cannot pin
-# Eigen 3.4, so its `build-full` leaves this OFF and produces a core bagwiz; the
-# `build-core` task leaves it OFF on any distro.) The
+# -DBAGWIZ_WITH_SLAM=ON plus that prefix on CMAKE_PREFIX_PATH. (The `build-core`
+# task leaves this OFF.) The
 # GLIM types stay confined to cloud_mapper.cpp (pimpl); the
 # `map` command group (map.cpp) and its `slam` action (map_slam.cpp) are GLIM-free.
 option(BAGWIZ_WITH_SLAM "Build the in-process GLIM `bagwiz map slam` command" OFF)
@@ -437,7 +436,7 @@ endif()
 # The viewer (a cpp-httplib loopback server + embedded Three.js assets + a
 # browser launch) is entirely GLIM-free, so it gets its own option that simply
 # DEFAULTS to BAGWIZ_WITH_SLAM: a SLAM build (the default `pixi run build-full` on
-# humble/jazzy) gains the viewer, a core build (lyrical, `build-core`, or
+# humble/jazzy) gains the viewer, a core build (`build-core` or
 # BAGWIZ_WITH_SLAM=OFF) pulls in neither cpp-httplib nor this code, and the viewer can be built and
 # tested on its own with -DBAGWIZ_WITH_MAP_VIEWER=ON (no GLIM needed).
 option(BAGWIZ_WITH_MAP_VIEWER

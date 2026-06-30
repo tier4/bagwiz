@@ -22,9 +22,7 @@ three actions:
 > then compiles bagwiz with SLAM enabled. Later builds reuse the cached deps and are
 > fast. The **core** build (`pixi run -e <distro> build-core`) omits the `map`
 > command group entirely and skips the GLIM stack, so it is much faster but exposes
-> neither `bagwiz map slam` nor `bagwiz map filter`. **lyrical** is the exception
-> for full builds: it cannot pin the Eigen version GLIM needs, so
-> `pixi run -e lyrical build-full` falls back to a core bagwiz.
+> neither `bagwiz map slam` nor `bagwiz map filter`.
 >
 > **GPU fast path.** For the optional CUDA backend (`--backend gpu`), build the
 > full CUDA build in a `*-gpu` environment — the CUDA toolkit is pixi-managed

@@ -244,7 +244,7 @@ fi
 # When the SLAM build linked the vendored GLIM stack
 # (install/<distro>/glim-deps, produced by `pixi run build-full`), put its lib
 # dir on LD_LIBRARY_PATH so `bagwiz map slam` resolves libglim / libgtsam* at run
-# time. No-op for core builds (e.g. lyrical): the directory simply does not exist.
+# time. No-op for core builds (e.g. build-core): the directory simply does not exist.
 _bagwiz_glim_lib="${BAGWIZ_REPO}/install/${distro}/glim-deps/lib"
 if [ -d "${_bagwiz_glim_lib}" ]; then
     export LD_LIBRARY_PATH="${_bagwiz_glim_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"

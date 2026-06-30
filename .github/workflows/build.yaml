@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        distro: [humble, jazzy, lyrical]
+        distro: [humble, jazzy]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -31,10 +31,8 @@ jobs:
       # + gtsam_points + glim) from source into install/<distro>/glim-deps, which
       # takes tens of minutes cold. Cache that vendored prefix keyed on the build
       # script (the pinned GLIM/GTSAM refs live there); on a hit, build-glim-deps.sh
-      # finds its stamp and no-ops. lyrical cannot build SLAM, so its `build-full`
-      # falls back to a core build with no prefix.
+      # finds its stamp and no-ops.
       - name: Cache GLIM SLAM deps
-        if: matrix.distro != 'lyrical'
         uses: actions/cache@v4
         with:
           path: install/${{ matrix.distro }}/glim-deps

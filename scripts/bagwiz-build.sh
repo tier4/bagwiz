@@ -14,9 +14,6 @@
 #                                         The fast build. Any distro.
 #   * build-full      (no flags)       -> CPU SLAM (-DBAGWIZ_WITH_SLAM=ON), after
 #                                         building the GLIM CPU deps. humble/jazzy.
-#                                         lyrical falls back to a core build (it
-#                                         cannot pin Eigen 3.4, so the GLIM stack is
-#                                         unbuildable there).
 #   * build-core-cuda (--core --cuda)  -> core bagwiz built inside a *-gpu env
 #                                         (install/<env>-gpu base). Same binary as
 #                                         build-core (core links no CUDA); exists for
@@ -68,16 +65,10 @@ DISTRO="${ENV_NAME%-gpu}"
 
 # Resolve whether to compile the `map`/SLAM command group:
 #   slam=1 -> full build (map present);  slam=0 -> core build (no map).
-# --core forces a core build anywhere. A full build wants SLAM, but lyrical cannot
-# build the GLIM stack (it cannot pin Eigen 3.4), so a full build there falls back
-# to core with a notice.
+# --core forces a core build anywhere; otherwise a full build compiles SLAM.
 slam=1
 if [ "${core}" -eq 1 ]; then
     slam=0
-elif [ "${DISTRO}" = "lyrical" ]; then
-    slam=0
-    echo "[bagwiz-build] lyrical cannot build the GLIM/SLAM stack (it cannot pin Eigen 3.4)," >&2
-    echo "[bagwiz-build]   so this 'full' build produces a core (no 'map' command) bagwiz." >&2
 fi
 
 cd "${REPO}"
@@ -105,12 +96,7 @@ if [ "${cuda}" -eq 1 ] && [ "${core}" -eq 1 ]; then
         -DBAGWIZ_WITH_MAP_VIEWER=OFF
     )
 elif [ "${cuda}" -eq 1 ]; then
-    # build-full-cuda: CUDA SLAM. Unsupported wherever SLAM is (lyrical).
-    if [ "${slam}" -eq 0 ]; then
-        echo "build-full-cuda: SLAM (and thus the CUDA build) is unsupported on '${DISTRO}'." >&2
-        echo "  Use a SLAM distro: pixi run -e humble-gpu build-full-cuda   # or jazzy-gpu" >&2
-        exit 1
-    fi
+    # build-full-cuda: CUDA SLAM (humble-gpu/jazzy-gpu).
     : "${CONDA_PREFIX:?build-full-cuda needs an activated pixi env (CONDA_PREFIX unset)}"
     : "${CXX:?build-full-cuda needs the conda C++ compiler on \$CXX}"
     # Fail fast (BEFORE the slow CPU GLIM build) when this env has no CUDA toolkit,
@@ -149,9 +135,9 @@ elif [ "${slam}" -eq 1 ]; then
         "-DCMAKE_PREFIX_PATH=${REPO}/install/${ENV_NAME}/glim-deps"
     )
 else
-    # build-core (CPU), or a full build on lyrical: core profile, no `map`/SLAM.
-    # Force the toggles OFF so a prior full build in this same base cannot leave
-    # `map` compiled into this core build.
+    # build-core (CPU): core profile, no `map`/SLAM. Force the toggles OFF so a
+    # prior full build in this same base cannot leave `map` compiled into this
+    # core build.
     cmake_args+=(
         -DBAGWIZ_WITH_SLAM=OFF
         -DBAGWIZ_WITH_SLAM_CUDA=OFF

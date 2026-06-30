@@ -18,7 +18,7 @@ bagwiz is built and run through [pixi](https://pixi.sh) — no system ROS 2
 install needed.
 
 bagwiz provides first-class support for the long-term-support (LTS) ROS 2
-distributions — Humble, Jazzy, and Lyrical; `pixi.toml` exposes one environment
+distributions — Humble and Jazzy; `pixi.toml` exposes one environment
 per distro.
 
 1. Install pixi once, then reopen your shell so `pixi` is on `PATH`:
@@ -31,7 +31,7 @@ per distro.
    packages and compiles bagwiz; later builds are incremental:
 
    ```bash
-   pixi run -e humble build-full     # or: jazzy | lyrical
+   pixi run -e humble build-full     # or: jazzy
    ```
 
    `pixi run build-full` (no `-e`) targets Humble, the default environment. Each
@@ -42,9 +42,8 @@ per distro.
    builds the GLIM dependency stack (GTSAM + gtsam_points + glim) from source the
    first time, which takes tens of minutes; subsequent builds reuse the vendored
    prefix and are fast. If you don't need `map`, `pixi run -e humble build-core`
-   skips the GLIM stack entirely for a much faster build. **lyrical** cannot pin
-   the Eigen version GLIM needs, so its `build-full` falls back to a core build
-   (no `map slam`). For the CUDA-accelerated SLAM build, use
+   skips the GLIM stack entirely for a much faster build. For the
+   CUDA-accelerated SLAM build, use
    `pixi run -e humble-gpu build-full-cuda` (needs an NVIDIA GPU); see
    [docs/commands/map.md](docs/commands/map.md).
 

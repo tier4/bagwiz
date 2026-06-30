@@ -32,7 +32,7 @@ GLIM_REF="88b3833229a9c3308e95065719a40acdd5f64c33"
 _self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 REPO="$(cd -- "$(dirname -- "${_self}")/.." && pwd)"
 
-# The active pixi environment (humble/jazzy/lyrical/...). Falls back to humble
+# The active pixi environment (humble/jazzy/...). Falls back to humble
 # for a bare invocation outside `pixi run`.
 ENV_NAME="${PIXI_ENVIRONMENT_NAME:-humble}"
 
