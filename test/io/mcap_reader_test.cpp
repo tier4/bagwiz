@@ -368,6 +368,50 @@ TEST_F(McapReaderTest, DirectoryTopicCountsServedFromMetadataWithoutOpeningShard
   EXPECT_EQ(counts.at("/bar"), 2);
 }
 
+TEST_F(McapReaderTest, TimeExtentFromSummary)
+{
+  const auto path = write_fixture_mcap(tmp_dir_ / "time_extent");
+
+  auto reader = bagwiz::io::open_read(path);
+  const auto extent = reader->compute_time_extent();
+
+  EXPECT_TRUE(extent.has_data);
+  EXPECT_EQ(extent.start_ns, 1'000'000'000LL);
+  EXPECT_EQ(extent.end_ns, 2'000'000'001LL);
+}
+
+TEST_F(McapReaderTest, TimeExtentEmptyBag)
+{
+  std::filesystem::create_directories(tmp_dir_ / "time_extent_empty");
+  const auto path = tmp_dir_ / "time_extent_empty" / "empty.mcap";
+
+  mcap::McapWriter writer;
+  mcap::McapWriterOptions opts("ros2");
+  opts.compression = mcap::Compression::None;
+  const auto status = writer.open(path.string(), opts);
+  EXPECT_TRUE(status.ok()) << status.message;
+  writer.close();
+
+  auto reader = bagwiz::io::open_read(path);
+  const auto extent = reader->compute_time_extent();
+
+  EXPECT_FALSE(extent.has_data);
+  EXPECT_EQ(extent.start_ns, 0);
+  EXPECT_EQ(extent.end_ns, 0);
+}
+
+TEST_F(McapReaderTest, DirectoryTimeExtentServedFromMetadataWithoutOpeningShards)
+{
+  const auto dir = write_fixture_directory_summary_only(tmp_dir_ / "time_extent_summary_only");
+
+  auto reader = bagwiz::io::open_read(dir);
+  const auto extent = reader->compute_time_extent();
+
+  EXPECT_TRUE(extent.has_data);
+  EXPECT_EQ(extent.start_ns, 1'000'000'000LL);
+  EXPECT_EQ(extent.end_ns, 2'000'000'001LL);
+}
+
 TEST_F(McapReaderTest, RejectsDirectoryWithoutMetadata)
 {
   const auto dir = tmp_dir_ / "no_meta";

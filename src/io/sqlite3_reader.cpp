@@ -217,6 +217,20 @@ public:
     return result;
   }
 
+  TimeExtent compute_time_extent() override
+  {
+    TimeExtent extent;
+    auto stmt =
+      sqlite_prepare_or_throw(db_.get(), "SELECT MIN(timestamp), MAX(timestamp) FROM messages");
+    if (
+      sqlite3_step(stmt.get()) == SQLITE_ROW && sqlite3_column_type(stmt.get(), 0) != SQLITE_NULL) {
+      extent.start_ns = sqlite3_column_int64(stmt.get(), 0);
+      extent.end_ns = sqlite3_column_int64(stmt.get(), 1);
+      extent.has_data = true;
+    }
+    return extent;
+  }
+
 private:
   static const char * column_text_or_empty(sqlite3_stmt * stmt, int col)
   {
@@ -524,6 +538,32 @@ public:
       }
     }
     return result;
+  }
+
+  TimeExtent compute_time_extent() override
+  {
+    TimeExtent extent;
+    if (metadata_.has_summary) {
+      extent.start_ns = metadata_.start_ns;
+      extent.end_ns = metadata_.end_ns;
+      extent.has_data = true;
+      return extent;
+    }
+
+    for (std::size_t i = 0; i < shard_rel_paths_.size(); ++i) {
+      auto shard_extent = ensure_shard(i).compute_time_extent();
+      if (!shard_extent.has_data) {
+        continue;
+      }
+      if (!extent.has_data || shard_extent.start_ns < extent.start_ns) {
+        extent.start_ns = shard_extent.start_ns;
+      }
+      if (!extent.has_data || shard_extent.end_ns > extent.end_ns) {
+        extent.end_ns = shard_extent.end_ns;
+      }
+      extent.has_data = true;
+    }
+    return extent;
   }
 
 private:

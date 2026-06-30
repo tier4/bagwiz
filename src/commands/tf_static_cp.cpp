@@ -237,23 +237,37 @@ int execute_cp_pass(
     BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", dst_path.c_str(), e.what());
     return 1;
   }
-  reader->populate_schemas();
-
-  io::BagReader::Stats stats;
+  io::BagReader::TimeExtent time_extent;
   try {
-    stats = reader->compute_stats();
+    time_extent = reader->compute_time_extent();
   } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to compute stats on %s: %s", dst_path.c_str(), e.what());
+    BAGWIZ_LOG_ERROR(
+      kLogger, "Failed to compute time extent on %s: %s", dst_path.c_str(), e.what());
     return 1;
   }
-  const std::int64_t start_ns = stats.start_ns;
+  const std::int64_t start_ns = time_extent.start_ns;
 
-  // Snapshot the destination's topic list; the reader's span is invalidated by
-  // subsequent operations.
+  std::vector<std::string> src_topic_names;
+  src_topic_names.reserve(src_topics.size());
+  for (const auto & st : src_topics) {
+    src_topic_names.push_back(st.name);
+  }
+
+  std::unordered_map<std::string, std::int64_t> dst_counts;
+  try {
+    dst_counts = reader->compute_topic_counts(src_topic_names);
+  } catch (const std::exception & e) {
+    BAGWIZ_LOG_ERROR(
+      kLogger, "Failed to compute topic counts on %s: %s", dst_path.c_str(), e.what());
+    return 1;
+  }
+
+  // Snapshot the destination's topic list before conflict detection; the
+  // reader's span may be invalidated by subsequent operations.
   const std::vector<io::TopicInfo> dst_topics(reader->topics().begin(), reader->topics().end());
 
   TopicWritePlan plan;
-  if (!plan_topic_writes(dst_topics, stats.per_topic, src_topics, overwrite, plan)) {
+  if (!plan_topic_writes(dst_topics, dst_counts, src_topics, overwrite, plan)) {
     return 1;
   }
 
@@ -265,9 +279,18 @@ int execute_cp_pass(
     return 1;
   }
 
+  // Schemas are only needed once we start streaming messages. Deferring
+  // avoids opening shard 0 for bags that abort early due to a topic conflict.
+  reader->populate_schemas();
+
+  // Snapshot the destination's topic list after schema backfill so the output
+  // writer receives embedded schemas.
+  const std::vector<io::TopicInfo> dst_topics_with_schemas(
+    reader->topics().begin(), reader->topics().end());
+
   // Declare every existing destination topic, then a synthesised TopicInfo for
   // each brand-new static topic being introduced.
-  for (const auto & t : dst_topics) {
+  for (const auto & t : dst_topics_with_schemas) {
     try {
       writer->declare_topic(t);
     } catch (const std::exception & e) {
