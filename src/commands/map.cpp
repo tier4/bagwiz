@@ -138,7 +138,8 @@ private:
       ->add_option(
         "--backend", slam_args_.backend,
         "SLAM backend (default 'auto'). 'auto' uses the CUDA GPU backend when this binary was "
-        "built with -DBAGWIZ_WITH_SLAM_CUDA (pixi run build-full-cuda) AND a CUDA device is "
+        "built with -DBAGWIZ_WITH_SLAM_CUDA (pixi run -e humble-cuda build-full) AND a CUDA device "
+        "is "
         "visible, else CPU. 'gpu' forces it (errors on a non-CUDA build / no device). 'cpu' "
         "forces the CPU backend (the reproducibility-guaranteed path). The GPU backend = GPU "
         "LiDAR-IMU odometry with --imu (CT without it), GPU VGICP mapping, and GPU export "

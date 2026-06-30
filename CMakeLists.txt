@@ -357,9 +357,10 @@ target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang ${Op
 option(BAGWIZ_WITH_SLAM "Build the in-process GLIM `bagwiz map slam` command" OFF)
 # GPU fast path for `bagwiz map slam --gpu` (CUDA odometry + VGICP_GPU mapping +
 # GPU export voxelization). OFF by default; implies BAGWIZ_WITH_SLAM. Enabled via
-# `pixi run build-full-cuda`, which builds the CUDA GLIM stack into
-# install/<distro>/glim-deps-cuda and passes -DBAGWIZ_WITH_SLAM_CUDA=ON plus the
-# CUDA toolchain. A CPU build (`pixi run build-full`) leaves this OFF and links no CUDA.
+# `pixi run -e <distro>-cuda build-full` (humble-cuda/jazzy-cuda), which builds the
+# CUDA GLIM stack into install/<distro>-cuda/glim-deps-cuda and passes
+# -DBAGWIZ_WITH_SLAM_CUDA=ON plus the CUDA toolchain. A CPU build (`pixi run
+# build-full` in a CPU env) leaves this OFF and links no CUDA.
 option(BAGWIZ_WITH_SLAM_CUDA "GPU-accelerate `bagwiz map slam --gpu` (implies BAGWIZ_WITH_SLAM)" OFF)
 if(BAGWIZ_WITH_SLAM_CUDA)
   set(BAGWIZ_WITH_SLAM ON CACHE BOOL "Implied by BAGWIZ_WITH_SLAM_CUDA" FORCE)
@@ -413,14 +414,14 @@ if(BAGWIZ_WITH_SLAM)
     if(NOT TARGET gtsam_points::gtsam_points_cuda)
       message(FATAL_ERROR
         "BAGWIZ_WITH_SLAM_CUDA=ON but gtsam_points has no CUDA target. Rebuild the GLIM deps "
-        "with CUDA: scripts/build-glim-deps.sh --cuda (pixi run build-full-cuda).")
+        "with CUDA: scripts/build-glim-deps.sh --cuda (pixi run -e humble-cuda build-full).")
     endif()
     if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
       message(WARNING
         "CMAKE_CUDA_ARCHITECTURES not set; defaulting to 86 (sm_86 / RTX 30xx). For another GPU "
         "pass -DCMAKE_CUDA_ARCHITECTURES=<arch> (e.g. 75 = RTX 20xx, 89 = RTX 40xx). The "
         "voxelize_gpu kernel falls back to CPU on an arch mismatch, but GLIM's VGICP_GPU mapping "
-        "does not — a wrong arch then fails the --gpu run. `pixi run build-full-cuda` sets 86.")
+        "does not — a wrong arch then fails the --gpu run. `pixi run -e humble-cuda build-full` sets 86.")
       set(CMAKE_CUDA_ARCHITECTURES 86)
     endif()
     enable_language(CUDA)

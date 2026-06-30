@@ -42,4 +42,4 @@ jobs:
         run: pixi run -e ${{ matrix.distro }} build-full
 
       - name: Test
-        run: pixi run -e ${{ matrix.distro }} test
+        run: pixi run -e ${{ matrix.distro }} test-full

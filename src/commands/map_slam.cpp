@@ -687,7 +687,8 @@ private:
         BAGWIZ_LOG_ERROR(
           kLogger,
           "--backend gpu requested but this binary was built without CUDA; rebuild with "
-          "-DBAGWIZ_WITH_SLAM_CUDA=ON (pixi run build-full-cuda), or use --backend auto/cpu.");
+          "-DBAGWIZ_WITH_SLAM_CUDA=ON (pixi run -e humble-cuda build-full), or use --backend "
+          "auto/cpu.");
         return false;
       }
       if (!cuda.error.empty()) {

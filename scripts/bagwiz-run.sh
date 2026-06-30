@@ -55,10 +55,7 @@ bin="${BAGWIZ_REPO}/install/${distro}/bagwiz/bin/bagwiz"
 
 if [ ! -x "${bin}" ]; then
     echo "bagwiz: no build found for '${distro}' at ${bin}" >&2
-    case "${distro}" in
-    *-gpu) echo "bagwiz: build it first: pixi run -e ${distro} build-full-cuda" >&2 ;;
-    *) echo "bagwiz: build it first: pixi run -e ${distro} build-full" >&2 ;;
-    esac
+    echo "bagwiz: build it first: pixi run -e ${distro} build-full" >&2
     exit 127
 fi
 
@@ -249,10 +246,10 @@ _bagwiz_glim_lib="${BAGWIZ_REPO}/install/${distro}/glim-deps/lib"
 if [ -d "${_bagwiz_glim_lib}" ]; then
     export LD_LIBRARY_PATH="${_bagwiz_glim_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 fi
-# A GPU build (a *-gpu environment) additionally has the CUDA stack at
+# A GPU build (a *-cuda environment) additionally has the CUDA stack at
 # install/<env>/glim-deps-cuda (CUDA libglim + libgtsam_points_cuda); place it
 # AHEAD of glim-deps so its CUDA libglim wins over the CPU one. Auto-detected by
-# the directory's presence — only a *-gpu env's install dir has it, so a CPU
+# the directory's presence — only a *-cuda env's install dir has it, so a CPU
 # launcher never loads the CUDA libglim (which would pull a libcudart it never
 # linked). The conda CUDA runtime (libcudart/libcusolver) comes from the env
 # activation; no system /usr/local/cuda is needed.

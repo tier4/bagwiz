@@ -44,7 +44,7 @@ per distro.
    prefix and are fast. If you don't need `map`, `pixi run -e humble build-core`
    skips the GLIM stack entirely for a much faster build. For the
    CUDA-accelerated SLAM build, use
-   `pixi run -e humble-gpu build-full-cuda` (needs an NVIDIA GPU); see
+   `pixi run -e humble-cuda build-full` (needs an NVIDIA GPU); see
    [docs/commands/map.md](docs/commands/map.md).
 
 3. Install a `bagwiz` launcher on your `PATH` — plus tab completion — so you can

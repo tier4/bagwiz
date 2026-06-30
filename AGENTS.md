@@ -159,21 +159,23 @@ govern source code or CLI behavior.
   the default environment (Humble). Each distro builds into its own
   `build/<distro>` and `install/<distro>`, so switching distros never reuses
   another distro's CMake cache.
-- Builds are a `{core, full} x {cpu, cuda}` matrix. `build-full` is the default
-  full build: on `humble`/`jazzy` it builds the GLIM stack (via
+- Builds are a `{core, full} x {cpu, cuda}` matrix, but the CPU/CUDA choice is
+  derived from the active pixi environment. `build-full` is the default full
+  build: on `humble`/`jazzy` it builds the GLIM stack (via
   `scripts/bagwiz-build.sh` → `scripts/build-glim-deps.sh`) and links the `map`
   command group (`bagwiz map slam`). `build-core` builds every command group
   EXCEPT `map`, with no GLIM stack — the fast build, on any distro. The CUDA
-  SLAM build is `pixi run -e <distro>-gpu build-full-cuda` (humble-gpu/jazzy-gpu;
-  needs an NVIDIA GPU); `build-core-cuda` is the core build inside a `*-gpu` env.
-- Run the tests with `pixi run -e <distro> test` and the built binary with
-  `pixi run -e <distro> run -- <args>` (or `pixi shell -e <distro>` then
-  `bagwiz`). `pixi run install` builds, then installs an optional `bagwiz`
-  launcher on `PATH` plus shell completion for your current shell, in one step
-  (always overwriting existing copies); it runs the binary in its pixi-managed
-  ROS environment. See `scripts/bagwiz-install.sh`. `test`/`run`/`install` target
-  the CPU full build (`build-full`); each has a `-cuda` variant
-  (`test-cuda`/`run-cuda`/`install-cuda`) targeting `build-full-cuda`.
+  SLAM build is `pixi run -e <distro>-cuda build-full` (humble-cuda/jazzy-cuda;
+  needs an NVIDIA GPU); `build-core` in a `*-cuda` env is the core build inside a
+  `*-cuda` env.
+- Run the tests with `pixi run -e <distro> test-core` / `test-full` and the built
+  binary with `pixi run -e <distro> run -- <args>` (or `pixi shell -e <distro>`
+  then `bagwiz`). `pixi run install` builds via `build-full`, then installs an
+  optional `bagwiz` launcher on `PATH` plus shell completion for your current
+  shell, in one step (always overwriting existing copies); it runs the binary in
+  its pixi-managed ROS environment. See `scripts/bagwiz-install.sh`. `run` and
+  `install` target the full build (`build-full`) in whichever environment they
+  are invoked.
 - Prefer the `pixi run` tasks over ad-hoc `colcon build` invocations when
   verifying changes, unless you are reproducing a CI or tooling issue that
   requires a different command line. The task definitions live in `pixi.toml`.

@@ -9,8 +9,8 @@
 # Rather than rebuild this multi-ten-minute stack on every `colcon build`, it is
 # built ONCE into install/<distro>/glim-deps and then `find_package`d by bagwiz
 # (Approach B - a vendored prefix). This script is run inside the pixi environment
-# by `pixi run -e <distro> build-full` (and `build-full-cuda`, which also passes
-# --cuda) via scripts/bagwiz-build.sh, so the conda toolchain (gcc, cmake, ninja)
+# by `pixi run -e <distro> build-full` (which in a *-cuda env also passes --cuda)
+# via scripts/bagwiz-build.sh, so the conda toolchain (gcc, cmake, ninja)
 # and the env-provided Boost / Eigen / fmt / spdlog / OpenMP are already on the
 # relevant paths.
 #
@@ -53,22 +53,22 @@ for arg in "$@"; do
 done
 
 if [ "${cuda}" -eq 1 ]; then
-    # The GPU stack must build in a *-gpu pixi environment (humble-gpu / jazzy-gpu):
+    # The GPU stack must build in a *-cuda pixi environment (humble-cuda / jazzy-cuda):
     # the env name is the install base (install/<env>), kept separate from the CPU
     # build, and it carries the conda CUDA toolkit. Running this under pixi in a CPU
-    # env (e.g. `pixi run build-full-cuda` without `-e <distro>-gpu`) would share the
+    # env (e.g. `pixi run build-full` without `-e <distro>-cuda`) would share the
     # CPU build base + cache and fail later with a confusing "no CUDA target" CMake
     # error, so stop now with a clear message. A bare run outside pixi
     # (PIXI_ENVIRONMENT_NAME unset) is left to the caller + BAGWIZ_CUDA_HOME.
-    if [ -n "${PIXI_ENVIRONMENT_NAME:-}" ] && [ "${PIXI_ENVIRONMENT_NAME%-gpu}" = "${PIXI_ENVIRONMENT_NAME}" ]; then
-        echo "build-glim-deps --cuda must run in a *-gpu pixi environment" \
+    if [ -n "${PIXI_ENVIRONMENT_NAME:-}" ] && [ "${PIXI_ENVIRONMENT_NAME%-cuda}" = "${PIXI_ENVIRONMENT_NAME}" ]; then
+        echo "build-glim-deps --cuda must run in a *-cuda pixi environment" \
             "(it ran in '${PIXI_ENVIRONMENT_NAME}')." >&2
-        echo "  Use:  pixi run -e humble-gpu build-full-cuda   # or: jazzy-gpu" >&2
+        echo "  Use:  pixi run -e humble-cuda build-full   # or: jazzy-cuda" >&2
         exit 1
     fi
     # CUDA toolkit root, by priority: an explicit BAGWIZ_CUDA_HOME > the active pixi
     # env's conda CUDA ($CONDA_PREFIX/bin/nvcc, installed by the `gpu` feature) > a
-    # system /usr/local/cuda-12.8. So in a *-gpu pixi env CUDA is fully pixi-managed;
+    # system /usr/local/cuda-12.8. So in a *-cuda pixi env CUDA is fully pixi-managed;
     # BAGWIZ_CUDA_HOME still lets a system toolkit be used. NOTE: do NOT trust the
     # env's CUDA_HOME — a user profile may point it at an incompatible system CUDA
     # (e.g. 12.6, which rejects gcc 14). nvcc 12.8 is required for the gcc 14.3 host.
@@ -115,12 +115,12 @@ if [ "${cuda}" -eq 1 ]; then
     # Reuse the CPU prefix's GTSAM (the long pole); fail clearly if it is absent.
     if [ ! -f "${CPU_PREFIX}/lib/cmake/GTSAM/GTSAMConfig.cmake" ]; then
         echo "build-glim-deps --cuda reuses GTSAM from ${CPU_PREFIX}, but it is missing." >&2
-        echo "  Build the CPU deps first: pixi run -e ${ENV_NAME} build-full-cuda" >&2
+        echo "  Build the CPU deps first: pixi run -e ${ENV_NAME} build-full" >&2
         exit 1
     fi
     if [ ! -x "${cuda_root}/bin/nvcc" ]; then
         echo "build-glim-deps --cuda: nvcc not found at ${cuda_root}/bin/nvcc" >&2
-        echo "  In a *-gpu pixi env nvcc comes from the conda env; otherwise set BAGWIZ_CUDA_HOME." >&2
+        echo "  In a *-cuda pixi env nvcc comes from the conda env; otherwise set BAGWIZ_CUDA_HOME." >&2
         exit 1
     fi
     # Override any stale system CUDA_HOME/CUDA_PATH (a user profile may export an

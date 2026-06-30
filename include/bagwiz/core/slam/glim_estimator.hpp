@@ -83,7 +83,7 @@ inline std::unique_ptr<glim::OdometryEstimationBase> make_odometry_estimator(
 #else
     throw std::runtime_error(
       "--backend gpu requested but this binary was built without CUDA "
-      "(rebuild with -DBAGWIZ_WITH_SLAM_CUDA=ON / `pixi run build-full-cuda`).");
+      "(rebuild with -DBAGWIZ_WITH_SLAM_CUDA=ON / `pixi run -e humble-cuda build-full`).");
 #endif
   }
 
