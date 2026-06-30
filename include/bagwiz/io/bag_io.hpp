@@ -122,11 +122,7 @@ public:
   // the requested topics when unavoidable. Topics that are absent or have
   // zero messages are omitted from the result.
   virtual std::unordered_map<std::string, int64_t> compute_topic_counts(
-    std::span<const std::string> topics)
-  {
-    (void)topics;
-    return {};
-  }
+    std::span<const std::string> topics) = 0;
 
   // Backfill TopicInfo::schema_text / schema_encoding for all topics when the
   // storage embeds schemas but the cheap topics() path did not load them.

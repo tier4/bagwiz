@@ -453,6 +453,41 @@ TEST_F(Sqlite3ReaderTest, DirectoryStatsServedFromMetadataWithoutOpeningShards)
   EXPECT_EQ(stats.per_topic.at("/bar"), 2);
 }
 
+TEST_F(Sqlite3ReaderTest, TopicCounts)
+{
+  const auto path = write_fixture_db3(tmp_dir_ / "topic_counts");
+
+  auto reader = bagwiz::io::open_read(path);
+  const auto counts =
+    reader->compute_topic_counts(std::vector<std::string>{"/foo", "/bar", "/unknown"});
+
+  EXPECT_EQ(counts.size(), 2U);
+  EXPECT_EQ(counts.at("/foo"), 3);
+  EXPECT_EQ(counts.at("/bar"), 2);
+}
+
+TEST_F(Sqlite3ReaderTest, TopicCountsEmptyBag)
+{
+  const auto path = write_fixture_db3_no_messages(tmp_dir_ / "topic_counts_empty");
+
+  auto reader = bagwiz::io::open_read(path);
+  const auto counts = reader->compute_topic_counts(std::vector<std::string>{"/foo"});
+
+  EXPECT_TRUE(counts.empty());
+}
+
+TEST_F(Sqlite3ReaderTest, DirectoryTopicCountsServedFromMetadataWithoutOpeningShards)
+{
+  const auto dir = write_fixture_directory_summary_only(tmp_dir_ / "topic_counts_summary_only");
+
+  auto reader = bagwiz::io::open_read(dir);
+  const auto counts = reader->compute_topic_counts(std::vector<std::string>{"/foo", "/bar"});
+
+  EXPECT_EQ(counts.size(), 2U);
+  EXPECT_EQ(counts.at("/foo"), 3);
+  EXPECT_EQ(counts.at("/bar"), 2);
+}
+
 TEST_F(Sqlite3ReaderTest, OpensDirectoryWithMetadata)
 {
   const auto dir = write_fixture_directory(tmp_dir_ / "dir");

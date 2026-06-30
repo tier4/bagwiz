@@ -169,6 +169,54 @@ public:
     return stats;
   }
 
+  std::unordered_map<std::string, int64_t> compute_topic_counts(
+    std::span<const std::string> topics) override
+  {
+    std::unordered_map<std::string, int64_t> result;
+    if (topics.empty()) {
+      return result;
+    }
+
+    std::vector<int64_t> ids;
+    ids.reserve(topics.size());
+    for (const auto & name : topics) {
+      for (const auto & [tid, idx] : topic_id_to_idx_) {
+        if (topics_[idx].name == name) {
+          ids.push_back(tid);
+          break;
+        }
+      }
+    }
+    if (ids.empty()) {
+      return result;
+    }
+
+    std::string sql = "SELECT topic_id, COUNT(*) FROM messages WHERE topic_id IN (";
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+      sql += (i == 0 ? "" : ",") + std::to_string(ids[i]);
+    }
+    sql += ") GROUP BY topic_id";
+
+    auto stmt = sqlite_prepare_or_throw(db_.get(), sql.c_str());
+    for (;;) {
+      const int rc = sqlite3_step(stmt.get());
+      if (rc == SQLITE_DONE) {
+        break;
+      }
+      if (rc != SQLITE_ROW) {
+        throw std::runtime_error("topic count query failed: " + sqlite_errmsg(db_.get()));
+      }
+      const int64_t topic_id = sqlite3_column_int64(stmt.get(), 0);
+      const int64_t count = sqlite3_column_int64(stmt.get(), 1);
+
+      auto idx_it = topic_id_to_idx_.find(topic_id);
+      if (idx_it != topic_id_to_idx_.end()) {
+        result[topics_[idx_it->second].name] = count;
+      }
+    }
+    return result;
+  }
+
 private:
   static const char * column_text_or_empty(sqlite3_stmt * stmt, int col)
   {
@@ -448,6 +496,34 @@ public:
       }
     }
     return combined;
+  }
+
+  std::unordered_map<std::string, int64_t> compute_topic_counts(
+    std::span<const std::string> topics) override
+  {
+    std::unordered_map<std::string, int64_t> result;
+    if (topics.empty()) {
+      return result;
+    }
+
+    if (metadata_.has_summary) {
+      for (const auto & topic : topics) {
+        if (auto it = metadata_.per_topic_counts.find(topic);
+            it != metadata_.per_topic_counts.end()) {
+          result[topic] = it->second;
+        }
+      }
+      return result;
+    }
+
+    for (std::size_t i = 0; i < shard_rel_paths_.size(); ++i) {
+      auto shard_counts = ensure_shard(i).compute_topic_counts(topics);
+      // cppcheck-suppress unassignedVariable
+      for (const auto & [k, v] : shard_counts) {
+        result[k] += v;
+      }
+    }
+    return result;
   }
 
 private:
