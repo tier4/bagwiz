@@ -1005,22 +1005,21 @@ private:
     }
     reader->populate_schemas();
 
-    io::BagReader::Stats stats;
-    try {
-      stats = reader->compute_stats();
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Failed to compute stats on %s: %s", args.input_path.c_str(), e.what());
-      return 1;
-    }
-
     // Snapshot the input's topic list; the reader's span is invalidated
     // by subsequent operations.
     const std::vector<io::TopicInfo> input_topics(reader->topics().begin(), reader->topics().end());
 
     std::int64_t existing_count = 0;
-    if (auto it = stats.per_topic.find(args.topic); it != stats.per_topic.end()) {
-      existing_count = it->second;
+    try {
+      const std::vector<std::string> count_topics{args.topic};
+      const auto topic_counts = reader->compute_topic_counts(count_topics);
+      if (auto it = topic_counts.find(args.topic); it != topic_counts.end()) {
+        existing_count = it->second;
+      }
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "Failed to compute topic count on %s: %s", args.input_path.c_str(), e.what());
+      return 1;
     }
 
     const auto decision =

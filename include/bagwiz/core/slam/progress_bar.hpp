@@ -15,6 +15,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <unordered_map>
 
 namespace bagwiz::core::slam
 {
@@ -33,6 +34,12 @@ bool progress_enabled(bool stderr_is_tty, bool no_color_env_set, bool no_progres
 // back to an indeterminate bar.
 std::int64_t progress_total(
   const io::BagReader::Stats & stats, std::span<const std::string> topics);
+
+// Same as above, but takes a pre-computed topic-name → count map. Used when
+// callers have already obtained counts via BagReader::compute_topic_counts().
+std::int64_t progress_total(
+  const std::unordered_map<std::string, std::int64_t> & counts,
+  std::span<const std::string> topics);
 
 // RAII progress reporter for the bag-read / GLIM-feed phase of `map slam`.
 // Determinate (with ETA) when the total message count is known; otherwise an

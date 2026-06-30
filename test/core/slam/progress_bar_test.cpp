@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // Unit tests for the `map slam` progress helpers. The pure decision functions
@@ -83,6 +84,27 @@ TEST(ProgressTotal, IgnoresNonPositiveCounts)
   stats.per_topic["/imu"] = -1;  // defensive: never negative in practice
   const std::vector<std::string> topics{"/lidar", "/imu"};
   EXPECT_EQ(slam::progress_total(stats, topics), 0);
+}
+
+TEST(ProgressTotalFromMap, SumsCountsForRequestedTopicsOnly)
+{
+  std::unordered_map<std::string, std::int64_t> counts;
+  counts["/lidar"] = 100;
+  counts["/imu"] = 5000;
+  counts["/gnss"] = 30;
+  counts["/camera"] = 99999;
+
+  const std::vector<std::string> topics{"/lidar", "/imu", "/gnss"};
+  EXPECT_EQ(slam::progress_total(counts, topics), 5130);
+}
+
+TEST(ProgressTotalFromMap, SkipsEmptyTopicNamesAndMissingTopics)
+{
+  std::unordered_map<std::string, std::int64_t> counts;
+  counts["/lidar"] = 42;
+
+  const std::vector<std::string> topics{"/lidar", "", "/missing"};
+  EXPECT_EQ(slam::progress_total(counts, topics), 42);
 }
 
 TEST(ScanProgressDisabled, DeterminateIsNoOp)

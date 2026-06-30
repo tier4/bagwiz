@@ -18,6 +18,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 
 namespace bagwiz::core::slam
@@ -37,6 +38,22 @@ std::int64_t progress_total(const io::BagReader::Stats & stats, std::span<const 
     }
     const auto it = stats.per_topic.find(topic);
     if (it != stats.per_topic.end() && it->second > 0) {
+      total += it->second;
+    }
+  }
+  return total;
+}
+
+std::int64_t progress_total(
+  const std::unordered_map<std::string, std::int64_t> & counts, std::span<const std::string> topics)
+{
+  std::int64_t total = 0;
+  for (const auto & topic : topics) {
+    if (topic.empty()) {
+      continue;
+    }
+    const auto it = counts.find(topic);
+    if (it != counts.end() && it->second > 0) {
       total += it->second;
     }
   }

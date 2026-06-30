@@ -288,7 +288,8 @@ int run_map_filter_removert(const MapFilterRemovertArgs & args)
   if (progress_on) {
     try {
       const std::vector<std::string> progress_topics{args.cloud_topic};
-      progress_total_msgs = core::slam::progress_total(reader->compute_stats(), progress_topics);
+      const auto topic_counts = reader->compute_topic_counts(progress_topics);
+      progress_total_msgs = core::slam::progress_total(topic_counts, progress_topics);
     } catch (const std::exception & e) {
       BAGWIZ_LOG_WARN(
         kLogger, "Could not read bag stats for the progress bar (%s); using an indeterminate bar",
