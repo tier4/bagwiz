@@ -29,6 +29,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -140,6 +141,35 @@ public:
       BAGWIZ_LOG_WARN(kLogger, "Statistics unavailable for %s; stats will be zero", path_.c_str());
     }
     return stats;
+  }
+
+  std::unordered_map<std::string, int64_t> compute_topic_counts(
+    std::span<const std::string> topics) override
+  {
+    std::unordered_map<std::string, int64_t> result;
+    if (topics.empty()) {
+      return result;
+    }
+
+    const auto & statistics = reader_.statistics();
+    if (!statistics) {
+      BAGWIZ_LOG_WARN(
+        kLogger, "Statistics unavailable for %s; topic counts will be zero", path_.c_str());
+      return result;
+    }
+
+    const std::unordered_set<std::string> requested(topics.begin(), topics.end());
+    for (const auto & [channel_id, count] : statistics->channelMessageCounts) {
+      auto idx_it = channel_to_topic_idx_.find(channel_id);
+      if (idx_it == channel_to_topic_idx_.end()) {
+        continue;
+      }
+      const std::string & name = topics_[idx_it->second].name;
+      if (requested.count(name) != 0U) {
+        result[name] = static_cast<int64_t>(count);
+      }
+    }
+    return result;
   }
 
 private:
@@ -356,6 +386,34 @@ public:
       }
     }
     return combined;
+  }
+
+  std::unordered_map<std::string, int64_t> compute_topic_counts(
+    std::span<const std::string> topics) override
+  {
+    std::unordered_map<std::string, int64_t> result;
+    if (topics.empty()) {
+      return result;
+    }
+
+    if (metadata_.has_summary) {
+      for (const auto & topic : topics) {
+        if (auto it = metadata_.per_topic_counts.find(topic);
+            it != metadata_.per_topic_counts.end()) {
+          result[topic] = it->second;
+        }
+      }
+      return result;
+    }
+
+    for (std::size_t i = 0; i < shard_rel_paths_.size(); ++i) {
+      auto shard_counts = ensure_shard(i).compute_topic_counts(topics);
+      // cppcheck-suppress unassignedVariable
+      for (const auto & [k, v] : shard_counts) {
+        result[k] += v;
+      }
+    }
+    return result;
   }
 
   void populate_schemas() override

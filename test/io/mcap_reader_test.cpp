@@ -332,6 +332,42 @@ TEST_F(McapReaderTest, DirectoryStatsServedFromMetadataWithoutOpeningShards)
   EXPECT_EQ(stats.per_topic.at("/bar"), 2);
 }
 
+TEST_F(McapReaderTest, TopicCountsFromSummary)
+{
+  const auto path = write_fixture_mcap(tmp_dir_ / "topic_counts");
+
+  auto reader = bagwiz::io::open_read(path);
+  const auto counts = reader->compute_topic_counts(std::vector<std::string>{"/foo"});
+
+  EXPECT_EQ(counts.size(), 1U);
+  EXPECT_EQ(counts.at("/foo"), 3);
+}
+
+TEST_F(McapReaderTest, TopicCountsForMultipleTopics)
+{
+  const auto path = write_fixture_mcap(tmp_dir_ / "topic_counts_multi");
+
+  auto reader = bagwiz::io::open_read(path);
+  const auto counts =
+    reader->compute_topic_counts(std::vector<std::string>{"/foo", "/bar", "/unknown"});
+
+  EXPECT_EQ(counts.size(), 2U);
+  EXPECT_EQ(counts.at("/foo"), 3);
+  EXPECT_EQ(counts.at("/bar"), 2);
+}
+
+TEST_F(McapReaderTest, DirectoryTopicCountsServedFromMetadataWithoutOpeningShards)
+{
+  const auto dir = write_fixture_directory_summary_only(tmp_dir_ / "topic_counts_summary_only");
+
+  auto reader = bagwiz::io::open_read(dir);
+  const auto counts = reader->compute_topic_counts(std::vector<std::string>{"/foo", "/bar"});
+
+  EXPECT_EQ(counts.size(), 2U);
+  EXPECT_EQ(counts.at("/foo"), 3);
+  EXPECT_EQ(counts.at("/bar"), 2);
+}
+
 TEST_F(McapReaderTest, RejectsDirectoryWithoutMetadata)
 {
   const auto dir = tmp_dir_ / "no_meta";
