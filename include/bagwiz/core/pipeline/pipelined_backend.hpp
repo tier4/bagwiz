@@ -34,9 +34,15 @@ namespace bagwiz::core::pipeline
 // rethrown from run() after both threads join (so the process never hangs on a
 // read/write error). Counts mirror SequentialBackend exactly.
 //
-// PipelinedBackend is for pure-copy rewrites only: it never decodes payloads, so
-// the decoders' thread-incompatibility is irrelevant here. Transform/inject
-// commands stay on SequentialBackend.
+// PipelinedBackend handles both pure-copy and transforming Processors. A
+// transforming Processor's transform() runs only on this (single) producer
+// thread — the same thread that reads — so a stateful decoder it owns is never
+// shared across threads, and the writer thread only ever drains already-produced
+// payloads. That is why the write-dominant transform commands (cam-info replace,
+// convert msg geo) default to it too, not just the pure-copy trio. The single
+// consumer never reorders, so inject commands that copy a bag and then append
+// new records keep strict emission order by writing the appended records after
+// the run.
 class PipelinedBackend : public Backend
 {
 public:
