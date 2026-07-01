@@ -1010,8 +1010,8 @@ public:
       if (pr.ok()) {
         const auto & img = *pr.raster;
         info = fmt::format(
-          "  {}x{}  {}   [{} / {}{}]", img.width, img.height, img.encoding, index,
-          last_loaded_index, total_suffix);
+          "  {}x{}   [{} / {}{}]", img.width, img.height, index, last_loaded_index,
+          total_suffix);
       } else {
         info = fmt::format("  [{} / {}{}]", index, last_loaded_index, total_suffix);
       }
