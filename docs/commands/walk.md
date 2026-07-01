@@ -102,9 +102,11 @@ on resize. Press `i` again or `q` to return to the YAML view.
   The overlay projects the nearest clouds onto the image using TF and colors
   each point by the selected property. See
   [Point-cloud overlay](#point-cloud-overlay) below for the controls.
-- While the point-cloud overlay is enabled, **undistort is forced on** so that
-  points are projected onto the rectified image. `u` shows a status message
-  instead of toggling undistort until the overlay is turned off.
+- The overlay follows the current undistort state: with **undistort off** the
+  points are projected onto the raw image using the camera's lens distortion
+  (`plumb_bob`/`rational_polynomial`, or `equidistant` for fisheye lenses), and
+  with **undistort on** they are projected onto the rectified image. Pressing `u`
+  re-aims the overlay accordingly.
 - Pressing `i` on a non-image topic shows `(not an image topic)`; pressing it on
   an image topic in an unsupported terminal shows
   `(image preview not supported in this terminal)`.
@@ -126,7 +128,7 @@ selection. The selected topics are remembered for the rest of the walk session.
 
 | Key       | Action                                                                                                                 |
 | --------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `p`       | Toggle the point-cloud overlay on/off. When turning it on, undistort is also turned on.                                |
+| `p`       | Toggle the point-cloud overlay on/off. Points project onto the raw or rectified image to match the current undistort state. |
 | `t`       | Open the PointCloud2 topic picker again to change the selected topics.                                                 |
 | `f`       | Cycle the visualized property: `distance` → `x` → `y` → `z` → `intensity` (when the topic has intensity) → `distance`. |
 | `c`       | Cycle the color scheme: `jet` → `viridis` → `turbo` → `plasma` → `inferno` → `magma` → `rainbow` → `jet`.              |
@@ -211,7 +213,7 @@ not been read into the cache yet (they get pulled in on demand).
 | `s`            | Save as yaml - writes the current message body (prompts for path). In the image preview, `s` saves the decoded image including any undistortion or point-cloud overlay. |
 | `a`            | Toggle full expansion of long primitive arrays (default off).                                                                                                           |
 | `i`            | Toggle in-terminal image preview (image topics on a Kitty- or Sixel-capable terminal; hidden otherwise). See [Image preview](#image-preview).                           |
-| `u`            | Toggle undistortion in the image preview (when CameraInfo is available). Disabled while the point-cloud overlay is active because the overlay forces undistort on.      |
+| `u`            | Toggle undistortion in the image preview (when CameraInfo is available). Also re-aims the point-cloud overlay: off projects onto the raw (distorted) image, on projects onto the rectified image. |
 | `p`            | Toggle PointCloud2 projection overlay in the image preview. See [Point-cloud overlay](#point-cloud-overlay).                                                            |
 | `t`            | Open the PointCloud2 topic picker to select or change the overlay topics.                                                                                               |
 | `f`            | Cycle the point-cloud overlay property.                                                                                                                                 |

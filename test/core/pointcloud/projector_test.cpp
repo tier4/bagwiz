@@ -272,3 +272,76 @@ TEST(Projector, UseRectifiedSelectsProjectionMatrix)
   EXPECT_EQ(rectified.points[0].u, 160);
   EXPECT_EQ(rectified.points[0].v, 120);
 }
+
+TEST(Projector, PlumbBobDistortionShiftsRawProjection)
+{
+  // Point (2.5, 0, 5) -> normalized a=0.5, b=0. With k1=0.2 the radial factor is
+  // 1 + 0.2*0.25 = 1.05, so x'=0.525 and u = 100*0.525 + 320 = 372 (vs 370 with no
+  // distortion). use_rectified=false projects onto the raw image using k + d.
+  const auto cloud = make_xyz_cloud({{2.5f, 0.0f, 5.0f}});
+  auto camera = make_pinhole_camera(100.0, 100.0, 320.0, 240.0, 640, 480);
+  camera.distortion_model = "plumb_bob";
+  camera.d = {0.2, 0.0, 0.0, 0.0, 0.0};
+
+  const auto result = project_pointcloud(
+    cloud, camera, identity_transform(), 640, 480, PointCloudProperty::kDistance, false);
+
+  ASSERT_TRUE(result.ok());
+  ASSERT_EQ(result.points.size(), 1u);
+  EXPECT_EQ(result.points[0].u, 372);
+  EXPECT_EQ(result.points[0].v, 240);
+}
+
+TEST(Projector, EmptyDistortionMatchesPinhole)
+{
+  // The same point with no distortion coefficients: the raw path stays a plain
+  // pinhole projection, so u = 100*0.5 + 320 = 370.
+  const auto cloud = make_xyz_cloud({{2.5f, 0.0f, 5.0f}});
+  const auto camera = make_pinhole_camera(100.0, 100.0, 320.0, 240.0, 640, 480);
+
+  const auto result = project_pointcloud(
+    cloud, camera, identity_transform(), 640, 480, PointCloudProperty::kDistance, false);
+
+  ASSERT_TRUE(result.ok());
+  ASSERT_EQ(result.points.size(), 1u);
+  EXPECT_EQ(result.points[0].u, 370);
+}
+
+TEST(Projector, RectifiedPathIgnoresDistortion)
+{
+  // With use_rectified=true the projection uses p and ignores d, so the point
+  // stays at the p-based pinhole location (100*0.5 + 320 = 370) despite a
+  // non-zero distortion coefficient.
+  const auto cloud = make_xyz_cloud({{2.5f, 0.0f, 5.0f}});
+  auto camera =
+    make_pinhole_camera_with_p(100.0, 100.0, 320.0, 240.0, 640, 480, 100.0, 100.0, 320.0, 240.0);
+  camera.distortion_model = "plumb_bob";
+  camera.d = {0.2, 0.0, 0.0, 0.0, 0.0};
+
+  const auto result = project_pointcloud(
+    cloud, camera, identity_transform(), 640, 480, PointCloudProperty::kDistance, true);
+
+  ASSERT_TRUE(result.ok());
+  ASSERT_EQ(result.points.size(), 1u);
+  EXPECT_EQ(result.points[0].u, 370);
+  EXPECT_EQ(result.points[0].v, 240);
+}
+
+TEST(Projector, EquidistantDistortionAppliesFisheyeModel)
+{
+  // Point (2.5, 0, 5) -> a=0.5, r=0.5, theta=atan(0.5)=0.46365. With k1=0.1:
+  // theta_d = theta*(1 + 0.1*theta^2) = 0.47362, scale = theta_d/r = 0.94723,
+  // x' = 0.47362, u = 100*0.47362 + 320 = 367.
+  const auto cloud = make_xyz_cloud({{2.5f, 0.0f, 5.0f}});
+  auto camera = make_pinhole_camera(100.0, 100.0, 320.0, 240.0, 640, 480);
+  camera.distortion_model = "equidistant";
+  camera.d = {0.1, 0.0, 0.0, 0.0};
+
+  const auto result = project_pointcloud(
+    cloud, camera, identity_transform(), 640, 480, PointCloudProperty::kDistance, false);
+
+  ASSERT_TRUE(result.ok());
+  ASSERT_EQ(result.points.size(), 1u);
+  EXPECT_EQ(result.points[0].u, 367);
+  EXPECT_EQ(result.points[0].v, 240);
+}

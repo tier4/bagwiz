@@ -846,7 +846,7 @@ public:
 
         const auto projected = core::pointcloud::project_cloud_for_frame(
           *cloud, effective_ci, *tf_buffer, img.width, img.height, pcd.property,
-          /*use_rectified=*/true, cache[index].timestamp_ns);
+          /*use_rectified=*/undistort_enabled, cache[index].timestamp_ns);
         if (!projected.ok()) {
           last_error = std::move(projected.error);
           continue;
@@ -1213,11 +1213,12 @@ public:
             needs_render = true;
             break;
           case core::KeyEvent::kToggleUndistort:
+            // Toggling undistort also re-aims the pcd overlay: with undistort on
+            // points project onto the rectified image, with it off they project
+            // onto the raw image using the lens distortion (see maybe_overlay_pcd).
             if (!camera_info.has_value()) {
               status = camera_info_error.empty() ? "undistort: no camera_info"
                                                  : "undistort: " + camera_info_error;
-            } else if (pcd.enabled) {
-              status = "undistort is forced on while pcd overlay is active";
             } else {
               undistort_enabled = !undistort_enabled;
             }
@@ -1231,14 +1232,10 @@ public:
               if (auto topics = prompt_for_pcd_topics(); topics.has_value() && !topics->empty()) {
                 if (initialize_pcd_overlay(*topics)) {
                   pcd.enabled = true;
-                  undistort_enabled = true;
                 }
               }
             } else {
               pcd.enabled = !pcd.enabled;
-              if (pcd.enabled) {
-                undistort_enabled = true;
-              }
             }
             needs_render = true;
             break;
@@ -1249,7 +1246,6 @@ public:
                   pcd.enabled = false;
                 } else if (initialize_pcd_overlay(*topics)) {
                   pcd.enabled = true;
-                  undistort_enabled = true;
                 }
               }
             } else {
