@@ -696,7 +696,13 @@ public:
         return std::nullopt;
       }
 
+      // Pre-check the topics that are currently active so the picker reflects
+      // the existing selection instead of resetting every topic to unchecked.
       std::vector<bool> checked(pcd_topics.size(), false);
+      for (std::size_t i = 0; i < pcd_topics.size(); ++i) {
+        checked[i] =
+          std::find(pcd.topics.begin(), pcd.topics.end(), pcd_topics[i]) != pcd.topics.end();
+      }
       std::size_t cursor = 0;
       bool done = false;
       bool cancelled = false;
