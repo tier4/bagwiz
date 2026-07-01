@@ -1006,7 +1006,6 @@ public:
         maybe_overlay_pcd(&*pr.raster);
       }
 
-      core::tui::draw_line(out, 1, fmt::format("  {}  {}", topic_name, type_name), cols);
       std::string info;
       if (pr.ok()) {
         const auto & img = *pr.raster;
@@ -1030,7 +1029,18 @@ public:
           pcd.auto_range ? "auto" : fmt::format("{:.2f}-{:.2f}", pcd.manual_min, pcd.manual_max),
           scheme_name(pcd.scheme), pcd.point_size, pcd.alpha);
       }
-      core::tui::draw_line(out, 2, info, cols);
+
+      // Header: the topic/type row and the info row, each wrapped to width the
+      // same way build_frame's header and the legend below are, so a narrow
+      // terminal shows the full text on continuation lines instead of truncating
+      // it at the right edge. The image region starts just below the wrapped
+      // header (see region_row).
+      std::vector<std::string> header_lines;
+      append_wrapped(header_lines, fmt::format("  {}  {}", topic_name, type_name), cols);
+      append_wrapped(header_lines, info, cols);
+      for (std::size_t i = 0; i < header_lines.size(); ++i) {
+        core::tui::draw_line(out, 1 + static_cast<int>(i), header_lines[i], cols);
+      }
 
       // Wrap the key legend the way the YAML footer (build_frame) does, so a
       // narrow terminal shows every key on continuation lines instead of
@@ -1043,8 +1053,9 @@ public:
         cols);
       const int legend_top = std::max(1, rows - static_cast<int>(legend_lines.size()) + 1);
 
-      // Image region: from row 3 down to the row above the first legend line.
-      const int region_row = 3;
+      // Image region: from the row just below the wrapped header down to the row
+      // above the first legend line.
+      const int region_row = 1 + static_cast<int>(header_lines.size());
       const int region_rows = std::max(1, legend_top - region_row);
       if (pr.ok()) {
         core::tui::image::CellRegion region;
