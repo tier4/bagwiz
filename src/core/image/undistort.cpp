@@ -54,28 +54,27 @@ class UndistortHelper::Impl
 {
 public:
   Impl(const CameraInfo & info, std::uint32_t width, std::uint32_t height)
-  : width_(width), height_(height)
+  : width_(width), height_(height), effective_info_(info)
   {
-    CameraInfo scaled = info;
     if (info.width != 0 && info.height != 0 && (info.width != width || info.height != height)) {
       const double scale_x = static_cast<double>(width) / static_cast<double>(info.width);
       const double scale_y = static_cast<double>(height) / static_cast<double>(info.height);
-      scaled = scale_camera_info(info, scale_x, scale_y);
+      effective_info_ = scale_camera_info(info, scale_x, scale_y);
     }
 
-    const cv::Mat k(3, 3, CV_64F, scaled.k.data());
-    const cv::Mat p(3, 4, CV_64F, scaled.p.data());
+    const cv::Mat k(3, 3, CV_64F, effective_info_.k.data());
+    const cv::Mat p(3, 4, CV_64F, effective_info_.p.data());
 
     // An empty R makes initUndistortRectifyMap use identity; only pass an
     // explicit R when CameraInfo carries a usable rectification rotation.
     cv::Mat r;
-    if (is_usable_rotation(scaled.r)) {
-      r = cv::Mat(3, 3, CV_64F, scaled.r.data());
+    if (is_usable_rotation(effective_info_.r)) {
+      r = cv::Mat(3, 3, CV_64F, effective_info_.r.data());
     }
 
     cv::Mat d;
-    if (!scaled.d.empty()) {
-      d = cv::Mat(static_cast<int>(scaled.d.size()), 1, CV_64F, scaled.d.data());
+    if (!effective_info_.d.empty()) {
+      d = cv::Mat(static_cast<int>(effective_info_.d.size()), 1, CV_64F, effective_info_.d.data());
     }
 
     cv::initUndistortRectifyMap(
@@ -99,12 +98,15 @@ public:
     return {output_.data(), output_.size()};
   }
 
+  [[nodiscard]] const CameraInfo & effective_camera_info() const { return effective_info_; }
+
 private:
   std::uint32_t width_ = 0;
   std::uint32_t height_ = 0;
   cv::Mat map1_;
   cv::Mat map2_;
   std::vector<std::byte> output_;
+  CameraInfo effective_info_;
 };
 
 UndistortHelper::UndistortHelper(const CameraInfo & info, std::uint32_t width, std::uint32_t height)
@@ -121,6 +123,11 @@ std::span<const std::byte> UndistortHelper::remap(
   std::span<const std::byte> src, std::uint32_t src_step)
 {
   return impl_->remap(src, src_step);
+}
+
+CameraInfo UndistortHelper::effective_camera_info() const
+{
+  return impl_->effective_camera_info();
 }
 
 }  // namespace bagwiz::core::image

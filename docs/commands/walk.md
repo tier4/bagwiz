@@ -96,9 +96,52 @@ on resize. Press `i` again or `q` to return to the YAML view.
   explicitly provided. The undistorted frame is rendered and saved by `s`. If no
   CameraInfo is available, `u` shows `undistort: no camera_info` in the status
   line and leaves the original image on screen.
+- Pressing `p` toggles a **PointCloud2 projection overlay** on the image
+  preview. The first time it is enabled, bagwiz shows a checkbox list of the
+  PointCloud2 topics in the bag; you can select one or more topics to project.
+  The overlay projects the nearest clouds onto the image using TF and colors
+  each point by the selected property. See
+  [Point-cloud overlay](#point-cloud-overlay) below for the controls.
+- While the point-cloud overlay is enabled, **undistort is forced on** so that
+  points are projected onto the rectified image. `u` shows a status message
+  instead of toggling undistort until the overlay is turned off.
 - Pressing `i` on a non-image topic shows `(not an image topic)`; pressing it on
   an image topic in an unsupported terminal shows
   `(image preview not supported in this terminal)`.
+
+## Point-cloud overlay
+
+When the image preview is active, `p` toggles a PointCloud2 projection overlay.
+The overlay finds the nearest PointCloud2 message to the current image timestamp,
+transforms it into the camera frame using the bag's TF data, and projects points
+onto the image. Points are colored by the selected property using the current
+color scheme and alpha-blended on top of the frame.
+
+The first time the overlay is enabled in a session, bagwiz opens a checkbox
+list of every `sensor_msgs/msg/PointCloud2` topic in the bag. Use `↑/↓` (or
+`k`/`j`) to move the cursor, `Space` to check/uncheck a topic, and `Enter` to
+confirm. You can select any number of topics; their projected points are
+drawn together. Press `q` or `Esc` to cancel without changing the current
+selection. The selected topics are remembered for the rest of the walk session.
+
+| Key       | Action                                                                                                                 |
+| --------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `p`       | Toggle the point-cloud overlay on/off. When turning it on, undistort is also turned on.                                |
+| `t`       | Open the PointCloud2 topic picker again to change the selected topics.                                                 |
+| `f`       | Cycle the visualized property: `distance` → `x` → `y` → `z` → `intensity` (when the topic has intensity) → `distance`. |
+| `c`       | Cycle the color scheme: `jet` → `viridis` → `turbo` → `plasma` → `inferno` → `magma` → `rainbow` → `jet`.              |
+| `r`       | Toggle between automatic min/max range and a manual range prompt.                                                      |
+| `=` / `-` | Increase / decrease point size.                                                                                        |
+| `[` / `]` | Increase / decrease overlay alpha (transparency).                                                                      |
+
+Defaults on first enable are: property `distance`, scheme `jet`, range `auto`,
+point size `2`, alpha `1.0`. The status line at the bottom of the preview shows
+the current property, scheme, range mode, point size, and alpha.
+
+The overlay is applied to both the on-screen preview and the image saved by `s`.
+If no TF data is available, no CameraInfo was resolved, or the selected topic has
+no messages near the current frame, the status line reports the failure and the
+image is shown without the overlay.
 
 ## Layout
 
@@ -153,23 +196,30 @@ not been read into the cache yet (they get pulled in on demand).
 
 ## Keys
 
-| Key            | Action                                                                                                                                        |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `→` / `Space`  | Next message (wraps from last back to first).                                                                                                 |
-| `←` / `b`      | Previous message.                                                                                                                             |
-| `.`            | Jump forward to the next message at least one second after the current one.                                                                   |
-| `,`            | Jump backward to the previous message at least one second before the current one.                                                             |
-| `↑` / `k`      | Scroll body up one line.                                                                                                                      |
-| `↓` / `j`      | Scroll body down one line.                                                                                                                    |
-| `Home` / `H`   | Jump body scroll to the head.                                                                                                                 |
-| `End` / `T`    | Jump body scroll to the tail.                                                                                                                 |
-| `g`            | Jump to the first message.                                                                                                                    |
-| `G`            | Jump to the last message (forces a full-remaining scan).                                                                                      |
-| `s`            | Save as yaml - writes the current message body (prompts for path).                                                                            |
-| `a`            | Toggle full expansion of long primitive arrays (default off).                                                                                 |
-| `i`            | Toggle in-terminal image preview (image topics on a Kitty- or Sixel-capable terminal; hidden otherwise). See [Image preview](#image-preview). |
-| `u`            | Toggle undistortion in the image preview (when CameraInfo is available).                                                                      |
-| `q` / `Ctrl-C` | Quit.                                                                                                                                         |
+| Key            | Action                                                                                                                                                                  |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `→` / `Space`  | Next message (wraps from last back to first).                                                                                                                           |
+| `←` / `b`      | Previous message.                                                                                                                                                       |
+| `.`            | Jump forward to the next message at least one second after the current one.                                                                                             |
+| `,`            | Jump backward to the previous message at least one second before the current one.                                                                                       |
+| `↑` / `k`      | Scroll body up one line.                                                                                                                                                |
+| `↓` / `j`      | Scroll body down one line.                                                                                                                                              |
+| `Home` / `H`   | Jump body scroll to the head.                                                                                                                                           |
+| `End` / `T`    | Jump body scroll to the tail.                                                                                                                                           |
+| `g`            | Jump to the first message.                                                                                                                                              |
+| `G`            | Jump to the last message (forces a full-remaining scan).                                                                                                                |
+| `s`            | Save as yaml - writes the current message body (prompts for path). In the image preview, `s` saves the decoded image including any undistortion or point-cloud overlay. |
+| `a`            | Toggle full expansion of long primitive arrays (default off).                                                                                                           |
+| `i`            | Toggle in-terminal image preview (image topics on a Kitty- or Sixel-capable terminal; hidden otherwise). See [Image preview](#image-preview).                           |
+| `u`            | Toggle undistortion in the image preview (when CameraInfo is available). Disabled while the point-cloud overlay is active because the overlay forces undistort on.      |
+| `p`            | Toggle PointCloud2 projection overlay in the image preview. See [Point-cloud overlay](#point-cloud-overlay).                                                            |
+| `t`            | Open the PointCloud2 topic picker to select or change the overlay topics.                                                                                               |
+| `f`            | Cycle the point-cloud overlay property.                                                                                                                                 |
+| `c`            | Cycle the point-cloud overlay color scheme.                                                                                                                             |
+| `r`            | Toggle auto/manual value range for the overlay.                                                                                                                         |
+| `=` / `-`      | Increase / decrease overlay point size.                                                                                                                                 |
+| `[` / `]`      | Increase / decrease overlay alpha.                                                                                                                                      |
+| `q` / `Ctrl-C` | Quit.                                                                                                                                                                   |
 
 When the body is taller than the visible window, a `lines X-Y of N`
 indicator is shown above the key legend.

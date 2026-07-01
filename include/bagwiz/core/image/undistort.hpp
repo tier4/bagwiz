@@ -40,6 +40,11 @@ public:
   [[nodiscard]] std::span<const std::byte> remap(
     std::span<const std::byte> src, std::uint32_t src_step);
 
+  // Return the CameraInfo actually used for undistortion. This is the input
+  // CameraInfo scaled to the target image size, which is what callers need when
+  // projecting other data (e.g. point clouds) onto the undistorted image.
+  [[nodiscard]] CameraInfo effective_camera_info() const;
+
 private:
   class Impl;
   std::unique_ptr<Impl> impl_;

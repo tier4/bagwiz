@@ -206,6 +206,7 @@ add_library(bagwiz_core
   src/core/tf_message_wire.cpp
   src/core/tf_transform_format.cpp
   src/core/tf_value_extract.cpp
+  src/core/tf_buffer_loader.cpp
   src/core/tf_walk_timeline.cpp
   src/core/trajectory.cpp
   src/core/msg_convert/geo_pose_convert.cpp
@@ -220,6 +221,9 @@ add_library(bagwiz_core
   src/core/pointcloud/pointcloud2.cpp
   src/core/pointcloud/color_mapper.cpp
   src/core/pointcloud/projector.cpp
+  src/core/pointcloud/fetcher.cpp
+  src/core/pointcloud/overlay.cpp
+  src/core/pointcloud/projector_helpers.cpp
   src/core/slam/lidar_scan.cpp
   src/core/slam/imu_sample.cpp
   src/core/slam/gnss_sample.cpp

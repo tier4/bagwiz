@@ -99,6 +99,9 @@ KeyEvent classify_key(std::string_view bytes)
         return KeyEvent::kQuit;
       case ' ':
         return KeyEvent::kNext;
+      case '\r':
+      case '\n':
+        return KeyEvent::kConfirm;
       case 'b':
         return KeyEvent::kPrev;
       case 'g':
@@ -125,6 +128,25 @@ KeyEvent classify_key(std::string_view bytes)
         return KeyEvent::kTogglePreview;
       case 'u':
         return KeyEvent::kToggleUndistort;
+      case 'p':
+        return KeyEvent::kToggleProjectPcd;
+      case 't':
+        return KeyEvent::kSelectPcdTopic;
+      case 'f':
+        return KeyEvent::kCyclePcdProperty;
+      case 'c':
+        return KeyEvent::kCyclePcdScheme;
+      case 'r':
+        return KeyEvent::kTogglePcdRange;
+      case '=':
+      case '+':
+        return KeyEvent::kPcdPointSizeUp;
+      case '-':
+        return KeyEvent::kPcdPointSizeDown;
+      case ']':
+        return KeyEvent::kPcdAlphaUp;
+      case '[':
+        return KeyEvent::kPcdAlphaDown;
       default:
         return KeyEvent::kUnknown;
     }

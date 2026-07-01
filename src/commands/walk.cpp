@@ -16,7 +16,14 @@
 #include "bagwiz/core/image/undistort.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/message_formatter.hpp"
+#include "bagwiz/core/pointcloud/color_scheme.hpp"
+#include "bagwiz/core/pointcloud/fetcher.hpp"
+#include "bagwiz/core/pointcloud/overlay.hpp"
+#include "bagwiz/core/pointcloud/projector.hpp"
+#include "bagwiz/core/pointcloud/projector_helpers.hpp"
+#include "bagwiz/core/pointcloud/property.hpp"
 #include "bagwiz/core/terminal_input.hpp"
+#include "bagwiz/core/tf_buffer_loader.hpp"
 #include "bagwiz/core/tui/image/terminal_image_caps.hpp"
 #include "bagwiz/core/tui/image/terminal_image_renderer.hpp"
 #include "bagwiz/core/tui/layout.hpp"
@@ -24,6 +31,8 @@
 #include "bagwiz/core/tui/renderer.hpp"
 #include "bagwiz/core/tui/width.hpp"
 #include "bagwiz/io/bag_io.hpp"
+
+#include <tf2/buffer_core.hpp>
 
 #include <fmt/core.h>
 #include <fmt/ostream.h>
@@ -39,6 +48,7 @@
 #include <iostream>
 #include <istream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <ostream>
 #include <span>
@@ -241,6 +251,14 @@ public:
       BAGWIZ_LOG_ERROR(
         kLogger, "Topic '%s' is not present in %s", topic_.c_str(), input_path_.c_str());
       return 1;
+    }
+
+    constexpr const char * kPointCloudType = "sensor_msgs/msg/PointCloud2";
+    std::vector<std::string> pcd_topics;
+    for (const auto & t : reader->topics()) {
+      if (t.type == kPointCloudType) {
+        pcd_topics.push_back(t.name);
+      }
     }
 
     std::optional<std::string> camera_info_topic;
@@ -615,6 +633,347 @@ public:
 
     bool undistort_enabled = false;
 
+    struct PcdOverlayState
+    {
+      bool enabled = false;
+      std::vector<std::string> topics;
+      core::pointcloud::PointCloudProperty property =
+        core::pointcloud::PointCloudProperty::kDistance;
+      core::pointcloud::ColorScheme scheme = core::pointcloud::ColorScheme::kJet;
+      std::uint32_t point_size = 2;
+      float alpha = 1.0f;
+      bool auto_range = true;
+      double manual_min = 0.0;
+      double manual_max = 1.0;
+      double computed_min = 0.0;
+      double computed_max = 1.0;
+      bool has_intensity = false;
+    };
+    PcdOverlayState pcd;
+
+    std::optional<tf2::BufferCore> tf_buffer;
+    std::vector<core::pointcloud::PointCloudFetcher> pcd_fetchers;
+
+    auto property_name = [](core::pointcloud::PointCloudProperty prop) -> std::string_view {
+      switch (prop) {
+        case core::pointcloud::PointCloudProperty::kX:
+          return "x";
+        case core::pointcloud::PointCloudProperty::kY:
+          return "y";
+        case core::pointcloud::PointCloudProperty::kZ:
+          return "z";
+        case core::pointcloud::PointCloudProperty::kDistance:
+          return "distance";
+        case core::pointcloud::PointCloudProperty::kIntensity:
+          return "intensity";
+      }
+      return "?";
+    };
+
+    auto scheme_name = [](core::pointcloud::ColorScheme s) -> std::string_view {
+      switch (s) {
+        case core::pointcloud::ColorScheme::kViridis:
+          return "viridis";
+        case core::pointcloud::ColorScheme::kTurbo:
+          return "turbo";
+        case core::pointcloud::ColorScheme::kJet:
+          return "jet";
+        case core::pointcloud::ColorScheme::kPlasma:
+          return "plasma";
+        case core::pointcloud::ColorScheme::kInferno:
+          return "inferno";
+        case core::pointcloud::ColorScheme::kMagma:
+          return "magma";
+        case core::pointcloud::ColorScheme::kRainbow:
+          return "rainbow";
+      }
+      return "?";
+    };
+
+    auto prompt_for_pcd_topics = [&]() -> std::optional<std::vector<std::string>> {
+      if (pcd_topics.empty()) {
+        status = "no PointCloud2 topics in bag";
+        return std::nullopt;
+      }
+
+      std::vector<bool> checked(pcd_topics.size(), false);
+      std::size_t cursor = 0;
+      bool done = false;
+      bool cancelled = false;
+
+      while (!done) {
+        core::tui::image::clear_image(std::cout, image_caps.backend);
+        std::cout << "\x1B[2J";
+        const auto term = core::tui::query_terminal_size();
+        core::tui::draw_line(
+          std::cout, 1,
+          "  Select PointCloud2 topics (Space toggle, Enter confirm, Esc/q cancel):", term.cols);
+        for (std::size_t i = 0; i < pcd_topics.size(); ++i) {
+          const std::string marker = (i == cursor) ? ">" : " ";
+          const std::string box = checked[i] ? "[x]" : "[ ]";
+          core::tui::draw_line(
+            std::cout, static_cast<int>(i) + 3,
+            fmt::format("  {} {} {}", marker, box, pcd_topics[i]), term.cols);
+        }
+        std::cout.flush();
+
+        switch (core::read_key_event()) {
+          case core::KeyEvent::kScrollUp:
+            if (cursor > 0) {
+              --cursor;
+            }
+            break;
+          case core::KeyEvent::kScrollDown:
+            if (cursor + 1 < pcd_topics.size()) {
+              ++cursor;
+            }
+            break;
+          case core::KeyEvent::kFirst:
+            cursor = 0;
+            break;
+          case core::KeyEvent::kLast:
+            cursor = pcd_topics.size() - 1;
+            break;
+          case core::KeyEvent::kNext:
+            checked[cursor] = !checked[cursor];
+            break;
+          case core::KeyEvent::kConfirm:
+            done = true;
+            break;
+          case core::KeyEvent::kQuit:
+            done = true;
+            cancelled = true;
+            break;
+          case core::KeyEvent::kResize:
+          default:
+            break;
+        }
+      }
+
+      if (cancelled) {
+        status = "(topic selection cancelled)";
+        return std::nullopt;
+      }
+
+      std::vector<std::string> selected;
+      for (std::size_t i = 0; i < pcd_topics.size(); ++i) {
+        if (checked[i]) {
+          selected.push_back(pcd_topics[i]);
+        }
+      }
+      return selected;
+    };
+
+    auto initialize_pcd_overlay = [&](const std::vector<std::string> & topics) -> bool {
+      for (const auto & topic : topics) {
+        bool valid = false;
+        for (const auto & t : reader->topics()) {
+          if (t.name == topic && t.type == kPointCloudType) {
+            valid = true;
+            break;
+          }
+        }
+        if (!valid) {
+          status = fmt::format("not a PointCloud2 topic: {}", topic);
+          return false;
+        }
+      }
+
+      if (!tf_buffer.has_value()) {
+        tf_buffer.emplace();
+        if (const auto err = core::load_tf_buffer(input_path_, *tf_buffer); err.has_value()) {
+          status = *err;
+          tf_buffer.reset();
+          return false;
+        }
+      }
+
+      double running_min = std::numeric_limits<double>::infinity();
+      double running_max = -std::numeric_limits<double>::infinity();
+      bool any_intensity = false;
+      std::vector<std::string> initialized_topics;
+      std::vector<core::pointcloud::PointCloudFetcher> new_fetchers;
+
+      for (const auto & topic : topics) {
+        std::string error;
+        auto idx = core::pointcloud::build_point_cloud_index(
+          input_path_, topic, pcd.property, std::nullopt, std::nullopt, error);
+        if (!idx.has_value()) {
+          status = error;
+          return false;
+        }
+        running_min = std::min(running_min, idx->property_min);
+        running_max = std::max(running_max, idx->property_max);
+        any_intensity = any_intensity || idx->has_intensity;
+        initialized_topics.push_back(topic);
+        new_fetchers.emplace_back(input_path_, topic, std::move(idx->entries));
+      }
+
+      pcd.topics = std::move(initialized_topics);
+      pcd.has_intensity = any_intensity;
+      pcd.computed_min = running_min;
+      pcd.computed_max = running_max;
+      pcd_fetchers = std::move(new_fetchers);
+      return true;
+    };
+
+    auto maybe_overlay_pcd = [&](core::image::PackedRaster * raster) {
+      if (raster == nullptr || !pcd.enabled || pcd.topics.empty() || pcd_fetchers.empty()) {
+        return;
+      }
+      if (!camera_info.has_value()) {
+        status = "pcd projection requires camera_info";
+        return;
+      }
+
+      const auto & img = *raster;
+      const auto * helper = ensure_undistort_helper(img.width, img.height);
+      if (helper == nullptr) {
+        status = "pcd projection requires camera_info";
+        return;
+      }
+      const auto effective_ci = helper->effective_camera_info();
+
+      std::vector<core::pointcloud::ProjectedPoint> all_points;
+      std::string last_error;
+      for (auto & fetcher : pcd_fetchers) {
+        std::string error;
+        const auto * cloud = fetcher.fetch(cache[index].timestamp_ns, error);
+        if (cloud == nullptr) {
+          last_error = std::move(error);
+          continue;
+        }
+
+        const auto projected = core::pointcloud::project_cloud_for_frame(
+          *cloud, effective_ci, *tf_buffer, img.width, img.height, pcd.property,
+          /*use_rectified=*/true, cache[index].timestamp_ns);
+        if (!projected.ok()) {
+          last_error = std::move(projected.error);
+          continue;
+        }
+        all_points.insert(all_points.end(), projected.points.begin(), projected.points.end());
+      }
+
+      if (all_points.empty()) {
+        if (!last_error.empty()) {
+          status = std::move(last_error);
+        }
+        return;
+      }
+
+      const double vmin = pcd.auto_range ? pcd.computed_min : pcd.manual_min;
+      const double vmax = pcd.auto_range ? pcd.computed_max : pcd.manual_max;
+      const auto err = core::pointcloud::overlay_projected_points(
+        img, all_points, vmin, vmax, pcd.scheme, pcd.point_size, pcd.alpha, *raster);
+      if (!err.empty()) {
+        status = err;
+      } else {
+        status =
+          fmt::format("pcd: {} points from {} topic(s)", all_points.size(), pcd_fetchers.size());
+      }
+    };
+
+    auto cycle_pcd_property = [&]() {
+      auto next = [&](core::pointcloud::PointCloudProperty cur) {
+        switch (cur) {
+          case core::pointcloud::PointCloudProperty::kX:
+            return core::pointcloud::PointCloudProperty::kY;
+          case core::pointcloud::PointCloudProperty::kY:
+            return core::pointcloud::PointCloudProperty::kZ;
+          case core::pointcloud::PointCloudProperty::kZ:
+            if (pcd.has_intensity) {
+              return core::pointcloud::PointCloudProperty::kIntensity;
+            }
+            return core::pointcloud::PointCloudProperty::kDistance;
+          case core::pointcloud::PointCloudProperty::kDistance:
+            return core::pointcloud::PointCloudProperty::kX;
+          case core::pointcloud::PointCloudProperty::kIntensity:
+            return core::pointcloud::PointCloudProperty::kDistance;
+        }
+        return core::pointcloud::PointCloudProperty::kDistance;
+      };
+      pcd.property = next(pcd.property);
+      if (pcd.auto_range && !pcd_fetchers.empty()) {
+        double running_min = std::numeric_limits<double>::infinity();
+        double running_max = -std::numeric_limits<double>::infinity();
+        std::vector<core::pointcloud::PointCloudFetcher> new_fetchers;
+        bool ok = true;
+        for (const auto & topic : pcd.topics) {
+          std::string error;
+          auto idx = core::pointcloud::build_point_cloud_index(
+            input_path_, topic, pcd.property, std::nullopt, std::nullopt, error);
+          if (!idx.has_value()) {
+            status = error;
+            ok = false;
+            break;
+          }
+          running_min = std::min(running_min, idx->property_min);
+          running_max = std::max(running_max, idx->property_max);
+          new_fetchers.emplace_back(input_path_, topic, std::move(idx->entries));
+        }
+        if (ok) {
+          pcd.computed_min = running_min;
+          pcd.computed_max = running_max;
+          pcd_fetchers = std::move(new_fetchers);
+        }
+      }
+    };
+
+    auto cycle_pcd_scheme = [&]() {
+      switch (pcd.scheme) {
+        case core::pointcloud::ColorScheme::kJet:
+          pcd.scheme = core::pointcloud::ColorScheme::kViridis;
+          break;
+        case core::pointcloud::ColorScheme::kViridis:
+          pcd.scheme = core::pointcloud::ColorScheme::kTurbo;
+          break;
+        case core::pointcloud::ColorScheme::kTurbo:
+          pcd.scheme = core::pointcloud::ColorScheme::kPlasma;
+          break;
+        case core::pointcloud::ColorScheme::kPlasma:
+          pcd.scheme = core::pointcloud::ColorScheme::kInferno;
+          break;
+        case core::pointcloud::ColorScheme::kInferno:
+          pcd.scheme = core::pointcloud::ColorScheme::kMagma;
+          break;
+        case core::pointcloud::ColorScheme::kMagma:
+          pcd.scheme = core::pointcloud::ColorScheme::kRainbow;
+          break;
+        case core::pointcloud::ColorScheme::kRainbow:
+          pcd.scheme = core::pointcloud::ColorScheme::kJet;
+          break;
+      }
+    };
+
+    auto prompt_for_range = [&]() {
+      if (pcd.auto_range) {
+        pcd.auto_range = false;
+        core::tui::image::clear_image(std::cout, image_caps.backend);
+        std::cout << "\x1B[2J";
+        pager.with_line_input([&](std::istream & in, std::ostream & out) {
+          out << "Manual min: ";
+          out.flush();
+          std::string line;
+          if (std::getline(in, line)) {
+            try {
+              pcd.manual_min = std::stod(line);
+            } catch (...) {
+            }
+          }
+          out << "Manual max: ";
+          out.flush();
+          if (std::getline(in, line)) {
+            try {
+              pcd.manual_max = std::stod(line);
+            } catch (...) {
+            }
+          }
+        });
+      } else {
+        pcd.auto_range = true;
+      }
+    };
+
     // Paint one preview frame: a two-line caption, the decoded image centred in
     // the region between caption and key hint, and the key hint on the last row.
     // Graphics escapes bypass the pager (they have no display width), so this
@@ -643,6 +1002,9 @@ public:
       if (undistort_enabled && pr.ok()) {
         maybe_undistort(&*pr.raster);
       }
+      if (pcd.enabled && pr.ok()) {
+        maybe_overlay_pcd(&*pr.raster);
+      }
 
       core::tui::draw_line(out, 1, fmt::format("  {}  {}", topic_name, type_name), cols);
       std::string info;
@@ -661,6 +1023,13 @@ public:
         info += fmt::format("   {}", status);
       }
       info += fmt::format("   undistort: {}", undistort_enabled ? "on" : "off");
+      if (!pcd.topics.empty()) {
+        info += fmt::format(
+          "   pcd: {}  {}  {}  {}  sz:{}  a:{:.1f}", pcd.enabled ? "on" : "off",
+          property_name(pcd.property),
+          pcd.auto_range ? "auto" : fmt::format("{:.2f}-{:.2f}", pcd.manual_min, pcd.manual_max),
+          scheme_name(pcd.scheme), pcd.point_size, pcd.alpha);
+      }
       core::tui::draw_line(out, 2, info, cols);
 
       // Wrap the key legend the way the YAML footer (build_frame) does, so a
@@ -670,7 +1039,7 @@ public:
       // derives its body height from the wrapped footer.
       const std::vector<std::string> legend_lines = core::tui::wrap_to_width(
         "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [g] first   [G] last   [s] save   "
-        "[u] undistort   [i] back   [q] quit",
+        "[u] undistort   [p] project pcd   [t] pcd topics   [i] back   [q] quit",
         cols);
       const int legend_top = std::max(1, rows - static_cast<int>(legend_lines.size()) + 1);
 
@@ -716,6 +1085,9 @@ public:
       }
       if (undistort_enabled) {
         maybe_undistort(&*pr.raster);
+      }
+      if (pcd.enabled) {
+        maybe_overlay_pcd(&*pr.raster);
       }
       const auto encoded = core::image::encode_png(*pr.raster);
       if (!encoded.ok()) {
@@ -833,9 +1205,74 @@ public:
             if (!camera_info.has_value()) {
               status = camera_info_error.empty() ? "undistort: no camera_info"
                                                  : "undistort: " + camera_info_error;
+            } else if (pcd.enabled) {
+              status = "undistort is forced on while pcd overlay is active";
             } else {
               undistort_enabled = !undistort_enabled;
             }
+            needs_render = true;
+            break;
+          case core::KeyEvent::kToggleProjectPcd:
+            if (!camera_info.has_value()) {
+              status =
+                camera_info_error.empty() ? "pcd: no camera_info" : "pcd: " + camera_info_error;
+            } else if (pcd.topics.empty()) {
+              if (auto topics = prompt_for_pcd_topics(); topics.has_value() && !topics->empty()) {
+                if (initialize_pcd_overlay(*topics)) {
+                  pcd.enabled = true;
+                  undistort_enabled = true;
+                }
+              }
+            } else {
+              pcd.enabled = !pcd.enabled;
+              if (pcd.enabled) {
+                undistort_enabled = true;
+              }
+            }
+            needs_render = true;
+            break;
+          case core::KeyEvent::kSelectPcdTopic:
+            if (camera_info.has_value()) {
+              if (auto topics = prompt_for_pcd_topics(); topics.has_value()) {
+                if (topics->empty()) {
+                  pcd.enabled = false;
+                } else if (initialize_pcd_overlay(*topics)) {
+                  pcd.enabled = true;
+                  undistort_enabled = true;
+                }
+              }
+            } else {
+              status =
+                camera_info_error.empty() ? "pcd: no camera_info" : "pcd: " + camera_info_error;
+            }
+            needs_render = true;
+            break;
+          case core::KeyEvent::kCyclePcdProperty:
+            cycle_pcd_property();
+            needs_render = true;
+            break;
+          case core::KeyEvent::kCyclePcdScheme:
+            cycle_pcd_scheme();
+            needs_render = true;
+            break;
+          case core::KeyEvent::kTogglePcdRange:
+            prompt_for_range();
+            needs_render = true;
+            break;
+          case core::KeyEvent::kPcdPointSizeUp:
+            pcd.point_size = std::min(pcd.point_size + 1, 64U);
+            needs_render = true;
+            break;
+          case core::KeyEvent::kPcdPointSizeDown:
+            pcd.point_size = std::max(pcd.point_size - 1, 1U);
+            needs_render = true;
+            break;
+          case core::KeyEvent::kPcdAlphaUp:
+            pcd.alpha = std::min(pcd.alpha + 0.1f, 1.0f);
+            needs_render = true;
+            break;
+          case core::KeyEvent::kPcdAlphaDown:
+            pcd.alpha = std::max(pcd.alpha - 0.1f, 0.0f);
             needs_render = true;
             break;
           case core::KeyEvent::kTogglePreview:

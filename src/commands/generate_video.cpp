@@ -15,9 +15,12 @@
 #include "bagwiz/core/image/undistort.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/output_path.hpp"
-#include "bagwiz/core/pointcloud/color_mapper.hpp"
+#include "bagwiz/core/pointcloud/fetcher.hpp"
+#include "bagwiz/core/pointcloud/overlay.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
 #include "bagwiz/core/pointcloud/projector.hpp"
+#include "bagwiz/core/pointcloud/projector_helpers.hpp"
+#include "bagwiz/core/tf_buffer_loader.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/core/video/frame_rate.hpp"
 #include "bagwiz/core/video/video_encoder.hpp"
@@ -112,88 +115,8 @@ struct TopicSpan
   std::uint64_t count = 0;
 };
 
-// Per-message timestamp entry for the point-cloud topic, gathered during Pass 1.
-struct PointCloudIndexEntry
-{
-  std::int64_t timestamp_ns = 0;
-};
-
-// Timestamps of every point-cloud message plus the global field min/max used for
-// color normalization. When the user supplies --min/--max the min/max values are
-// taken from the arguments and only the timestamps are scanned.
-struct PointCloudSpan
-{
-  std::vector<PointCloudIndexEntry> entries;
-  double property_min = 0.0;
-  double property_max = 0.0;
-};
-
-// Introduced in Task 6; consumed by the point-cloud overlay path in Task 7.
-// Load /tf and /tf_static into a BufferCore. Returns an error string on failure.
-std::optional<std::string> load_tf_buffer(
-  const std::filesystem::path & input, tf2::BufferCore & buffer)
-{
-  constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(input);
-  } catch (const std::exception & e) {
-    return "failed to open '" + input.string() + "': " + e.what();
-  }
-
-  std::vector<const io::TopicInfo *> tf_topics;
-  for (const auto & t : reader->topics()) {
-    if (t.type == kTfMessageType) {
-      tf_topics.push_back(&t);
-    }
-  }
-  if (tf_topics.empty()) {
-    return "no tf2_msgs/msg/TFMessage topics found; cannot resolve point-cloud transform";
-  }
-
-  io::ReadFilter filter;
-  for (const auto * t : tf_topics) {
-    filter.topics.push_back(t->name);
-  }
-  reader->set_filter(filter);
-
-  std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> decoders;
-  for (const auto * t : tf_topics) {
-    auto open = core::decoder::open_decoder(*t);
-    if (!open.ok()) {
-      return "could not open decoder for TF topic '" + t->name + "': " + open.error;
-    }
-    decoders.emplace(t->name, std::move(open.decoder));
-  }
-
-  const auto is_static_tf_topic = [](std::string_view name) -> bool {
-    return name.size() >= kTfStaticSuffix.size() &&
-           name.compare(
-             name.size() - kTfStaticSuffix.size(), kTfStaticSuffix.size(), kTfStaticSuffix) == 0;
-  };
-
-  io::RawMessage raw;
-  try {
-    while (reader->next(raw)) {
-      auto it = decoders.find(raw.topic->name);
-      if (it == decoders.end()) {
-        continue;
-      }
-      const auto decoded = it->second->decode(raw.payload);
-      if (!decoded.ok()) {
-        return "failed to decode TF message on '" + raw.topic->name + "': " + decoded.error;
-      }
-      const auto transforms = core::extract_tf_message(*decoded.value);
-      const bool is_static = is_static_tf_topic(raw.topic->name);
-      for (const auto & t : transforms) {
-        buffer.setTransform(t, "bagwiz", is_static);
-      }
-    }
-  } catch (const std::exception & e) {
-    return "error reading TF topics: " + std::string(e.what());
-  }
-  return std::nullopt;
-}
+using PointCloudIndexEntry = core::pointcloud::PointCloudIndexEntry;
+using PointCloudSpan = core::pointcloud::PointCloudIndex;
 
 // Pass 1: stream the topic's messages reading only their timestamps (no
 // payload decode) to learn the count and time span for the frame-rate estimate.
@@ -226,71 +149,7 @@ int scan_topic_span(const std::filesystem::path & input, const std::string & top
   return 0;
 }
 
-const core::pointcloud::PointField * find_point_field(
-  const core::pointcloud::PointCloud2 & cloud, const std::string & name)
-{
-  for (const auto & f : cloud.fields) {
-    if (f.name == name) {
-      return &f;
-    }
-  }
-  return nullptr;
-}
-
-float read_point_field(
-  const core::pointcloud::PointCloud2 & cloud, std::uint32_t point_idx, std::uint32_t offset,
-  core::pointcloud::PointFieldType type)
-{
-  const std::byte * base = cloud.data.data() + point_idx * cloud.point_step + offset;
-  switch (type) {
-    case core::pointcloud::PointFieldType::kFloat32:
-      return *reinterpret_cast<const float *>(base);
-    case core::pointcloud::PointFieldType::kFloat64:
-      return static_cast<float>(*reinterpret_cast<const double *>(base));
-    case core::pointcloud::PointFieldType::kInt8:
-      return static_cast<float>(*reinterpret_cast<const std::int8_t *>(base));
-    case core::pointcloud::PointFieldType::kUint8:
-      return static_cast<float>(*reinterpret_cast<const std::uint8_t *>(base));
-    case core::pointcloud::PointFieldType::kInt16:
-      return static_cast<float>(*reinterpret_cast<const std::int16_t *>(base));
-    case core::pointcloud::PointFieldType::kUint16:
-      return static_cast<float>(*reinterpret_cast<const std::uint16_t *>(base));
-    case core::pointcloud::PointFieldType::kInt32:
-      return static_cast<float>(*reinterpret_cast<const std::int32_t *>(base));
-    case core::pointcloud::PointFieldType::kUint32:
-      return static_cast<float>(*reinterpret_cast<const std::uint32_t *>(base));
-  }
-  return 0.0f;
-}
-
-// Compute the scalar value that project_pointcloud() would store for the given
-// property so Pass 1's global min/max matches Pass 2's per-point values.
-float compute_property_value(
-  const core::pointcloud::PointCloud2 & cloud, std::uint32_t point_idx,
-  const core::pointcloud::PointField * field_x, const core::pointcloud::PointField * field_y,
-  const core::pointcloud::PointField * field_z,
-  const core::pointcloud::PointField * field_intensity, std::uint32_t off_x, std::uint32_t off_y,
-  std::uint32_t off_z, std::optional<std::uint32_t> off_intensity,
-  core::pointcloud::PointCloudProperty property)
-{
-  const float px = read_point_field(cloud, point_idx, off_x, field_x->datatype);
-  const float py = read_point_field(cloud, point_idx, off_y, field_y->datatype);
-  const float pz = read_point_field(cloud, point_idx, off_z, field_z->datatype);
-
-  switch (property) {
-    case core::pointcloud::PointCloudProperty::kX:
-      return px;
-    case core::pointcloud::PointCloudProperty::kY:
-      return py;
-    case core::pointcloud::PointCloudProperty::kZ:
-      return pz;
-    case core::pointcloud::PointCloudProperty::kDistance:
-      return std::sqrt(px * px + py * py + pz * pz);
-    case core::pointcloud::PointCloudProperty::kIntensity:
-      return read_point_field(cloud, point_idx, *off_intensity, field_intensity->datatype);
-  }
-  return 0.0f;
-}
+using PointCloudFetcher = core::pointcloud::PointCloudFetcher;
 
 // Pass 1: scan the point-cloud topic, record every timestamp, and compute the
 // global min/max of the selected property unless the user supplied --min/--max.
@@ -299,196 +158,16 @@ int scan_pointcloud_span(
   core::pointcloud::PointCloudProperty property, const std::optional<double> & manual_min,
   const std::optional<double> & manual_max, PointCloudSpan & out)
 {
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(input);
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "failed to open '%s': %s", input.string().c_str(), e.what());
+  std::string error;
+  auto idx = core::pointcloud::build_point_cloud_index(
+    input, topic, property, manual_min, manual_max, error);
+  if (!idx.has_value()) {
+    BAGWIZ_LOG_ERROR(kLogger, "%s", error.c_str());
     return 1;
   }
-  io::ReadFilter filter;
-  filter.topics.push_back(topic);
-  reader->set_filter(filter);
-
-  const bool need_auto_min = !manual_min.has_value();
-  const bool need_auto_max = !manual_max.has_value();
-  const bool need_parse = need_auto_min || need_auto_max;
-
-  double running_min = std::numeric_limits<double>::infinity();
-  double running_max = -std::numeric_limits<double>::infinity();
-
-  const bool need_intensity = (property == core::pointcloud::PointCloudProperty::kIntensity);
-
-  io::RawMessage raw;
-  try {
-    while (reader->next(raw)) {
-      PointCloudIndexEntry entry;
-      entry.timestamp_ns = raw.timestamp_ns;
-      out.entries.push_back(entry);
-
-      if (!need_parse) {
-        continue;
-      }
-
-      const auto parsed = core::pointcloud::parse_pointcloud2(raw.payload);
-      if (!parsed.ok()) {
-        BAGWIZ_LOG_ERROR(kLogger, "failed to parse point cloud: %s", parsed.error.c_str());
-        return 1;
-      }
-      const auto & cloud = *parsed.cloud;
-
-      const auto off_x = cloud.field_offset("x");
-      const auto off_y = cloud.field_offset("y");
-      const auto off_z = cloud.field_offset("z");
-      if (!off_x || !off_y || !off_z) {
-        BAGWIZ_LOG_ERROR(kLogger, "point cloud is missing required x/y/z fields");
-        return 1;
-      }
-      const auto * field_x = find_point_field(cloud, "x");
-      const auto * field_y = find_point_field(cloud, "y");
-      const auto * field_z = find_point_field(cloud, "z");
-
-      std::optional<std::uint32_t> off_intensity;
-      const core::pointcloud::PointField * field_intensity = nullptr;
-      if (need_intensity) {
-        off_intensity = cloud.field_offset("intensity");
-        if (!off_intensity) {
-          BAGWIZ_LOG_ERROR(kLogger, "point cloud has no intensity field");
-          return 1;
-        }
-        field_intensity = find_point_field(cloud, "intensity");
-      }
-
-      const std::uint32_t n = cloud.height * cloud.width;
-      for (std::uint32_t i = 0; i < n; ++i) {
-        const float value = compute_property_value(
-          cloud, i, field_x, field_y, field_z, field_intensity, *off_x, *off_y, *off_z,
-          off_intensity, property);
-        running_min = std::min(running_min, static_cast<double>(value));
-        running_max = std::max(running_max, static_cast<double>(value));
-      }
-    }
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "error reading point-cloud topic '%s': %s", topic.c_str(), e.what());
-    return 1;
-  }
-
-  if (out.entries.empty()) {
-    BAGWIZ_LOG_ERROR(kLogger, "point-cloud topic '%s' has no messages", topic.c_str());
-    return 1;
-  }
-
-  out.property_min = need_auto_min ? running_min : *manual_min;
-  out.property_max = need_auto_max ? running_max : *manual_max;
+  out = std::move(*idx);
   return 0;
 }
-
-// Caches the most recently fetched point cloud so sequential image frames that
-// map to the same cloud do not reopen the bag. Each fetch opens a fresh reader
-// filtered tightly around the target timestamp.
-class PointCloudFetcher
-{
-public:
-  PointCloudFetcher(
-    const std::filesystem::path & input, std::string topic,
-    std::vector<PointCloudIndexEntry> entries)
-  : input_(input), topic_(std::move(topic)), entries_(std::move(entries))
-  {
-  }
-
-  // Returns the point cloud whose timestamp is closest to target_ns. The
-  // returned pointer is valid until the next fetch() call or destruction.
-  const core::pointcloud::PointCloud2 * fetch(std::int64_t target_ns, std::string & error)
-  {
-    if (entries_.empty()) {
-      error = "no point-cloud messages available";
-      return nullptr;
-    }
-
-    const std::size_t idx = find_nearest_index(target_ns);
-    const std::int64_t target_ts = entries_[idx].timestamp_ns;
-
-    if (cached_cloud_.has_value() && cached_timestamp_ns_ == target_ts) {
-      return &*cached_cloud_;
-    }
-
-    auto cloud = load_at(target_ts, error);
-    if (!cloud.has_value()) {
-      return nullptr;
-    }
-    cached_cloud_ = std::move(*cloud);
-    cached_timestamp_ns_ = target_ts;
-    return &*cached_cloud_;
-  }
-
-private:
-  std::size_t find_nearest_index(std::int64_t target_ns) const
-  {
-    auto it = std::lower_bound(
-      entries_.begin(), entries_.end(), target_ns,
-      [](const PointCloudIndexEntry & e, std::int64_t ns) { return e.timestamp_ns < ns; });
-
-    if (it == entries_.begin()) {
-      return 0;
-    }
-    if (it == entries_.end()) {
-      return entries_.size() - 1;
-    }
-
-    const auto prev = it - 1;
-    const std::int64_t prev_delta = target_ns - prev->timestamp_ns;
-    const std::int64_t next_delta = it->timestamp_ns - target_ns;
-    if (prev_delta <= next_delta) {
-      return static_cast<std::size_t>(prev - entries_.begin());
-    }
-    return static_cast<std::size_t>(it - entries_.begin());
-  }
-
-  std::optional<core::pointcloud::PointCloud2> load_at(std::int64_t ts, std::string & error)
-  {
-    std::unique_ptr<io::BagReader> reader;
-    try {
-      reader = io::open_read(input_);
-    } catch (const std::exception & e) {
-      error = "failed to open '" + input_.string() + "': " + e.what();
-      return std::nullopt;
-    }
-
-    io::ReadFilter filter;
-    filter.topics.push_back(topic_);
-    // Tight bracket around the exact timestamp so MCAP/SQLite can skip to the
-    // right chunk while still capturing the message.
-    filter.start_ns = ts - 1;
-    filter.end_ns = ts + 1;
-    reader->set_filter(filter);
-
-    io::RawMessage raw;
-    try {
-      while (reader->next(raw)) {
-        if (raw.timestamp_ns == ts) {
-          const auto parsed = core::pointcloud::parse_pointcloud2(raw.payload);
-          if (!parsed.ok()) {
-            error = parsed.error;
-            return std::nullopt;
-          }
-          return std::move(*parsed.cloud);
-        }
-      }
-    } catch (const std::exception & e) {
-      error = "error reading point-cloud topic '" + topic_ + "': " + e.what();
-      return std::nullopt;
-    }
-
-    error = "point-cloud message at timestamp " + std::to_string(ts) + " not found";
-    return std::nullopt;
-  }
-
-  const std::filesystem::path input_;
-  const std::string topic_;
-  const std::vector<PointCloudIndexEntry> entries_;
-  std::optional<core::pointcloud::PointCloud2> cached_cloud_;
-  std::int64_t cached_timestamp_ns_ = 0;
-};
 
 // Result of point-cloud transform/projection work. Kept separate from
 // ProjectionResult so callers can return an error string without throwing.
@@ -499,42 +178,6 @@ struct ProjectionWorkResult
 
   [[nodiscard]] bool ok() const noexcept { return error.empty(); }
 };
-
-// Transform the cloud into the camera frame and project it onto the image.
-// This helper is shared by the synchronous and the threaded overlay paths.
-// `use_rectified` should be true when the target image has been undistorted, so
-// the projection aligns with the rectified image using `camera_info.p`.
-ProjectionWorkResult project_cloud_for_frame(
-  const core::pointcloud::PointCloud2 & cloud, const core::image::CameraInfo & camera_info,
-  tf2::BufferCore & tf_buffer, std::uint32_t image_width, std::uint32_t image_height,
-  core::pointcloud::PointCloudProperty property, bool use_rectified)
-{
-  const std::string & image_frame = camera_info.frame_id;
-  const std::string & cloud_frame = cloud.frame_id;
-  geometry_msgs::msg::TransformStamped tf;
-  try {
-    tf = tf_buffer.lookupTransform(image_frame, cloud_frame, tf2::TimePointZero);
-  } catch (const tf2::TransformException & e) {
-    return {
-      {}, std::string("cannot transform ") + cloud_frame + " -> " + image_frame + ": " + e.what()};
-  }
-
-  std::array<double, 16> transform{};
-  tf2::Quaternion q(
-    tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z,
-    tf.transform.rotation.w);
-  tf2::Matrix3x3(q).getOpenGLSubMatrix(transform.data());
-  transform[12] = tf.transform.translation.x;
-  transform[13] = tf.transform.translation.y;
-  transform[14] = tf.transform.translation.z;
-
-  const auto projected = core::pointcloud::project_pointcloud(
-    cloud, camera_info, transform, image_width, image_height, property, use_rectified);
-  if (!projected.ok()) {
-    return {{}, std::move(projected.error)};
-  }
-  return {std::move(projected.points), {}};
-}
 
 // Fetch, parse, transform, and project the point clouds nearest to `target_ns`
 // for every listed topic. Each call opens its own BagReader(s) so the work can
@@ -556,7 +199,7 @@ ProjectionWorkResult run_projection_work(
       if (cloud == nullptr) {
         return {{}, std::move(error)};
       }
-      const auto projected = project_cloud_for_frame(
+      const auto projected = core::pointcloud::project_cloud_for_frame(
         *cloud, camera_info, tf_buffer, image_width, image_height, property, use_rectified);
       if (!projected.ok()) {
         return {{}, std::move(projected.error)};
@@ -568,61 +211,6 @@ ProjectionWorkResult run_projection_work(
   } catch (const std::exception & e) {
     return {{}, std::string("point-cloud projection failed: ") + e.what()};
   }
-}
-
-// Draw projected points on top of a decoded frame. `step` is the source row
-// stride in bytes. The returned cv::Mat owns the drawn buffer.
-cv::Mat overlay_points(
-  std::span<const std::byte> image_data, std::uint32_t width, std::uint32_t height,
-  std::uint32_t step, const std::vector<core::pointcloud::ProjectedPoint> & projected,
-  double property_min, double property_max, core::pointcloud::ColorScheme scheme,
-  std::uint32_t point_size, float alpha)
-{
-  cv::Mat input(
-    static_cast<int>(height), static_cast<int>(width), CV_8UC3,
-    const_cast<std::byte *>(image_data.data()), step);
-  cv::Mat canvas = input.clone();
-
-  core::pointcloud::ColorMapper mapper(scheme);
-  std::vector projected_sorted(projected.begin(), projected.end());
-  std::sort(projected_sorted.begin(), projected_sorted.end(), [](const auto & a, const auto & b) {
-    return a.depth < b.depth;
-  });
-
-  const int radius = static_cast<int>(point_size) / 2;
-  const int width_i = static_cast<int>(width);
-  const int height_i = static_cast<int>(height);
-
-  auto in_bounds = [width_i, height_i, radius](const core::pointcloud::ProjectedPoint & p) -> bool {
-    return p.u >= -radius && p.u < width_i + radius && p.v >= -radius && p.v < height_i + radius;
-  };
-
-  if (alpha >= 0.999f) {
-    for (const auto & p : projected_sorted) {
-      if (!in_bounds(p)) {
-        continue;
-      }
-      const auto color = mapper.map(p.value, property_min, property_max);
-      const cv::Scalar bgr(color[0], color[1], color[2]);
-      cv::circle(canvas, {p.u, p.v}, radius, bgr, cv::FILLED);
-    }
-  } else {
-    // Draw every point onto a single transparent overlay and blend it once.
-    // Per-point copies of a full HD/4K frame are too expensive and risk memory pressure.
-    cv::Mat overlay(height, width, CV_8UC3, cv::Scalar{0, 0, 0});
-    for (const auto & p : projected_sorted) {
-      if (!in_bounds(p)) {
-        continue;
-      }
-      const auto color = mapper.map(p.value, property_min, property_max);
-      const cv::Scalar bgr(color[0], color[1], color[2]);
-      cv::circle(overlay, {p.u, p.v}, radius, bgr, cv::FILLED);
-    }
-    cv::Mat blended;
-    cv::addWeighted(canvas, 1.0 - alpha, overlay, alpha, 0.0, blended);
-    return blended;
-  }
-  return canvas;
 }
 
 }  // namespace
@@ -827,7 +415,7 @@ int run_generate_video(const GenerateVideoArgs & args)
   std::optional<tf2::BufferCore> tf_buffer;
   if (!args.pointcloud_topics.empty()) {
     tf_buffer.emplace();
-    if (const auto err = load_tf_buffer(args.input_path, *tf_buffer); err.has_value()) {
+    if (const auto err = core::load_tf_buffer(args.input_path, *tf_buffer); err.has_value()) {
       BAGWIZ_LOG_ERROR(kLogger, "%s", err->c_str());
       return 1;
     }
@@ -974,14 +562,31 @@ int run_generate_video(const GenerateVideoArgs & args)
       fstep = enc_w * 3U;
     }
 
+    core::image::PackedRaster overlay_output;
     if (projected != nullptr) {
-      cv::Mat overlay_canvas = overlay_points(
-        fdata, frame.width, frame.height, fstep, *projected, global_property_min,
-        global_property_max, args.colorscheme, args.point_size, args.alpha);
-      fdata = std::span<const std::byte>(
-        reinterpret_cast<const std::byte *>(overlay_canvas.data),
-        overlay_canvas.total() * overlay_canvas.elemSize());
-      fstep = static_cast<std::uint32_t>(overlay_canvas.step[0]);
+      core::image::PackedRaster src;
+      src.width = frame.width;
+      src.height = frame.height;
+      src.encoding = frame.encoding;
+      const std::size_t row_bytes = static_cast<std::size_t>(frame.width) * 3U;
+      src.bgr.resize(row_bytes * frame.height);
+      for (std::uint32_t y = 0; y < frame.height; ++y) {
+        std::copy_n(fdata.data() + y * fstep, row_bytes, src.bgr.data() + y * row_bytes);
+      }
+
+      overlay_output.width = frame.width;
+      overlay_output.height = frame.height;
+      overlay_output.encoding = frame.encoding;
+      overlay_output.bgr.resize(src.bgr.size());
+      if (const auto err = core::pointcloud::overlay_projected_points(
+            src, *projected, global_property_min, global_property_max, args.colorscheme,
+            args.point_size, args.alpha, overlay_output);
+          !err.empty()) {
+        BAGWIZ_LOG_ERROR(kLogger, "overlay failed: %s", err.c_str());
+        return false;
+      }
+      fdata = std::span<const std::byte>(overlay_output.bgr.data(), overlay_output.bgr.size());
+      fstep = static_cast<std::uint32_t>(row_bytes);
     }
 
     if (auto e = encoder->write_frame(fdata, fstep, frame.pixel_format); !e.empty()) {
@@ -1124,7 +729,7 @@ int run_generate_video(const GenerateVideoArgs & args)
               return 1;
             }
 
-            const auto projected = project_cloud_for_frame(
+            const auto projected = core::pointcloud::project_cloud_for_frame(
               *cloud, *camera_info, *tf_buffer, frame->width, frame->height, args.property,
               use_rectified);
             if (!projected.ok()) {

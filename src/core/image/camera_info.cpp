@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -109,6 +110,8 @@ CameraInfoResult extract_camera_info(std::span<const std::byte> payload)
 CameraInfo scale_camera_info(const CameraInfo & info, double scale)
 {
   CameraInfo scaled = info;
+  scaled.width = static_cast<std::uint32_t>(std::lround(static_cast<double>(info.width) * scale));
+  scaled.height = static_cast<std::uint32_t>(std::lround(static_cast<double>(info.height) * scale));
   // K = [[fx, skew, cx], [0, fy, cy], [0, 0, 1]]
   scaled.k[0] *= scale;
   scaled.k[1] *= scale;
@@ -132,6 +135,9 @@ CameraInfo scale_camera_info(const CameraInfo & info, double scale)
 CameraInfo scale_camera_info(const CameraInfo & info, double scale_x, double scale_y)
 {
   CameraInfo scaled = info;
+  scaled.width = static_cast<std::uint32_t>(std::lround(static_cast<double>(info.width) * scale_x));
+  scaled.height =
+    static_cast<std::uint32_t>(std::lround(static_cast<double>(info.height) * scale_y));
   scaled.k[0] *= scale_x;
   scaled.k[1] *= scale_x;
   scaled.k[2] *= scale_x;

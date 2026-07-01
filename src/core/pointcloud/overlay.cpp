@@ -1,0 +1,84 @@
+// Copyright 2026 TIER IV, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+
+#include "bagwiz/core/pointcloud/overlay.hpp"
+
+#include "bagwiz/core/pointcloud/color_mapper.hpp"
+
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+
+#include <algorithm>
+#include <cstdint>
+#include <span>
+#include <string>
+#include <vector>
+
+namespace bagwiz::core::pointcloud
+{
+
+std::string overlay_projected_points(
+  const image::PackedRaster & src, const std::vector<ProjectedPoint> & projected,
+  double property_min, double property_max, ColorScheme scheme, std::uint32_t point_size,
+  float alpha, image::PackedRaster & out)
+{
+  if (src.empty()) {
+    return "empty source raster";
+  }
+  if (&out != &src) {
+    out = src;
+  }
+
+  const int width_i = static_cast<int>(src.width);
+  const int height_i = static_cast<int>(src.height);
+  const std::uint32_t step = src.width * 3U;
+
+  // out already holds a copy of src, so we can draw directly into its buffer.
+  cv::Mat canvas(height_i, width_i, CV_8UC3, const_cast<std::byte *>(out.bgr.data()), step);
+
+  std::vector<ProjectedPoint> projected_sorted(projected.begin(), projected.end());
+  std::sort(projected_sorted.begin(), projected_sorted.end(), [](const auto & a, const auto & b) {
+    return a.depth < b.depth;
+  });
+
+  const int radius = static_cast<int>(point_size) / 2;
+
+  auto in_bounds = [width_i, height_i, radius](const ProjectedPoint & p) -> bool {
+    return p.u >= -radius && p.u < width_i + radius && p.v >= -radius && p.v < height_i + radius;
+  };
+
+  ColorMapper mapper(scheme);
+
+  if (alpha >= 0.999f) {
+    for (const auto & p : projected_sorted) {
+      if (!in_bounds(p)) {
+        continue;
+      }
+      const auto color = mapper.map(p.value, property_min, property_max);
+      const cv::Scalar bgr(color[0], color[1], color[2]);
+      cv::circle(canvas, {p.u, p.v}, radius, bgr, cv::FILLED);
+    }
+  } else {
+    cv::Mat overlay(height_i, width_i, CV_8UC3, cv::Scalar{0, 0, 0});
+    for (const auto & p : projected_sorted) {
+      if (!in_bounds(p)) {
+        continue;
+      }
+      const auto color = mapper.map(p.value, property_min, property_max);
+      const cv::Scalar bgr(color[0], color[1], color[2]);
+      cv::circle(overlay, {p.u, p.v}, radius, bgr, cv::FILLED);
+    }
+    cv::Mat blended;
+    cv::addWeighted(canvas, 1.0 - alpha, overlay, alpha, 0.0, blended);
+    blended.copyTo(canvas);
+  }
+
+  return {};
+}
+
+}  // namespace bagwiz::core::pointcloud

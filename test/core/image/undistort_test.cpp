@@ -155,4 +155,22 @@ TEST(UndistortHelper, ScalesToDifferentSize)
   EXPECT_EQ(output.size(), static_cast<std::size_t>(kDstW) * kDstH * 3);
 }
 
+TEST(UndistortHelper, EffectiveCameraInfoMatchesScaledSize)
+{
+  constexpr std::uint32_t kSrcW = 16;
+  constexpr std::uint32_t kSrcH = 16;
+  constexpr std::uint32_t kDstW = 8;
+  constexpr std::uint32_t kDstH = 8;
+  const auto info = identity_camera_info(kSrcW, kSrcH);
+  UndistortHelper helper(info, kDstW, kDstH);
+  const auto effective = helper.effective_camera_info();
+  EXPECT_EQ(effective.width, kDstW);
+  EXPECT_EQ(effective.height, kDstH);
+  // fx/fy and cx/cy should be scaled by 0.5.
+  EXPECT_DOUBLE_EQ(effective.k[0], info.k[0] * 0.5);
+  EXPECT_DOUBLE_EQ(effective.k[2], info.k[2] * 0.5);
+  EXPECT_DOUBLE_EQ(effective.k[4], info.k[4] * 0.5);
+  EXPECT_DOUBLE_EQ(effective.k[5], info.k[5] * 0.5);
+}
+
 }  // namespace

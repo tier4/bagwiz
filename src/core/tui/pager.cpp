@@ -77,6 +77,16 @@ NavKey to_nav_key(KeyEvent ev) noexcept
     case KeyEvent::kToggleArrayExpand:
     case KeyEvent::kTogglePreview:
     case KeyEvent::kToggleUndistort:
+    case KeyEvent::kToggleProjectPcd:
+    case KeyEvent::kSelectPcdTopic:
+    case KeyEvent::kCyclePcdProperty:
+    case KeyEvent::kCyclePcdScheme:
+    case KeyEvent::kTogglePcdRange:
+    case KeyEvent::kPcdPointSizeUp:
+    case KeyEvent::kPcdPointSizeDown:
+    case KeyEvent::kPcdAlphaUp:
+    case KeyEvent::kPcdAlphaDown:
+    case KeyEvent::kConfirm:
     case KeyEvent::kUnknown:
       return NavKey::kNone;
   }

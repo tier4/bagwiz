@@ -43,7 +43,6 @@ TEST(ClassifyKey, PreviouslyRetiredKeysAreUnknown)
   EXPECT_EQ(classify_key("l"), KeyEvent::kUnknown);
   EXPECT_EQ(classify_key("n"), KeyEvent::kUnknown);
   EXPECT_EQ(classify_key("h"), KeyEvent::kUnknown);
-  EXPECT_EQ(classify_key("p"), KeyEvent::kUnknown);
 }
 
 TEST(ClassifyKey, FirstAndLast)
@@ -87,11 +86,18 @@ TEST(ClassifyKey, ToggleUndistortBinding)
   EXPECT_EQ(classify_key("u"), KeyEvent::kToggleUndistort);
 }
 
-// 'r' used to cycle the rotation format in the (now removed) `tf walk`
-// viewer. Pin that it no longer binds so a future re-use is intentional.
-TEST(ClassifyKey, RotationKeyIsUnknown)
+TEST(ClassifyKey, ProjectPcdBindings)
 {
-  EXPECT_EQ(classify_key("r"), KeyEvent::kUnknown);
+  EXPECT_EQ(classify_key("p"), KeyEvent::kToggleProjectPcd);
+  EXPECT_EQ(classify_key("t"), KeyEvent::kSelectPcdTopic);
+  EXPECT_EQ(classify_key("f"), KeyEvent::kCyclePcdProperty);
+  EXPECT_EQ(classify_key("c"), KeyEvent::kCyclePcdScheme);
+  EXPECT_EQ(classify_key("r"), KeyEvent::kTogglePcdRange);
+  EXPECT_EQ(classify_key("="), KeyEvent::kPcdPointSizeUp);
+  EXPECT_EQ(classify_key("+"), KeyEvent::kPcdPointSizeUp);
+  EXPECT_EQ(classify_key("-"), KeyEvent::kPcdPointSizeDown);
+  EXPECT_EQ(classify_key("]"), KeyEvent::kPcdAlphaUp);
+  EXPECT_EQ(classify_key("["), KeyEvent::kPcdAlphaDown);
 }
 
 TEST(ClassifyKey, ScrollBindings)

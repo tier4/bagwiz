@@ -34,6 +34,16 @@ enum class KeyEvent {
   kToggleArrayExpand,  // toggle full-expansion of long primitive arrays (walk command)
   kTogglePreview,      // toggle in-terminal image preview (walk command)
   kToggleUndistort,    // toggle undistort in image preview (walk command)
+  kToggleProjectPcd,   // toggle point-cloud projection overlay in image preview (walk command)
+  kSelectPcdTopic,     // choose a PointCloud2 topic for the projection overlay
+  kCyclePcdProperty,   // cycle point-cloud visualization property (walk command)
+  kCyclePcdScheme,     // cycle point-cloud color scheme (walk command)
+  kTogglePcdRange,     // toggle point-cloud value range auto/manual (walk command)
+  kPcdPointSizeUp,     // increase projected point size (walk command)
+  kPcdPointSizeDown,   // decrease projected point size (walk command)
+  kPcdAlphaUp,         // increase point overlay opacity (walk command)
+  kPcdAlphaDown,       // decrease point overlay opacity (walk command)
+  kConfirm,            // confirm the current prompt/selection
   kQuit,               // exit the interactive loop
   kResize,             // terminal was resized (synthesised by read_key_event
                        // from a SIGWINCH flag set by tui::internal; never
