@@ -49,11 +49,13 @@
 #include <istream>
 #include <iterator>
 #include <limits>
+#include <list>
 #include <memory>
 #include <ostream>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -78,6 +80,65 @@ struct OwnedMessage
 {
   int64_t timestamp_ns = 0;
   std::vector<std::byte> payload;
+};
+
+// Upper bound on decoded preview frames kept in memory at once. Decoding a
+// frame (JPEG/PNG via libav, or a raw copy) dominates repaint cost, so we cache
+// recently viewed rasters; the cap bounds memory (each raster is
+// width * height * 3 bytes, so a handful of HD frames is a few tens of MB).
+constexpr std::size_t kPreviewCacheCapacity = 16;
+
+// Bounded LRU cache of decoded preview frames keyed by message index. The base
+// raster for an index is a pure function of its immutable payload, so entries
+// never need invalidation. Interactive navigation revisits nearby frames, so
+// evicting the least-recently-used frame keeps the working set hot far better
+// than evicting by insertion order (FIFO) would. All operations are O(1).
+class DecodedFrameCache
+{
+public:
+  explicit DecodedFrameCache(std::size_t capacity) : capacity_(std::max<std::size_t>(1, capacity))
+  {
+  }
+
+  // Result of a lookup: `raster` points at the cached frame (valid until the
+  // next get() call) or is null when the frame failed to decode, in which case
+  // `error` carries the reason. Decode failures are not cached.
+  struct Lookup
+  {
+    const core::image::PackedRaster * raster = nullptr;
+    std::string error;
+  };
+
+  Lookup get(std::size_t index, std::string_view type, std::span<const std::byte> payload)
+  {
+    if (const auto it = map_.find(index); it != map_.end()) {
+      // Move the hit to the front so it is evicted last.
+      order_.splice(order_.begin(), order_, it->second);
+      return Lookup{&it->second->raster, {}};
+    }
+    auto decoded = core::image::to_packed_raster(type, payload);
+    if (!decoded.ok()) {
+      return Lookup{nullptr, std::move(decoded.error)};
+    }
+    order_.push_front(Entry{index, std::move(*decoded.raster)});
+    map_[index] = order_.begin();
+    if (map_.size() > capacity_) {
+      map_.erase(order_.back().index);
+      order_.pop_back();
+    }
+    return Lookup{&order_.front().raster, {}};
+  }
+
+private:
+  struct Entry
+  {
+    std::size_t index;
+    core::image::PackedRaster raster;
+  };
+
+  std::size_t capacity_;
+  std::list<Entry> order_;  // front = most recently used, back = least
+  std::unordered_map<std::size_t, std::list<Entry>::iterator> map_;
 };
 
 std::string format_timestamp(int64_t ns)
@@ -1002,6 +1063,33 @@ public:
       }
     };
 
+    // Decoded-frame cache shared by the preview repaint and the PNG save path,
+    // so navigating back to a frame (or saving the one on screen) reuses the
+    // decode instead of paying for it again.
+    DecodedFrameCache decoded_frames{kPreviewCacheCapacity};
+
+    // Produce the frame to display/save for `idx`: fetch the cached base raster
+    // (decoding on a miss), then apply the active undistort / PCD overlay on a
+    // private copy so the cached frame stays pristine and reusable. Returns an
+    // error result when the frame cannot decode.
+    auto compose_preview_frame = [&](std::size_t idx) -> core::image::PackedRasterResult {
+      core::image::PackedRasterResult pr;
+      const auto & msg = cache[idx];
+      auto hit = decoded_frames.get(idx, type_name, msg.payload);
+      if (hit.raster == nullptr) {
+        pr.error = std::move(hit.error);
+        return pr;
+      }
+      pr.raster = *hit.raster;  // copy the pristine base before mutating overlays
+      if (undistort_enabled) {
+        maybe_undistort(&*pr.raster);
+      }
+      if (pcd.enabled) {
+        maybe_overlay_pcd(&*pr.raster);
+      }
+      return pr;
+    };
+
     // Paint one preview frame: a two-line caption, the decoded image centred in
     // the region between caption and key hint, and the key hint on the last row.
     // Graphics escapes bypass the pager (they have no display width), so this
@@ -1023,16 +1111,9 @@ public:
       core::tui::image::clear_image(out, image_caps.backend);
       out << "\x1B[2J";
 
-      const auto & msg = cache[index];
       const char * total_suffix = exhausted ? "" : "+";
       const std::size_t last_loaded_index = cache.size() - 1;
-      auto pr = core::image::to_packed_raster(type_name, msg.payload);
-      if (undistort_enabled && pr.ok()) {
-        maybe_undistort(&*pr.raster);
-      }
-      if (pcd.enabled && pr.ok()) {
-        maybe_overlay_pcd(&*pr.raster);
-      }
+      auto pr = compose_preview_frame(index);
 
       std::string info;
       if (pr.ok()) {
@@ -1115,17 +1196,10 @@ public:
     // `status`, which render_preview surfaces on the next repaint.
     auto save_preview_image = [&]() {
       status.clear();
-      const auto & cur = cache[index];
-      auto pr = core::image::to_packed_raster(type_name, cur.payload);
+      auto pr = compose_preview_frame(index);
       if (!pr.ok()) {
         status = fmt::format("cannot save: {}", pr.error);
         return;
-      }
-      if (undistort_enabled) {
-        maybe_undistort(&*pr.raster);
-      }
-      if (pcd.enabled) {
-        maybe_overlay_pcd(&*pr.raster);
       }
       const auto encoded = core::image::encode_png(*pr.raster);
       if (!encoded.ok()) {
