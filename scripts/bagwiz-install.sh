@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # bagwiz-install.sh - Install the bagwiz launcher AND its shell completion in one
 # step. Invoked by `pixi run install` (see pixi.toml); not meant to be run on its
-# own, because installing completion runs the freshly built binary, which only
-# works inside the activated pixi environment.
+# own, because installing completion runs the built binary, which only works
+# inside the activated pixi environment.
 #
 # It installs two things:
 #   1. A `bagwiz` launcher on your PATH (default ~/.local/bin/bagwiz). bagwiz's
@@ -46,15 +46,17 @@ if [[ ! ${BAGWIZ_LAUNCH_DISTRO} =~ ^[A-Za-z0-9._-]+$ ]]; then
     exit 1
 fi
 
-# The freshly built binary, by explicit per-distro path (same path the `run` task
-# uses). For the GPU build, target a *-cuda environment (e.g. `pixi run -e
-# humble-cuda install`, or BAGWIZ_DISTRO=humble-cuda). `pixi run install` depends
-# on `build-full`, so it should already exist; guard anyway.
+# The built binary, by explicit per-distro path (same path the `run` task uses).
+# For the GPU build, target a *-cuda environment (e.g. `pixi run -e humble-cuda
+# install`, or BAGWIZ_DISTRO=humble-cuda). `pixi run install` no longer builds: it
+# wires the launcher to whatever build-core or build-full already produced here,
+# so require that a binary exists and point at how to build one if it does not.
 built_binary="${REPO_DIR}/install/${BAGWIZ_LAUNCH_DISTRO}/bagwiz/bin/bagwiz"
 if [[ ! -x ${built_binary} ]]; then
     echo "[install] No build found for '${BAGWIZ_LAUNCH_DISTRO}' at" >&2
     echo "[install]   ${built_binary}" >&2
-    echo "[install] Build it first: pixi run -e ${BAGWIZ_LAUNCH_DISTRO} build-full" >&2
+    echo "[install] Build it first: pixi run -e ${BAGWIZ_LAUNCH_DISTRO} build-core" >&2
+    echo "[install]   (or build-full for the map/SLAM command group)" >&2
     exit 1
 fi
 

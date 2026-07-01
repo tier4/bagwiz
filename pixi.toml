@@ -97,9 +97,10 @@ scripts = ["scripts/pixi-activate.sh"]
 #                  (BAGWIZ_WITH_SLAM_CUDA=ON) in a *-cuda env. Builds the GLIM deps
 #                  first (CPU; plus the CUDA deps in a *-cuda env).
 #
-# test-core/test-full mirror the two builds. run/install operate on the full build
-# (build-full) in whichever env they are invoked: a *-cuda env runs/installs the
-# CUDA build, a CPU env the CPU build.
+# test-core/test-full mirror the two builds. `run` operates on the full build
+# (build-full) in whichever env it is invoked: a *-cuda env runs the CUDA build, a
+# CPU env the CPU build. `install` does NOT build — it wires the launcher to
+# whatever is already built (build-core or build-full) in that env's base.
 
 # Core build (no `map` command group): the fast build, no GLIM/SLAM stack. Any distro.
 # In a *-cuda env it builds the same core binary into that env's install base.
@@ -139,12 +140,15 @@ cmd = 'install/$PIXI_ENVIRONMENT_NAME/bagwiz/bin/bagwiz'
 
 # Install, in one step, a `bagwiz` launcher on PATH (default ~/.local/bin) AND
 # tab completion for your current shell. Both are ALWAYS overwritten if they
-# already exist, so re-running after a rebuild just refreshes them. The launcher
-# targets this env's build (install/$PIXI_ENVIRONMENT_NAME); set BAGWIZ_INSTALL_DIR
-# or BAGWIZ_DISTRO to override the destination or targeted distro. Run in a *-cuda
-# env to point the launcher at the CUDA build. See scripts/bagwiz-install.sh.
+# already exist, so re-running after a rebuild just refreshes them. Unlike `run`,
+# install does NOT build: it wires the launcher to whatever is ALREADY built at
+# install/$PIXI_ENVIRONMENT_NAME (from build-core OR build-full), so a fast
+# build-core install stays core and a re-install skips the compile. Build first if
+# nothing is there — the script errors with the exact command. The launcher
+# targets this env's build; set BAGWIZ_INSTALL_DIR or BAGWIZ_DISTRO to override the
+# destination or targeted distro. Run in a *-cuda env to point the launcher at the
+# CUDA build. See scripts/bagwiz-install.sh.
 [tasks.install]
-depends-on = ["build-full"]
 cmd = 'bash scripts/bagwiz-install.sh'
 
 [tasks.clean]

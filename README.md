@@ -51,12 +51,14 @@ per distro.
    run it from anywhere without typing `pixi run`:
 
    ```bash
-   pixi run -e humble install   # builds, then installs ~/.local/bin/bagwiz + completion
+   pixi run -e humble install   # installs ~/.local/bin/bagwiz + completion for step 2's build
    ```
 
    This installs the launcher and shell completion for your current shell in one
-   step, always overwriting any existing copies. Use the same `-e <distro>` you
-   built with (a bare `pixi run install` targets Humble, the default
+   step, always overwriting any existing copies. It does **not** build — it wires
+   the launcher to whatever step 2 already built (`build-core` or `build-full`), so
+   run a build first and re-install after rebuilding. Use the same `-e <distro>`
+   you built with (a bare `pixi run install` targets Humble, the default
    environment). Set `BAGWIZ_INSTALL_DIR` to change the destination, or
    `BAGWIZ_DISTRO` to target a different built distro. At run time,
    `BAGWIZ_DISTRO=<distro>` still switches which built distro the launcher uses.

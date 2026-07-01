@@ -170,12 +170,13 @@ govern source code or CLI behavior.
   `*-cuda` env.
 - Run the tests with `pixi run -e <distro> test-core` / `test-full` and the built
   binary with `pixi run -e <distro> run -- <args>` (or `pixi shell -e <distro>`
-  then `bagwiz`). `pixi run install` builds via `build-full`, then installs an
-  optional `bagwiz` launcher on `PATH` plus shell completion for your current
-  shell, in one step (always overwriting existing copies); it runs the binary in
-  its pixi-managed ROS environment. See `scripts/bagwiz-install.sh`. `run` and
-  `install` target the full build (`build-full`) in whichever environment they
-  are invoked.
+  then `bagwiz`). `pixi run install` does NOT build — it installs an optional
+  `bagwiz` launcher on `PATH` plus shell completion for your current shell, in one
+  step (always overwriting existing copies), wiring them to whatever `build-core`
+  or `build-full` already produced in that environment (build first, or it errors
+  with the command to run). It runs the binary in its pixi-managed ROS
+  environment. See `scripts/bagwiz-install.sh`. `run` targets the full build
+  (`build-full`) in whichever environment it is invoked.
 - Prefer the `pixi run` tasks over ad-hoc `colcon build` invocations when
   verifying changes, unless you are reproducing a CI or tooling issue that
   requires a different command line. The task definitions live in `pixi.toml`.
