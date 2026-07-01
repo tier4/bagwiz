@@ -255,9 +255,31 @@ public:
 
     constexpr const char * kPointCloudType = "sensor_msgs/msg/PointCloud2";
     std::vector<std::string> pcd_topics;
-    for (const auto & t : reader->topics()) {
-      if (t.type == kPointCloudType) {
-        pcd_topics.push_back(t.name);
+    {
+      // Collect every PointCloud2 topic, then drop the ones the bag records
+      // with zero messages: an empty topic cannot project anything, so it only
+      // clutters the picker. If counting fails, fall back to listing them all.
+      std::vector<std::string> pcd_candidates;
+      for (const auto & t : reader->topics()) {
+        if (t.type == kPointCloudType) {
+          pcd_candidates.push_back(t.name);
+        }
+      }
+      if (!pcd_candidates.empty()) {
+        try {
+          const auto pcd_counts = reader->compute_topic_counts(pcd_candidates);
+          for (auto & name : pcd_candidates) {
+            const auto it = pcd_counts.find(name);
+            if (it != pcd_counts.end() && it->second > 0) {
+              pcd_topics.push_back(std::move(name));
+            }
+          }
+        } catch (const std::exception & e) {
+          BAGWIZ_LOG_WARN(
+            kLogger, "Could not read PointCloud2 message counts (%s); listing all topics",
+            e.what());
+          pcd_topics = std::move(pcd_candidates);
+        }
       }
     }
 
@@ -692,7 +714,7 @@ public:
 
     auto prompt_for_pcd_topics = [&]() -> std::optional<std::vector<std::string>> {
       if (pcd_topics.empty()) {
-        status = "no PointCloud2 topics in bag";
+        status = "no non-empty PointCloud2 topics in bag";
         return std::nullopt;
       }
 
