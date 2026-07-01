@@ -1039,7 +1039,7 @@ public:
       // derives its body height from the wrapped footer.
       const std::vector<std::string> legend_lines = core::tui::wrap_to_width(
         "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [g] first   [G] last   [s] save   "
-        "[u] undistort   [p] project pcd   [t] pcd topics   [i] back   [q] quit",
+        "[u] undistort   [p] project pcd   [t] select pcd topics   [i] back   [q] quit",
         cols);
       const int legend_top = std::max(1, rows - static_cast<int>(legend_lines.size()) + 1);
 
