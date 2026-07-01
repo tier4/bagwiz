@@ -46,12 +46,7 @@ float read_field(
   return 0.0f;
 }
 
-enum class DistortionModel
-{
-  kNone,
-  kPlumbBob,
-  kEquidistant
-};
+enum class DistortionModel { kNone, kPlumbBob, kEquidistant };
 
 DistortionModel select_distortion_model(const std::string & name)
 {
