@@ -1036,7 +1036,7 @@ public:
       // it at the right edge. The image region starts just below the wrapped
       // header (see region_row).
       std::vector<std::string> header_lines;
-      append_wrapped(header_lines, fmt::format("  {}  {}", topic_name, type_name), cols);
+      append_wrapped(header_lines, fmt::format("  {}", topic_name), cols);
       append_wrapped(header_lines, info, cols);
       for (std::size_t i = 0; i < header_lines.size(); ++i) {
         core::tui::draw_line(out, 1 + static_cast<int>(i), header_lines[i], cols);
