@@ -329,10 +329,10 @@ public:
       if (!pcd_candidates.empty()) {
         try {
           const auto pcd_counts = reader->compute_topic_counts(pcd_candidates);
-          for (auto & name : pcd_candidates) {
-            const auto it = pcd_counts.find(name);
+          for (auto & candidate : pcd_candidates) {
+            const auto it = pcd_counts.find(candidate);
             if (it != pcd_counts.end() && it->second > 0) {
-              pcd_topics.push_back(std::move(name));
+              pcd_topics.push_back(std::move(candidate));
             }
           }
         } catch (const std::exception & e) {
