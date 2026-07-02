@@ -79,7 +79,8 @@ bagwiz map slam [OPTIONS] <input> <pcd_topic> <output_root>
 | `--backend <mode>`       | SLAM backend: `auto` (default), `cpu`, or `gpu`. `auto` uses the CUDA GPU backend when this binary was built with `-DBAGWIZ_WITH_SLAM_CUDA` (`pixi run -e humble-cuda build-full`) **and** a CUDA device is visible, otherwise it falls back to CPU. `gpu` forces the GPU backend (errors on a non-CUDA build or with no device). `cpu` forces the CPU backend (the reproducibility-guaranteed path). GPU backend = GPU LiDAR-IMU odometry with `--imu` (CT odometry without it, as GLIM has no GPU LiDAR-only backend), GPU VGICP registration in sub/global mapping, and GPU export-map voxelization. **The GPU backend is outside the CPU reproducibility guarantee.** |
 | `--viewer`               | After writing `map.pcd`, serve it over a loopback HTTP server and open the default browser to a Three.js point-cloud viewer. Blocks until interrupted (`Ctrl-C`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `--upsample-traj <spec>` | Densify `traj.tum` only (the map is unaffected) to a higher rate. `<spec>` is a positive magnitude: `x`/`X` = multiple of the native rate (e.g. `2x`); `hz` or no suffix = absolute frequency in Hz (e.g. `20` or `20hz`). Position is interpolated linearly and orientation by SLERP within the original time span.                                                                                                                                                                                                                                                                                                                                                      |
-| `--no-recover-init`      | Disable initialization-window pose recovery (default **on**; automatically disabled without `--imu`). GLIM's LiDAR-IMU odometry emits no pose until IMU init converges (~1 s), so `traj.tum` otherwise has no samples over its opening window. By default the pre-init IMU + scan stamps are buffered and, once the first frame's converged state is known, the IMU is integrated backward from it to recover those early poses (re-anchored onto the optimized map). Affects `traj.tum`'s opening window only; the map is unaffected.                                                                                                                                    |
+| `--no-recover-start`     | Disable initialization-window ('start') pose recovery (default **on**; automatically disabled without `--imu`). GLIM's LiDAR-IMU odometry emits no pose until IMU init converges (~1 s), so `traj.tum` otherwise has no samples over its opening window. By default the pre-init IMU + scan stamps are buffered and, once the first frame's converged state is known, the IMU is integrated backward from it to recover those early poses (re-anchored onto the optimized map). Affects `traj.tum`'s opening window only; the map is unaffected.                                                                                                                          |
+| `--no-recover-end`       | Disable cooldown-window ('end') pose recovery (default **on**; automatically disabled without `--imu`) — the symmetric counterpart of `--no-recover-start`. The newest scans stay inside the odometry smoother window at end-of-sequence, so `traj.tum` otherwise stops one window short of the last input scan. By default a trailing ring of IMU + scan stamps is buffered and the IMU is integrated forward from the last estimated frame to recover those trailing poses (re-anchored onto the optimized map). Affects `traj.tum`'s closing window only; the map is unaffected.                                                                                       |
 | `-w`, `--overwrite`      | Overwrite the output file(s) if they already exist. Without it, an existing output file stops the run.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `--no-progress`          | Disable the live progress bar. The bar is also auto-suppressed when stderr is not a terminal or `NO_COLOR` is set, so this flag is only needed to silence it on an interactive terminal.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
@@ -103,14 +104,24 @@ Written under `<output_root>`:
   alone. With `--imu`, GLIM's `OdometryEstimationCPU` (or `OdometryEstimationGPU`
   under `--backend gpu`) fuses the IMU, and the
   LiDAR←IMU extrinsic is resolved from the bag's static TF.
-- **Initialization window (default on; `--no-recover-init` to disable).** GLIM's
-  LiDAR-IMU odometry emits no pose until its IMU initialization converges (~1 s),
-  so `traj.tum` normally starts a beat late. By default the pre-init IMU and scan
-  stamps are buffered; once the first estimated frame's converged state (pose,
-  velocity, biases) is known, the IMU is integrated backward from it to recover
-  per-scan poses for that window, re-anchored onto the optimized map. LiDAR-IMU
-  only (automatically disabled without `--imu`); affects `traj.tum`'s opening
-  window only.
+- **Initialization ("start") window (default on; `--no-recover-start` to
+  disable).** GLIM's LiDAR-IMU odometry emits no pose until its IMU initialization
+  converges (~1 s), so `traj.tum` normally starts a beat late. By default the
+  pre-init IMU and scan stamps are buffered; once the first estimated frame's
+  converged state (pose, velocity, biases) is known, the IMU is integrated
+  backward from it to recover per-scan poses for that window, re-anchored onto the
+  optimized map. LiDAR-IMU only (automatically disabled without `--imu`); affects
+  `traj.tum`'s opening window only.
+- **Cooldown ("end") window (default on; `--no-recover-end` to disable).** The
+  symmetric counterpart of start recovery. The newest scans are still inside the
+  odometry smoother window at end-of-sequence and never reach a finalized submap,
+  so `traj.tum` normally stops one window (a beat) short of the last input scan.
+  By default a trailing ring of IMU and scan stamps is buffered; the IMU is
+  integrated forward from the last estimated frame's converged state to recover
+  per-scan poses for that window, re-anchored onto the optimized map. Because that
+  boundary is a fully-converged mid-run frame, forward recovery is typically more
+  accurate than start recovery. LiDAR-IMU only (automatically disabled without
+  `--imu`); affects `traj.tum`'s closing window only.
 - **GNSS (`--gnss`).** Fixes are projected to a local ENU frame,
   interpolated at each submap's mid-timestamp, and turned into horizontal
   translation priors once the SLAM baseline exceeds ~10 m. Each prior is

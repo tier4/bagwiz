@@ -26,13 +26,21 @@
 // IMU stream *backward* from that boundary — with the biases now known and over
 // a short (~1 s) window — recovers accurate poses for the warmup scans.
 //
-// This module is the GLIM-free, Eigen-only kinematic core of that recovery: it
+// The symmetric problem exists at the END of a run: the newest scans are still
+// inside the odometry smoother window at end-of-sequence and never get
+// marginalized into a finalized submap, so the trajectory stops one window short
+// of the last input scan. There the boundary is the LAST estimated frame and the
+// buffered IMU is integrated *forward* from it (forwardpropagate_imu) to recover
+// the trailing "cooldown" scans. Forward and backward share the same strapdown
+// kinematics, differing only in integration direction.
+//
+// This module is the GLIM-free, Eigen-only kinematic core of both recoveries: it
 // knows nothing about GLIM, the bag, or the map. The SLAM wrapper
-// (cloud_mapper.cpp) buffers the raw IMU + scan stamps, captures the boundary
-// off GLIM's first EstimationFrame, calls backpropagate_imu(), and re-anchors
-// the result onto the globally-optimized map. Keeping the math here lets it be
-// unit-tested with synthetic IMU (static / rotating / translating) without the
-// GLIM stack.
+// (cloud_mapper.cpp) buffers the raw IMU + scan stamps, captures the boundary off
+// a GLIM EstimationFrame, calls backpropagate_imu() / forwardpropagate_imu(), and
+// re-anchors the result onto the globally-optimized map. Keeping the math here
+// lets it be unit-tested with synthetic IMU (static / rotating / translating)
+// without the GLIM stack.
 namespace bagwiz::core::slam
 {
 
@@ -96,6 +104,26 @@ inline Eigen::Vector3d default_gravity_world()
 // itself, ascending by stamp (so the last element is the boundary). With no
 // preceding samples the result is just the boundary knot.
 std::vector<TimedPose> backpropagate_imu(
+  const BackpropBoundary & boundary, std::span<const BackpropImu> imu_window,
+  const Eigen::Vector3d & gravity_world = {0.0, 0.0, -kGravityMagnitude});
+
+// Forward-propagate the IMU body pose from `boundary` forward in time over the
+// IMU samples in `imu_window` that follow it. `imu_window` must be sorted by
+// ascending stamp; only samples with stamp strictly greater than boundary.stamp
+// are integrated (earlier samples are ignored, so the caller may pass a trailing
+// ring that still contains pre-boundary samples). Each interval uses zero-order
+// hold on its arriving (later) sample and the known biases — a first-order
+// forward strapdown integration, the mirror of backpropagate_imu:
+//
+//   a = R * (linear_acceleration - acc_bias) + gravity_world
+//   p(t+dt) = p(t) + v(t) * dt + 0.5 * a * dt^2
+//   v(t+dt) = v(t) + a * dt
+//   R(t+dt) = R(t) * Exp((gyro - gyro_bias) * dt)
+//
+// Returns the IMU-rate poses at the boundary plus each integrated sample stamp,
+// ascending by stamp (so the FIRST element is the boundary). With no following
+// samples the result is just the boundary knot.
+std::vector<TimedPose> forwardpropagate_imu(
   const BackpropBoundary & boundary, std::span<const BackpropImu> imu_window,
   const Eigen::Vector3d & gravity_world = {0.0, 0.0, -kGravityMagnitude});
 

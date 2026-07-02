@@ -124,13 +124,22 @@ private:
       "terminal or NO_COLOR is set, so this is only needed to silence them interactively.");
 
     sub->add_flag(
-      "!--no-recover-init", slam_args_.recover_init,
-      "Disable initialization-window pose recovery (default on; requires --imu, automatically "
-      "disabled in LiDAR-only mode). GLIM's LiDAR-IMU odometry emits no pose until IMU init "
-      "converges (~1 s), so traj.tum otherwise has no samples over its opening window. By "
+      "!--no-recover-start", slam_args_.recover_start,
+      "Disable initialization-window ('start') pose recovery (default on; requires --imu, "
+      "automatically disabled in LiDAR-only mode). GLIM's LiDAR-IMU odometry emits no pose until "
+      "IMU init converges (~1 s), so traj.tum otherwise has no samples over its opening window. By "
       "default the pre-init IMU + scans are buffered and, once the first frame's converged state "
       "is known, the IMU is integrated backward from it to recover those early poses (re-anchored "
       "onto the optimized map). Affects traj.tum's opening window only.");
+    sub->add_flag(
+      "!--no-recover-end", slam_args_.recover_end,
+      "Disable cooldown-window ('end') pose recovery (default on; requires --imu, automatically "
+      "disabled in LiDAR-only mode) — the symmetric counterpart of --no-recover-start. The newest "
+      "scans stay inside the odometry smoother window at end-of-sequence, so traj.tum otherwise "
+      "stops one window short of the last input scan. By default a trailing ring of IMU + scans is "
+      "buffered and the IMU is integrated forward from the last estimated frame to recover those "
+      "trailing poses (re-anchored onto the optimized map). Affects traj.tum's closing window "
+      "only.");
     const int max_threads = static_cast<int>(std::thread::hardware_concurrency());
     sub
       ->add_option(

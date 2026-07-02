@@ -46,6 +46,26 @@ std::vector<BackpropImu> make_window(
   return window;
 }
 
+// Build an ascending IMU window of `n` samples spaced `dt`, starting just after
+// `boundary_stamp` (first sample at boundary_stamp + dt), all carrying the same
+// acc/gyro. Sample i sits at boundary_stamp + (i + 1) * dt. The forward mirror
+// of make_window.
+std::vector<BackpropImu> make_forward_window(
+  double boundary_stamp, int n, double dt, const Eigen::Vector3d & acc,
+  const Eigen::Vector3d & gyro)
+{
+  std::vector<BackpropImu> window;
+  window.reserve(n);
+  for (int i = 0; i < n; ++i) {
+    BackpropImu s;
+    s.stamp = boundary_stamp + static_cast<double>(i + 1) * dt;
+    s.linear_acceleration = acc;
+    s.angular_velocity = gyro;
+    window.push_back(s);
+  }
+  return window;
+}
+
 TEST(WarmupRecovery, StaticBoundaryStaysPut)
 {
   BackpropBoundary boundary;
@@ -141,6 +161,105 @@ TEST(WarmupRecovery, SamplesAtOrAfterBoundaryAreIgnored)
   const auto knots = backpropagate_imu(boundary, window, default_gravity_world());
   ASSERT_EQ(knots.size(), 3u);  // boundary + 2 preceding
   EXPECT_DOUBLE_EQ(knots.back().stamp, 2.0);
+}
+
+TEST(WarmupRecovery, ForwardStaticBoundaryStaysPut)
+{
+  BackpropBoundary boundary;
+  boundary.stamp = 10.0;  // T_world_imu = I, v = 0
+
+  const auto window =
+    make_forward_window(10.0, 200, 0.005, gravity_reaction(), Eigen::Vector3d::Zero());
+  const auto knots = forwardpropagate_imu(boundary, window, default_gravity_world());
+
+  ASSERT_EQ(knots.size(), window.size() + 1);
+  // A stationary IMU stays at the origin with identity orientation over the
+  // whole (1 s) window.
+  for (const auto & knot : knots) {
+    EXPECT_LT(knot.T_world_imu.translation().norm(), 1e-9);
+    const Eigen::AngleAxisd aa(knot.T_world_imu.rotation());
+    EXPECT_LT(aa.angle(), 1e-9);
+  }
+  // Ascending, boundary first.
+  EXPECT_DOUBLE_EQ(knots.front().stamp, 10.0);
+  EXPECT_GT(knots.back().stamp, knots.front().stamp);
+}
+
+TEST(WarmupRecovery, ForwardConstantVelocityTranslatesForward)
+{
+  BackpropBoundary boundary;
+  boundary.stamp = 5.0;
+  boundary.v_world_imu = Eigen::Vector3d(2.0, 0.0, 0.0);  // 2 m/s along +x, no rotation
+
+  // a_world = 0 (constant velocity) => acc reads the gravity reaction, gyro 0.
+  const auto window =
+    make_forward_window(5.0, 100, 0.01, gravity_reaction(), Eigen::Vector3d::Zero());
+  const auto knots = forwardpropagate_imu(boundary, window, default_gravity_world());
+
+  // Latest knot is 1 s after the boundary; position should be v*Δt ahead:
+  // p(t) = p0 + v0 * (t - boundary) = (2.0, 0, 0).
+  const auto & last = knots.back();
+  const double dt_fwd = last.stamp - boundary.stamp;
+  EXPECT_NEAR(dt_fwd, 1.0, 1e-9);
+  EXPECT_NEAR(last.T_world_imu.translation().x(), 2.0, 1e-6);
+  EXPECT_NEAR(last.T_world_imu.translation().y(), 0.0, 1e-9);
+  EXPECT_NEAR(last.T_world_imu.translation().z(), 0.0, 1e-9);
+  const Eigen::AngleAxisd aa(last.T_world_imu.rotation());
+  EXPECT_LT(aa.angle(), 1e-9);
+}
+
+TEST(WarmupRecovery, ForwardConstantYawRateRotatesForward)
+{
+  const double wz = 0.5;  // rad/s about +z
+  BackpropBoundary boundary;
+  boundary.stamp = 3.0;  // R = I, v = 0
+
+  // Rotation about the gravity (z) axis keeps the IMU gravity-aligned, so the
+  // accelerometer still reads the pure gravity reaction and world accel is 0.
+  const auto window =
+    make_forward_window(3.0, 100, 0.01, gravity_reaction(), Eigen::Vector3d(0.0, 0.0, wz));
+  const auto knots = forwardpropagate_imu(boundary, window, default_gravity_world());
+
+  // 1 s after the boundary the orientation is Exp(+wz * 1 s) about +z.
+  const auto & last = knots.back();
+  const double dt_fwd = last.stamp - boundary.stamp;
+  EXPECT_NEAR(dt_fwd, 1.0, 1e-9);
+  const Eigen::AngleAxisd aa(last.T_world_imu.rotation());
+  EXPECT_NEAR(aa.angle(), wz * dt_fwd, 1e-6);
+  // Axis is +z (forward rotation, opposite sign to the backward case).
+  EXPECT_NEAR(aa.axis().z(), 1.0, 1e-6);
+  EXPECT_LT(last.T_world_imu.translation().norm(), 1e-6);
+}
+
+TEST(WarmupRecovery, ForwardEmptyWindowReturnsBoundaryOnly)
+{
+  BackpropBoundary boundary;
+  boundary.stamp = 1.0;
+  boundary.T_world_imu.translation() = Eigen::Vector3d(1.0, 2.0, 3.0);
+
+  const auto knots = forwardpropagate_imu(boundary, {}, default_gravity_world());
+  ASSERT_EQ(knots.size(), 1u);
+  EXPECT_DOUBLE_EQ(knots.front().stamp, 1.0);
+  EXPECT_NEAR(
+    (knots.front().T_world_imu.translation() - Eigen::Vector3d(1, 2, 3)).norm(), 0.0, 1e-12);
+}
+
+TEST(WarmupRecovery, ForwardSamplesAtOrBeforeBoundaryAreIgnored)
+{
+  BackpropBoundary boundary;
+  boundary.stamp = 2.0;
+
+  // Two samples at/before, two after the boundary — only the later two count.
+  std::vector<BackpropImu> window;
+  for (double t : {1.98, 2.00, 2.01, 2.02}) {
+    BackpropImu s;
+    s.stamp = t;
+    s.linear_acceleration = gravity_reaction();
+    window.push_back(s);
+  }
+  const auto knots = forwardpropagate_imu(boundary, window, default_gravity_world());
+  ASSERT_EQ(knots.size(), 3u);  // boundary + 2 following
+  EXPECT_DOUBLE_EQ(knots.front().stamp, 2.0);
 }
 
 TEST(WarmupRecovery, InterpolatePoseWithinSpan)

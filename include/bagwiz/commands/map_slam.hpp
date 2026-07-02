@@ -61,14 +61,23 @@ struct MapSlamArgs
   // leaves the trajectory unchanged (warned, never down-sampled).
   std::string upsample_traj;
 
-  // Recover poses for the initialization window (LiDAR-IMU only; automatically
-  // disabled without --imu). GLIM's LiDAR-IMU odometry emits no frame until IMU
-  // init converges (~1 s), leaving traj.tum without samples over its opening
-  // window. When enabled, the pre-init IMU + scan stamps are buffered and, once
-  // the first frame's converged state is known, the IMU is integrated backward
-  // from it to recover per-scan poses for that window, re-anchored onto the
-  // optimized map.
-  bool recover_init = true;
+  // Recover poses for the initialization ("start") window (LiDAR-IMU only;
+  // automatically disabled without --imu). GLIM's LiDAR-IMU odometry emits no
+  // frame until IMU init converges (~1 s), leaving traj.tum without samples over
+  // its opening window. When enabled, the pre-init IMU + scan stamps are buffered
+  // and, once the first frame's converged state is known, the IMU is integrated
+  // backward from it to recover per-scan poses for that window, re-anchored onto
+  // the optimized map.
+  bool recover_start = true;
+
+  // Recover poses for the cooldown ("end") window (LiDAR-IMU only; automatically
+  // disabled without --imu) — the symmetric counterpart of recover_start. The
+  // newest scans stay inside the odometry smoother window at end-of-sequence, so
+  // traj.tum otherwise stops one window short of the last input scan. When
+  // enabled, a trailing ring of IMU + scan stamps is buffered and the IMU is
+  // integrated forward from the last estimated frame to recover per-scan poses for
+  // those trailing scans, re-anchored onto the optimized map.
+  bool recover_end = true;
 
   // Number of CPU threads for GLIM. 0 or a negative value falls back to the
   // default (4).

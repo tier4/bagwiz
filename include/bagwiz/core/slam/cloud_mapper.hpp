@@ -60,14 +60,24 @@ struct CloudMapperConfig
   // Convention is GLIM's T_lidar_imu (p_lidar = T_lidar_imu * p_imu).
   std::optional<SensorTransform> t_lidar_imu;
 
-  // Recover poses for the SLAM initialization window. GLIM's LiDAR-IMU odometry
-  // emits no frame until its IMU init converges (~1 s), leaving the trajectory's
-  // opening window empty. When true, the raw IMU + scan stamps before the first
-  // frame are buffered and, once that frame's converged state is known, the IMU
-  // is integrated backward from it to recover per-scan poses for the warmup
-  // window (re-anchored onto the globally-optimized map). LiDAR-IMU only: a no-op
-  // unless t_lidar_imu is set. See core/slam/warmup_recovery.hpp.
-  bool recover_init = false;
+  // Recover poses for the SLAM initialization ("start") window. GLIM's LiDAR-IMU
+  // odometry emits no frame until its IMU init converges (~1 s), leaving the
+  // trajectory's opening window empty. When true, the raw IMU + scan stamps
+  // before the first frame are buffered and, once that frame's converged state is
+  // known, the IMU is integrated backward from it to recover per-scan poses for
+  // the warmup window (re-anchored onto the globally-optimized map). LiDAR-IMU
+  // only: a no-op unless t_lidar_imu is set. See core/slam/warmup_recovery.hpp.
+  bool recover_start = false;
+
+  // Recover poses for the SLAM cooldown ("end") window — the symmetric
+  // counterpart of recover_start. The newest scans stay inside the odometry
+  // smoother window at end-of-sequence and never reach a finalized submap, so the
+  // trajectory stops one window short of the last input scan. When true, a
+  // trailing ring of raw IMU + scan stamps is buffered and the IMU is integrated
+  // forward from the last estimated frame to recover per-scan poses for those
+  // trailing scans (re-anchored onto the globally-optimized map). LiDAR-IMU only:
+  // a no-op unless t_lidar_imu is set. See core/slam/warmup_recovery.hpp.
+  bool recover_end = false;
 
   // GNSS global constraint (ported from glim_ext's gnss_global). When true, GNSS
   // points fed via insert_gnss() add horizontal translation priors on the submap
@@ -185,10 +195,15 @@ struct CloudMap
   // overlapping the submap timespan, or baseline below gnss_min_baseline).
   std::size_t gnss_factor_count = 0;
 
-  // Number of warmup-window poses recovered by backward IMU propagation and
-  // prepended to `trajectory` (config.recover_init). 0 when recovery was off,
+  // Number of start-window poses recovered by backward IMU propagation and
+  // prepended to `trajectory` (config.recover_start). 0 when recovery was off,
   // the IMU init never converged, or there were no pre-init scans to recover.
-  std::size_t recovered_init_pose_count = 0;
+  std::size_t recovered_start_pose_count = 0;
+
+  // Number of end-window poses recovered by forward IMU propagation and appended
+  // to `trajectory` (config.recover_end). 0 when recovery was off, no frame was
+  // captured, or there were no trailing scans past the last estimated frame.
+  std::size_t recovered_end_pose_count = 0;
 };
 
 class CloudMapper
