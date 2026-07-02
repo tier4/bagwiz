@@ -193,6 +193,80 @@ std::string fetch_map_pcd(const std::filesystem::path & path)
   return res ? res->body : std::string{};
 }
 
+// Spin up a viewer server on `map_path`, GET /traj.tum once, and return the
+// result (status + body), so callers can assert on either.
+httplib::Result fetch_traj_tum(const std::filesystem::path & map_path)
+{
+  httplib::Server server;
+  slam::register_map_viewer_routes(server, map_path);
+  const int port = server.bind_to_any_port("127.0.0.1");
+  EXPECT_GE(port, 0);
+  std::thread server_thread([&server] { server.listen_after_bind(); });
+  for (int i = 0; i < 200 && !server.is_running(); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  EXPECT_TRUE(server.is_running());
+
+  httplib::Client client("127.0.0.1", port);
+  auto res = client.Get("/traj.tum");
+
+  server.stop();
+  server_thread.join();
+  return res;
+}
+
+// /traj.tum is resolved as a sibling of map_path (same parent directory), and
+// "traj.tum" is a generic name that other tests/processes could plausibly also
+// write into the shared temp directory; each test below therefore gets its own
+// dedicated subdirectory rather than reusing temp_directory_path() directly.
+TEST(MapViewerServerTraj, ServesTrajTumWhenPresent)
+{
+  const auto dir = std::filesystem::temp_directory_path() / "bagwiz_map_viewer_traj_present_test";
+  std::error_code ec;
+  std::filesystem::remove_all(dir, ec);
+  std::filesystem::create_directories(dir);
+  const auto map_path = dir / "map.pcd";
+  const auto traj_path = dir / "traj.tum";
+  const std::string traj_body = "1700000000.000000000 0.0 0.0 0.0 0.0 0.0 0.0 1.0\n";
+  {
+    std::ofstream map_out(map_path, std::ios::binary);
+    map_out << "unused";
+    std::ofstream traj_out(traj_path, std::ios::binary);
+    traj_out << traj_body;
+  }
+
+  const auto res = fetch_traj_tum(map_path);
+
+  std::filesystem::remove_all(dir, ec);
+
+  ASSERT_TRUE(res);
+  EXPECT_EQ(res->status, 200);
+  EXPECT_EQ(res->body, traj_body);
+}
+
+// A map viewed standalone, without a matching `map slam` trajectory, has no
+// sibling traj.tum; the route must 404 rather than error out so the client can
+// treat it as "no trajectory to offer".
+TEST(MapViewerServerTraj, TrajTumMissingReturns404)
+{
+  const auto dir = std::filesystem::temp_directory_path() / "bagwiz_map_viewer_traj_missing_test";
+  std::error_code ec;
+  std::filesystem::remove_all(dir, ec);
+  std::filesystem::create_directories(dir);
+  const auto map_path = dir / "map.pcd";
+  {
+    std::ofstream map_out(map_path, std::ios::binary);
+    map_out << "unused";
+  }
+
+  const auto res = fetch_traj_tum(map_path);
+
+  std::filesystem::remove_all(dir, ec);
+
+  ASSERT_TRUE(res);
+  EXPECT_EQ(res->status, 404);
+}
+
 // Regression for the `--viewer` "Offset is outside the bounds of the DataView"
 // crash: the map writer must flush/close its ofstream before the viewer serves
 // the file. While the producing ofstream is still open, its final partial

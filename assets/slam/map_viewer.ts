@@ -153,8 +153,8 @@ interface ViewerState {
   subsample: number; // 1.0 = draw every point
   viewMode: ViewMode;
   projection2d: Projection2D; // 2D projection: parallel (ortho) or perspective
-  trajLine: Line2 | null; // built once traj.tum is fetched and parsed; null when absent
-  trajMaterial: LineMaterial | null; // kept to update .resolution on resize
+  trajLine: THREE.Group | null; // outline + gradient Line2 pair; null when absent
+  trajMaterials: LineMaterial[]; // both lines' materials, kept to update .resolution on resize
   showTrajectory: boolean; // mirrors #trajToggle; default off
 }
 
@@ -177,7 +177,7 @@ const state: ViewerState = {
   viewMode: "3d",
   projection2d: "ortho",
   trajLine: null,
-  trajMaterial: null,
+  trajMaterials: [],
   showTrajectory: false,
 };
 
@@ -688,6 +688,12 @@ function buildUI(): void {
 const TRAJ_COLOR_START = new THREE.Color(0x3fd2c7); // --a1
 const TRAJ_COLOR_END = new THREE.Color(0x4ea1ff); // --a2
 const TRAJ_LINE_WIDTH_PX = 2.5;
+// A dark outline drawn under the gradient line keeps it legible over any
+// point-cloud colormap: with jet (the default; see map_colormaps.ts) the
+// cloud's low end is itself blue, which otherwise visually blends with the
+// trajectory's teal/blue gradient.
+const TRAJ_OUTLINE_COLOR = 0x08090c;
+const TRAJ_OUTLINE_WIDTH_PX = TRAJ_LINE_WIDTH_PX + 2.5;
 
 // Parse TUM trajectory lines ("timestamp tx ty tz qx qy qz qw") into a flat
 // [x0,y0,z0, x1,y1,z1, ...] array. Blank lines and '#' comments are skipped,
@@ -715,13 +721,16 @@ function parseTumPositions(text: string): Float32Array {
   return new Float32Array(positions);
 }
 
-// Build the fat-line (three/addons Line2, for real pixel-width control that
-// plain THREE.Line lacks) representing `positions` (flat xyz triples),
-// per-vertex colored by lerping TRAJ_COLOR_START -> TRAJ_COLOR_END along the
-// trajectory's time order. Positions are already in the map's world frame (the
-// same SLAM run wrote both map.pcd and traj.tum), so no extra transform is
-// needed.
-function buildTrajectoryLine(positions: Float32Array): Line2 {
+// Build the fat-line pair (three/addons Line2, for real pixel-width control
+// that plain THREE.Line lacks) representing `positions` (flat xyz triples): a
+// dark outline drawn first, then the gradient line on top of the identical
+// geometry. Both derive from the same vertices, so their depths coincide and
+// draw order alone (not z-fighting) decides which shows on top -- no
+// polygonOffset needed. Colors lerp TRAJ_COLOR_START -> TRAJ_COLOR_END along
+// the trajectory's time order. Positions are already in the map's world frame
+// (the same SLAM run wrote both map.pcd and traj.tum), so no extra transform
+// is needed.
+function buildTrajectoryLine(positions: Float32Array): THREE.Group {
   const count = positions.length / 3;
   const colors = new Float32Array(positions.length);
   const c = new THREE.Color();
@@ -736,11 +745,24 @@ function buildTrajectoryLine(positions: Float32Array): Line2 {
   geometry.setPositions(positions);
   geometry.setColors(colors);
 
-  const material = new LineMaterial({ linewidth: TRAJ_LINE_WIDTH_PX, vertexColors: true });
-  material.resolution.set(window.innerWidth, window.innerHeight);
-  state.trajMaterial = material;
+  const outlineMaterial = new LineMaterial({
+    color: TRAJ_OUTLINE_COLOR,
+    linewidth: TRAJ_OUTLINE_WIDTH_PX,
+  });
+  const lineMaterial = new LineMaterial({ linewidth: TRAJ_LINE_WIDTH_PX, vertexColors: true });
+  for (const material of [outlineMaterial, lineMaterial]) {
+    material.resolution.set(window.innerWidth, window.innerHeight);
+  }
+  state.trajMaterials = [outlineMaterial, lineMaterial];
 
-  return new Line2(geometry, material);
+  const outline = new Line2(geometry, outlineMaterial);
+  outline.renderOrder = 0;
+  const line = new Line2(geometry, lineMaterial);
+  line.renderOrder = 1;
+
+  const group = new THREE.Group();
+  group.add(outline, line);
+  return group;
 }
 
 // Reveal the inspector's Trajectory group (hidden by default in the markup)
@@ -856,7 +878,9 @@ window.addEventListener("resize", () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   // LineMaterial (Line2) sizes its screen-space width from this uniform, so it
   // must track the viewport like the cameras above.
-  state.trajMaterial?.resolution.set(window.innerWidth, window.innerHeight);
+  for (const material of state.trajMaterials) {
+    material.resolution.set(window.innerWidth, window.innerHeight);
+  }
   requestFrame();
 });
 
