@@ -30,6 +30,10 @@ namespace bagwiz::core::slam
 //   GET /map_colormaps.js      -> the embedded colormap LUTs (text/javascript)
 //   GET /map_viewer_overlay.js -> the embedded gizmo + scale bar (text/javascript)
 //   GET /map.pcd               -> the binary PCD at `map_path`, streamed from disk
+//   GET /traj.tum              -> the TUM trajectory sibling to `map_path`
+//                                 (<map_path's parent>/traj.tum), if present; 404
+//                                 when absent (e.g. a map viewed without a
+//                                 matching `map slam` trajectory).
 // Exposed separately from serve_map_viewer so the routing is unit-testable with
 // httplib's own client (no browser launch, no blocking listen).
 void register_map_viewer_routes(httplib::Server & server, const std::filesystem::path & map_path);

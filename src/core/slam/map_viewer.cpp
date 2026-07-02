@@ -24,6 +24,7 @@
 #include <fstream>
 #include <ios>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -96,6 +97,25 @@ void register_map_viewer_routes(httplib::Server & server, const std::filesystem:
         }
         return sink.write(buf.data(), static_cast<std::size_t>(got));
       });
+  });
+
+  // TUM trajectories are one short ASCII line per pose, so even a long SLAM run
+  // is at most a few tens of MB; unlike /map.pcd this reads the whole file into
+  // memory rather than chunk-streaming it. Absent when `map_path` was viewed
+  // without a matching `map slam` trajectory (or any other reason its sibling
+  // traj.tum does not exist) -- the client treats 404 as "no trajectory to
+  // offer" and hides the toggle rather than treating it as an error.
+  const std::filesystem::path traj_path = map_path.parent_path() / "traj.tum";
+  server.Get("/traj.tum", [traj_path](const httplib::Request &, httplib::Response & res) {
+    std::ifstream in(traj_path, std::ios::binary);
+    if (!in.good()) {
+      res.status = 404;
+      res.set_content("traj.tum not found", "text/plain");
+      return;
+    }
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    res.set_content(buf.str(), "text/plain; charset=utf-8");
   });
 }
 

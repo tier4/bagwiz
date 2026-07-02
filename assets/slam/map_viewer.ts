@@ -6,13 +6,18 @@
 // double-click-to-anchor
 // recentering. A corner orientation gizmo (three.js ViewHelper) shows the global
 // X/Y/Z axes and snaps the view on click, and a scale bar reports the on-screen
-// distance scale. TypeScript source; compiled to map_viewer.js at build time and
+// distance scale. When a sibling traj.tum exists next to map.pcd, an optional
+// (default off) trajectory overlay is also offered; see the Trajectory section
+// below. TypeScript source; compiled to map_viewer.js at build time and
 // embedded into bagwiz (see CMakeLists.txt). three.js is resolved from a CDN at
 // runtime via the import map in map_viewer.html.
 
 import * as THREE from "three";
 import { PCDLoader } from "three/addons/loaders/PCDLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { Line2 } from "three/addons/lines/Line2.js";
+import { LineGeometry } from "three/addons/lines/LineGeometry.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { COLORMAP_NAMES, DEFAULT_COLORMAP, sampleColormap } from "./map_colormaps.js";
 import { createOrientationGizmo, createScaleBar } from "./map_viewer_overlay.js";
 
@@ -148,6 +153,9 @@ interface ViewerState {
   subsample: number; // 1.0 = draw every point
   viewMode: ViewMode;
   projection2d: Projection2D; // 2D projection: parallel (ortho) or perspective
+  trajLine: Line2 | null; // built once traj.tum is fetched and parsed; null when absent
+  trajMaterial: LineMaterial | null; // kept to update .resolution on resize
+  showTrajectory: boolean; // mirrors #trajToggle; default off
 }
 
 const state: ViewerState = {
@@ -168,6 +176,9 @@ const state: ViewerState = {
   subsample: 1.0,
   viewMode: "3d",
   projection2d: "ortho",
+  trajLine: null,
+  trajMaterial: null,
+  showTrajectory: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -666,6 +677,119 @@ function buildUI(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Trajectory (traj.tum), toggled from the inspector; off by default. Fetched
+// eagerly alongside map.pcd, but only added to the scene once the toggle is
+// switched on, so an unused trajectory costs nothing in the render graph.
+// ---------------------------------------------------------------------------
+// The only two saturated accent colors in the whole UI (see --a1 / --a2 in
+// map_viewer.html); the line lerps between them (oldest -> newest) instead of
+// introducing a third color, so the gradient reads as on-brand and doubles as
+// a direction-of-travel cue.
+const TRAJ_COLOR_START = new THREE.Color(0x3fd2c7); // --a1
+const TRAJ_COLOR_END = new THREE.Color(0x4ea1ff); // --a2
+const TRAJ_LINE_WIDTH_PX = 2.5;
+
+// Parse TUM trajectory lines ("timestamp tx ty tz qx qy qz qw") into a flat
+// [x0,y0,z0, x1,y1,z1, ...] array. Blank lines and '#' comments are skipped,
+// mirroring bagwiz's core::read_tum; a line that isn't exactly 8 numeric
+// fields is skipped rather than aborting the whole load.
+function parseTumPositions(text: string): Float32Array {
+  const positions: number[] = [];
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#")) {
+      continue;
+    }
+    const fields = line.split(/\s+/);
+    if (fields.length !== 8) {
+      continue;
+    }
+    const tx = parseFloat(fields[1]);
+    const ty = parseFloat(fields[2]);
+    const tz = parseFloat(fields[3]);
+    if (!Number.isFinite(tx) || !Number.isFinite(ty) || !Number.isFinite(tz)) {
+      continue;
+    }
+    positions.push(tx, ty, tz);
+  }
+  return new Float32Array(positions);
+}
+
+// Build the fat-line (three/addons Line2, for real pixel-width control that
+// plain THREE.Line lacks) representing `positions` (flat xyz triples),
+// per-vertex colored by lerping TRAJ_COLOR_START -> TRAJ_COLOR_END along the
+// trajectory's time order. Positions are already in the map's world frame (the
+// same SLAM run wrote both map.pcd and traj.tum), so no extra transform is
+// needed.
+function buildTrajectoryLine(positions: Float32Array): Line2 {
+  const count = positions.length / 3;
+  const colors = new Float32Array(positions.length);
+  const c = new THREE.Color();
+  for (let i = 0; i < count; i += 1) {
+    c.copy(TRAJ_COLOR_START).lerp(TRAJ_COLOR_END, count > 1 ? i / (count - 1) : 0);
+    colors[i * 3] = c.r;
+    colors[i * 3 + 1] = c.g;
+    colors[i * 3 + 2] = c.b;
+  }
+
+  const geometry = new LineGeometry();
+  geometry.setPositions(positions);
+  geometry.setColors(colors);
+
+  const material = new LineMaterial({ linewidth: TRAJ_LINE_WIDTH_PX, vertexColors: true });
+  material.resolution.set(window.innerWidth, window.innerHeight);
+  state.trajMaterial = material;
+
+  return new Line2(geometry, material);
+}
+
+// Reveal the inspector's Trajectory group (hidden by default in the markup)
+// and wire its toggle, once traj.tum has been fetched and parsed into at
+// least one pose. Left untouched -- so the panel stays hidden -- when
+// traj.tum is absent (404) or empty.
+function revealTrajectoryUi(poseCount: number): void {
+  el<HTMLElement>("trajGrp").hidden = false;
+  el<HTMLElement>("trajHint").textContent =
+    `${poseCount.toLocaleString()} poses · color: oldest (teal) → newest (blue)`;
+
+  el<HTMLInputElement>("trajToggle").addEventListener("change", (event) => {
+    state.showTrajectory = (event.target as HTMLInputElement).checked;
+    if (!state.trajLine) {
+      return;
+    }
+    if (state.showTrajectory) {
+      scene.add(state.trajLine);
+    } else {
+      scene.remove(state.trajLine);
+    }
+    requestFrame();
+  });
+}
+
+// Fetch and parse the sibling traj.tum served alongside map.pcd (see
+// register_map_viewer_routes in map_viewer.cpp). A 404 means no trajectory was
+// written next to this map -- not an error -- so the Trajectory panel simply
+// stays hidden.
+function loadTrajectory(): void {
+  fetch("traj.tum")
+    .then((res) => (res.ok ? res.text() : null))
+    .then((text) => {
+      if (text === null) {
+        return;
+      }
+      const positions = parseTumPositions(text);
+      if (positions.length === 0) {
+        return;
+      }
+      state.trajLine = buildTrajectoryLine(positions);
+      revealTrajectoryUi(positions.length / 3);
+    })
+    .catch(() => {
+      // No trajectory to offer; leave the panel hidden.
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Load
 // ---------------------------------------------------------------------------
 function onLoad(points: THREE.Points): void {
@@ -704,6 +828,8 @@ function onLoad(points: THREE.Points): void {
   updateStatus();
 }
 
+loadTrajectory();
+
 const loader = new PCDLoader();
 // PCDLoader natively exposes the optional per-point `intensity` field (present
 // for LiDAR maps) as its own geometry attribute, so it can be selected as a
@@ -728,6 +854,9 @@ window.addEventListener("resize", () => {
   // Re-fit the ortho frustum's width to the new aspect, preserving zoom/height.
   setOrthoExtent(orthoCamera.top);
   renderer.setSize(window.innerWidth, window.innerHeight);
+  // LineMaterial (Line2) sizes its screen-space width from this uniform, so it
+  // must track the viewport like the cameras above.
+  state.trajMaterial?.resolution.set(window.innerWidth, window.innerHeight);
   requestFrame();
 });
 
