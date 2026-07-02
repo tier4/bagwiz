@@ -956,7 +956,9 @@ public:
         img, all_points, vmin, vmax, pcd.scheme, pcd.point_size, pcd.alpha, *raster);
       if (!err.empty()) {
         status = err;
-      } else {
+      } else if (status.empty()) {
+        // Preserve transient statuses such as the save confirmation; the point
+        // count will be shown again once the current status is cleared.
         status =
           fmt::format("pcd: {} points from {} topic(s)", all_points.size(), pcd_fetchers.size());
       }
