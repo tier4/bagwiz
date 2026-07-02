@@ -2,8 +2,9 @@
 // map.pcd and renders it with configurable controls: which scalar drives the
 // color (x/y/z/intensity), its value range (auto or manual), the colormap, a
 // subsample rate, point size, a 3D / 2D view toggle (2D is a top-down bird's-eye
-// view, switchable between orthographic and perspective projection), and
-// double-click-to-anchor
+// view, switchable between orthographic and perspective projection, and
+// left-drag rotatable about the vertical Z axis while the top-down tilt stays
+// locked), and double-click-to-anchor
 // recentering. A corner orientation gizmo (three.js ViewHelper) shows the global
 // X/Y/Z axes and snaps the view on click, and a scale bar reports the on-screen
 // distance scale. When a sibling traj.tum exists next to map.pcd, an optional
@@ -156,6 +157,7 @@ interface ViewerState {
   subsample: number; // 1.0 = draw every point
   viewMode: ViewMode;
   projection2d: Projection2D; // 2D projection: parallel (ortho) or perspective
+  heading2d: number; // 2D bird's-eye yaw about the vertical (Z) axis, radians
   trajPoses: TrajPoses | null; // parsed traj.tum poses (position + orientation)
   trajGroup: THREE.Group | null; // backbone + pose-axis triads + end markers
   trajMaterials: LineMaterial[]; // every fat-line material, for .resolution on resize
@@ -182,6 +184,7 @@ const state: ViewerState = {
   subsample: 1.0,
   viewMode: "3d",
   projection2d: "ortho",
+  heading2d: 0,
   trajPoses: null,
   trajGroup: null,
   trajMaterials: [],
@@ -300,9 +303,18 @@ function defaultPointSize(radius: number): number {
 }
 
 // 2D bird's-eye pose. `TOP_OFFSET` is the unit direction from the target to the
-// camera (straight up, looking down -Z); `TOP_UP` keeps north (+y) upright.
+// camera (straight up, looking down -Z).
 const TOP_OFFSET = new THREE.Vector3(0, 0, 1);
-const TOP_UP = new THREE.Vector3(0, 1, 0);
+
+// Screen-up for the 2D bird's-eye view: north (+y) at heading 0, rolled about
+// the vertical (Z) axis by the current heading. Rolling the camera up-vector
+// (rather than orbiting) spins the top-down map around Z while keeping it
+// perfectly flat — OrbitControls' orbit stays disabled in 2D because it would
+// tilt the view.
+function top2dUp(): THREE.Vector3 {
+  const h = state.heading2d;
+  return new THREE.Vector3(-Math.sin(h), Math.cos(h), 0);
+}
 
 // Set the ortho frustum left/right/top/bottom from a half-height, fitting the
 // viewport aspect. Leaves zoom and near/far untouched.
@@ -370,17 +382,29 @@ function frameView(): void {
   } else {
     if (state.projection2d === "ortho") {
       setNearFar(orthoCamera, radius);
-      orthoCamera.up.copy(TOP_UP);
+      orthoCamera.up.copy(top2dUp());
       orthoCamera.position.copy(center).addScaledVector(TOP_OFFSET, radius * 2);
       orthoCamera.zoom = 1;
       setOrthoExtent(fitHalfHeight(radius));
     } else {
       setNearFar(perspCamera, radius);
-      perspCamera.up.copy(TOP_UP);
+      perspCamera.up.copy(top2dUp());
       perspCamera.position.copy(center).addScaledVector(TOP_OFFSET, fitDistance(radius));
       perspCamera.updateProjectionMatrix();
     }
   }
+  controls.update();
+  requestFrame();
+}
+
+// Re-roll the active 2D camera to the current heading without changing its
+// position or target, so the top-down map spins about the vertical (Z) axis.
+// No-op outside 2D.
+function apply2dHeading(): void {
+  if (state.viewMode !== "2d") {
+    return;
+  }
+  activeCamera().up.copy(top2dUp());
   controls.update();
   requestFrame();
 }
@@ -490,6 +514,61 @@ function onDoubleClick(event: MouseEvent): void {
 }
 
 renderer.domElement.addEventListener("dblclick", onDoubleClick);
+
+// ---------------------------------------------------------------------------
+// 2D heading: left-drag spins the bird's-eye view about the vertical (Z) axis.
+// OrbitControls' orbit is disabled in 2D (it would tilt the top-down lock), so
+// the left button is free here; we roll the camera up-vector instead. Panning
+// (right-drag) and zoom (wheel) stay owned by OrbitControls.
+// ---------------------------------------------------------------------------
+let headingDrag: { pointerId: number; lastAngle: number } | null = null;
+
+// Angle of the pointer about the viewport centre (screen y-down, so it grows
+// clockwise). Dragging around the centre acts like a turntable.
+function pointerAngleAboutCenter(event: PointerEvent): number {
+  const rect = renderer.domElement.getBoundingClientRect();
+  return Math.atan2(
+    event.clientY - (rect.top + rect.height / 2),
+    event.clientX - (rect.left + rect.width / 2),
+  );
+}
+
+renderer.domElement.addEventListener("pointerdown", (event: PointerEvent) => {
+  if (state.viewMode !== "2d" || event.button !== 0) {
+    return;
+  }
+  headingDrag = { pointerId: event.pointerId, lastAngle: pointerAngleAboutCenter(event) };
+  renderer.domElement.setPointerCapture(event.pointerId);
+});
+
+renderer.domElement.addEventListener("pointermove", (event: PointerEvent) => {
+  if (!headingDrag || event.pointerId !== headingDrag.pointerId) {
+    return;
+  }
+  const angle = pointerAngleAboutCenter(event);
+  let delta = angle - headingDrag.lastAngle;
+  // Shortest arc so crossing the ±180° seam does not snap the view around.
+  if (delta > Math.PI) {
+    delta -= 2 * Math.PI;
+  } else if (delta < -Math.PI) {
+    delta += 2 * Math.PI;
+  }
+  headingDrag.lastAngle = angle;
+  // Turn the map the same way the cursor sweeps, so a grabbed feature follows
+  // the pointer.
+  state.heading2d += delta;
+  apply2dHeading();
+});
+
+function endHeadingDrag(event: PointerEvent): void {
+  if (!headingDrag || event.pointerId !== headingDrag.pointerId) {
+    return;
+  }
+  renderer.domElement.releasePointerCapture(headingDrag.pointerId);
+  headingDrag = null;
+}
+renderer.domElement.addEventListener("pointerup", endHeadingDrag);
+renderer.domElement.addEventListener("pointercancel", endHeadingDrag);
 
 // Click an axis on the corner gizmo to snap the camera to that view, orbiting
 // around the current target. Restricted to 3D mode: in 2D the bird's-eye
@@ -683,6 +762,7 @@ function buildUI(): void {
   syncToolbar();
 
   el<HTMLButtonElement>("resetView").addEventListener("click", () => {
+    state.heading2d = 0; // back to the canonical north-up bird's-eye
     frameView();
   });
 }
