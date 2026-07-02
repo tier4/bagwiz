@@ -68,20 +68,20 @@ void write_tum(std::ostream & os, std::span<const TrajectoryPose> poses);
 // at year-2026 magnitudes).
 TrajectoryReadResult read_tum(std::istream & is);
 
-// How a `--upsample-traj` magnitude is interpreted (see parse_upsample_spec).
+// How a `--upsample` magnitude is interpreted (see parse_upsample_spec).
 enum class UpsampleMode {
   kFrequencyHz,  // value is an absolute target rate in Hz
   kMultiplier,   // value multiplies the trajectory's native (average) rate
 };
 
-// A parsed `--upsample-traj` specification.
+// A parsed `--upsample` specification.
 struct UpsampleSpec
 {
   UpsampleMode mode = UpsampleMode::kFrequencyHz;
   double value = 0.0;  // strictly positive once parsed
 };
 
-// Parse a `--upsample-traj` argument. The suffix selects the interpretation,
+// Parse a `--upsample` argument. The suffix selects the interpretation,
 // case-insensitively, and a bare number means Hz:
 //
 //   "2x" / "2.0X"            -> multiplier (x the native rate)

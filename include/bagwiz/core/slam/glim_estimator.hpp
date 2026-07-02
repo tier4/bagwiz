@@ -12,7 +12,7 @@
 // INTERNAL — this header pulls in GLIM / Eigen. Include it ONLY from a
 // BAGWIZ_WITH_SLAM translation unit (cloud_mapper.cpp), never from a GLIM-free
 // public header. It turns the GLIM-free extrinsic POD into the right GLIM
-// backend (LiDAR-only CT, LiDAR-IMU CPU, or — with --backend gpu — LiDAR-IMU GPU).
+// backend (LiDAR-only CT, LiDAR-IMU CPU, or — with --backend cuda — LiDAR-IMU GPU).
 
 #include "bagwiz/core/slam/sensor_transform.hpp"
 
@@ -77,12 +77,12 @@ inline std::unique_ptr<glim::OdometryEstimationBase> make_odometry_estimator(
       params.num_threads = threads;
       return std::make_unique<glim::OdometryEstimationGPU>(params);
     }
-    // --backend gpu without --imu: GLIM has no GPU LiDAR-only odometry, so odometry
+    // --backend cuda without --imu: GLIM has no GPU LiDAR-only odometry, so odometry
     // stays on CT (GPU acceleration still applies to sub/global mapping). The command
     // layer (map_slam.cpp) prints this notice; here we just fall through to CT.
 #else
     throw std::runtime_error(
-      "--backend gpu requested but this binary was built without CUDA "
+      "--backend cuda requested but this binary was built without CUDA "
       "(rebuild with -DBAGWIZ_WITH_SLAM_CUDA=ON / `pixi run -e humble-cuda build-full`).");
 #endif
   }

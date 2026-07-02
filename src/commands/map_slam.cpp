@@ -116,16 +116,16 @@ public:
 
   int run()
   {
-    // Validate the optional --upsample-traj spec up front so a malformed value
+    // Validate the optional --upsample spec up front so a malformed value
     // fails before any bag work. Empty leaves up-sampling disabled.
     if (!args_.upsample_traj.empty()) {
       const auto spec = core::parse_upsample_spec(args_.upsample_traj);
       if (!spec) {
         BAGWIZ_LOG_ERROR(
           kLogger,
-          "Invalid --upsample-traj value '%s'; expected a positive number with an optional "
-          "suffix: 'x' for a multiple of the native rate (e.g. 2x) or 'hz' for a frequency "
-          "(e.g. 20 or 20hz)",
+          "Invalid --upsample value '%s'; expected a positive number with an optional "
+          "case-insensitive unit suffix: 'x'/'X' for a multiple of the native rate (e.g. 2x), "
+          "or 'hz'/'Hz' (or no suffix) for an absolute frequency in Hz (e.g. 20 or 20hz)",
           args_.upsample_traj.c_str());
         return 1;
       }
@@ -133,7 +133,7 @@ public:
     }
 
     // Resolve the effective backend (CPU/GPU) from --backend plus a CUDA device
-    // probe, before any bag work. A forced 'gpu' that cannot run errors here;
+    // probe, before any bag work. A forced 'cuda' that cannot run errors here;
     // 'auto' degrades to CPU.
     if (!resolve_backend()) {
       return 1;
@@ -634,7 +634,7 @@ private:
     return true;
   }
 
-  // Resolve --upsample-traj for the poses destined for traj.tum (the map is
+  // Resolve --upsample for the poses destined for traj.tum (the map is
   // never touched). Returns the poses to write and logs the resampling /
   // declined / gap notices. Only called when upsample_spec_ is set.
   std::vector<core::TrajectoryPose> upsample_for_output(std::span<const core::TrajectoryPose> poses)
@@ -655,7 +655,7 @@ private:
     } else if (result.native_rate_hz > 0.0) {
       BAGWIZ_LOG_WARN(
         kLogger,
-        "--upsample-traj target (%.3f Hz) is at or below the trajectory's native ~%.3f Hz; wrote "
+        "--upsample target (%.3f Hz) is at or below the trajectory's native ~%.3f Hz; wrote "
         "the trajectory unchanged (no resampling)",
         result.target_rate_hz, result.native_rate_hz);
     }
@@ -663,7 +663,7 @@ private:
   }
 
   // Resolve --backend plus a CUDA device probe into use_gpu_. Returns false
-  // (logged) only when 'gpu' was forced but is unavailable; 'auto' silently uses
+  // (logged) only when 'cuda' was forced but is unavailable; 'auto' silently uses
   // CPU when GPU is unavailable (announcing the fallback when a CUDA build merely
   // lacks a usable device).
   bool resolve_backend()
@@ -676,22 +676,22 @@ private:
       use_gpu_ = false;
       return true;
     }
-    if (backend == "gpu") {
+    if (backend == "cuda") {
       if (!cuda.has_cuda_build) {
         BAGWIZ_LOG_ERROR(
           kLogger,
-          "--backend gpu requested but this binary was built without CUDA; rebuild with "
+          "--backend cuda requested but this binary was built without CUDA; rebuild with "
           "-DBAGWIZ_WITH_SLAM_CUDA=ON (pixi run -e humble-cuda build-full), or use --backend "
           "auto/cpu.");
         return false;
       }
       if (!cuda.error.empty()) {
         BAGWIZ_LOG_ERROR(
-          kLogger, "--backend gpu: CUDA device query failed: %s", cuda.error.c_str());
+          kLogger, "--backend cuda: CUDA device query failed: %s", cuda.error.c_str());
         return false;
       }
       if (cuda.device_count <= 0) {
-        BAGWIZ_LOG_ERROR(kLogger, "--backend gpu requested but no CUDA device is available.");
+        BAGWIZ_LOG_ERROR(kLogger, "--backend cuda requested but no CUDA device is available.");
         return false;
       }
       use_gpu_ = true;
@@ -811,7 +811,7 @@ private:
       BAGWIZ_LOG_ERROR(kLogger, "could not open %s for writing", map_path_.c_str());
       return 1;
     }
-    // --upsample-traj rewrites traj.tum only; map.points below is written
+    // --upsample rewrites traj.tum only; map.points below is written
     // untouched, so the map is identical with or without the option.
     std::vector<core::TrajectoryPose> upsampled_traj;
     const std::vector<core::TrajectoryPose> * out_traj = &map.trajectory;
@@ -914,7 +914,7 @@ private:
   const MapSlamArgs & args_;
   std::filesystem::path output_path_;  // <output_root>/traj.tum
   std::filesystem::path map_path_;     // <output_root>/map.pcd (mapping mode only)
-  // Parsed --upsample-traj spec; std::nullopt leaves up-sampling disabled.
+  // Parsed --upsample spec; std::nullopt leaves up-sampling disabled.
   std::optional<core::UpsampleSpec> upsample_spec_;
   // Effective backend resolved by resolve_backend() from --backend.
   bool use_gpu_ = false;

@@ -83,11 +83,11 @@ struct MapSlamArgs
   // default (4).
   int num_threads = 4;
 
-  // SLAM backend selection: "auto" (default), "cpu", or "gpu".
+  // SLAM backend selection: "auto" (default), "cpu", or "cuda".
   //  - auto: use the CUDA GPU backend when this binary was built with
   //    -DBAGWIZ_WITH_SLAM_CUDA AND a CUDA device is visible; otherwise CPU.
   //  - cpu: force the CPU backend (the reproducibility-guaranteed path).
-  //  - gpu: force the CUDA GPU backend; error on a non-CUDA build or no device.
+  //  - cuda: force the CUDA GPU backend; error on a non-CUDA build or no device.
   // The GPU backend = GLIM's GPU LiDAR-IMU odometry (with --imu; CT without it,
   // since GLIM has no GPU LiDAR-only backend), GPU VGICP registration in
   // sub/global mapping, and GPU export-map voxelization. It is OUTSIDE the CPU

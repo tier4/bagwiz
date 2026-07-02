@@ -11,7 +11,7 @@
 
 #include <string>
 
-// GLIM-free AND CUDA-free runtime probe for the `--backend gpu` pre-flight. The
+// GLIM-free AND CUDA-free runtime probe for the `--backend cuda` pre-flight. The
 // declaration carries no CUDA types so the GLIM-free command layer
 // (map_slam.cpp) can call it without pulling in <cuda_runtime_api.h>; the body
 // (cuda_device.cpp) compiles the actual CUDA call only under

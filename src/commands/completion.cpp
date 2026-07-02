@@ -976,9 +976,9 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 // shifting every argument one word to the right of a flat command.
 //
 //   slam:   `map`(0) `slam`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
-//           [--backend <cpu|gpu|auto>] [--imu <topic>] [--gnss <topic>] [--map-resolution <m>]
-//           [--threads <N>] [--upsample-traj <spec>] [--viewer] [-w|--overwrite]
-//           [--no-progress] [--no-recover-start] [--no-recover-end]
+//           [--backend <cpu|cuda|auto>] [--imu <topic>] [--gnss <topic>] [--map-res <m>]
+//           [-t|--threads <N>] [--upsample <spec>] [--viewer] [-w|--overwrite]
+//           [--no-progress] [--no-warmup-recovery] [--no-cooldown-recovery]
 //   viewer: `map`(0) `viewer`(1) `<map>`(2)
 //   filter: `map`(0) `filter`(1) `<action>`(2) ...
 //
@@ -1020,13 +1020,13 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
   if (current.starts_with("-")) {
     return matching(
       with_help(
-        {"--backend", "--gnss", "--imu", "--map-resolution", "--no-progress", "--no-recover-end",
-         "--no-recover-start", "--overwrite", "--threads", "--upsample-traj", "--viewer", "-w"}),
+        {"--backend", "--gnss", "--imu", "--map-res", "--no-cooldown-recovery", "--no-progress",
+         "--no-warmup-recovery", "--overwrite", "--threads", "--upsample", "--viewer", "-t", "-w"}),
       current);
   }
 
   if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--backend") {
-    return matching({"auto", "cpu", "gpu"}, current);
+    return matching({"auto", "cpu", "cuda"}, current);
   }
 
   if (request.cursor_word == 0 || request.words[request.cursor_word - 1] != "--imu") {

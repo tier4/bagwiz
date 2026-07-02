@@ -98,7 +98,7 @@ private:
       "precision when unknown). Requires global mapping.");
     sub
       ->add_option(
-        "--map-resolution", slam_args_.map_resolution,
+        "--map-res", slam_args_.map_resolution,
         "Exported map voxel size in meters (smaller = denser; default 0.2). Controls "
         "only the exported map's density, never the optimization or trajectory. The "
         "LiDAR preprocessor's ~0.15 m input voxel bounds the real resolution.")
@@ -110,21 +110,22 @@ private:
       "After writing map.pcd, open the default browser to a Three.js point-cloud viewer "
       "served over a loopback HTTP server. Runs until interrupted (Ctrl-C).");
     sub->add_option(
-      "--upsample-traj", slam_args_.upsample_traj,
+      "--upsample", slam_args_.upsample_traj,
       "Densify traj.tum only (the map is unaffected) to a higher rate. Every original pose is "
-      "kept verbatim and interpolated samples are inserted between consecutive poses. Accepts "
-      "an absolute frequency ('20' or '20hz') or a multiple of the trajectory's native rate "
-      "('2x'). Position is interpolated linearly and orientation by SLERP, only within the "
-      "original time span (no extrapolation). A target at or below the native rate writes the "
-      "trajectory unchanged (warned; never down-sampled); gaps between poses wider than a few "
-      "times the median spacing are left un-interpolated.");
+      "kept verbatim and interpolated samples are inserted between consecutive poses. The value "
+      "is a positive magnitude with an optional, case-insensitive unit suffix: 'hz'/'Hz' or no "
+      "suffix = absolute frequency in Hz (e.g. '20' or '20hz'); 'x'/'X' = a multiple of the "
+      "trajectory's native rate (e.g. '2x'). Position is interpolated linearly and orientation "
+      "by SLERP, only within the original time span (no extrapolation). A target at or below the "
+      "native rate writes the trajectory unchanged (warned; never down-sampled); gaps between "
+      "poses wider than a few times the median spacing are left un-interpolated.");
     sub->add_flag(
       "--no-progress", slam_args_.no_progress,
       "Disable the live progress bars. They are also auto-suppressed when stderr is not a "
       "terminal or NO_COLOR is set, so this is only needed to silence them interactively.");
 
     sub->add_flag(
-      "!--no-recover-start", slam_args_.recover_start,
+      "!--no-warmup-recovery", slam_args_.recover_start,
       "Disable initialization-window ('start') pose recovery (default on; requires --imu, "
       "automatically disabled in LiDAR-only mode). GLIM's LiDAR-IMU odometry emits no pose until "
       "IMU init converges (~1 s), so traj.tum otherwise has no samples over its opening window. By "
@@ -132,9 +133,10 @@ private:
       "is known, the IMU is integrated backward from it to recover those early poses (re-anchored "
       "onto the optimized map). Affects traj.tum's opening window only.");
     sub->add_flag(
-      "!--no-recover-end", slam_args_.recover_end,
+      "!--no-cooldown-recovery", slam_args_.recover_end,
       "Disable cooldown-window ('end') pose recovery (default on; requires --imu, automatically "
-      "disabled in LiDAR-only mode) — the symmetric counterpart of --no-recover-start. The newest "
+      "disabled in LiDAR-only mode) — the symmetric counterpart of --no-warmup-recovery. The "
+      "newest "
       "scans stay inside the odometry smoother window at end-of-sequence, so traj.tum otherwise "
       "stops one window short of the last input scan. By default a trailing ring of IMU + scans is "
       "buffered and the IMU is integrated forward from the last estimated frame to recover those "
@@ -143,7 +145,7 @@ private:
     const int max_threads = static_cast<int>(std::thread::hardware_concurrency());
     sub
       ->add_option(
-        "--threads", slam_args_.num_threads,
+        "-t,--threads", slam_args_.num_threads,
         "Number of CPU threads for GLIM (default: 4). The host's hardware concurrency is the "
         "effective maximum.")
       ->check(CLI::Range(0, max_threads > 0 ? max_threads : 256));
@@ -153,11 +155,11 @@ private:
         "SLAM backend (default 'auto'). 'auto' uses the CUDA GPU backend when this binary was "
         "built with -DBAGWIZ_WITH_SLAM_CUDA (pixi run -e humble-cuda build-full) AND a CUDA device "
         "is "
-        "visible, else CPU. 'gpu' forces it (errors on a non-CUDA build / no device). 'cpu' "
-        "forces the CPU backend (the reproducibility-guaranteed path). The GPU backend = GPU "
+        "visible, else CPU. 'cuda' forces it (errors on a non-CUDA build / no device). 'cpu' "
+        "forces the CPU backend (the reproducibility-guaranteed path). The CUDA backend = GPU "
         "LiDAR-IMU odometry with --imu (CT without it), GPU VGICP mapping, and GPU export "
         "voxelization; it is OUTSIDE the CPU reproducibility guarantee.")
-      ->check(CLI::IsMember({"auto", "cpu", "gpu"}));
+      ->check(CLI::IsMember({"auto", "cpu", "cuda"}));
     sub->callback([this]() { selected_ = Subcommand::kSlam; });
   }
 
