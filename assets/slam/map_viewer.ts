@@ -89,43 +89,6 @@ const clock = new THREE.Clock();
 const gizmo = createOrientationGizmo(camera, renderer.domElement);
 const scaleBar = createScaleBar(el<HTMLElement>("scaleBarLine"), el<HTMLElement>("scaleBarLabel"));
 
-// Default arrow-style world-axis triad shown at the anchor point in 3D mode.
-// Uses unlit default colors (red/green/blue) so it matches the conventional
-// axis style without extra scene lights.
-let axesHelper: THREE.Group | null = null;
-
-function createArrowAxes(length: number): THREE.Group {
-  const group = new THREE.Group();
-  const headLength = length * 0.15;
-  const shaftLength = length - headLength;
-  const shaftRadius = length * 0.015;
-  const headRadius = length * 0.04;
-  const up = new THREE.Vector3(0, 1, 0);
-
-  const addAxis = (color: number, dir: THREE.Vector3): void => {
-    const material = new THREE.MeshBasicMaterial({ color });
-    const q = new THREE.Quaternion().setFromUnitVectors(up, dir);
-
-    const shaftGeom = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 12);
-    shaftGeom.translate(0, shaftLength / 2, 0);
-    const shaft = new THREE.Mesh(shaftGeom, material);
-    shaft.setRotationFromQuaternion(q);
-
-    const headGeom = new THREE.ConeGeometry(headRadius, headLength, 12);
-    headGeom.translate(0, shaftLength + headLength / 2, 0);
-    const head = new THREE.Mesh(headGeom, material);
-    head.setRotationFromQuaternion(q);
-
-    group.add(shaft, head);
-  };
-
-  addAxis(0xff0000, new THREE.Vector3(1, 0, 0));
-  addAxis(0x00ff00, new THREE.Vector3(0, 1, 0));
-  addAxis(0x0000ff, new THREE.Vector3(0, 0, 1));
-
-  return group;
-}
-
 // ---------------------------------------------------------------------------
 // On-demand rendering
 // ---------------------------------------------------------------------------
@@ -362,9 +325,6 @@ function applyView(): void {
   controls.object = camera;
   gizmo.rebind(camera); // rebind the gizmo to the now-active camera
   controls.enableRotate = state.viewMode !== "2d";
-  if (axesHelper) {
-    axesHelper.visible = state.viewMode === "3d";
-  }
   controls.update();
   syncToolbar();
   requestFrame();
@@ -378,13 +338,6 @@ function frameView(): void {
   }
   const { center, radius } = sphere;
   controls.target.copy(center);
-
-  if (!axesHelper) {
-    axesHelper = createArrowAxes(3.0);
-    scene.add(axesHelper);
-  }
-  axesHelper.position.copy(center);
-  axesHelper.visible = state.viewMode === "3d";
 
   if (state.viewMode === "3d") {
     setNearFar(perspCamera, radius);
@@ -510,9 +463,6 @@ function onDoubleClick(event: MouseEvent): void {
   // delta as the target so the framing is preserved.
   camera.position.add(p.clone().sub(controls.target));
   controls.target.copy(p);
-  if (axesHelper) {
-    axesHelper.position.copy(p);
-  }
   controls.update();
   setStatus(`Anchored at (${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)})`);
 }
