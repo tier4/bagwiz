@@ -8,7 +8,12 @@ if(NOT CMAKE_CXX_STANDARD)
 endif()
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic -Wshadow)
+  # Scope to C++ only. When BAGWIZ_WITH_SLAM_CUDA enables the CUDA language,
+  # these flags would otherwise reach nvcc, which forwards -Wpedantic to the
+  # host compiler on its generated intermediate (.cudafe1.stub.c). That file is
+  # full of GCC-style linemarkers, so -Wpedantic floods the build with
+  # "style of line directive is a GCC extension" — one per line of the .cu.
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic;-Wshadow>")
 endif()
 
 find_package(ament_cmake REQUIRED)
