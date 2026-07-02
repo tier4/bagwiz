@@ -122,18 +122,15 @@ private:
       "--no-progress", slam_args_.no_progress,
       "Disable the live progress bars. They are also auto-suppressed when stderr is not a "
       "terminal or NO_COLOR is set, so this is only needed to silence them interactively.");
+
     sub->add_flag(
-      "--no-pipeline", slam_args_.no_pipeline,
-      "Run the feed fully synchronously on one thread instead of overlapping bag read + "
-      "preprocess with odometry + mapping. The pipeline is bit-identical to this serial path, "
-      "so this is mainly for A/B timing or a strictly serial run.");
-    sub->add_flag(
-      "--recover-init", slam_args_.recover_init,
-      "Recover poses for the initialization window (requires --imu). GLIM's LiDAR-IMU odometry "
-      "emits no pose until IMU init converges (~1 s), so traj.tum otherwise has no samples over "
-      "its opening window. This buffers the pre-init IMU + scans and, once the first frame's "
-      "converged state is known, integrates the IMU backward from it to recover those early "
-      "poses (re-anchored onto the optimized map). Affects traj.tum's opening window only.");
+      "!--no-recover-init", slam_args_.recover_init,
+      "Disable initialization-window pose recovery (default on; requires --imu, automatically "
+      "disabled in LiDAR-only mode). GLIM's LiDAR-IMU odometry emits no pose until IMU init "
+      "converges (~1 s), so traj.tum otherwise has no samples over its opening window. By "
+      "default the pre-init IMU + scans are buffered and, once the first frame's converged state "
+      "is known, the IMU is integrated backward from it to recover those early poses (re-anchored "
+      "onto the optimized map). Affects traj.tum's opening window only.");
     const int max_threads = static_cast<int>(std::thread::hardware_concurrency());
     sub
       ->add_option(

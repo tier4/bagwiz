@@ -132,14 +132,6 @@ public:
       upsample_spec_ = *spec;
     }
 
-    // --recover-init needs the LiDAR-IMU backend's velocity/bias state to
-    // integrate the warmup window backward, so it requires --imu.
-    if (args_.recover_init && args_.imu_topic.empty()) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "--recover-init requires --imu (the warmup-window recovery needs IMU state).");
-      return 1;
-    }
-
     // Resolve the effective backend (CPU/GPU) from --backend plus a CUDA device
     // probe, before any bag work. A forced 'gpu' that cannot run errors here;
     // 'auto' degrades to CPU.
@@ -387,9 +379,6 @@ private:
     // is identity regardless of whether that frame is a TF node.
     if (cloud_frame == imu_frame) {
       out = core::slam::SensorTransform{};
-      fmt::print(
-        stdout, "IMU and cloud share frame '{}'; using identity LiDAR<-IMU extrinsic\n",
-        cloud_frame);
       return true;
     }
 
@@ -419,9 +408,6 @@ private:
       return false;
     }
 
-    fmt::print(
-      stdout, "Resolved LiDAR<-IMU extrinsic from static TF ('{}' <- '{}')\n", cloud_frame,
-      imu_frame);
     return true;
   }
 
@@ -736,8 +722,7 @@ private:
     config.num_threads = cap_threads_at_hardware_limit(args_.num_threads);
     config.enable_gnss = !args_.gnss_topic.empty();
     config.use_gpu = use_gpu_;
-    config.disable_pipeline = args_.no_pipeline;
-    config.recover_init = args_.recover_init;
+    config.recover_init = args_.recover_init && !args_.imu_topic.empty();
     // Resolve the antenna lever-arm (T_cloud_gnss) from static TF so the GNSS prior
     // constrains the sensor origin, not the antenna. Non-fatal: a missing TF leaves
     // the offset zero (raw-antenna behavior) with a warning.
@@ -859,7 +844,7 @@ private:
       out_traj->size(), map.points.size(), scans, imu_suffix(imu_count), skipped,
       output_path_.string(), map_path_.string());
 
-    if (args_.recover_init) {
+    if (args_.recover_init && !args_.imu_topic.empty()) {
       if (map.recovered_init_pose_count > 0) {
         fmt::print(
           stdout, "Recovered {} initialization-window pose(s) by backward IMU propagation\n",
@@ -867,8 +852,8 @@ private:
       } else {
         fmt::print(
           stdout,
-          "--recover-init: no initialization-window poses recovered (IMU init converged "
-          "immediately, or no pre-init scans)\n");
+          "No initialization-window poses recovered (IMU init converged immediately, or no "
+          "pre-init scans)\n");
       }
     }
 

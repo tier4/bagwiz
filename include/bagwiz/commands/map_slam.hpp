@@ -61,13 +61,14 @@ struct MapSlamArgs
   // leaves the trajectory unchanged (warned, never down-sampled).
   std::string upsample_traj;
 
-  // Recover poses for the initialization window (LiDAR-IMU only; requires
-  // --imu). GLIM's LiDAR-IMU odometry emits no frame until IMU init converges
-  // (~1 s), leaving traj.tum without samples over its opening window. When set,
-  // the pre-init IMU + scan stamps are buffered and, once the first frame's
-  // converged state is known, the IMU is integrated backward from it to recover
-  // per-scan poses for that window, re-anchored onto the optimized map.
-  bool recover_init = false;
+  // Recover poses for the initialization window (LiDAR-IMU only; automatically
+  // disabled without --imu). GLIM's LiDAR-IMU odometry emits no frame until IMU
+  // init converges (~1 s), leaving traj.tum without samples over its opening
+  // window. When enabled, the pre-init IMU + scan stamps are buffered and, once
+  // the first frame's converged state is known, the IMU is integrated backward
+  // from it to recover per-scan poses for that window, re-anchored onto the
+  // optimized map.
+  bool recover_init = true;
 
   // Number of CPU threads for GLIM. 0 or a negative value falls back to the
   // default (4).
@@ -83,12 +84,6 @@ struct MapSlamArgs
   // sub/global mapping, and GPU export-map voxelization. It is OUTSIDE the CPU
   // reproducibility guarantee. The effective choice is resolved in run_map_slam.
   std::string backend = "auto";
-
-  // Force the fully synchronous (single-thread) feed path instead of the default
-  // read+preprocess / odometry+mapping pipeline. The pipeline only overlaps stages
-  // and is bit-identical to this serial path, so this is mainly an A/B-timing and
-  // strict-serial escape hatch.
-  bool no_pipeline = false;
 };
 
 // Run LiDAR SLAM over a single PointCloud2 topic entirely in-process: bagwiz

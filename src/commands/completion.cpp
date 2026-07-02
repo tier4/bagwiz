@@ -978,7 +978,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //   slam:   `map`(0) `slam`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
 //           [--backend <cpu|gpu|auto>] [--imu <topic>] [--gnss <topic>] [--map-resolution <m>]
 //           [--threads <N>] [--upsample-traj <spec>] [--viewer] [-w|--overwrite]
-//           [--no-progress] [--no-pipeline]
+//           [--no-progress] [--no-recover-init]
 //   viewer: `map`(0) `viewer`(1) `<map>`(2)
 //   filter: `map`(0) `filter`(1) `<action>`(2) ...
 //
@@ -1020,8 +1020,8 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
   if (current.starts_with("-")) {
     return matching(
       with_help(
-        {"--backend", "--gnss", "--imu", "--map-resolution", "--no-pipeline", "--no-progress",
-         "--overwrite", "--recover-init", "--threads", "--upsample-traj", "--viewer", "-w"}),
+        {"--backend", "--gnss", "--imu", "--map-resolution", "--no-progress", "--no-recover-init",
+         "--overwrite", "--threads", "--upsample-traj", "--viewer", "-w"}),
       current);
   }
 
