@@ -17,53 +17,35 @@ Any combination of these is accepted transparently.
 bagwiz is built and run through [pixi](https://pixi.sh) — no system ROS 2
 install needed.
 
-bagwiz provides first-class support for the long-term-support (LTS) ROS 2
-distributions — Humble and Jazzy; `pixi.toml` exposes one environment
-per distro.
-
 1. Install pixi once, then reopen your shell so `pixi` is on `PATH`:
 
    ```bash
    curl -fsSL https://pixi.sh/install.sh | bash
    ```
 
-2. Build bagwiz against a distro. The first build downloads that distro's
-   packages and compiles bagwiz; later builds are incremental:
+2. Build bagwiz for a distro. bagwiz supports ROS 2 Humble and Jazzy; each
+   has CPU and CUDA environments.
 
    ```bash
-   pixi run -e humble build-full     # or: jazzy
+   pixi run -e humble build-core   # basic features
+   pixi run -e humble build-full   # includes advanced features such as `map`
    ```
 
-   `pixi run build-full` (no `-e`) targets Humble, the default environment. Each
-   distro builds into its own `build/<distro>` and `install/<distro>`, so builds
-   for several distros can coexist.
+   Use `build-full` only when you need features like `bagwiz map`. The default
+   environment is Humble, so `pixi run build-core` is equivalent to
+   `pixi run -e humble build-core`.
 
-   `build-full` includes the `map slam` command, so on **humble**/**jazzy** it
-   builds the GLIM dependency stack (GTSAM + gtsam_points + glim) from source the
-   first time, which takes tens of minutes; subsequent builds reuse the vendored
-   prefix and are fast. If you don't need `map`, `pixi run -e humble build-core`
-   skips the GLIM stack entirely for a much faster build. For the
-   CUDA-accelerated SLAM build, use
-   `pixi run -e humble-cuda build-full` (needs an NVIDIA GPU); see
-   [docs/commands/map.md](docs/commands/map.md).
-
-3. Install a `bagwiz` launcher on your `PATH` — plus tab completion — so you can
-   run it from anywhere without typing `pixi run`:
+3. Install a `bagwiz` launcher on your `PATH` so you can run it from anywhere:
 
    ```bash
-   pixi run -e humble install   # installs ~/.local/bin/bagwiz + completion for step 2's build
+   pixi run -e humble install   # installs ~/.local/bin/bagwiz
    ```
 
-   This installs the launcher and shell completion for your current shell in one
-   step, always overwriting any existing copies. It does **not** build — it wires
-   the launcher to whatever step 2 already built (`build-core` or `build-full`), so
-   run a build first and re-install after rebuilding. Use the same `-e <distro>`
-   you built with (a bare `pixi run install` targets Humble, the default
-   environment). Set `BAGWIZ_INSTALL_DIR` to change the destination. To switch
-   the launcher to a different built distro, run `pixi run -e <distro> install`
-   again.
+   This also installs shell completion for your current shell. It does not
+   build; run the build from step 2 first. Use the same `-e <distro>` you built
+   with. To switch distros, run `pixi run -e <distro> install` again.
 
-4. Verify the install — `bagwiz` should now be on your `PATH`:
+4. Verify the install:
 
    ```bash
    bagwiz --help
