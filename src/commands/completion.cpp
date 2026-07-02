@@ -1021,7 +1021,7 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
     return matching(
       with_help(
         {"--backend", "--gnss", "--imu", "--map-resolution", "--no-pipeline", "--no-progress",
-         "--overwrite", "--threads", "--upsample-traj", "--viewer", "-w"}),
+         "--overwrite", "--recover-init", "--threads", "--upsample-traj", "--viewer", "-w"}),
       current);
   }
 

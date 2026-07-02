@@ -17,6 +17,7 @@
 #include "bagwiz/core/slam/gnss_alignment.hpp"
 #include "bagwiz/core/slam/gnss_sample.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
+#include "bagwiz/core/slam/warmup_recovery.hpp"
 #include "bagwiz/core/trajectory.hpp"
 
 #include <Eigen/Core>
@@ -74,6 +75,18 @@ constexpr double kUnconstrainedZVariance = 1e8;  // ~ (1e4 m)^2
 // buffered frame is the preprocessed cloud, tens of MB on a dense scan). IMU/GNSS
 // events are weight-0 and do not count toward this bound.
 constexpr std::size_t kFeedQueueCapacityScans = 8;
+
+// Caps on the pre-init data buffered for warmup-window recovery (config.
+// recover_init). Buffering runs until GLIM MARGINALIZES its first frame, not
+// until init converges: that is IMU init (~1 s) plus the odometry smoother lag
+// (~5 s), so ~6 s of data (~1k IMU samples, tens of scans) on a normal run. The
+// post-boundary surplus is discarded at use time (recover_warmup filters on
+// stamp < boundary; backpropagate_imu suffix-trims the rest). The caps sit far
+// above that and only bound memory if init never converges (e.g. a fully static
+// bag), where recovery is disabled rather than buffering unboundedly. IMU
+// ~200 Hz -> 100k is >8 min.
+constexpr std::size_t kWarmupMaxImuSamples = 100000;
+constexpr std::size_t kWarmupMaxScanStamps = 20000;
 
 core::TrajectoryPose to_pose(double stamp, const Eigen::Isometry3d & transform)
 {
@@ -273,6 +286,24 @@ struct CloudMapper::Impl
   std::vector<SubMapEntry> entries;
   std::unordered_map<std::int64_t, StashedPoints> stash;  // frame id -> full points
 
+  // --- Warmup-window recovery (config.recover_init; LiDAR-IMU only) -----------
+  // Raw IMU + scan stamps captured before GLIM's first estimation frame, plus
+  // the converged boundary state read off that frame. Buffered on the single
+  // odometry-executing thread (consume_* serial, odometry_loop pipeline) and
+  // consumed by recover_warmup() in finish() only after the workers join, so no
+  // synchronization is needed.
+  struct WarmupState
+  {
+    bool active = false;              // recover_init AND a LiDAR-IMU extrinsic
+    bool boundary_captured = false;   // first frame seen -> `boundary` is set
+    bool overflowed = false;          // window exceeded the cap before init
+    std::vector<BackpropImu> imu;     // raw (pre-bias), ascending, pre-boundary
+    std::vector<double> scan_stamps;  // seconds, ascending, pre-boundary
+    BackpropBoundary boundary;        // converged state at the first frame
+    std::int64_t boundary_id = -1;    // that frame's EstimationFrame::id
+  };
+  WarmupState warmup;
+
   // One GNSS fix in the local metric frame, with its stamp in seconds (matching
   // EstimationFrame::stamp) so it can be interpolated against submap timestamps.
   struct GnssMetric
@@ -391,9 +422,11 @@ struct CloudMapper::Impl
   // sub mapping. Identical to the serial path's odometry-onward body.
   void consume_scan(const glim::PreprocessedFrame::Ptr & preprocessed)
   {
+    warmup_note_scan(preprocessed->stamp);
     std::vector<glim::EstimationFrame::ConstPtr> marginalized;
     odometry->insert_frame(preprocessed, marginalized);
     for (const auto & frame : marginalized) {
+      warmup_note_frame(frame);
       feed_sub_mapping(frame);
     }
     drain_submaps();
@@ -403,6 +436,7 @@ struct CloudMapper::Impl
   // LiDAR-only mode), each of which buffers it in its own preintegrator.
   void consume_imu(double stamp, const Eigen::Vector3d & acc, const Eigen::Vector3d & gyro)
   {
+    warmup_note_imu(stamp, acc, gyro);
     odometry->insert_imu(stamp, acc, gyro);
     sub_mapping->insert_imu(stamp, acc, gyro);
     global_mapping->insert_imu(stamp, acc, gyro);
@@ -422,9 +456,11 @@ struct CloudMapper::Impl
       while (odom_queue.pop(event)) {
         switch (event.kind) {
           case FeedEvent::Kind::Scan: {
+            warmup_note_scan(event.frame->stamp);
             std::vector<glim::EstimationFrame::ConstPtr> marginalized;
             odometry->insert_frame(event.frame, marginalized);
             for (auto & frame : marginalized) {
+              warmup_note_frame(frame);
               MapEvent out;
               out.kind = MapEvent::Kind::Frame;
               out.frame = std::move(frame);
@@ -435,6 +471,7 @@ struct CloudMapper::Impl
             break;
           }
           case FeedEvent::Kind::Imu: {
+            warmup_note_imu(event.imu_stamp, event.imu_acc, event.imu_gyro);
             odometry->insert_imu(event.imu_stamp, event.imu_acc, event.imu_gyro);
             MapEvent out;
             out.kind = MapEvent::Kind::Imu;
@@ -546,6 +583,9 @@ struct CloudMapper::Impl
       std::make_unique<glim::GlobalMapping>(
         make_global_mapping_params(cfg.t_lidar_imu.has_value(), cfg.use_gpu)))
   {
+    // Warmup recovery needs the LiDAR-IMU backend's velocity/bias state, so it is
+    // active only with an extrinsic; recover_init without --imu is a no-op here.
+    warmup.active = cfg.recover_init && cfg.t_lidar_imu.has_value();
   }
 
   // Copy a frame's full LiDAR-frame points (and intensities, if any) out of GLIM
@@ -608,6 +648,63 @@ struct CloudMapper::Impl
     }
     stash_frame(frame);
     sub_mapping->insert_frame(frame);
+  }
+
+  // ---- Warmup-window recovery buffering (odometry-executing thread only) -----
+  // Buffer one raw IMU sample until the first frame is seen. Disables recovery
+  // (releasing the buffers) if the pre-init window overflows the cap.
+  void warmup_note_imu(double stamp, const Eigen::Vector3d & acc, const Eigen::Vector3d & gyro)
+  {
+    if (!warmup.active || warmup.boundary_captured) {
+      return;
+    }
+    if (warmup.imu.size() >= kWarmupMaxImuSamples) {
+      warmup_disable();
+      return;
+    }
+    warmup.imu.push_back({stamp, acc, gyro});
+  }
+
+  // Buffer one pre-init scan stamp (seconds). See warmup_note_imu.
+  void warmup_note_scan(double stamp)
+  {
+    if (!warmup.active || warmup.boundary_captured) {
+      return;
+    }
+    if (warmup.scan_stamps.size() >= kWarmupMaxScanStamps) {
+      warmup_disable();
+      return;
+    }
+    warmup.scan_stamps.push_back(stamp);
+  }
+
+  // Capture the boundary state off GLIM's first estimation frame (id 0): its
+  // converged world pose, world velocity, and IMU biases. Called for every
+  // marginalized frame but latches on the first.
+  void warmup_note_frame(const glim::EstimationFrame::ConstPtr & frame)
+  {
+    if (!warmup.active || warmup.boundary_captured || !frame) {
+      return;
+    }
+    warmup.boundary.stamp = frame->stamp;
+    warmup.boundary.T_world_imu = frame->T_world_imu;
+    warmup.boundary.v_world_imu = frame->v_world_imu;
+    warmup.boundary.acc_bias = frame->imu_bias.head<3>();
+    warmup.boundary.gyro_bias = frame->imu_bias.tail<3>();
+    warmup.boundary_id = frame->id;
+    warmup.boundary_captured = true;
+  }
+
+  // Give up on recovery and release the buffers (init never converged within the
+  // cap). boundary_captured stays false so recover_warmup() no-ops.
+  void warmup_disable()
+  {
+    warmup.active = false;
+    warmup.overflowed = true;
+    warmup.imu.clear();
+    warmup.imu.shrink_to_fit();
+    warmup.scan_stamps.clear();
+    warmup.scan_stamps.shrink_to_fit();
   }
 
   // Capture each frame's submap-local relative pose and pair it with the full
@@ -852,6 +949,86 @@ struct CloudMapper::Impl
     for (const auto & entry : poses) {
       result.trajectory.push_back(entry.second);
     }
+  }
+
+  // Prepend backward-propagated poses for the SLAM warmup window (the scans
+  // captured before GLIM's first frame) to the optimized trajectory. Runs in
+  // finish() after the workers join, so it is the sole reader of `warmup`. A
+  // no-op unless recovery is active, the boundary frame was captured, and it
+  // survived into the optimized map.
+  void recover_warmup(CloudMap & result)
+  {
+    if (!warmup.active || !warmup.boundary_captured || !config.t_lidar_imu.has_value()) {
+      return;
+    }
+    const Eigen::Isometry3d T_lidar_imu = detail::to_isometry(*config.t_lidar_imu);
+
+    // Globally-optimized LiDAR pose of the boundary frame, found by id in the
+    // captured submaps (T_origin_frame is invariant under global optimization,
+    // so the optimized world pose is T_world_origin * T_origin_frame).
+    std::optional<Eigen::Isometry3d> anchor_world_lidar;
+    for (const auto & entry : entries) {
+      if (!entry.submap) {
+        continue;
+      }
+      for (const auto & ref : entry.frames) {
+        if (ref.id == warmup.boundary_id) {
+          anchor_world_lidar = entry.submap->T_world_origin * ref.T_origin_frame;
+          break;
+        }
+      }
+      if (anchor_world_lidar) {
+        break;
+      }
+    }
+    if (!anchor_world_lidar) {
+      return;  // boundary frame not in the optimized map (unexpected)
+    }
+    const Eigen::Isometry3d T_world_imu_anchor = *anchor_world_lidar * T_lidar_imu;
+
+    // Integrate the buffered IMU backward from the (odometry-frame) boundary.
+    const auto knots = backpropagate_imu(warmup.boundary, warmup.imu, default_gravity_world());
+    if (knots.size() < 2) {
+      return;  // no samples before the boundary
+    }
+    const Eigen::Isometry3d T_odom_imu0_inv = warmup.boundary.T_world_imu.inverse();
+    const Eigen::Isometry3d T_imu_lidar = T_lidar_imu.inverse();
+
+    // Merge into a stamp-keyed map so recovered poses dedup against the existing
+    // trajectory (a real GLIM pose always wins a collision).
+    std::map<std::int64_t, core::TrajectoryPose> merged;
+    for (const auto & pose : result.trajectory) {
+      merged[pose.timestamp_ns] = pose;
+    }
+
+    std::size_t recovered = 0;
+    for (const double stamp : warmup.scan_stamps) {
+      if (stamp >= warmup.boundary.stamp) {
+        continue;  // this scan already has a GLIM-estimated frame
+      }
+      const auto pose_imu = interpolate_pose(knots, stamp);
+      if (!pose_imu) {
+        continue;  // outside the integrated span
+      }
+      // Recovered odometry-frame IMU pose, re-expressed relative to the boundary
+      // and re-anchored onto the boundary's globally-optimized pose, then mapped
+      // IMU -> LiDAR (T_world_lidar = T_world_imu * T_imu_lidar).
+      const Eigen::Isometry3d T_world_lidar =
+        T_world_imu_anchor * (T_odom_imu0_inv * *pose_imu) * T_imu_lidar;
+      const auto pose = to_pose(stamp, T_world_lidar);
+      if (merged.emplace(pose.timestamp_ns, pose).second) {
+        ++recovered;
+      }
+    }
+    if (recovered == 0) {
+      return;
+    }
+    result.trajectory.clear();
+    result.trajectory.reserve(merged.size());
+    for (const auto & entry : merged) {
+      result.trajectory.push_back(entry.second);
+    }
+    result.recovered_init_pose_count = recovered;
   }
 
   // Intensity is all-or-nothing across the whole map (mirrors GLIM's export and
@@ -1226,6 +1403,10 @@ CloudMap CloudMapper::finish()
   // exactly as glim's async pipeline does at end of sequence — into sub mapping,
   // then force out the final submap.
   for (const auto & frame : impl_->odometry->get_remaining_frames()) {
+    // Capture the warmup boundary here too: on a bag shorter than the odometry
+    // smoother window, the first frame (id 0) is never marginalized mid-stream
+    // and only surfaces in this end-of-sequence flush. No-op once already caught.
+    impl_->warmup_note_frame(frame);
     impl_->feed_sub_mapping(frame);
   }
   // This drain only sees submaps the flushed remaining frames newly completed —
@@ -1291,6 +1472,7 @@ CloudMap CloudMapper::finish()
   CloudMap result;
   result.gnss_factor_count = gnss_count;
   impl_->fill_trajectory(result);
+  impl_->recover_warmup(result);
   impl_->fill_map(result);
   return result;
 }

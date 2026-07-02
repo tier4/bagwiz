@@ -127,6 +127,13 @@ private:
       "Run the feed fully synchronously on one thread instead of overlapping bag read + "
       "preprocess with odometry + mapping. The pipeline is bit-identical to this serial path, "
       "so this is mainly for A/B timing or a strictly serial run.");
+    sub->add_flag(
+      "--recover-init", slam_args_.recover_init,
+      "Recover poses for the initialization window (requires --imu). GLIM's LiDAR-IMU odometry "
+      "emits no pose until IMU init converges (~1 s), so traj.tum otherwise has no samples over "
+      "its opening window. This buffers the pre-init IMU + scans and, once the first frame's "
+      "converged state is known, integrates the IMU backward from it to recover those early "
+      "poses (re-anchored onto the optimized map). Affects traj.tum's opening window only.");
     const int max_threads = static_cast<int>(std::thread::hardware_concurrency());
     sub
       ->add_option(

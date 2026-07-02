@@ -60,6 +60,15 @@ struct CloudMapperConfig
   // Convention is GLIM's T_lidar_imu (p_lidar = T_lidar_imu * p_imu).
   std::optional<SensorTransform> t_lidar_imu;
 
+  // Recover poses for the SLAM initialization window. GLIM's LiDAR-IMU odometry
+  // emits no frame until its IMU init converges (~1 s), leaving the trajectory's
+  // opening window empty. When true, the raw IMU + scan stamps before the first
+  // frame are buffered and, once that frame's converged state is known, the IMU
+  // is integrated backward from it to recover per-scan poses for the warmup
+  // window (re-anchored onto the globally-optimized map). LiDAR-IMU only: a no-op
+  // unless t_lidar_imu is set. See core/slam/warmup_recovery.hpp.
+  bool recover_init = false;
+
   // GNSS global constraint (ported from glim_ext's gnss_global). When true, GNSS
   // points fed via insert_gnss() add horizontal translation priors on the submap
   // poses during the final global optimization, pinning the world frame to GNSS
@@ -175,6 +184,11 @@ struct CloudMap
   // optimization. 0 when GNSS was disabled or could not initialize (no fixes
   // overlapping the submap timespan, or baseline below gnss_min_baseline).
   std::size_t gnss_factor_count = 0;
+
+  // Number of warmup-window poses recovered by backward IMU propagation and
+  // prepended to `trajectory` (config.recover_init). 0 when recovery was off,
+  // the IMU init never converged, or there were no pre-init scans to recover.
+  std::size_t recovered_init_pose_count = 0;
 };
 
 class CloudMapper
