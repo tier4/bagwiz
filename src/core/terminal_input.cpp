@@ -47,6 +47,13 @@ constexpr int kReadResizeInterrupt = -2;
 int read_byte()
 {
   while (true) {
+    // Surface a pending resize immediately instead of waiting for read() to be
+    // interrupted by SIGWINCH. This catches resizes that occurred while we were
+    // busy (e.g. rendering) as well as those that interrupted the previous read.
+    if (tui::internal::consume_resize_flag()) {
+      return kReadResizeInterrupt;
+    }
+
     char c = 0;
     const ssize_t n = ::read(STDIN_FILENO, &c, 1);
     if (n > 0) {
@@ -57,10 +64,8 @@ int read_byte()
     }
     // n < 0
     if (errno == EINTR) {
-      if (tui::internal::consume_resize_flag()) {
-        return kReadResizeInterrupt;
-      }
-      continue;  // unrelated signal: retry the read
+      // Loop and let the consume_resize_flag() check at the top handle it.
+      continue;
     }
     return kReadEofOrError;
   }
@@ -236,10 +241,26 @@ KeyEvent read_key_event()
 
   // ESC may be standalone or the start of a CSI sequence. Peek briefly for
   // a '[' follower.
+  //
+  // A SIGWINCH can interrupt the poll() inside read_available(). Without
+  // handling that case we would treat a partial ESC sequence as a lone ESC
+  // and quit the preview unexpectedly. Retry on EINTR so the sequence can be
+  // assembled; the pending resize flag is left set and will be surfaced by
+  // the next read_byte() call.
   char follow[2] = {0, 0};
-  const ssize_t got = read_available(follow, sizeof(follow), kEscFollowupPollMs);
-  if (got < 2 || follow[0] != '[') {
-    return KeyEvent::kQuit;  // lone ESC
+  std::size_t got = 0;
+  while (got < sizeof(follow)) {
+    const ssize_t n = read_available(follow + got, sizeof(follow) - got, kEscFollowupPollMs);
+    if (n > 0) {
+      got += static_cast<std::size_t>(n);
+    } else if (n == 0) {
+      break;  // timeout
+    } else if (errno != EINTR) {
+      break;  // genuine read error
+    }
+  }
+  if (got < sizeof(follow) || follow[0] != '[') {
+    return KeyEvent::kQuit;  // lone ESC or unrecognized sequence
   }
   const char seq[3] = {'\x1B', follow[0], follow[1]};
   return classify_key(std::string_view(seq, 3));
