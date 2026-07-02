@@ -1057,7 +1057,7 @@ TEST(FlagCompletionTest, MapSlamDashListsSlamFlags)
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "map", "slam", "-"}),
     "--backend\n--gnss\n--help\n--imu\n--map-resolution\n--no-pipeline\n--no-progress\n--"
     "overwrite\n"
-    "--threads\n--upsample-traj\n--viewer\n-h\n-w\n");
+    "--recover-init\n--threads\n--upsample-traj\n--viewer\n-h\n-w\n");
 }
 
 // `map slam --backend <TAB>` lists the three backend modes.
