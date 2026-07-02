@@ -125,7 +125,9 @@ Written under `<output_root>`:
   directory is accepted and the directory is created when absent. Each output
   file is guarded independently — an existing `traj.tum`/`map.pcd` stops the run
   unless `-w`/`--overwrite` is given.
-- **`--viewer`.** See the viewer section below.
+- **`--viewer`.** See the viewer section below. Since `traj.tum` is always
+  written alongside `map.pcd`, the viewer's Trajectory toggle is available
+  here too (off by default).
 - **Progress bar.** On an interactive terminal, a progress bar is drawn on stderr.
 - **CPU backend.** SLAM runs on GLIM's CPU backend.
 
@@ -192,6 +194,12 @@ bagwiz map viewer <map>
 - **Same viewer as `--viewer`.** Serves the map over a loopback-only HTTP server
   and opens the host's default browser. The command **blocks until you interrupt
   it** (`Ctrl-C`).
+- **Trajectory overlay.** When a `traj.tum` file sits next to the served
+  `map.pcd` (as written by `bagwiz map slam`), the viewer's inspector gains a
+  Trajectory panel with a "Show trajectory" toggle (off by default). Enabling
+  it draws the trajectory as a line colored from the UI's teal accent (oldest)
+  to its blue accent (newest), so direction of travel reads at a glance. No
+  `traj.tum` next to the map means no panel is shown.
 - **Requires the map-viewer build.** Available only when bagwiz is built with the
   map viewer.
 
