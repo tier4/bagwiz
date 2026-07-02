@@ -39,12 +39,12 @@ BAGWIZ_REPO="$(dirname -- "${_self_dir}")"
 manifest="${BAGWIZ_REPO}/pixi.toml"
 activate_hook="${_self_dir}/pixi-activate.sh"
 
-# Which built distro to run. An explicit BAGWIZ_DISTRO wins; otherwise the
-# default the launcher was installed with (BAGWIZ_DEFAULT_DISTRO), else Humble.
-distro="${BAGWIZ_DISTRO:-${BAGWIZ_DEFAULT_DISTRO:-humble}}"
+# Which built distro to run: the default the launcher was installed with
+# (BAGWIZ_DEFAULT_DISTRO), else Humble.
+distro="${BAGWIZ_DEFAULT_DISTRO:-humble}"
 # The distro indexes both the binary path and the cache filename; reject empty,
 # '.'/'..', and any path- or shell-unsafe character (including '/') so a stray
-# BAGWIZ_DISTRO cannot traverse out of install/ or produce an odd cache name.
+# value cannot traverse out of install/ or produce an odd cache name.
 case "${distro}" in
 '' | . | .. | *[!A-Za-z0-9._-]*)
     echo "bagwiz: invalid distro '${distro}': use letters, digits, '.', '_', or '-'." >&2
@@ -131,16 +131,16 @@ regenerate_snapshot() {
 
     echo "bagwiz: caching the '${distro}' environment (one-time; rebuilt after a rebuild)..." >&2
 
-    # Seed the two path variables with sentinels and clear BAGWIZ_OVERLAY, then
-    # dump the fully activated environment. Comparing each variable against its
-    # sentinel reveals whether pixi prepended to or rebuilt it, independent of
-    # the caller's environment. stdout is a pipe (not a TTY), so pixi prints no
-    # activation spinner during capture.
+    # Seed the two path variables with sentinels, then dump the fully activated
+    # environment. Comparing each variable against its sentinel reveals whether
+    # pixi prepended to or rebuilt it, independent of the caller's environment.
+    # stdout is a pipe (not a TTY), so pixi prints no activation spinner during
+    # capture.
     local sentinel_ament="@@BAGWIZ_AMENT_SENTINEL@@"
     local sentinel_ld="@@BAGWIZ_LD_SENTINEL@@"
     local raw
     if ! raw="$(
-        env AMENT_PREFIX_PATH="${sentinel_ament}" LD_LIBRARY_PATH="${sentinel_ld}" BAGWIZ_OVERLAY= \
+        env AMENT_PREFIX_PATH="${sentinel_ament}" LD_LIBRARY_PATH="${sentinel_ld}" \
             pixi run --manifest-path "${manifest}" -e "${distro}" -- env 2>/dev/null
     )"; then
         echo "bagwiz: failed to activate the '${distro}' environment via pixi." >&2
@@ -212,31 +212,12 @@ if snapshot_is_stale; then
     fi
 fi
 
-# From here on we source environment files (the cache, then any overlays) that
-# may reference unset variables and are not written to be `set -u`/`-e` clean,
-# so relax both before sourcing.
+# From here on we source the cache, which may reference unset variables and is
+# not written to be `set -u`/`-e` clean, so relax both before sourcing.
 set +eu
 
 # shellcheck source=/dev/null
 . "${cache}"
-
-# External overlays (BAGWIZ_OVERLAY): layered live on top of the cached base so
-# custom message workspaces are picked up without rebuilding the snapshot. This
-# mirrors the overlay handling in scripts/pixi-activate.sh.
-if [ -n "${BAGWIZ_OVERLAY:-}" ]; then
-    _bagwiz_old_ifs="${IFS}"
-    IFS=':'
-    for _bagwiz_ov in ${BAGWIZ_OVERLAY}; do
-        if [ -f "${_bagwiz_ov}/install/setup.sh" ]; then
-            # shellcheck disable=SC1090,SC1091
-            . "${_bagwiz_ov}/install/setup.sh"
-        elif [ -f "${_bagwiz_ov}/install/local_setup.sh" ]; then
-            # shellcheck disable=SC1090,SC1091
-            . "${_bagwiz_ov}/install/local_setup.sh"
-        fi
-    done
-    IFS="${_bagwiz_old_ifs}"
-fi
 
 # When the SLAM build linked the vendored GLIM stack
 # (install/<distro>/glim-deps, produced by `pixi run build-full`), put its lib

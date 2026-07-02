@@ -11,12 +11,11 @@
 #   pixi run -e jazzy run -- --help
 #   pixi shell -e jazzy            # interactive shell with `bagwiz` on PATH
 #
-# To layer your own message packages on top of any distro, point BAGWIZ_OVERLAY
-# at one or more (colon-separated) external colcon workspaces before running:
+# To use your own message packages, source the workspace's install/setup.bash
+# before running bagwiz:
 #
-#   BAGWIZ_OVERLAY=/path/to/my_msgs_ws pixi run -e jazzy run -- ls my.mcap
-#
-# See scripts/pixi-activate.sh for how the overlay is sourced.
+#   source /path/to/my_msgs_ws/install/setup.bash
+#   pixi run -e jazzy run -- ls my.mcap
 
 [workspace]
 name = "bagwiz"
@@ -145,9 +144,9 @@ cmd = 'install/$PIXI_ENVIRONMENT_NAME/bagwiz/bin/bagwiz'
 # install/$PIXI_ENVIRONMENT_NAME (from build-core OR build-full), so a fast
 # build-core install stays core and a re-install skips the compile. Build first if
 # nothing is there — the script errors with the exact command. The launcher
-# targets this env's build; set BAGWIZ_INSTALL_DIR or BAGWIZ_DISTRO to override the
-# destination or targeted distro. Run in a *-cuda env to point the launcher at the
-# CUDA build. See scripts/bagwiz-install.sh.
+# targets this env's build; set BAGWIZ_INSTALL_DIR to override the destination.
+# Run in a *-cuda env to point the launcher at the CUDA build. See
+# scripts/bagwiz-install.sh.
 [tasks.install]
 cmd = 'bash scripts/bagwiz-install.sh'
 

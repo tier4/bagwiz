@@ -59,9 +59,9 @@ per distro.
    the launcher to whatever step 2 already built (`build-core` or `build-full`), so
    run a build first and re-install after rebuilding. Use the same `-e <distro>`
    you built with (a bare `pixi run install` targets Humble, the default
-   environment). Set `BAGWIZ_INSTALL_DIR` to change the destination, or
-   `BAGWIZ_DISTRO` to target a different built distro. At run time,
-   `BAGWIZ_DISTRO=<distro>` still switches which built distro the launcher uses.
+   environment). Set `BAGWIZ_INSTALL_DIR` to change the destination. To switch
+   the launcher to a different built distro, run `pixi run -e <distro> install`
+   again.
 
 4. Verify the install — `bagwiz` should now be on your `PATH`:
 
@@ -76,17 +76,17 @@ per distro.
 
 Bags whose topics use message types beyond the standard stack need the matching
 ROS 2 message packages available at run time. Build those packages in your own
-colcon workspace, then point `BAGWIZ_OVERLAY` at it (colon-separated for several
-workspaces) before running bagwiz:
+colcon workspace and source its `install/setup.bash` before running bagwiz:
 
 ```bash
-BAGWIZ_OVERLAY=/path/to/my_msgs_ws pixi run -e humble run -- walk my.mcap /topic
+source /path/to/my_msgs_ws/install/setup.bash
+bagwiz walk my.mcap /topic
 ```
 
-The overlay's `install/setup.bash` is layered on top of the distro, so bagwiz
-finds your custom message definitions and typesupport at run time without a
-rebuild. Build overlays against the same distro so their libraries stay ABI
-compatible with bagwiz.
+Sourcing the overlay sets `AMENT_PREFIX_PATH` and `LD_LIBRARY_PATH`, so bagwiz
+finds the `msg/*.msg` definitions and can dlopen() the introspection typesupport
+at runtime without a rebuild. Build overlays against the same distro so their
+libraries stay ABI compatible with bagwiz.
 
 ## Subcommands
 
@@ -109,33 +109,6 @@ invocation. Click through for full usage, options, and examples:
 
 `bagwiz <subcommand> --help` is always available and reflects the same
 options documented in the per-command pages.
-
-## Shell completion
-
-`pixi run install` already installs completion for your current shell (see step 3
-of [Installation](#installation)). To install it manually, or for a different
-shell, `bagwiz complete <shell>` generates a completion script for `bash`, `zsh`,
-or `fish`. Pass `--install` to write it to the shell's standard location
-automatically (parent directories are created):
-
-```bash
-bagwiz complete bash --install
-bagwiz complete zsh  --install   # remember to put ~/.zsh/completions on $fpath
-bagwiz complete fish --install
-```
-
-Without `--install` the script is printed to stdout, so you can pipe it
-anywhere:
-
-```bash
-bagwiz complete bash > ~/.local/share/bash-completion/completions/bagwiz
-```
-
-Open a new shell, or source the generated file in the current shell:
-
-```bash
-source ~/.local/share/bash-completion/completions/bagwiz
-```
 
 ## License
 
