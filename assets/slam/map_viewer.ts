@@ -7,8 +7,9 @@
 // recentering. A corner orientation gizmo (three.js ViewHelper) shows the global
 // X/Y/Z axes and snaps the view on click, and a scale bar reports the on-screen
 // distance scale. When a sibling traj.tum exists next to map.pcd, an optional
-// (default off) trajectory overlay is also offered; see the Trajectory section
-// below. TypeScript source; compiled to map_viewer.js at build time and
+// (default off) trajectory overlay is also offered — each pose's X/Y/Z axes
+// joined by a backbone line; see the Trajectory section below. TypeScript
+// source; compiled to map_viewer.js at build time and
 // embedded into bagwiz (see CMakeLists.txt). three.js is resolved from a CDN at
 // runtime via the import map in map_viewer.html.
 
@@ -18,6 +19,8 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { Line2 } from "three/addons/lines/Line2.js";
 import { LineGeometry } from "three/addons/lines/LineGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { COLORMAP_NAMES, DEFAULT_COLORMAP, sampleColormap } from "./map_colormaps.js";
 import { createOrientationGizmo, createScaleBar } from "./map_viewer_overlay.js";
 
@@ -153,8 +156,11 @@ interface ViewerState {
   subsample: number; // 1.0 = draw every point
   viewMode: ViewMode;
   projection2d: Projection2D; // 2D projection: parallel (ortho) or perspective
-  trajLine: THREE.Group | null; // outline + gradient Line2 pair; null when absent
-  trajMaterials: LineMaterial[]; // both lines' materials, kept to update .resolution on resize
+  trajPoses: TrajPoses | null; // parsed traj.tum poses (position + orientation)
+  trajGroup: THREE.Group | null; // backbone + pose-axis triads + end markers
+  trajMaterials: LineMaterial[]; // every fat-line material, for .resolution on resize
+  axisLength: number; // pose-axis length in metres (inspector-controlled)
+  axisSpacing: number; // along-path spacing between drawn axes, metres
   showTrajectory: boolean; // mirrors #trajToggle; default off
 }
 
@@ -176,8 +182,13 @@ const state: ViewerState = {
   subsample: 1.0,
   viewMode: "3d",
   projection2d: "ortho",
-  trajLine: null,
+  trajPoses: null,
+  trajGroup: null,
   trajMaterials: [],
+  // Metres; must match the #trajAxisLen / #trajAxisSpacing slider defaults in
+  // map_viewer.html.
+  axisLength: 1.0,
+  axisSpacing: 1.5,
   showTrajectory: false,
 };
 
@@ -681,26 +692,59 @@ function buildUI(): void {
 // eagerly alongside map.pcd, but only added to the scene once the toggle is
 // switched on, so an unused trajectory costs nothing in the render graph.
 // ---------------------------------------------------------------------------
-// The only two saturated accent colors in the whole UI (see --a1 / --a2 in
-// map_viewer.html); the line lerps between them (oldest -> newest) instead of
-// introducing a third color, so the gradient reads as on-brand and doubles as
-// a direction-of-travel cue.
-const TRAJ_COLOR_START = new THREE.Color(0x3fd2c7); // --a1
-const TRAJ_COLOR_END = new THREE.Color(0x4ea1ff); // --a2
-const TRAJ_LINE_WIDTH_PX = 2.5;
-// A dark outline drawn under the gradient line keeps it legible over any
-// point-cloud colormap: with jet (the default; see map_colormaps.ts) the
-// cloud's low end is itself blue, which otherwise visually blends with the
-// trajectory's teal/blue gradient.
-const TRAJ_OUTLINE_COLOR = 0x08090c;
-const TRAJ_OUTLINE_WIDTH_PX = TRAJ_LINE_WIDTH_PX + 2.5;
+// Each pose is drawn as an X/Y/Z coordinate triad built from its orientation
+// quaternion, colored to match the corner orientation gizmo (three.js
+// ViewHelper's defaults): X red, Y green, Z blue. Triads sit at a subset of the
+// actual poses, spaced by arc length, and their origins are joined by a neutral
+// "backbone" line so the path stays continuous between triads. The vehicle's
+// forward axis is X, so the red axis doubles as a direction-of-travel cue.
+const TRAJ_AXIS_X_COLOR = new THREE.Color(0xff4466); // gizmo X
+const TRAJ_AXIS_Y_COLOR = new THREE.Color(0x88ff44); // gizmo Y
+const TRAJ_AXIS_Z_COLOR = new THREE.Color(0x4488ff); // gizmo Z
+const TRAJ_AXIS_DIRS: Array<[THREE.Vector3, THREE.Color]> = [
+  [new THREE.Vector3(1, 0, 0), TRAJ_AXIS_X_COLOR],
+  [new THREE.Vector3(0, 1, 0), TRAJ_AXIS_Y_COLOR],
+  [new THREE.Vector3(0, 0, 1), TRAJ_AXIS_Z_COLOR],
+];
+const TRAJ_AXIS_WIDTH_PX = 2.5;
 
-// Parse TUM trajectory lines ("timestamp tx ty tz qx qy qz qw") into a flat
-// [x0,y0,z0, x1,y1,z1, ...] array. Blank lines and '#' comments are skipped,
-// mirroring bagwiz's core::read_tum; a line that isn't exactly 8 numeric
-// fields is skipped rather than aborting the whole load.
-function parseTumPositions(text: string): Float32Array {
+// A neutral backbone (not the teal/blue accent) stays distinct from the blue Z
+// axis and the point cloud. Both the backbone and the axes get a dark outline
+// so they read over any colormap — jet's low end (the default; see
+// map_colormaps.ts) is itself blue.
+const TRAJ_BACKBONE_COLOR = 0xd5d9e2;
+const TRAJ_BACKBONE_WIDTH_PX = 2;
+const TRAJ_OUTLINE_COLOR = 0x08090c;
+const TRAJ_OUTLINE_EXTRA_PX = 2; // an outline is this many px wider than its line
+
+// Start (oldest) / end (newest) pose markers — a hollow teal ring and a filled
+// blue node — so the open path's two ends are told apart at a glance.
+const TRAJ_START_COLOR = 0x3fd2c7; // --a1
+const TRAJ_END_COLOR = 0x4ea1ff; // --a2
+
+// Reused scratch objects for axis construction (avoid per-vertex allocation).
+const trajQuat = new THREE.Quaternion();
+const trajOrigin = new THREE.Vector3();
+const trajAxisEnd = new THREE.Vector3();
+
+// Parsed traj.tum: pose origins plus the orientation quaternions that rotate the
+// unit axes into world-frame triads. Positions are already in the map's world
+// frame (the same SLAM run wrote both map.pcd and traj.tum), so no extra
+// transform is needed.
+interface TrajPoses {
+  positions: Float32Array; // length count*3, pose origins in the map world frame
+  quaternions: Float32Array; // length count*4 (x, y, z, w)
+  count: number;
+}
+
+// Parse TUM trajectory lines ("timestamp tx ty tz qx qy qz qw") into pose
+// origins plus orientation quaternions. Blank lines and '#' comments are
+// skipped, mirroring bagwiz's core::read_tum; a line that isn't exactly 8
+// numeric fields (or has a non-finite value) is skipped rather than aborting
+// the whole load.
+function parseTumPoses(text: string): TrajPoses {
   const positions: number[] = [];
+  const quaternions: number[] = [];
   for (const rawLine of text.split("\n")) {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#")) {
@@ -713,78 +757,237 @@ function parseTumPositions(text: string): Float32Array {
     const tx = parseFloat(fields[1]);
     const ty = parseFloat(fields[2]);
     const tz = parseFloat(fields[3]);
-    if (!Number.isFinite(tx) || !Number.isFinite(ty) || !Number.isFinite(tz)) {
+    const qx = parseFloat(fields[4]);
+    const qy = parseFloat(fields[5]);
+    const qz = parseFloat(fields[6]);
+    const qw = parseFloat(fields[7]);
+    if (![tx, ty, tz, qx, qy, qz, qw].every(Number.isFinite)) {
       continue;
     }
     positions.push(tx, ty, tz);
+    quaternions.push(qx, qy, qz, qw);
   }
-  return new Float32Array(positions);
+  return {
+    positions: new Float32Array(positions),
+    quaternions: new Float32Array(quaternions),
+    count: positions.length / 3,
+  };
 }
 
-// Build the fat-line pair (three/addons Line2, for real pixel-width control
-// that plain THREE.Line lacks) representing `positions` (flat xyz triples): a
-// dark outline drawn first, then the gradient line on top of the identical
-// geometry. Both derive from the same vertices, so their depths coincide and
-// draw order alone (not z-fighting) decides which shows on top -- no
-// polygonOffset needed. Colors lerp TRAJ_COLOR_START -> TRAJ_COLOR_END along
-// the trajectory's time order. Positions are already in the map's world frame
-// (the same SLAM run wrote both map.pcd and traj.tum), so no extra transform
-// is needed.
-function buildTrajectoryLine(positions: Float32Array): THREE.Group {
-  const count = positions.length / 3;
-  const colors = new Float32Array(positions.length);
-  const c = new THREE.Color();
-  for (let i = 0; i < count; i += 1) {
-    c.copy(TRAJ_COLOR_START).lerp(TRAJ_COLOR_END, count > 1 ? i / (count - 1) : 0);
-    colors[i * 3] = c.r;
-    colors[i * 3 + 1] = c.g;
-    colors[i * 3 + 2] = c.b;
+// Pick the poses that get an axis triad: every `spacing` metres of travelled
+// path, plus the first and last so both ends of an open path always carry a
+// frame. The returned indices are always real poses from traj.tum -- axes are
+// never placed at interpolated points -- and the backbone still runs through
+// every pose regardless of this subset.
+function selectAxisFrames(poses: TrajPoses, spacing: number): number[] {
+  const frames: number[] = [];
+  if (poses.count === 0) {
+    return frames;
   }
+  frames.push(0);
+  let travelled = 0;
+  const p = poses.positions;
+  for (let i = 1; i < poses.count; i += 1) {
+    travelled += Math.hypot(
+      p[i * 3] - p[(i - 1) * 3],
+      p[i * 3 + 1] - p[(i - 1) * 3 + 1],
+      p[i * 3 + 2] - p[(i - 1) * 3 + 2],
+    );
+    if (travelled >= spacing) {
+      frames.push(i);
+      travelled = 0;
+    }
+  }
+  if (frames[frames.length - 1] !== poses.count - 1) {
+    frames.push(poses.count - 1);
+  }
+  return frames;
+}
 
-  const geometry = new LineGeometry();
-  geometry.setPositions(positions);
-  geometry.setColors(colors);
+// Build the trajectory group: a neutral backbone (Line2) through every pose
+// origin, an X/Y/Z axis triad (LineSegments2) at each selected pose, and start
+// / end origin markers. Fat lines come from three/addons (Line2 /
+// LineSegments2) for real pixel-width control that plain THREE.Line lacks; each
+// gets a dark outline drawn under it on identical geometry, so draw order alone
+// (not z-fighting) decides what shows on top. Every LineMaterial is returned so
+// the caller can track it for .resolution updates on resize. The frame count is
+// returned for the inspector's hint.
+function buildTrajectory(
+  poses: TrajPoses,
+  axisLength: number,
+  axisSpacing: number,
+): { group: THREE.Group; materials: LineMaterial[]; frameCount: number } {
+  const group = new THREE.Group();
+  const materials: LineMaterial[] = [];
 
-  const outlineMaterial = new LineMaterial({
+  // Backbone through all pose origins.
+  const backboneGeom = new LineGeometry();
+  backboneGeom.setPositions(poses.positions);
+  const backboneOutlineMat = new LineMaterial({
     color: TRAJ_OUTLINE_COLOR,
-    linewidth: TRAJ_OUTLINE_WIDTH_PX,
+    linewidth: TRAJ_BACKBONE_WIDTH_PX + TRAJ_OUTLINE_EXTRA_PX,
   });
-  const lineMaterial = new LineMaterial({ linewidth: TRAJ_LINE_WIDTH_PX, vertexColors: true });
-  for (const material of [outlineMaterial, lineMaterial]) {
+  const backboneMat = new LineMaterial({
+    color: TRAJ_BACKBONE_COLOR,
+    linewidth: TRAJ_BACKBONE_WIDTH_PX,
+  });
+  const backboneOutline = new Line2(backboneGeom, backboneOutlineMat);
+  backboneOutline.renderOrder = 0;
+  const backbone = new Line2(backboneGeom, backboneMat);
+  backbone.renderOrder = 1;
+  group.add(backboneOutline, backbone);
+  materials.push(backboneOutlineMat, backboneMat);
+
+  // Pose-axis triads at arc-length-spaced real poses.
+  const frames = selectAxisFrames(poses, axisSpacing);
+  const axisPositions: number[] = [];
+  const axisColors: number[] = [];
+  for (const i of frames) {
+    trajOrigin.set(poses.positions[i * 3], poses.positions[i * 3 + 1], poses.positions[i * 3 + 2]);
+    trajQuat.set(
+      poses.quaternions[i * 4],
+      poses.quaternions[i * 4 + 1],
+      poses.quaternions[i * 4 + 2],
+      poses.quaternions[i * 4 + 3],
+    );
+    for (const [dir, color] of TRAJ_AXIS_DIRS) {
+      trajAxisEnd.copy(dir).multiplyScalar(axisLength).applyQuaternion(trajQuat).add(trajOrigin);
+      axisPositions.push(
+        trajOrigin.x,
+        trajOrigin.y,
+        trajOrigin.z,
+        trajAxisEnd.x,
+        trajAxisEnd.y,
+        trajAxisEnd.z,
+      );
+      axisColors.push(color.r, color.g, color.b, color.r, color.g, color.b);
+    }
+  }
+  const axisGeom = new LineSegmentsGeometry();
+  axisGeom.setPositions(axisPositions);
+  axisGeom.setColors(axisColors);
+  const axisOutlineMat = new LineMaterial({
+    color: TRAJ_OUTLINE_COLOR,
+    linewidth: TRAJ_AXIS_WIDTH_PX + TRAJ_OUTLINE_EXTRA_PX,
+  });
+  const axisMat = new LineMaterial({ linewidth: TRAJ_AXIS_WIDTH_PX, vertexColors: true });
+  const axisOutline = new LineSegments2(axisGeom, axisOutlineMat);
+  axisOutline.renderOrder = 2;
+  const axes = new LineSegments2(axisGeom, axisMat);
+  axes.renderOrder = 3;
+  group.add(axisOutline, axes);
+  materials.push(axisOutlineMat, axisMat);
+
+  // Start (teal ring) and end (blue node) origin markers, sized off the axes.
+  const markerRadius = Math.max(0.12, axisLength * 0.18);
+  const startRing = new THREE.Mesh(
+    new THREE.TorusGeometry(markerRadius * 1.5, markerRadius * 0.32, 8, 24),
+    new THREE.MeshBasicMaterial({ color: TRAJ_START_COLOR }),
+  );
+  startRing.position.set(poses.positions[0], poses.positions[1], poses.positions[2]);
+  startRing.renderOrder = 4;
+  const last = poses.count - 1;
+  const endNode = new THREE.Mesh(
+    new THREE.SphereGeometry(markerRadius * 1.2, 16, 12),
+    new THREE.MeshBasicMaterial({ color: TRAJ_END_COLOR }),
+  );
+  endNode.position.set(
+    poses.positions[last * 3],
+    poses.positions[last * 3 + 1],
+    poses.positions[last * 3 + 2],
+  );
+  endNode.renderOrder = 5;
+  group.add(startRing, endNode);
+
+  for (const material of materials) {
     material.resolution.set(window.innerWidth, window.innerHeight);
   }
-  state.trajMaterials = [outlineMaterial, lineMaterial];
-
-  const outline = new Line2(geometry, outlineMaterial);
-  outline.renderOrder = 0;
-  const line = new Line2(geometry, lineMaterial);
-  line.renderOrder = 1;
-
-  const group = new THREE.Group();
-  group.add(outline, line);
-  return group;
+  return { group, materials, frameCount: frames.length };
 }
 
-// Reveal the inspector's Trajectory group (hidden by default in the markup)
-// and wire its toggle, once traj.tum has been fetched and parsed into at
-// least one pose. Left untouched -- so the panel stays hidden -- when
-// traj.tum is absent (404) or empty.
-function revealTrajectoryUi(poseCount: number): void {
-  el<HTMLElement>("trajGrp").hidden = false;
+// Free the GPU resources of a trajectory group before dropping it, so repeated
+// rebuilds (dragging the axis-length / spacing sliders) don't leak geometries
+// or materials.
+function disposeTrajectoryGroup(group: THREE.Group): void {
+  group.traverse((obj) => {
+    const holder = obj as THREE.Object3D & {
+      geometry?: THREE.BufferGeometry;
+      material?: THREE.Material | THREE.Material[];
+    };
+    holder.geometry?.dispose();
+    if (Array.isArray(holder.material)) {
+      holder.material.forEach((m) => m.dispose());
+    } else {
+      holder.material?.dispose();
+    }
+  });
+}
+
+// (Re)build the trajectory group from the current poses and axis settings,
+// swapping it into the scene when the overlay is shown. Called once on load and
+// whenever the axis-length / spacing sliders change.
+function rebuildTrajectory(): void {
+  if (!state.trajPoses) {
+    return;
+  }
+  if (state.trajGroup) {
+    scene.remove(state.trajGroup);
+    disposeTrajectoryGroup(state.trajGroup);
+  }
+  const built = buildTrajectory(state.trajPoses, state.axisLength, state.axisSpacing);
+  state.trajGroup = built.group;
+  state.trajMaterials = built.materials;
+  if (state.showTrajectory) {
+    scene.add(state.trajGroup);
+  }
   el<HTMLElement>("trajHint").textContent =
-    `${poseCount.toLocaleString()} poses · color: oldest (teal) → newest (blue)`;
+    `${state.trajPoses.count.toLocaleString()} poses · ` +
+    `${built.frameCount.toLocaleString()} axis frames · X/Y/Z per pose`;
+  requestFrame();
+}
+
+// Reveal the inspector's Trajectory group (hidden by default in the markup) and
+// wire its toggle plus the axis-length / spacing sliders, once traj.tum has been
+// fetched and parsed into at least one pose. Left untouched -- so the panel
+// stays hidden -- when traj.tum is absent (404) or empty.
+function revealTrajectoryUi(): void {
+  el<HTMLElement>("trajGrp").hidden = false;
 
   el<HTMLInputElement>("trajToggle").addEventListener("change", (event) => {
     state.showTrajectory = (event.target as HTMLInputElement).checked;
-    if (!state.trajLine) {
+    if (!state.trajGroup) {
       return;
     }
     if (state.showTrajectory) {
-      scene.add(state.trajLine);
+      scene.add(state.trajGroup);
     } else {
-      scene.remove(state.trajLine);
+      scene.remove(state.trajGroup);
     }
     requestFrame();
+  });
+
+  const lenSlider = el<HTMLInputElement>("trajAxisLen");
+  const lenVal = el<HTMLElement>("trajAxisLenVal");
+  lenSlider.value = String(state.axisLength);
+  lenVal.textContent = `${state.axisLength.toFixed(2)} m`;
+  setSliderFill(lenSlider);
+  lenSlider.addEventListener("input", () => {
+    state.axisLength = parseFloat(lenSlider.value);
+    lenVal.textContent = `${state.axisLength.toFixed(2)} m`;
+    setSliderFill(lenSlider);
+    rebuildTrajectory();
+  });
+
+  const spacingSlider = el<HTMLInputElement>("trajAxisSpacing");
+  const spacingVal = el<HTMLElement>("trajAxisSpacingVal");
+  spacingSlider.value = String(state.axisSpacing);
+  spacingVal.textContent = `${state.axisSpacing.toFixed(1)} m`;
+  setSliderFill(spacingSlider);
+  spacingSlider.addEventListener("input", () => {
+    state.axisSpacing = parseFloat(spacingSlider.value);
+    spacingVal.textContent = `${state.axisSpacing.toFixed(1)} m`;
+    setSliderFill(spacingSlider);
+    rebuildTrajectory();
   });
 }
 
@@ -799,12 +1002,15 @@ function loadTrajectory(): void {
       if (text === null) {
         return;
       }
-      const positions = parseTumPositions(text);
-      if (positions.length === 0) {
+      const poses = parseTumPoses(text);
+      if (poses.count === 0) {
         return;
       }
-      state.trajLine = buildTrajectoryLine(positions);
-      revealTrajectoryUi(positions.length / 3);
+      state.trajPoses = poses;
+      revealTrajectoryUi();
+      // Build the group now (parsing + geometry are the costly part); it only
+      // joins the scene once the toggle is switched on.
+      rebuildTrajectory();
     })
     .catch(() => {
       // No trajectory to offer; leave the panel hidden.
