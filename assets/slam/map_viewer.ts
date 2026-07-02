@@ -80,7 +80,12 @@ renderer.setClearColor(BG_COLOR, 1);
 document.body.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = false;
+// A light damping factor gives releases a brief, subtle ease-out instead of
+// stopping dead — the on-demand render loop below already drives repeated
+// controls.update() calls (via its `stillEasing` return value) until damping
+// settles, so this only changes how motion feels, not the render path.
+controls.enableDamping = true;
+controls.dampingFactor = 0.15;
 
 // Bottom-corner overlay widgets (see map_viewer_overlay.ts): the CloudCompare-
 // style orientation gizmo that tracks the camera and snaps the view on click,
