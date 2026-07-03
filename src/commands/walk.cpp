@@ -411,8 +411,9 @@ public:
     };
 
     if (!load_next()) {
-      fmt::print(
-        stdout, "No messages found for topic '{}' in {}.\n", topic_name, input_path_.string());
+      BAGWIZ_LOG_INFO(
+        kLogger, "No messages found for topic '%s' in %s.", topic_name.c_str(),
+        input_path_.string().c_str());
       return 0;
     }
 

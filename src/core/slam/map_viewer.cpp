@@ -33,7 +33,7 @@ namespace bagwiz::core::slam
 {
 namespace
 {
-constexpr const char * kLogger = "bagwiz.cmd.slam";
+constexpr const char * kLogger = "bagwiz.cmd.map.viewer";
 constexpr std::size_t kStreamChunkBytes = 1U << 20;  // 1 MiB per content-provider call
 
 // listen() blocks, so a SIGINT handler stops the running server to unblock it.
@@ -131,14 +131,12 @@ int serve_map_viewer(const std::filesystem::path & map_path)
   }
   const std::string url = fmt::format("http://127.0.0.1:{}/", port);
 
-  fmt::print(stdout, "Serving map viewer at {} (press Ctrl-C to stop)\n", url);
-  std::fflush(stdout);
+  BAGWIZ_LOG_INFO(kLogger, "Serving map viewer at %s (press Ctrl-C to stop)", url.c_str());
 
   // Open the browser as a best-effort step; a failure is non-fatal because the
-  // URL is printed above for manual use.
+  // URL is logged above for manual use.
   if (std::system(browser_open_command(url).c_str()) != 0) {
-    fmt::print(stdout, "Could not auto-open a browser; open {} manually.\n", url);
-    std::fflush(stdout);
+    BAGWIZ_LOG_INFO(kLogger, "Could not auto-open a browser; open %s manually.", url.c_str());
   }
 
   g_viewer_server.store(&server);
@@ -147,7 +145,7 @@ int serve_map_viewer(const std::filesystem::path & map_path)
   std::signal(SIGINT, previous);
   g_viewer_server.store(nullptr);
 
-  fmt::print(stdout, "Map viewer stopped.\n");
+  BAGWIZ_LOG_INFO(kLogger, "Map viewer stopped.");
   return 0;
 }
 

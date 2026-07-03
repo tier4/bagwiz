@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cinttypes>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -139,10 +140,10 @@ public:
       return 1;
     }
     if (use_gpu_ && args_.imu_topic.empty()) {
-      fmt::print(
-        stdout,
+      BAGWIZ_LOG_INFO(
+        kLogger,
         "GPU backend without --imu: odometry runs on CPU (CT; GLIM has no GPU LiDAR-only "
-        "backend); GPU acceleration applies to mapping registration and export voxelization.\n");
+        "backend); GPU acceleration applies to mapping registration and export voxelization.");
     }
 
     std::unique_ptr<io::BagReader> reader;
@@ -492,8 +493,8 @@ private:
       return kZero;
     }
     if (cloud_frame == gnss_frame) {
-      fmt::print(
-        stdout, "GNSS and cloud share frame '{}'; antenna lever-arm is zero\n", cloud_frame);
+      BAGWIZ_LOG_INFO(
+        kLogger, "GNSS and cloud share frame '%s'; antenna lever-arm is zero", cloud_frame.c_str());
       return kZero;
     }
     if (!bag_has_static_tf()) {
@@ -530,11 +531,12 @@ private:
     try {
       const auto ts = buffer.lookupTransform(cloud_frame, gnss_frame, tf2::TimePointZero);
       const auto t = to_sensor_transform(ts);
-      fmt::print(
-        stdout,
-        "Resolved GNSS antenna lever-arm from static TF ('{}' <- '{}'): "
-        "({:.3f}, {:.3f}, {:.3f}) m\n",
-        cloud_frame, gnss_frame, t.translation[0], t.translation[1], t.translation[2]);
+      BAGWIZ_LOG_INFO(
+        kLogger,
+        "Resolved GNSS antenna lever-arm from static TF ('%s' <- '%s'): "
+        "(%.3f, %.3f, %.3f) m",
+        cloud_frame.c_str(), gnss_frame.c_str(), t.translation[0], t.translation[1],
+        t.translation[2]);
       return t.translation;
     } catch (const std::exception & e) {
       BAGWIZ_LOG_WARN(
@@ -641,8 +643,8 @@ private:
   {
     auto result = core::upsample_trajectory(poses, *upsample_spec_);
     if (result.resampled) {
-      fmt::print(
-        stdout, "Upsampled trajectory to {:.3f} Hz ({} -> {} poses)\n", result.target_rate_hz,
+      BAGWIZ_LOG_INFO(
+        kLogger, "Upsampled trajectory to %.3f Hz (%zu -> %zu poses)", result.target_rate_hz,
         poses.size(), result.poses.size());
       if (result.skipped_gap_count > 0) {
         BAGWIZ_LOG_WARN(
@@ -695,19 +697,20 @@ private:
         return false;
       }
       use_gpu_ = true;
-      fmt::print(stdout, "Backend: GPU (CUDA).\n");
+      BAGWIZ_LOG_INFO(kLogger, "Backend: GPU (CUDA).");
       return true;
     }
     // auto (the default): prefer GPU when runnable, else CPU.
     use_gpu_ = gpu_runnable;
     if (use_gpu_) {
-      fmt::print(stdout, "Backend: GPU (CUDA) — auto-selected.\n");
+      BAGWIZ_LOG_INFO(kLogger, "Backend: GPU (CUDA) — auto-selected.");
     } else if (cuda.has_cuda_build) {
       // CUDA build but no usable device: announce the CPU fallback (a non-CUDA
       // build under 'auto' is silently CPU, the normal case).
-      fmt::print(
-        stdout, "Backend: CPU — auto (no usable CUDA device{}).\n",
-        cuda.error.empty() ? std::string() : std::string(": ") + cuda.error);
+      const std::string cuda_error_suffix =
+        cuda.error.empty() ? std::string() : std::string(": ") + cuda.error;
+      BAGWIZ_LOG_INFO(
+        kLogger, "Backend: CPU — auto (no usable CUDA device%s).", cuda_error_suffix.c_str());
     }
     return true;
   }
@@ -798,7 +801,7 @@ private:
     }
     const double optimize_seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - optimize_start).count();
-    fmt::print(stdout, "Global optimization took {:.1f}s\n", optimize_seconds);
+    BAGWIZ_LOG_INFO(kLogger, "Global optimization took %.1fs", optimize_seconds);
 
     if (map.trajectory.empty()) {
       BAGWIZ_LOG_ERROR(
@@ -841,49 +844,49 @@ private:
       return 1;
     }
 
-    fmt::print(
-      stdout,
-      "Wrote {} optimized trajectory poses and a {}-point map from {} scans{} ({} skipped) "
-      "to {} and {}\n",
-      out_traj->size(), map.points.size(), scans, imu_suffix(imu_count), skipped,
-      output_path_.string(), map_path_.string());
+    BAGWIZ_LOG_INFO(
+      kLogger,
+      "Wrote %zu optimized trajectory poses and a %zu-point map from %zu scans%s (%zu skipped) "
+      "to %s and %s",
+      out_traj->size(), map.points.size(), scans, imu_suffix(imu_count).c_str(), skipped,
+      output_path_.string().c_str(), map_path_.string().c_str());
 
     if (args_.recover_start) {
       if (map.recovered_start_pose_count > 0) {
-        fmt::print(
-          stdout, "Recovered {} initialization-window pose(s) by scan-matching\n",
+        BAGWIZ_LOG_INFO(
+          kLogger, "Recovered %zu initialization-window pose(s) by scan-matching",
           map.recovered_start_pose_count);
       } else if (map.warmup_overflowed) {
-        fmt::print(
-          stdout,
+        BAGWIZ_LOG_INFO(
+          kLogger,
           "Initialization-window recovery abandoned: the pre-init scan buffer overflowed before "
-          "odometry converged (a very long static/slow start)\n");
+          "odometry converged (a very long static/slow start)");
       } else {
-        fmt::print(
-          stdout,
+        BAGWIZ_LOG_INFO(
+          kLogger,
           "No initialization-window poses recovered (odometry started immediately, or no "
-          "pre-init scans)\n");
+          "pre-init scans)");
       }
     }
 
     if (args_.recover_end) {
       if (map.recovered_end_pose_count > 0) {
-        fmt::print(
-          stdout, "Recovered {} cooldown-window pose(s) by scan-matching\n",
+        BAGWIZ_LOG_INFO(
+          kLogger, "Recovered %zu cooldown-window pose(s) by scan-matching",
           map.recovered_end_pose_count);
       } else {
-        fmt::print(
-          stdout,
+        BAGWIZ_LOG_INFO(
+          kLogger,
           "No cooldown-window poses recovered (no trailing scans past the last estimated "
-          "frame)\n");
+          "frame)");
       }
     }
 
     if (!args_.gnss_topic.empty()) {
       if (map.gnss_factor_count > 0) {
-        fmt::print(
-          stdout, "Applied {} GNSS constraint(s) from {} fix(es) on '{}'\n", map.gnss_factor_count,
-          gnss_count, args_.gnss_topic);
+        BAGWIZ_LOG_INFO(
+          kLogger, "Applied %zu GNSS constraint(s) from %" PRId64 " fix(es) on '%s'",
+          map.gnss_factor_count, gnss_count, args_.gnss_topic.c_str());
       } else {
         // GNSS was requested but the alignment could not initialize: the map is
         // still valid, just unconstrained by GNSS. Warn rather than fail.

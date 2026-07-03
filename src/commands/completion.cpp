@@ -11,6 +11,7 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
+#include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
@@ -39,6 +40,7 @@ namespace bagwiz::commands
 namespace
 {
 
+constexpr const char * kLogger = "bagwiz.cmd.complete";
 constexpr std::string_view kCompletionCommand = "__complete";
 constexpr int kMinimumCompletionProbeArgc = 2;
 constexpr int kCompletionCommandArg = 1;
@@ -285,8 +287,9 @@ bool write_script_to(
 {
   std::error_code ec;
   if (std::filesystem::exists(target, ec) && !overwrite) {
-    std::cerr << "refusing to overwrite existing file: " << target
-              << " (pass -w/--overwrite to replace it)\n";
+    BAGWIZ_LOG_ERROR(
+      kLogger, "refusing to overwrite existing file: %s (pass -w/--overwrite to replace it)",
+      target.string().c_str());
     return false;
   }
 
@@ -294,19 +297,21 @@ bool write_script_to(
   if (!parent.empty()) {
     std::filesystem::create_directories(parent, ec);
     if (ec) {
-      std::cerr << "failed to create directory " << parent << ": " << ec.message() << '\n';
+      BAGWIZ_LOG_ERROR(
+        kLogger, "failed to create directory %s: %s", parent.string().c_str(),
+        ec.message().c_str());
       return false;
     }
   }
 
   std::ofstream stream(target, std::ios::trunc);
   if (!stream) {
-    std::cerr << "failed to open " << target << " for writing\n";
+    BAGWIZ_LOG_ERROR(kLogger, "failed to open %s for writing", target.string().c_str());
     return false;
   }
   stream << contents;
   if (!stream) {
-    std::cerr << "failed to write completion script to " << target << '\n';
+    BAGWIZ_LOG_ERROR(kLogger, "failed to write completion script to %s", target.string().c_str());
     return false;
   }
   return true;
@@ -1401,7 +1406,7 @@ public:
   {
     const auto shell = parse_shell(shell_);
     if (!shell) {
-      std::cerr << "unsupported shell: " << shell_ << '\n';
+      BAGWIZ_LOG_ERROR(kLogger, "unsupported shell: %s", shell_.c_str());
       return 1;
     }
 
@@ -1412,7 +1417,7 @@ public:
 
     const auto target = install_path_for(*shell);
     if (!target) {
-      std::cerr << "cannot determine install path: HOME is not set\n";
+      BAGWIZ_LOG_ERROR(kLogger, "cannot determine install path: HOME is not set");
       return 1;
     }
 
@@ -1472,7 +1477,7 @@ bool install_completion_script(
 {
   const auto parsed = parse_shell(shell);
   if (!parsed) {
-    std::cerr << "unsupported shell: " << shell << '\n';
+    BAGWIZ_LOG_ERROR(kLogger, "unsupported shell: %s", std::string(shell).c_str());
     return false;
   }
   return write_script_to(target, completion_script(*parsed), overwrite);

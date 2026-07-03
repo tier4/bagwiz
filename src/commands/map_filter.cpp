@@ -412,11 +412,12 @@ int run_map_filter_removert(const MapFilterRemovertArgs & args)
     return 1;
   }
 
-  fmt::print(
-    stdout,
-    "Filtered map: kept {} of {} points (removed {}; reverted {}) from {} scans in {:.1f}s -> {}\n",
+  BAGWIZ_LOG_INFO(
+    kLogger,
+    "Filtered map: kept %zu of %zu points (removed %zu; reverted %zu) from %zu scans in %.1fs -> "
+    "%s",
     kept_points.size(), map.points.size(), removed_count, reverted_count, scans, filter_seconds,
-    out_file.string());
+    out_file.string().c_str());
   return 0;
 }
 
