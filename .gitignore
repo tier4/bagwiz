@@ -1,6 +1,9 @@
 # Optional local workspace (formerly populated by vcs import); not tracked
 dependencies/
 
+# Local data directory or symlink (e.g. rosbag workspace); not tracked
+/data
+
 # ROS2 build artifacts
 build/
 install/
