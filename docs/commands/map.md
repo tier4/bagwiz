@@ -74,15 +74,15 @@ bagwiz map slam [OPTIONS] <input> <pcd_topic> <output_root>
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--imu <topic>`          | `sensor_msgs/msg/Imu` topic. Switches odometry to LiDAR-IMU (GLIM's `OdometryEstimationCPU`, or `OdometryEstimationGPU` when combined with `--backend cuda`). The LiDAR←IMU extrinsic is resolved from the bag's static TF using the cloud and IMU header `frame_id`s.                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `--gnss <topic>`         | `sensor_msgs/msg/NavSatFix` topic. Adds GNSS global constraints during global mapping to pin the world frame to GNSS and curb drift. The antenna lever-arm is resolved from the bag's static TF and removed (a missing TF only warns). Requires global mapping.                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `--map-res <m>`          | Exported map voxel size in meters (default `0.2`; must be positive). Controls only the exported map's density, never the optimization or trajectory. The LiDAR preprocessor's ~0.15 m input voxel bounds the effective resolution, so values below ~0.15 m do not produce a denser map.                                                                                                                                                                                                                                                                                                                                                                                       |
+| `--map-res <m>`          | Exported map voxel size in meters (default `0.2`; must be positive). Controls only the exported map's density, never the optimization or trajectory. The LiDAR preprocessor's ~0.15 m input voxel bounds the per-scan resolution, but values below ~0.15 m can still recover detail from the offset grids of overlapping frames (at the cost of a much larger map).                                                                                                                                                                                                                                                                                                           |
 | `-t, --threads N`        | Number of CPU threads for GLIM (default: 4). The host's hardware concurrency is the effective maximum.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `--backend <mode>`       | SLAM backend: `auto` (default), `cpu`, or `cuda`. `auto` uses the CUDA GPU backend when this binary was built with `-DBAGWIZ_WITH_SLAM_CUDA` (`pixi run -e humble-cuda build-full`) **and** a CUDA device is visible, otherwise it falls back to CPU. `cuda` forces the GPU backend (errors on a non-CUDA build or with no device). `cpu` forces the CPU backend (the reproducibility-guaranteed path). CUDA backend = GPU LiDAR-IMU odometry with `--imu` (CT odometry without it, as GLIM has no GPU LiDAR-only backend), GPU VGICP registration in sub/global mapping, and GPU export-map voxelization. **The CUDA backend is outside the CPU reproducibility guarantee.** |
-| `--viewer`               | After writing `map.pcd`, serve it over a loopback HTTP server and open the default browser to a Three.js point-cloud viewer. Blocks until interrupted (`Ctrl-C`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `--viewer`               | After writing `map.pcd`, serve it over a loopback HTTP server and open the default browser to a Three.js point-cloud viewer. Blocks until interrupted (`Ctrl-C`). Requires bagwiz to be built with the map viewer; otherwise this flag errors out.                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `--upsample <spec>`      | Densify `traj.tum` only (the map is unaffected) to a higher rate. `<spec>` is a positive magnitude with an optional, case-insensitive unit suffix: `hz`/`Hz` or no suffix = absolute frequency in Hz (e.g. `20` or `20hz`); `x`/`X` = a multiple of the trajectory's native rate (e.g. `2x`). Position is interpolated linearly and orientation by SLERP within the original time span.                                                                                                                                                                                                                                                                                       |
 | `--no-warmup-recovery`   | Disable initialization-window ('start') pose recovery (default **on**). GLIM's odometry emits no pose over its opening window (the LiDAR-IMU init, ~1 s), so `traj.tum` otherwise has no samples there. By default those pre-init scans are buffered and recovered by scan-matching each against the optimized map (so it works in LiDAR-only mode too); with `--imu` the buffered IMU additionally seeds each registration's initial guess and is the fallback if a fit is rejected. Affects `traj.tum`'s opening window only; the map is unaffected.                                                                                                                        |
 | `--no-cooldown-recovery` | Disable cooldown-window ('end') pose recovery (default **on**) — the symmetric counterpart of `--no-warmup-recovery`. The newest scans stay inside the odometry smoother window at end-of-sequence, so `traj.tum` otherwise stops one window short of the last input scan. By default those trailing scans are buffered and recovered by scan-matching each against the optimized map (LiDAR-only included); with `--imu` the buffered IMU additionally seeds each initial guess and is the fallback. Affects `traj.tum`'s closing window only; the map is unaffected.                                                                                                        |
 | `-w`, `--overwrite`      | Overwrite the output file(s) if they already exist. Without it, an existing output file stops the run.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `--no-progress`          | Disable the live progress bar. The bar is also auto-suppressed when stderr is not a terminal or `NO_COLOR` is set, so this flag is only needed to silence it on an interactive terminal.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `--no-progress`          | Disable the live progress bars. The bars are also auto-suppressed when stderr is not a terminal or `NO_COLOR` is set, so this flag is only needed to silence them on an interactive terminal.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 ### Outputs
 
@@ -124,10 +124,11 @@ Written under `<output_root>`:
   closing window only.
 - **GNSS (`--gnss`).** Fixes are projected to a local ENU frame,
   interpolated at each submap's mid-timestamp, and turned into horizontal
-  translation priors once the SLAM baseline exceeds ~10 m. Each prior is
-  weighted by the fix's reported position covariance, falling back to a fixed
-  precision when the covariance is unknown. The antenna lever-arm
-  is resolved from the bag's static TF and removed.
+  translation priors once the 3-D baseline between the first and last
+  GNSS-associated submap origins exceeds ~10 m (the priors themselves remain
+  horizontal). Each prior is weighted by the fix's reported position covariance,
+  falling back to a fixed precision when the covariance is unknown. The antenna
+  lever-arm is resolved from the bag's static TF and removed.
 - **Dynamic-point removal.** Removed from `map slam`. Run
   `bagwiz map filter removert` afterwards if you need a cleaned map.
 - **Deskewing.** Clouds with a per-point time field are deskewed by GLIM; clouds
@@ -139,8 +140,14 @@ Written under `<output_root>`:
 - **`--viewer`.** See the viewer section below. Since `traj.tum` is always
   written alongside `map.pcd`, the viewer's Trajectory toggle is available
   here too (off by default).
-- **Progress bar.** On an interactive terminal, a progress bar is drawn on stderr.
-- **CPU backend.** SLAM runs on GLIM's CPU backend.
+- **Progress.** On an interactive terminal, a determinate progress bar tracks the
+  bag-read/feed phase on stderr, and an indeterminate spinner is shown during
+  global optimization. Both are auto-suppressed when stderr is not a terminal or
+  `NO_COLOR` is set.
+- **Backend.** The default `auto` backend uses CUDA when the binary was built with
+  `-DBAGWIZ_WITH_SLAM_CUDA` and a device is visible, otherwise CPU. Force a
+  specific backend with `--backend cpu` (the reproducibility-guaranteed path) or
+  `--backend cuda`.
 
 ### Examples
 
@@ -208,14 +215,14 @@ bagwiz map viewer <map>
 - **Trajectory overlay.** When a `traj.tum` file sits next to the served
   `map.pcd` (as written by `bagwiz map slam`), the viewer's inspector gains a
   Trajectory panel with a "Show trajectory" toggle (off by default). Enabling it
-  draws each pose as an X/Y/Z axis triad — oriented by the pose's quaternion and
-  colored to match the corner orientation gizmo (X red, Y green, Z blue) — with
-  the triads' origins joined by a neutral backbone line. Triads sit at actual
-  poses spaced evenly along the path; **Axis length** and **Axis spacing**
-  sliders tune their size and density. The vehicle's forward axis is X, and a
-  teal ring / blue node mark the first and last pose, so direction of travel and
-  both ends of the path read at a glance. No `traj.tum` next to the map means no
-  panel is shown.
+  draws an X/Y/Z axis triad at selected poses — oriented by the pose's quaternion
+  and colored to match the corner orientation gizmo (X red, Y green, Z blue) —
+  with every recorded pose origin joined by a neutral backbone line (the triads
+  sit on a subset of those poses). Triads are placed at actual poses spaced by
+  arc length along the path; **Axis length** and **Axis spacing** sliders tune
+  their size and density. The vehicle's forward axis is X, and a teal ring / blue
+  node mark the first and last pose, so direction of travel and both ends of the
+  path read at a glance. No `traj.tum` next to the map means no panel is shown.
 - **Requires the map-viewer build.** Available only when bagwiz is built with the
   map viewer.
 
