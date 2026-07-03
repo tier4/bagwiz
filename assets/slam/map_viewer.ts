@@ -1,7 +1,7 @@
 // Browser-side viewer for `bagwiz map slam --viewer`. Loads the locally served
 // map.pcd and renders it with configurable controls: which scalar drives the
-// color (x/y/z/intensity), its value range (auto or manual), the colormap, a
-// subsample rate, point size, a 3D / 2D view toggle (2D is a top-down bird's-eye
+// color (x/y/z/intensity), its value range (auto or manual), the colormap,
+// point size, point opacity, a 3D / 2D view toggle (2D is a top-down bird's-eye
 // view, switchable between orthographic and perspective projection, and
 // left-drag rotatable about the vertical Z axis while the top-down tilt stays
 // locked), and double-click-to-anchor
@@ -154,7 +154,6 @@ interface ViewerState {
   autoRange: boolean;
   rangeMin: number;
   rangeMax: number;
-  subsample: number; // 1.0 = draw every point
   viewMode: ViewMode;
   projection2d: Projection2D; // 2D projection: parallel (ortho) or perspective
   heading2d: number; // 2D bird's-eye yaw about the vertical (Z) axis, radians
@@ -181,7 +180,6 @@ const state: ViewerState = {
   autoRange: true,
   rangeMin: 0,
   rangeMax: 1,
-  subsample: 1.0,
   viewMode: "3d",
   projection2d: "ortho",
   heading2d: 0,
@@ -250,41 +248,6 @@ function recolor(): void {
   }
   state.colorAttr.needsUpdate = true;
   drawColorbar();
-  updateStatus();
-  requestFrame();
-}
-
-// ---------------------------------------------------------------------------
-// Subsampling: a deterministic shuffled index lets a draw-range prefix act as a
-// uniform random subset, and keeps that subset stable as the rate is dragged
-// (raising the rate only adds points). Map points are spatially ordered, so a
-// plain stride/prefix would alias; the shuffle avoids that.
-// ---------------------------------------------------------------------------
-function shuffledIndex(n: number): Uint32Array {
-  const idx = new Uint32Array(n);
-  for (let i = 0; i < n; i += 1) {
-    idx[i] = i;
-  }
-  let seed = 0x9e3779b9; // fixed seed -> identical subset across reloads
-  const rand = (): number => {
-    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-    return seed / 4294967296;
-  };
-  for (let i = n - 1; i > 0; i -= 1) {
-    const j = Math.floor(rand() * (i + 1));
-    const t = idx[i];
-    idx[i] = idx[j];
-    idx[j] = t;
-  }
-  return idx;
-}
-
-function applySubsample(): void {
-  if (!state.geometry) {
-    return;
-  }
-  const shown = Math.max(1, Math.round(state.subsample * state.count));
-  state.geometry.setDrawRange(0, shown);
   updateStatus();
   requestFrame();
 }
@@ -610,12 +573,8 @@ function drawColorbar(): void {
 // Status line
 // ---------------------------------------------------------------------------
 function updateStatus(): void {
-  const shown = Math.max(1, Math.round(state.subsample * state.count));
   el<HTMLElement>("ptCount").textContent = `${state.count.toLocaleString()} pts`;
-  setStatus(
-    `${shown.toLocaleString()} / ${state.count.toLocaleString()} shown · ` +
-      `${state.scalar} · ${state.colormap}`,
-  );
+  setStatus(`${state.count.toLocaleString()} pts · ${state.scalar} · ${state.colormap}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -722,22 +681,10 @@ function buildUI(): void {
     recolor();
   });
 
-  const subSlider = el<HTMLInputElement>("subsample");
-  const subVal = el<HTMLElement>("subsampleVal");
-  subSlider.value = String(state.subsample);
-  subVal.textContent = state.subsample.toFixed(2);
-  setSliderFill(subSlider);
-  subSlider.addEventListener("input", () => {
-    state.subsample = parseFloat(subSlider.value);
-    subVal.textContent = state.subsample.toFixed(2);
-    setSliderFill(subSlider);
-    applySubsample();
-  });
-
-  const sizeSlider = el<HTMLInputElement>("pointSize");
-  const sizeVal = el<HTMLElement>("pointSizeVal");
   const material = state.material;
   if (material) {
+    const sizeSlider = el<HTMLInputElement>("pointSize");
+    const sizeVal = el<HTMLElement>("pointSizeVal");
     sizeSlider.value = String(material.size);
     sizeVal.textContent = material.size.toFixed(3);
     setSliderFill(sizeSlider);
@@ -745,6 +692,20 @@ function buildUI(): void {
       material.size = parseFloat(sizeSlider.value);
       sizeVal.textContent = material.size.toFixed(3);
       setSliderFill(sizeSlider);
+      requestFrame();
+    });
+
+    // The material is created with transparent:true (see onLoad), so changing
+    // opacity alone takes effect without a shader recompile (no needsUpdate).
+    const opacitySlider = el<HTMLInputElement>("pointOpacity");
+    const opacityVal = el<HTMLElement>("pointOpacityVal");
+    opacitySlider.value = String(material.opacity);
+    opacityVal.textContent = material.opacity.toFixed(2);
+    setSliderFill(opacitySlider);
+    opacitySlider.addEventListener("input", () => {
+      material.opacity = parseFloat(opacitySlider.value);
+      opacityVal.textContent = material.opacity.toFixed(2);
+      setSliderFill(opacitySlider);
       requestFrame();
     });
   }
@@ -1114,22 +1075,24 @@ function onLoad(points: THREE.Points): void {
   state.colors = new Float32Array(state.count * 3);
   state.colorAttr = new THREE.BufferAttribute(state.colors, 3);
   geometry.setAttribute("color", state.colorAttr);
-  geometry.setIndex(new THREE.BufferAttribute(shuffledIndex(state.count), 1));
   geometry.computeBoundingSphere();
   state.boundingSphere = geometry.boundingSphere;
 
   const radius = state.boundingSphere ? state.boundingSphere.radius : 10;
+  // transparent:true (default opacity 1.0 = fully opaque) lets the Point opacity
+  // slider fade the whole cloud; at 1.0 it renders identically to an opaque cloud.
   state.material = new THREE.PointsMaterial({
     size: defaultPointSize(radius),
     vertexColors: true,
     sizeAttenuation: true,
+    transparent: true,
+    opacity: 1.0,
   });
   state.points = new THREE.Points(geometry, state.material);
   scene.add(state.points);
 
   syncAutoRange();
   recolor();
-  applySubsample();
   buildUI();
   frameView();
   applyView();
