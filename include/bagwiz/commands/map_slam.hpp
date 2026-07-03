@@ -61,22 +61,20 @@ struct MapSlamArgs
   // leaves the trajectory unchanged (warned, never down-sampled).
   std::string upsample_traj;
 
-  // Recover poses for the initialization ("start") window (LiDAR-IMU only;
-  // automatically disabled without --imu). GLIM's LiDAR-IMU odometry emits no
-  // frame until IMU init converges (~1 s), leaving traj.tum without samples over
-  // its opening window. When enabled, the pre-init IMU + scan stamps are buffered
-  // and, once the first frame's converged state is known, the IMU is integrated
-  // backward from it to recover per-scan poses for that window, re-anchored onto
-  // the optimized map.
+  // Recover poses for the initialization ("start") window. GLIM's odometry emits
+  // no frame over its opening window (the LiDAR-IMU init, ~1 s), leaving traj.tum
+  // without samples there. When enabled, the pre-init scans are buffered and
+  // recovered by scan-matching each against the optimized map (works in LiDAR-only
+  // mode too); with --imu the buffered IMU additionally seeds each registration's
+  // initial guess and is the fallback when a registration fails its gate.
   bool recover_start = true;
 
-  // Recover poses for the cooldown ("end") window (LiDAR-IMU only; automatically
-  // disabled without --imu) — the symmetric counterpart of recover_start. The
-  // newest scans stay inside the odometry smoother window at end-of-sequence, so
-  // traj.tum otherwise stops one window short of the last input scan. When
-  // enabled, a trailing ring of IMU + scan stamps is buffered and the IMU is
-  // integrated forward from the last estimated frame to recover per-scan poses for
-  // those trailing scans, re-anchored onto the optimized map.
+  // Recover poses for the cooldown ("end") window — the symmetric counterpart of
+  // recover_start. The newest scans stay inside the odometry smoother window at
+  // end-of-sequence, so traj.tum otherwise stops one window short of the last
+  // input scan. When enabled, the trailing scans are buffered and recovered by
+  // scan-matching each against the optimized map (LiDAR-only included); with --imu
+  // the buffered IMU additionally seeds each initial guess and is the fallback.
   bool recover_end = true;
 
   // Number of CPU threads for GLIM. 0 or a negative value falls back to the

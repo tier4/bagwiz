@@ -60,23 +60,23 @@ struct CloudMapperConfig
   // Convention is GLIM's T_lidar_imu (p_lidar = T_lidar_imu * p_imu).
   std::optional<SensorTransform> t_lidar_imu;
 
-  // Recover poses for the SLAM initialization ("start") window. GLIM's LiDAR-IMU
-  // odometry emits no frame until its IMU init converges (~1 s), leaving the
-  // trajectory's opening window empty. When true, the raw IMU + scan stamps
-  // before the first frame are buffered and, once that frame's converged state is
-  // known, the IMU is integrated backward from it to recover per-scan poses for
-  // the warmup window (re-anchored onto the globally-optimized map). LiDAR-IMU
-  // only: a no-op unless t_lidar_imu is set. See core/slam/warmup_recovery.hpp.
+  // Recover poses for the SLAM initialization ("start") window. GLIM's odometry
+  // emits no frame over its opening window (the LiDAR-IMU init, ~1 s), leaving the
+  // trajectory's opening window empty. When true, the pre-init scans are buffered
+  // and recovered by scan-matching each against the globally-optimized map (works
+  // in LiDAR-only mode); with t_lidar_imu set the buffered IMU additionally seeds
+  // each registration's initial guess and is the fallback on a failed fit. See
+  // core/slam/scan_match_recovery.hpp (and warmup_recovery.hpp for the IMU path).
   bool recover_start = false;
 
   // Recover poses for the SLAM cooldown ("end") window — the symmetric
   // counterpart of recover_start. The newest scans stay inside the odometry
   // smoother window at end-of-sequence and never reach a finalized submap, so the
-  // trajectory stops one window short of the last input scan. When true, a
-  // trailing ring of raw IMU + scan stamps is buffered and the IMU is integrated
-  // forward from the last estimated frame to recover per-scan poses for those
-  // trailing scans (re-anchored onto the globally-optimized map). LiDAR-IMU only:
-  // a no-op unless t_lidar_imu is set. See core/slam/warmup_recovery.hpp.
+  // trajectory stops one window short of the last input scan. When true, the
+  // trailing scans are buffered and recovered by scan-matching each against the
+  // optimized map (LiDAR-only included); with t_lidar_imu set the buffered IMU
+  // additionally seeds each initial guess and is the fallback. See
+  // core/slam/scan_match_recovery.hpp.
   bool recover_end = false;
 
   // GNSS global constraint (ported from glim_ext's gnss_global). When true, GNSS
@@ -195,15 +195,21 @@ struct CloudMap
   // overlapping the submap timespan, or baseline below gnss_min_baseline).
   std::size_t gnss_factor_count = 0;
 
-  // Number of start-window poses recovered by backward IMU propagation and
-  // prepended to `trajectory` (config.recover_start). 0 when recovery was off,
-  // the IMU init never converged, or there were no pre-init scans to recover.
+  // Number of start-window poses recovered by scan-matching and prepended to
+  // `trajectory` (config.recover_start). 0 when recovery was off or there were no
+  // pre-init scans to recover.
   std::size_t recovered_start_pose_count = 0;
 
-  // Number of end-window poses recovered by forward IMU propagation and appended
-  // to `trajectory` (config.recover_end). 0 when recovery was off, no frame was
-  // captured, or there were no trailing scans past the last estimated frame.
+  // Number of end-window poses recovered by scan-matching and appended to
+  // `trajectory` (config.recover_end). 0 when recovery was off or there were no
+  // trailing scans past the last estimated frame.
   std::size_t recovered_end_pose_count = 0;
+
+  // True when start-window recovery was abandoned because the pre-init scan buffer
+  // overflowed before odometry converged (a very long static/slow start) — lets
+  // the caller distinguish "nothing to recover" from "gave up", which have the
+  // same recovered_start_pose_count of 0.
+  bool warmup_overflowed = false;
 };
 
 class CloudMapper

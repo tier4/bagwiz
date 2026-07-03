@@ -402,6 +402,7 @@ if(BAGWIZ_WITH_SLAM)
   target_sources(bagwiz PRIVATE
     src/core/slam/cloud_mapper.cpp
     src/core/slam/warmup_recovery.cpp
+    src/core/slam/scan_match_recovery.cpp
     src/core/slam/cuda_device.cpp
     src/core/slam/progress_bar.cpp
     src/commands/map.cpp
@@ -661,9 +662,18 @@ if(BUILD_TESTING)
       test/core/slam/cloud_mapper_test.cpp
       src/core/slam/cloud_mapper.cpp
       src/core/slam/warmup_recovery.cpp
+      src/core/slam/scan_match_recovery.cpp
       src/core/slam/cuda_device.cpp)
     target_link_libraries(bagwiz_slam_cloud_mapper_test
       bagwiz_core glim::glim gtsam_points::gtsam_points gtsam)
+
+    # gtsam_points-linked (GLIM-free) registration core for the scan-matching
+    # warmup/cooldown recovery. Compiles the same TU the bagwiz target links.
+    ament_add_gtest(bagwiz_slam_scan_match_recovery_test
+      test/core/slam/scan_match_recovery_test.cpp
+      src/core/slam/scan_match_recovery.cpp)
+    target_link_libraries(bagwiz_slam_scan_match_recovery_test
+      bagwiz_core gtsam_points::gtsam_points gtsam)
 
     # GPU variant: only when CUDA SLAM is on. CI never sets BAGWIZ_WITH_SLAM_CUDA,
     # so this never compiles there; on a GPU-less CUDA build the test body
@@ -673,6 +683,7 @@ if(BUILD_TESTING)
         test/core/slam/cloud_mapper_gpu_test.cpp
         src/core/slam/cloud_mapper.cpp
         src/core/slam/warmup_recovery.cpp
+        src/core/slam/scan_match_recovery.cpp
         src/core/slam/cuda_device.cpp
         src/core/slam/cloud_voxelize_gpu.cu)
       set_source_files_properties(src/core/slam/cloud_voxelize_gpu.cu PROPERTIES LANGUAGE CUDA)

@@ -722,8 +722,11 @@ private:
     config.num_threads = cap_threads_at_hardware_limit(args_.num_threads);
     config.enable_gnss = !args_.gnss_topic.empty();
     config.use_gpu = use_gpu_;
-    config.recover_start = args_.recover_start && !args_.imu_topic.empty();
-    config.recover_end = args_.recover_end && !args_.imu_topic.empty();
+    // Recovery scan-matches the window scans against the optimized map, so it runs
+    // in LiDAR-only mode too; --imu only adds the IMU init/fallback path inside the
+    // mapper. Gated solely on the recover toggles, not on the IMU topic.
+    config.recover_start = args_.recover_start;
+    config.recover_end = args_.recover_end;
     // Resolve the antenna lever-arm (T_cloud_gnss) from static TF so the GNSS prior
     // constrains the sensor origin, not the antenna. Non-fatal: a missing TF leaves
     // the offset zero (raw-antenna behavior) with a warning.
@@ -845,29 +848,34 @@ private:
       out_traj->size(), map.points.size(), scans, imu_suffix(imu_count), skipped,
       output_path_.string(), map_path_.string());
 
-    if (args_.recover_start && !args_.imu_topic.empty()) {
+    if (args_.recover_start) {
       if (map.recovered_start_pose_count > 0) {
         fmt::print(
-          stdout, "Recovered {} initialization-window pose(s) by backward IMU propagation\n",
+          stdout, "Recovered {} initialization-window pose(s) by scan-matching\n",
           map.recovered_start_pose_count);
+      } else if (map.warmup_overflowed) {
+        fmt::print(
+          stdout,
+          "Initialization-window recovery abandoned: the pre-init scan buffer overflowed before "
+          "odometry converged (a very long static/slow start)\n");
       } else {
         fmt::print(
           stdout,
-          "No initialization-window poses recovered (IMU init converged immediately, or no "
+          "No initialization-window poses recovered (odometry started immediately, or no "
           "pre-init scans)\n");
       }
     }
 
-    if (args_.recover_end && !args_.imu_topic.empty()) {
+    if (args_.recover_end) {
       if (map.recovered_end_pose_count > 0) {
         fmt::print(
-          stdout, "Recovered {} cooldown-window pose(s) by forward IMU propagation\n",
+          stdout, "Recovered {} cooldown-window pose(s) by scan-matching\n",
           map.recovered_end_pose_count);
       } else {
         fmt::print(
           stdout,
           "No cooldown-window poses recovered (no trailing scans past the last estimated "
-          "frame, or IMU ended first)\n");
+          "frame)\n");
       }
     }
 
