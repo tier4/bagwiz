@@ -169,10 +169,16 @@ std::vector<Eigen::Vector3d> preprocessed_xyz(const glim::PreprocessedFrame::Ptr
 // (built on a CUDA voxelmap). enable_gpu lets GLIM allocate the GPU stream/buffers.
 // Both fall back to GLIM's stock CPU VGICP when use_gpu is false, so the CPU path
 // is byte-for-byte unchanged.
-glim::SubMappingParams make_sub_mapping_params(bool enable_imu, bool use_gpu)
+glim::SubMappingParams make_sub_mapping_params(bool enable_imu, bool use_gpu, int max_num_keyframes)
 {
   glim::SubMappingParams params;
   params.enable_imu = enable_imu;
+  // Keyframes accumulated before a submap is finalized. GLIM's intra-submap
+  // registration factors are fully connected across a submap's keyframes (O(N^2)
+  // in this count), so it is the dominant sub-mapping runtime lever; it also sets
+  // the submap count, hence loop-closure granularity and (via GNSS-covered submap
+  // count) whether GNSS priors can be built. Default 15 == GLIM stock.
+  params.max_num_keyframes = max_num_keyframes;
   if (use_gpu) {
     params.enable_gpu = true;
     params.registration_error_factor_type = "VGICP_GPU";
@@ -690,8 +696,8 @@ struct CloudMapper::Impl
     preprocessor(make_preprocessor_params(cfg)),
     odometry(detail::make_odometry_estimator(cfg.t_lidar_imu, cfg.num_threads, cfg.use_gpu)),
     sub_mapping(
-      std::make_unique<glim::SubMapping>(
-        make_sub_mapping_params(cfg.t_lidar_imu.has_value(), cfg.use_gpu))),
+      std::make_unique<glim::SubMapping>(make_sub_mapping_params(
+        cfg.t_lidar_imu.has_value(), cfg.use_gpu, cfg.submap_max_keyframes))),
     global_mapping(
       std::make_unique<glim::GlobalMapping>(
         make_global_mapping_params(cfg.t_lidar_imu.has_value(), cfg.use_gpu)))

@@ -985,7 +985,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //           [--input-res <m>] [--min-range <m>] [--max-range <m>]
 //           [-t|--threads <N>] [--upsample <spec>] [--viewer] [-w|--overwrite]
 //           [--no-progress] [--no-warmup-recovery] [--no-cooldown-recovery]
-//           [--recovery-min-inliers <f>]
+//           [--recovery-min-inliers <f>] [--submap-keyframes <N>]
 //   viewer: `map`(0) `viewer`(1) `<map>`(2)
 //   filter: `map`(0) `filter`(1) `<action>`(2) ...
 //
@@ -1029,7 +1029,8 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
       with_help(
         {"--backend", "--gnss", "--imu", "--input-res", "--max-range", "--min-range",
          "--no-cooldown-recovery", "--no-progress", "--no-warmup-recovery", "--overwrite",
-         "--recovery-min-inliers", "--threads", "--upsample", "--viewer", "-t", "-w"}),
+         "--recovery-min-inliers", "--submap-keyframes", "--threads", "--upsample", "--viewer",
+         "-t", "-w"}),
       current);
   }
 

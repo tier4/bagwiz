@@ -96,6 +96,14 @@ struct CloudMapperConfig
   // matches ScanMatchParams' loose-init gate. Require 0 < x <= 1.
   double recovery_min_inlier_fraction = 0.7;
 
+  // Keyframes accumulated before GLIM finalizes a submap (GLIM SubMappingParams
+  // max_num_keyframes). Smaller = more, smaller submaps: finer loop-closure
+  // granularity and (via more GNSS-covered submaps) can unblock GNSS priors, but
+  // super-linearly more sub-mapping work per submap and thinner, weaker submaps.
+  // Larger = fewer, larger submaps: a cheaper global graph but coarser correction.
+  // Default 15 == GLIM stock, so the default trajectory is unchanged. Must be > 0.
+  int submap_max_keyframes = 15;
+
   // GNSS global constraint (ported from glim_ext's gnss_global). When true, GNSS
   // points fed via insert_gnss() add horizontal translation priors on the submap
   // poses during the final global optimization, pinning the world frame to GNSS
