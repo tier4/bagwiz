@@ -64,7 +64,13 @@ std::string overlay_projected_points(
       cv::circle(canvas, {p.u, p.v}, radius, bgr, cv::FILLED);
     }
   } else {
-    cv::Mat overlay(height_i, width_i, CV_8UC3, cv::Scalar{0, 0, 0});
+    // Alpha-blend the points onto the image. The overlay starts as a copy of the
+    // image (not black) and gets opaque points drawn on it, so pixels with no
+    // point are identical in both addWeighted operands and survive unchanged;
+    // only pixels a point covers blend toward the point color. A black overlay
+    // would instead scale every point-free pixel by (1 - alpha), darkening the
+    // whole frame as alpha drops.
+    cv::Mat overlay = canvas.clone();
     for (const auto & p : projected_sorted) {
       if (!in_bounds(p)) {
         continue;
