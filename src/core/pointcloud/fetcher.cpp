@@ -244,11 +244,11 @@ bool accumulate_property_ranges(
     running.has_intensity = true;
   }
 
-  constexpr auto ix = static_cast<std::size_t>(PointCloudProperty::kX);
-  constexpr auto iy = static_cast<std::size_t>(PointCloudProperty::kY);
-  constexpr auto iz = static_cast<std::size_t>(PointCloudProperty::kZ);
-  constexpr auto idist = static_cast<std::size_t>(PointCloudProperty::kDistance);
-  constexpr auto iintensity = static_cast<std::size_t>(PointCloudProperty::kIntensity);
+  constexpr auto x_index = static_cast<std::size_t>(PointCloudProperty::kX);
+  constexpr auto y_index = static_cast<std::size_t>(PointCloudProperty::kY);
+  constexpr auto z_index = static_cast<std::size_t>(PointCloudProperty::kZ);
+  constexpr auto distance_index = static_cast<std::size_t>(PointCloudProperty::kDistance);
+  constexpr auto intensity_index = static_cast<std::size_t>(PointCloudProperty::kIntensity);
 
   auto fold = [](double & lo, double & hi, double value) {
     lo = std::min(lo, value);
@@ -260,14 +260,14 @@ bool accumulate_property_ranges(
     const float px = read_point_field(cloud, i, *off_x, field_x->datatype);
     const float py = read_point_field(cloud, i, *off_y, field_y->datatype);
     const float pz = read_point_field(cloud, i, *off_z, field_z->datatype);
-    fold(running.mins[ix], running.maxs[ix], static_cast<double>(px));
-    fold(running.mins[iy], running.maxs[iy], static_cast<double>(py));
-    fold(running.mins[iz], running.maxs[iz], static_cast<double>(pz));
+    fold(running.mins[x_index], running.maxs[x_index], static_cast<double>(px));
+    fold(running.mins[y_index], running.maxs[y_index], static_cast<double>(py));
+    fold(running.mins[z_index], running.maxs[z_index], static_cast<double>(pz));
     const float dist = std::sqrt(px * px + py * py + pz * pz);
-    fold(running.mins[idist], running.maxs[idist], static_cast<double>(dist));
+    fold(running.mins[distance_index], running.maxs[distance_index], static_cast<double>(dist));
     if (field_intensity != nullptr) {
       const float pi = read_point_field(cloud, i, *off_intensity, field_intensity->datatype);
-      fold(running.mins[iintensity], running.maxs[iintensity], static_cast<double>(pi));
+      fold(running.mins[intensity_index], running.maxs[intensity_index], static_cast<double>(pi));
     }
   }
   return true;
