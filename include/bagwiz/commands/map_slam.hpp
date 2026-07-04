@@ -54,6 +54,12 @@ struct MapSlamArgs
   // looser (a bad fit can degrade recovery). No effect when both recoveries are
   // off. Default 0.7 matches the recovery scan-matcher's loose-init gate.
   double recovery_min_inlier_fraction = 0.7;
+  // Keyframes accumulated before GLIM finalizes a submap (GLIM max_num_keyframes).
+  // Smaller = more, smaller submaps (finer loop-closure granularity, more
+  // GNSS-covered submaps) at super-linearly more sub-mapping cost; larger = fewer,
+  // larger submaps (cheaper global graph, coarser correction). Default 15 == GLIM
+  // stock, so the default trajectory is unchanged. Must be > 0.
+  int submap_max_keyframes = 15;
   // Overwrite the output file(s) if they already exist.
   bool overwrite = false;
   // After writing map.pcd, serve it over a loopback HTTP server and open the

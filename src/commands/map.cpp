@@ -124,6 +124,15 @@ private:
         "scan-matching. Higher = stricter (endpoints may stay unrecovered); lower = looser (a bad "
         "fit can degrade recovery). No effect when both recoveries are disabled.")
       ->check(CLI::Range(0.0, 1.0));
+    sub
+      ->add_option(
+        "--submap-keyframes", slam_args_.submap_max_keyframes,
+        "Keyframes per GLIM submap before it is finalized (default 15). Smaller = more, smaller "
+        "submaps: finer loop-closure granularity and more GNSS-covered submaps (can unblock GNSS "
+        "priors on short runs), but super-linearly more sub-mapping work per submap and thinner, "
+        "weaker submaps. Larger = fewer, larger submaps: a cheaper global graph but coarser "
+        "correction. Feeds the optimizer, so it also changes the trajectory.")
+      ->check(CLI::PositiveNumber);
     sub->add_flag(
       "-w,--overwrite", slam_args_.overwrite, "Overwrite the output file(s) if they already exist");
     sub->add_flag(

@@ -743,6 +743,7 @@ private:
     config.range_min = args_.range_min;
     config.range_max = args_.range_max;
     config.recovery_min_inlier_fraction = args_.recovery_min_inlier_fraction;
+    config.submap_max_keyframes = args_.submap_max_keyframes;
     config.t_lidar_imu = t_lidar_imu;
     config.num_threads = cap_threads_at_hardware_limit(args_.num_threads);
     config.enable_gnss = !args_.gnss_topic.empty();
