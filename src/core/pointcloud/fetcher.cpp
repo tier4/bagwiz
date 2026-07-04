@@ -12,7 +12,9 @@
 #include "bagwiz/io/bag_io.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <limits>
@@ -187,6 +189,129 @@ std::optional<PointCloudIndex> build_point_cloud_index(
   result.property_min = need_auto_min ? running_min : *manual_min;
   result.property_max = need_auto_max ? running_max : *manual_max;
   return result;
+}
+
+PropertyRanges::PropertyRanges()
+{
+  mins.fill(std::numeric_limits<double>::infinity());
+  maxs.fill(-std::numeric_limits<double>::infinity());
+}
+
+void PropertyRanges::merge(const PropertyRanges & other)
+{
+  for (std::size_t i = 0; i < kCount; ++i) {
+    mins[i] = std::min(mins[i], other.mins[i]);
+    maxs[i] = std::max(maxs[i], other.maxs[i]);
+  }
+  has_intensity = has_intensity || other.has_intensity;
+}
+
+std::pair<double, double> PropertyRanges::resolve(PointCloudProperty property) const
+{
+  const auto i = static_cast<std::size_t>(property);
+  // A property that was never observed still holds the +inf/-inf sentinels
+  // (min > max); substitute a neutral range so the colour map stays sane.
+  if (mins[i] <= maxs[i]) {
+    return {mins[i], maxs[i]};
+  }
+  return {0.0, 1.0};
+}
+
+bool accumulate_property_ranges(
+  const PointCloud2 & cloud, PropertyRanges & running, std::string & error)
+{
+  // PropertyRanges is indexed by the raw enum value, so the enum must stay
+  // contiguous and exactly cover every slot.
+  static_assert(
+    static_cast<std::size_t>(PointCloudProperty::kIntensity) + 1 == PropertyRanges::kCount,
+    "PropertyRanges::kCount must match the PointCloudProperty enumeration");
+
+  const auto off_x = cloud.field_offset("x");
+  const auto off_y = cloud.field_offset("y");
+  const auto off_z = cloud.field_offset("z");
+  if (!off_x || !off_y || !off_z) {
+    error = "point cloud is missing required x/y/z fields";
+    return false;
+  }
+  const auto * field_x = find_point_field(cloud, "x");
+  const auto * field_y = find_point_field(cloud, "y");
+  const auto * field_z = find_point_field(cloud, "z");
+
+  const auto off_intensity = cloud.field_offset("intensity");
+  const PointField * field_intensity =
+    off_intensity.has_value() ? find_point_field(cloud, "intensity") : nullptr;
+  if (off_intensity.has_value()) {
+    running.has_intensity = true;
+  }
+
+  constexpr auto ix = static_cast<std::size_t>(PointCloudProperty::kX);
+  constexpr auto iy = static_cast<std::size_t>(PointCloudProperty::kY);
+  constexpr auto iz = static_cast<std::size_t>(PointCloudProperty::kZ);
+  constexpr auto idist = static_cast<std::size_t>(PointCloudProperty::kDistance);
+  constexpr auto iintensity = static_cast<std::size_t>(PointCloudProperty::kIntensity);
+
+  auto fold = [](double & lo, double & hi, double value) {
+    lo = std::min(lo, value);
+    hi = std::max(hi, value);
+  };
+
+  const std::uint32_t n = cloud.height * cloud.width;
+  for (std::uint32_t i = 0; i < n; ++i) {
+    const float px = read_point_field(cloud, i, *off_x, field_x->datatype);
+    const float py = read_point_field(cloud, i, *off_y, field_y->datatype);
+    const float pz = read_point_field(cloud, i, *off_z, field_z->datatype);
+    fold(running.mins[ix], running.maxs[ix], static_cast<double>(px));
+    fold(running.mins[iy], running.maxs[iy], static_cast<double>(py));
+    fold(running.mins[iz], running.maxs[iz], static_cast<double>(pz));
+    const float dist = std::sqrt(px * px + py * py + pz * pz);
+    fold(running.mins[idist], running.maxs[idist], static_cast<double>(dist));
+    if (field_intensity != nullptr) {
+      const float pi = read_point_field(cloud, i, *off_intensity, field_intensity->datatype);
+      fold(running.mins[iintensity], running.maxs[iintensity], static_cast<double>(pi));
+    }
+  }
+  return true;
+}
+
+std::optional<PointCloudScan> scan_point_cloud(
+  const std::filesystem::path & input, const std::string & topic, std::string & error)
+{
+  std::unique_ptr<io::BagReader> reader;
+  try {
+    reader = io::open_read(input);
+  } catch (const std::exception & e) {
+    error = "failed to open '" + input.string() + "': " + e.what();
+    return std::nullopt;
+  }
+
+  io::ReadFilter filter;
+  filter.topics.push_back(topic);
+  reader->set_filter(filter);
+
+  PointCloudScan scan;
+  io::RawMessage raw;
+  try {
+    while (reader->next(raw)) {
+      scan.entries.push_back({raw.timestamp_ns});
+      const auto parsed = parse_pointcloud2(raw.payload);
+      if (!parsed.ok()) {
+        error = parsed.error;
+        return std::nullopt;
+      }
+      if (!accumulate_property_ranges(*parsed.cloud, scan.ranges, error)) {
+        return std::nullopt;
+      }
+    }
+  } catch (const std::exception & e) {
+    error = "error reading point-cloud topic '" + topic + "': " + e.what();
+    return std::nullopt;
+  }
+
+  if (scan.entries.empty()) {
+    error = "point-cloud topic '" + topic + "' has no messages";
+    return std::nullopt;
+  }
+  return scan;
 }
 
 PointCloudFetcher::PointCloudFetcher(

@@ -732,6 +732,10 @@ public:
       double computed_min = 0.0;
       double computed_max = 1.0;
       bool has_intensity = false;
+      // Min/max of every colour property, captured once when the topics are
+      // selected. Switching the active property then reuses these instead of
+      // re-scanning the bag, so [f] is instant even with auto range on.
+      core::pointcloud::PropertyRanges ranges;
     };
     PcdOverlayState pcd;
 
@@ -851,6 +855,18 @@ public:
           selected.push_back(pcd_topics[i]);
         }
       }
+
+      // Confirming a selection identical to what is already applied would kick
+      // off a full (slow) bag re-scan for no visible change, so short-circuit it
+      // exactly like Esc/cancel — the overlay on screen is already correct.
+      auto sorted = [](std::vector<std::string> v) {
+        std::sort(v.begin(), v.end());
+        return v;
+      };
+      if (!pcd.topics.empty() && sorted(selected) == sorted(pcd.topics)) {
+        status = "(topic selection unchanged)";
+        return std::nullopt;
+      }
       return selected;
     };
 
@@ -878,31 +894,30 @@ public:
         }
       }
 
-      double running_min = std::numeric_limits<double>::infinity();
-      double running_max = -std::numeric_limits<double>::infinity();
-      bool any_intensity = false;
+      // One pass per topic captures the timestamps *and* the min/max of every
+      // colour property, so later property switches ([f]) never touch the bag.
+      core::pointcloud::PropertyRanges merged_ranges;
       std::vector<std::string> initialized_topics;
       std::vector<core::pointcloud::PointCloudFetcher> new_fetchers;
 
       for (const auto & topic : topics) {
         std::string error;
-        auto idx = core::pointcloud::build_point_cloud_index(
-          input_path_, topic, pcd.property, std::nullopt, std::nullopt, error);
-        if (!idx.has_value()) {
+        auto scan = core::pointcloud::scan_point_cloud(input_path_, topic, error);
+        if (!scan.has_value()) {
           status = error;
           return false;
         }
-        running_min = std::min(running_min, idx->property_min);
-        running_max = std::max(running_max, idx->property_max);
-        any_intensity = any_intensity || idx->has_intensity;
+        merged_ranges.merge(scan->ranges);
         initialized_topics.push_back(topic);
-        new_fetchers.emplace_back(input_path_, topic, std::move(idx->entries));
+        new_fetchers.emplace_back(input_path_, topic, std::move(scan->entries));
       }
 
+      const auto range = merged_ranges.resolve(pcd.property);
       pcd.topics = std::move(initialized_topics);
-      pcd.has_intensity = any_intensity;
-      pcd.computed_min = running_min;
-      pcd.computed_max = running_max;
+      pcd.has_intensity = merged_ranges.has_intensity;
+      pcd.ranges = merged_ranges;
+      pcd.computed_min = range.first;
+      pcd.computed_max = range.second;
       pcd_fetchers = std::move(new_fetchers);
       return true;
     };
@@ -957,57 +972,35 @@ public:
         img, all_points, vmin, vmax, pcd.scheme, pcd.point_size, pcd.alpha, *raster);
       if (!err.empty()) {
         status = err;
-      } else if (status.empty()) {
-        // Preserve transient statuses such as the save confirmation; the point
-        // count will be shown again once the current status is cleared.
-        status =
-          fmt::format("pcd: {} points from {} topic(s)", all_points.size(), pcd_fetchers.size());
       }
     };
 
     auto cycle_pcd_property = [&]() {
+      // Cycle order: distance -> intensity (only when the cloud carries it)
+      //           -> x -> y -> z -> distance ...
       auto next = [&](core::pointcloud::PointCloudProperty cur) {
+        using Property = core::pointcloud::PointCloudProperty;
         switch (cur) {
-          case core::pointcloud::PointCloudProperty::kX:
-            return core::pointcloud::PointCloudProperty::kY;
-          case core::pointcloud::PointCloudProperty::kY:
-            return core::pointcloud::PointCloudProperty::kZ;
-          case core::pointcloud::PointCloudProperty::kZ:
-            if (pcd.has_intensity) {
-              return core::pointcloud::PointCloudProperty::kIntensity;
-            }
-            return core::pointcloud::PointCloudProperty::kDistance;
-          case core::pointcloud::PointCloudProperty::kDistance:
-            return core::pointcloud::PointCloudProperty::kX;
-          case core::pointcloud::PointCloudProperty::kIntensity:
-            return core::pointcloud::PointCloudProperty::kDistance;
+          case Property::kDistance:
+            return pcd.has_intensity ? Property::kIntensity : Property::kX;
+          case Property::kIntensity:
+            return Property::kX;
+          case Property::kX:
+            return Property::kY;
+          case Property::kY:
+            return Property::kZ;
+          case Property::kZ:
+            return Property::kDistance;
         }
-        return core::pointcloud::PointCloudProperty::kDistance;
+        return Property::kDistance;
       };
       pcd.property = next(pcd.property);
-      if (pcd.auto_range && !pcd_fetchers.empty()) {
-        double running_min = std::numeric_limits<double>::infinity();
-        double running_max = -std::numeric_limits<double>::infinity();
-        std::vector<core::pointcloud::PointCloudFetcher> new_fetchers;
-        bool ok = true;
-        for (const auto & topic : pcd.topics) {
-          std::string error;
-          auto idx = core::pointcloud::build_point_cloud_index(
-            input_path_, topic, pcd.property, std::nullopt, std::nullopt, error);
-          if (!idx.has_value()) {
-            status = error;
-            ok = false;
-            break;
-          }
-          running_min = std::min(running_min, idx->property_min);
-          running_max = std::max(running_max, idx->property_max);
-          new_fetchers.emplace_back(input_path_, topic, std::move(idx->entries));
-        }
-        if (ok) {
-          pcd.computed_min = running_min;
-          pcd.computed_max = running_max;
-          pcd_fetchers = std::move(new_fetchers);
-        }
+      // Auto range reuses the extent captured up front, so switching property is
+      // O(1) and never re-reads the bag (the timestamps/fetchers are unchanged).
+      if (pcd.auto_range) {
+        const auto range = pcd.ranges.resolve(pcd.property);
+        pcd.computed_min = range.first;
+        pcd.computed_max = range.second;
       }
     };
 
@@ -1132,13 +1125,19 @@ public:
       if (!status.empty()) {
         info += fmt::format("   {}", status);
       }
-      info += fmt::format("   undistort: {}", undistort_enabled ? "on" : "off");
+      // Every state field reads as "field: value" with the value emphasised so
+      // it stands out from the label. The SGR wrapper is zero display-width (see
+      // width.cpp), so it does not perturb the wrap/truncate accounting below.
+      auto hl = [](auto && value) { return fmt::format("\x1B[1;36m{}\x1B[0m", value); };
+
+      info += fmt::format("   undistort: {}", hl(undistort_enabled ? "on" : "off"));
       if (!pcd.topics.empty()) {
+        const std::string range_text =
+          pcd.auto_range ? "auto" : fmt::format("{:.2f}-{:.2f}", pcd.manual_min, pcd.manual_max);
         info += fmt::format(
-          "   pcd: {}  {}  {}  {}  sz:{}  a:{:.1f}", pcd.enabled ? "on" : "off",
-          property_name(pcd.property),
-          pcd.auto_range ? "auto" : fmt::format("{:.2f}-{:.2f}", pcd.manual_min, pcd.manual_max),
-          scheme_name(pcd.scheme), pcd.point_size, pcd.alpha);
+          "   pcd: {}   property: {}   range: {}   scheme: {}   size: {}   alpha: {}",
+          hl(pcd.enabled ? "on" : "off"), hl(property_name(pcd.property)), hl(range_text),
+          hl(scheme_name(pcd.scheme)), hl(pcd.point_size), hl(fmt::format("{:.1f}", pcd.alpha)));
       }
 
       // Header: the topic/type row and the info row, each wrapped to width the

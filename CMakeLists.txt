@@ -832,6 +832,10 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_overlay_test test/core/pointcloud/overlay_test.cpp)
   target_link_libraries(bagwiz_overlay_test bagwiz_core)
 
+  ament_add_gtest(
+    bagwiz_pointcloud_property_ranges_test test/core/pointcloud/property_ranges_test.cpp)
+  target_link_libraries(bagwiz_pointcloud_property_ranges_test bagwiz_core)
+
   # image_decoder lives in bagwiz_core; libav is linked explicitly so the test
   # can both drive the decoder and synthesize JPEG/PNG fixtures with libav
   # (same reason video_encoder_test re-links it).

@@ -12,10 +12,13 @@
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
 #include "bagwiz/core/pointcloud/property.hpp"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace bagwiz::core::pointcloud
@@ -41,6 +44,50 @@ struct PointCloudIndex
   const std::filesystem::path & input, const std::string & topic, PointCloudProperty property,
   const std::optional<double> & manual_min, const std::optional<double> & manual_max,
   std::string & error);
+
+// Per-property value extent used to drive the colour-map range. Ranges are
+// indexed by PointCloudProperty (the enum values are contiguous 0..kCount-1).
+// A range whose `min` exceeds `max` was never observed (e.g. intensity on a
+// cloud that has no intensity field); `resolve()` substitutes a neutral [0, 1].
+struct PropertyRanges
+{
+  static constexpr std::size_t kCount = 5;
+  // Running min/max per property; default-constructed to +inf / -inf so the
+  // first observed value initialises both bounds.
+  std::array<double, kCount> mins;
+  std::array<double, kCount> maxs;
+  bool has_intensity = false;
+
+  PropertyRanges();
+
+  // Fold another topic's ranges into this one (element-wise min of mins / max
+  // of maxs); `has_intensity` becomes true if either side had intensity.
+  void merge(const PropertyRanges & other);
+
+  // Resolved [min, max] for `property`; neutral [0, 1] when never observed.
+  [[nodiscard]] std::pair<double, double> resolve(PointCloudProperty property) const;
+};
+
+// Update `running` per-property min/max from every point in `cloud`. Requires
+// x/y/z fields; sets `error` and returns false when they are absent. Intensity
+// is optional: when present, `running.has_intensity` becomes true and the
+// intensity range is updated. Start from a default-constructed PropertyRanges
+// and call once per cloud. Pure (no I/O), so it is unit-testable in isolation.
+[[nodiscard]] bool accumulate_property_ranges(
+  const PointCloud2 & cloud, PropertyRanges & running, std::string & error);
+
+struct PointCloudScan
+{
+  std::vector<PointCloudIndexEntry> entries;
+  PropertyRanges ranges;
+};
+
+// Single-pass scan of a PointCloud2 topic: records every message timestamp and
+// the min/max of *all* colour properties in one read, so the interactive
+// overlay can switch the active property without re-reading the bag. Returns
+// std::nullopt and fills `error` on failure.
+[[nodiscard]] std::optional<PointCloudScan> scan_point_cloud(
+  const std::filesystem::path & input, const std::string & topic, std::string & error);
 
 // Fetch the PointCloud2 message whose timestamp is closest to target_ns.
 // The returned pointer is valid until the next fetch() call or destruction.
