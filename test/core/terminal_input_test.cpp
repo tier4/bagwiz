@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <string_view>
 
 namespace
@@ -17,6 +18,12 @@ namespace
 
 using bagwiz::core::classify_key;
 using bagwiz::core::KeyEvent;
+using bagwiz::core::kStepDoubleTapWindow;
+using bagwiz::core::upgrade_step_double_tap;
+
+// Comfortably inside / outside the double-tap window, for readability.
+constexpr auto kInsideWindow = kStepDoubleTapWindow / 2;
+constexpr auto kOutsideWindow = kStepDoubleTapWindow * 2;
 
 TEST(ClassifyKey, EmptyIsUnknown)
 {
@@ -131,6 +138,73 @@ TEST(ClassifyKey, ResizeIsNeverProducedByClassify)
     const auto ch = static_cast<char>(b);
     EXPECT_NE(classify_key(std::string_view(&ch, 1)), KeyEvent::kResize);
   }
+}
+
+TEST(StepDoubleTap, FirstPressStaysSingleAndIsRemembered)
+{
+  KeyEvent remember = KeyEvent::kQuit;  // sentinel; must be overwritten
+  EXPECT_EQ(
+    upgrade_step_double_tap(KeyEvent::kStepForward1s, KeyEvent::kUnknown, kOutsideWindow, remember),
+    KeyEvent::kStepForward1s);
+  EXPECT_EQ(remember, KeyEvent::kStepForward1s);
+}
+
+TEST(StepDoubleTap, RapidSecondPressUpgradesToTenSeconds)
+{
+  KeyEvent remember = KeyEvent::kQuit;
+  EXPECT_EQ(
+    upgrade_step_double_tap(
+      KeyEvent::kStepForward1s, KeyEvent::kStepForward1s, kInsideWindow, remember),
+    KeyEvent::kStepForward10s);
+  // Reset so a third press starts a fresh single step instead of chaining.
+  EXPECT_EQ(remember, KeyEvent::kUnknown);
+
+  EXPECT_EQ(
+    upgrade_step_double_tap(
+      KeyEvent::kStepBackward1s, KeyEvent::kStepBackward1s, kInsideWindow, remember),
+    KeyEvent::kStepBackward10s);
+  EXPECT_EQ(remember, KeyEvent::kUnknown);
+}
+
+TEST(StepDoubleTap, ExactlyAtWindowStillUpgrades)
+{
+  KeyEvent remember = KeyEvent::kQuit;
+  EXPECT_EQ(
+    upgrade_step_double_tap(
+      KeyEvent::kStepForward1s, KeyEvent::kStepForward1s, kStepDoubleTapWindow, remember),
+    KeyEvent::kStepForward10s);
+}
+
+TEST(StepDoubleTap, SlowSecondPressStaysSingle)
+{
+  KeyEvent remember = KeyEvent::kQuit;
+  EXPECT_EQ(
+    upgrade_step_double_tap(
+      KeyEvent::kStepForward1s, KeyEvent::kStepForward1s, kOutsideWindow, remember),
+    KeyEvent::kStepForward1s);
+  EXPECT_EQ(remember, KeyEvent::kStepForward1s);
+}
+
+TEST(StepDoubleTap, OppositeDirectionDoesNotUpgrade)
+{
+  // A '.' then a rapid ',' is two independent single steps, not a double-tap.
+  KeyEvent remember = KeyEvent::kQuit;
+  EXPECT_EQ(
+    upgrade_step_double_tap(
+      KeyEvent::kStepBackward1s, KeyEvent::kStepForward1s, kInsideWindow, remember),
+    KeyEvent::kStepBackward1s);
+  EXPECT_EQ(remember, KeyEvent::kStepBackward1s);
+}
+
+TEST(StepDoubleTap, NonStepEventClearsPendingDoubleTap)
+{
+  // A key between the two step presses breaks the double-tap: the event
+  // passes through unchanged and nothing is remembered.
+  KeyEvent remember = KeyEvent::kQuit;
+  EXPECT_EQ(
+    upgrade_step_double_tap(KeyEvent::kNext, KeyEvent::kStepForward1s, kInsideWindow, remember),
+    KeyEvent::kNext);
+  EXPECT_EQ(remember, KeyEvent::kUnknown);
 }
 
 }  // namespace

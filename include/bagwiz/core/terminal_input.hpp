@@ -11,6 +11,7 @@
 
 #include <termios.h>
 
+#include <chrono>
 #include <string_view>
 
 namespace bagwiz::core
@@ -26,6 +27,8 @@ enum class KeyEvent {
   kLast,               // jump to last (may force a full scan in the caller)
   kStepForward1s,      // jump to the next message at least one second ahead
   kStepBackward1s,     // jump to the previous message at least one second behind
+  kStepForward10s,     // jump ~10 seconds ahead (rapid double-tap of '.')
+  kStepBackward10s,    // jump ~10 seconds behind (rapid double-tap of ',')
   kScrollUp,           // scroll the current message's rendered body up by one line
   kScrollDown,         // scroll the current message's rendered body down by one line
   kScrollHead,         // jump to the top of the current message's body
@@ -101,8 +104,29 @@ private:
 // Blocks on stdin until a single KeyEvent can be produced. Handles the ESC
 // prefetch needed to distinguish a lone ESC from an arrow-key sequence.
 // Returns kQuit when the read is interrupted (e.g. SIGINT) or on EOF.
-// Undefined unless stdin is a TTY.
+// Undefined unless stdin is a TTY. A second press of the same step key
+// ('.' or ',') within kStepDoubleTapWindow is reported as the matching
+// 10-second variant (see upgrade_step_double_tap()).
 KeyEvent read_key_event();
+
+// Maximum gap between two presses of the same step key for the second to
+// count as a double-tap. Generous enough to survive the frame render that
+// runs between reads in the preview loop, short enough that deliberate
+// second-by-second stepping stays at 1s.
+inline constexpr std::chrono::milliseconds kStepDoubleTapWindow{600};
+
+// Pure double-tap resolver, exposed for unit testing without a TTY or clock.
+//
+// Given the freshly classified event `ev`, the step key remembered from the
+// previous read `prev` (kStepForward1s / kStepBackward1s, or kUnknown when no
+// double-tap is pending), and `since_prev` (elapsed time since `prev` was
+// read), returns the event to emit. A rapid repeat of the same step key is
+// upgraded to its 10s variant. `remember` is set to the step key to carry
+// into the next read; it is kUnknown after a non-step key or after a 10s
+// upgrade fires, so taps never chain into a third jump.
+KeyEvent upgrade_step_double_tap(
+  KeyEvent ev, KeyEvent prev, std::chrono::steady_clock::duration since_prev,
+  KeyEvent & remember) noexcept;
 
 }  // namespace bagwiz::core
 

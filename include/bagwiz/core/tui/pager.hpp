@@ -25,19 +25,21 @@ namespace bagwiz::core::tui
 // Navigation keys recognised by the pager. App-specific events are
 // reported through the app-key callback instead.
 enum class NavKey {
-  kNone,            // app-specific event; forward to OnAppKey
-  kNext,            // advance one item
-  kPrev,            // back one item
-  kFirst,           // jump to first item
-  kLast,            // jump to last item
-  kStepForward1s,   // jump to the next item at least one second ahead
-  kStepBackward1s,  // jump to the previous item at least one second behind
-  kScrollUp,        // scroll body up by one line
-  kScrollDown,      // scroll body down by one line
-  kScrollHead,      // jump body to first line
-  kScrollTail,      // jump body to last line
-  kQuit,            // exit the pager
-  kResize,          // terminal was resized
+  kNone,             // app-specific event; forward to OnAppKey
+  kNext,             // advance one item
+  kPrev,             // back one item
+  kFirst,            // jump to first item
+  kLast,             // jump to last item
+  kStepForward1s,    // jump to the next item at least one second ahead
+  kStepBackward1s,   // jump to the previous item at least one second behind
+  kStepForward10s,   // jump ~10 seconds ahead (rapid double-tap of '.')
+  kStepBackward10s,  // jump ~10 seconds behind (rapid double-tap of ',')
+  kScrollUp,         // scroll body up by one line
+  kScrollDown,       // scroll body down by one line
+  kScrollHead,       // jump body to first line
+  kScrollTail,       // jump body to last line
+  kQuit,             // exit the pager
+  kResize,           // terminal was resized
 };
 
 // Pure mapping from KeyEvent to NavKey. App-specific events return

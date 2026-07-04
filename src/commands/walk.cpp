@@ -69,9 +69,19 @@ constexpr const char * kLogger = "bagwiz.cmd.walk";
 
 // Message-cursor moves shared by the YAML view and the image preview, so
 // wrap-around, "at first message", and G's full-scan behave identically in both.
-enum class MsgNav { kNext, kPrev, kFirst, kLast, kStepForward1s, kStepBackward1s };
+enum class MsgNav {
+  kNext,
+  kPrev,
+  kFirst,
+  kLast,
+  kStepForward1s,
+  kStepBackward1s,
+  kStepForward10s,
+  kStepBackward10s,
+};
 
 constexpr int64_t kOneSecondNs = 1'000'000'000;
+constexpr int64_t kTenSecondNs = 10 * kOneSecondNs;
 
 // Cached owning copy of a single bag message. RawMessage's span is
 // invalidated by the next BagReader::next() call, so walk must take a
@@ -252,8 +262,8 @@ std::string rainbow_text(std::string_view text)
 // Keys:
 //   right / Space : next message (wraps from last back to first)
 //   left / b      : previous message
-//   .             : jump forward ~1 second in time
-//   ,             : jump backward ~1 second in time
+//   .             : jump forward ~1 second in time (double-tap: ~10 seconds)
+//   ,             : jump backward ~1 second in time (double-tap: ~10 seconds)
 //   up / k        : scroll body up one line
 //   down / j      : scroll body down one line
 //   Home / H      : jump body scroll to the head
@@ -491,7 +501,8 @@ public:
       // visible body window.
       footer_logical.emplace_back();
       std::string legend =
-        "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [↑ / k] up   [↓ / j] down   "
+        "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [,,] -10s   [..] +10s   [↑ / k] "
+        "up   [↓ / j] down   "
         "[Home / H] head   [End / T] tail   [g] first   [G] last   [s] save as yaml   "
         "[a] expand arrays   ";
       if (preview_available) {
@@ -597,8 +608,10 @@ public:
           }
           break;
         }
-        case MsgNav::kStepForward1s: {
-          const int64_t target_ns = cache[index].timestamp_ns + kOneSecondNs;
+        case MsgNav::kStepForward1s:
+        case MsgNav::kStepForward10s: {
+          const int64_t delta_ns = move == MsgNav::kStepForward10s ? kTenSecondNs : kOneSecondNs;
+          const int64_t target_ns = cache[index].timestamp_ns + delta_ns;
           if (exhausted && cache.back().timestamp_ns < target_ns) {
             if (index == cache.size() - 1) {
               status = "(already at last message)";
@@ -622,8 +635,10 @@ public:
           }
           break;
         }
-        case MsgNav::kStepBackward1s: {
-          const int64_t target_ns = cache[index].timestamp_ns - kOneSecondNs;
+        case MsgNav::kStepBackward1s:
+        case MsgNav::kStepBackward10s: {
+          const int64_t delta_ns = move == MsgNav::kStepBackward10s ? kTenSecondNs : kOneSecondNs;
+          const int64_t target_ns = cache[index].timestamp_ns - delta_ns;
           if (target_ns <= cache.front().timestamp_ns) {
             if (index == 0) {
               status = "(at first message)";
@@ -672,9 +687,18 @@ public:
           navigate(MsgNav::kStepForward1s);
           pager.set_scroll_offset(0);
           return core::tui::AppKeyResult::kHandled;
+        case core::tui::NavKey::kStepForward10s:
+          navigate(MsgNav::kStepForward10s);
+          pager.set_scroll_offset(0);
+          return core::tui::AppKeyResult::kHandled;
         case core::tui::NavKey::kStepBackward1s:
           // Like prev, preserve body scroll when already at the boundary.
           if (navigate(MsgNav::kStepBackward1s)) {
+            pager.set_scroll_offset(0);
+          }
+          return core::tui::AppKeyResult::kHandled;
+        case core::tui::NavKey::kStepBackward10s:
+          if (navigate(MsgNav::kStepBackward10s)) {
             pager.set_scroll_offset(0);
           }
           return core::tui::AppKeyResult::kHandled;
@@ -1163,7 +1187,8 @@ public:
       // keys ([p]/[t]) stay visible unconditionally to guide the user to enable
       // the overlay in the first place.
       std::string legend_text =
-        "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [g] first   [G] last   [s] save   "
+        "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [,,] -10s   [..] +10s   [g] first "
+        "  [G] last   [s] save   "
         "[u] undistort   [p] project pcd   [t] select pcd topics";
       if (!pcd.topics.empty()) {
         legend_text += "   [f] property   [c] scheme   [r] range   [= / -] size   [ [ / ] ] alpha";
@@ -1311,8 +1336,14 @@ public:
           case core::KeyEvent::kStepForward1s:
             needs_render = navigate(MsgNav::kStepForward1s);
             break;
+          case core::KeyEvent::kStepForward10s:
+            needs_render = navigate(MsgNav::kStepForward10s);
+            break;
           case core::KeyEvent::kStepBackward1s:
             needs_render = navigate(MsgNav::kStepBackward1s);
+            break;
+          case core::KeyEvent::kStepBackward10s:
+            needs_render = navigate(MsgNav::kStepBackward10s);
             break;
           case core::KeyEvent::kResize:
             needs_render = true;  // geometry changed: re-fit and re-render

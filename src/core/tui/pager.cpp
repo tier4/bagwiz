@@ -61,6 +61,10 @@ NavKey to_nav_key(KeyEvent ev) noexcept
       return NavKey::kStepForward1s;
     case KeyEvent::kStepBackward1s:
       return NavKey::kStepBackward1s;
+    case KeyEvent::kStepForward10s:
+      return NavKey::kStepForward10s;
+    case KeyEvent::kStepBackward10s:
+      return NavKey::kStepBackward10s;
     case KeyEvent::kScrollUp:
       return NavKey::kScrollUp;
     case KeyEvent::kScrollDown:
