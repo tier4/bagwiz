@@ -215,11 +215,26 @@ void register_gpu_linearization_hook_once()
 
 // Build preprocessor params. A non-positive num_threads falls back to the
 // default (4) so both stages share the same baseline; otherwise they share
-// the requested thread budget because they run sequentially.
-glim::CloudPreprocessorParams make_preprocessor_params(int num_threads)
+// the requested thread budget because they run sequentially. input_resolution
+// and the range crop are written onto GLIM's stock preprocess fields (which
+// bagwiz otherwise leaves at their defaults, running GLIM with no config dir).
+glim::CloudPreprocessorParams make_preprocessor_params(const CloudMapperConfig & cfg)
 {
   glim::CloudPreprocessorParams params;
-  params.num_threads = num_threads > 0 ? num_threads : 4;
+  params.num_threads = cfg.num_threads > 0 ? cfg.num_threads : 4;
+  params.downsample_resolution = cfg.input_resolution;
+  params.distance_near_thresh = cfg.range_min;
+  params.distance_far_thresh = cfg.range_max;
+  return params;
+}
+
+// Build the scan-match recovery params. Only the accept/reject gate is
+// user-exposed (via CloudMapperConfig); every other field stays at
+// ScanMatchParams' loose-init default.
+ScanMatchParams make_recovery_params(const CloudMapperConfig & cfg)
+{
+  ScanMatchParams params;
+  params.min_inlier_fraction = cfg.recovery_min_inlier_fraction;
   return params;
 }
 
@@ -227,7 +242,7 @@ glim::CloudPreprocessorParams make_preprocessor_params(int num_threads)
 // stays byte-identical to the historical output). In use_gpu mode it is
 // int16-quantized about the frame's own centroid (Tier-1c), roughly halving the
 // host stash held across the whole run on a large bag; the quantization error
-// (< ~1 mm at LiDAR range) is far below map_resolution and the GPU path is
+// (< ~1 mm at LiDAR range) is far below input_resolution and the GPU path is
 // outside the reproducibility guarantee. Exactly one of `f` / `q` is populated.
 struct FramePoints
 {
@@ -672,7 +687,7 @@ struct CloudMapper::Impl
 
   explicit Impl(const CloudMapperConfig & cfg)
   : config(cfg),
-    preprocessor(make_preprocessor_params(cfg.num_threads)),
+    preprocessor(make_preprocessor_params(cfg)),
     odometry(detail::make_odometry_estimator(cfg.t_lidar_imu, cfg.num_threads, cfg.use_gpu)),
     sub_mapping(
       std::make_unique<glim::SubMapping>(
@@ -1274,7 +1289,7 @@ struct CloudMapper::Impl
 
     // Seed the scan-match target with the first frames of the optimized map (the
     // warmup window is spatially adjacent to them).
-    ScanMatchRecoverer recoverer{ScanMatchParams{}};
+    ScanMatchRecoverer recoverer{make_recovery_params(config)};
     const std::size_t seed_n = std::min<std::size_t>(kRecoverySeedFrames, frames.size());
     for (std::size_t i = 0; i < seed_n; ++i) {
       recoverer.insert_target(frame_world_points(frames[i]));
@@ -1354,7 +1369,7 @@ struct CloudMapper::Impl
     };
 
     // Seed the scan-match target with the last frames of the optimized map.
-    ScanMatchRecoverer recoverer{ScanMatchParams{}};
+    ScanMatchRecoverer recoverer{make_recovery_params(config)};
     const std::size_t seed_n = std::min<std::size_t>(kRecoverySeedFrames, frames.size());
     for (std::size_t i = frames.size() - seed_n; i < frames.size(); ++i) {
       recoverer.insert_target(frame_world_points(frames[i]));
@@ -1426,7 +1441,7 @@ struct CloudMapper::Impl
   // `--threads 1` reproducibility guarantee is preserved exactly.
   void fill_map_streaming(CloudMap & result, bool with_intensity) const
   {
-    VoxelGrid grid(config.map_resolution, with_intensity);
+    VoxelGrid grid(config.input_resolution, with_intensity);
     for (const auto & entry : entries) {
       if (!entry.submap) {
         continue;
@@ -1478,7 +1493,7 @@ struct CloudMapper::Impl
     std::vector<VoxelGrid> grids;
     grids.reserve(static_cast<std::size_t>(nthreads));
     for (int t = 0; t < nthreads; ++t) {
-      grids.emplace_back(config.map_resolution, with_intensity);
+      grids.emplace_back(config.input_resolution, with_intensity);
     }
     const auto worker = [&](int t) {
       const std::size_t lo = jobs.size() * static_cast<std::size_t>(t) / nthreads;
@@ -1585,7 +1600,7 @@ struct CloudMapper::Impl
 #endif
 
   // Rebuild the exported map from every frame's full points, placed at the
-  // frame's globally-optimized world pose and merged at config.map_resolution.
+  // frame's globally-optimized world pose and merged at config.input_resolution.
   // The optimization ran at GLIM's stock sub-map density; the emitted map is as
   // dense as the requested export voxel allows. Dispatch:
   //   - use_gpu (CUDA build): GPU voxelization, CPU fallback on GPU failure;
@@ -1601,13 +1616,13 @@ struct CloudMapper::Impl
       std::vector<float> world_intensities;
       build_world_points(world_points, world_intensities, with_intensity);
       if (voxelize_gpu(
-            world_points, world_intensities, config.map_resolution, result.points,
+            world_points, world_intensities, config.input_resolution, result.points,
             result.intensities)) {
         return;
       }
       // GPU unavailable / OOM: voxelize the already-built flat arrays on the CPU.
       voxelize_flat_cpu(
-        world_points, world_intensities, config.map_resolution, with_intensity, result);
+        world_points, world_intensities, config.input_resolution, with_intensity, result);
       return;
     }
 #endif

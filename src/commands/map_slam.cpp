@@ -133,6 +133,25 @@ public:
       upsample_spec_ = *spec;
     }
 
+    // Cross-field numeric validation the per-option CLI checks can't express, run
+    // before any bag work. Each of --input-res / --min-range / --max-range is
+    // already CLI-checked > 0 and --recovery-min-inliers is range-checked to
+    // [0, 1]; here we enforce the relations between them.
+    if (!(args_.range_min < args_.range_max)) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "--min-range (%g) must be strictly less than --max-range (%g).", args_.range_min,
+        args_.range_max);
+      return 1;
+    }
+    if (!(args_.recovery_min_inlier_fraction > 0.0)) {
+      BAGWIZ_LOG_ERROR(
+        kLogger,
+        "--recovery-min-inliers must be > 0 (got %g); 0 would disable the recovery acceptance gate "
+        "entirely.",
+        args_.recovery_min_inlier_fraction);
+      return 1;
+    }
+
     // Resolve the effective backend (CPU/GPU) from --backend plus a CUDA device
     // probe, before any bag work. A forced 'cuda' that cannot run errors here;
     // 'auto' degrades to CPU.
@@ -720,7 +739,10 @@ private:
     io::BagReader & reader, const std::optional<core::slam::SensorTransform> & t_lidar_imu)
   {
     core::slam::CloudMapperConfig config;
-    config.map_resolution = args_.map_resolution;
+    config.input_resolution = args_.input_resolution;
+    config.range_min = args_.range_min;
+    config.range_max = args_.range_max;
+    config.recovery_min_inlier_fraction = args_.recovery_min_inlier_fraction;
     config.t_lidar_imu = t_lidar_imu;
     config.num_threads = cap_threads_at_hardware_limit(args_.num_threads);
     config.enable_gnss = !args_.gnss_topic.empty();

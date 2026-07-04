@@ -1055,9 +1055,9 @@ TEST(FlagCompletionTest, MapSlamDashListsSlamFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "map", "slam", "-"}),
-    "--backend\n--gnss\n--help\n--imu\n--map-res\n--no-cooldown-recovery\n"
-    "--no-progress\n--no-warmup-recovery\n--overwrite\n"
-    "--threads\n--upsample\n--viewer\n-h\n-t\n-w\n");
+    "--backend\n--gnss\n--help\n--imu\n--input-res\n--max-range\n--min-range\n"
+    "--no-cooldown-recovery\n--no-progress\n--no-warmup-recovery\n--overwrite\n"
+    "--recovery-min-inliers\n--threads\n--upsample\n--viewer\n-h\n-t\n-w\n");
 }
 
 // `map slam --backend <TAB>` lists the three backend modes.

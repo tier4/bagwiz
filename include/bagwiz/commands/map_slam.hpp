@@ -39,9 +39,21 @@ struct MapSlamArgs
   std::string gnss_topic;
   // Output root directory; receives traj.tum and map.pcd.
   std::filesystem::path output_root;
-  // Exported-map voxel size in meters. Controls only the exported map's density,
-  // never the optimization or trajectory.
-  double map_resolution = 0.2;
+  // Voxel size in meters used for BOTH the GLIM LiDAR input downsample and the
+  // exported-map merge — the single "map resolution" knob. Default 0.15 matches
+  // GLIM's stock downsample, so the default trajectory is unchanged. Because it
+  // feeds the optimizer it affects the trajectory too, not only the map.
+  double input_resolution = 0.15;
+  // Range crop in meters applied before downsampling: returns closer than
+  // range_min or farther than range_max never enter the trajectory or the map.
+  // Defaults match GLIM's stock 1.0 / 100.0. Require 0 < range_min < range_max.
+  double range_min = 1.0;
+  double range_max = 100.0;
+  // Inlier-fraction acceptance gate (0..1) for warmup/cooldown pose-recovery
+  // scan-matching. Higher = stricter (endpoints may stay unrecovered); lower =
+  // looser (a bad fit can degrade recovery). No effect when both recoveries are
+  // off. Default 0.7 matches the recovery scan-matcher's loose-init gate.
+  double recovery_min_inlier_fraction = 0.7;
   // Overwrite the output file(s) if they already exist.
   bool overwrite = false;
   // After writing map.pcd, serve it over a loopback HTTP server and open the

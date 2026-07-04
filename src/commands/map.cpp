@@ -98,11 +98,32 @@ private:
       "precision when unknown). Requires global mapping.");
     sub
       ->add_option(
-        "--map-res", slam_args_.map_resolution,
-        "Exported map voxel size in meters (smaller = denser; default 0.2). Controls "
-        "only the exported map's density, never the optimization or trajectory. The "
-        "LiDAR preprocessor's ~0.15 m input voxel bounds the real resolution.")
+        "--input-res", slam_args_.input_resolution,
+        "Voxel size in meters (default 0.15) for BOTH the LiDAR input downsample and the "
+        "exported-map merge — the single map-resolution knob. Smaller = denser map and finer "
+        "SLAM detail, at more points and runtime. Unlike a pure export voxel it feeds the "
+        "optimizer, so it also changes the trajectory. The range crop still bounds which returns "
+        "enter the pipeline.")
       ->check(CLI::PositiveNumber);
+    sub
+      ->add_option(
+        "--min-range", slam_args_.range_min,
+        "Discard LiDAR returns closer than this many meters before SLAM (default 1.0). Points "
+        "dropped here never enter the trajectory or the map. Must be > 0 and < --max-range.")
+      ->check(CLI::PositiveNumber);
+    sub
+      ->add_option(
+        "--max-range", slam_args_.range_max,
+        "Discard LiDAR returns farther than this many meters before SLAM (default 100.0). Points "
+        "dropped here never enter the trajectory or the map. Must be > --min-range.")
+      ->check(CLI::PositiveNumber);
+    sub
+      ->add_option(
+        "--recovery-min-inliers", slam_args_.recovery_min_inlier_fraction,
+        "Inlier-fraction acceptance gate (0..1, default 0.7) for warmup/cooldown pose-recovery "
+        "scan-matching. Higher = stricter (endpoints may stay unrecovered); lower = looser (a bad "
+        "fit can degrade recovery). No effect when both recoveries are disabled.")
+      ->check(CLI::Range(0.0, 1.0));
     sub->add_flag(
       "-w,--overwrite", slam_args_.overwrite, "Overwrite the output file(s) if they already exist");
     sub->add_flag(

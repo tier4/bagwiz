@@ -39,20 +39,28 @@
 namespace bagwiz::core::slam
 {
 
-// Density control for CloudMapper's exported map. This is deliberately
-// decoupled from GLIM's internal sub-map density: the optimization always runs
-// with GLIM's stock defaults (so the trajectory is reproducible and unaffected),
-// while the exported map is rebuilt from every frame's full points placed at
-// their globally-optimized poses and merged at `map_resolution`. Changing this
-// therefore changes only the map's appearance, never the trajectory.
+// Point-cloud resolution/extent control for CloudMapper. `input_resolution` is
+// the single "map resolution" knob: it sets GLIM's LiDAR preprocessor downsample
+// voxel (the per-scan detail floor) AND the voxel the exported map is merged at.
+// Unlike a pure export voxel it feeds the optimizer, so changing it also changes
+// the trajectory (not just the map's appearance). The range crop bounds which
+// returns enter the pipeline at all.
 struct CloudMapperConfig
 {
-  // Voxel side length [m] of the exported map. The optimized per-frame points are
-  // merged into voxels of this size; smaller = denser. The cloud preprocessor's
-  // input voxel (~0.15 m) and 1–100 m range crop still bound how fine the real
-  // data is, but a value below ~0.15 m can still recover detail from the offset
-  // grids of overlapping frames (at the cost of a much larger map). Must be > 0.
-  double map_resolution = 0.2;
+  // Voxel side length [m] used for BOTH the GLIM input downsample (per-scan,
+  // applied after the range crop) and the exported-map merge (optimized per-frame
+  // points are merged into voxels of this size). Smaller = denser map and finer
+  // SLAM input, at more points and runtime. Default 0.15 matches GLIM's stock
+  // downsample_resolution, so the default trajectory is unchanged from the
+  // pre-flag behavior. Must be > 0.
+  double input_resolution = 0.15;
+
+  // Range crop [m] applied by the LiDAR preprocessor before downsampling: a point
+  // whose sensor-frame range is below range_min or above range_max is dropped and
+  // never enters the trajectory or the map. Defaults match GLIM's stock
+  // 1.0 / 100.0. Require 0 < range_min < range_max.
+  double range_min = 1.0;
+  double range_max = 100.0;
 
   // LiDAR↔IMU extrinsic. nullopt → LiDAR-only CT odometry (the M2 behavior; IMU
   // disabled in sub/global mapping). A value → LiDAR-IMU CPU odometry with that
@@ -78,6 +86,15 @@ struct CloudMapperConfig
   // additionally seeds each initial guess and is the fallback. See
   // core/slam/scan_match_recovery.hpp.
   bool recover_end = false;
+
+  // Inlier-fraction acceptance gate [0..1] for the warmup/cooldown recovery
+  // scan-matching: a scan-to-map fit is accepted only when at least this fraction
+  // of its source points find an inlier correspondence. Higher = stricter (an
+  // endpoint may stay unrecovered); lower = looser (risking a bad fit that
+  // poisons the growing scan-match target). Applies to both recovery windows and
+  // has no effect when recover_start and recover_end are both false. Default 0.7
+  // matches ScanMatchParams' loose-init gate. Require 0 < x <= 1.
+  double recovery_min_inlier_fraction = 0.7;
 
   // GNSS global constraint (ported from glim_ext's gnss_global). When true, GNSS
   // points fed via insert_gnss() add horizontal translation priors on the submap
