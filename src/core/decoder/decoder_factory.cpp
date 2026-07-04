@@ -48,7 +48,7 @@ OpenDecoderResult open_decoder(const io::TopicInfo & topic)
   if (!forced_introspection) {
     auto schema_result = SchemaDecoder::open(topic);
     if (schema_result.ok()) {
-      BAGWIZ_LOG_INFO(
+      BAGWIZ_LOG_DEBUG(
         kLogger, "topic '%s' (type %s): backend=schema", topic.name.c_str(), topic.type.c_str());
       return schema_result;
     }
@@ -58,7 +58,7 @@ OpenDecoderResult open_decoder(const io::TopicInfo & topic)
 
   auto intro_result = IntrospectionDecoder::open(topic);
   if (intro_result.ok()) {
-    BAGWIZ_LOG_INFO(
+    BAGWIZ_LOG_DEBUG(
       kLogger, "topic '%s' (type %s): backend=introspection%s", topic.name.c_str(),
       topic.type.c_str(), forced_introspection ? " (forced via BAGWIZ_DECODER)" : "");
     return intro_result;

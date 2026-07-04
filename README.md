@@ -92,6 +92,15 @@ invocation. Click through for full usage, options, and examples:
 `bagwiz <subcommand> --help` is always available and reflects the same
 options documented in the per-command pages.
 
+## Environment variables
+
+bagwiz reads a handful of **optional** environment variables to override
+defaults — logging verbosity (`BAGWIZ_LOG_LEVEL`), decoder backend
+(`BAGWIZ_DECODER`), color output (`NO_COLOR`), message-package overlays
+(`AMENT_PREFIX_PATH`), and the installed launcher's distro
+(`BAGWIZ_DEFAULT_DISTRO`), among others. None are required for normal use. See
+the full reference in [docs/environment.md](docs/environment.md).
+
 ## License
 
 Apache-2.0. See [`LICENSE`](LICENSE).

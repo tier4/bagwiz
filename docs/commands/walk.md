@@ -242,6 +242,13 @@ because `walk` is the most decoder-centric command.
   Any other value (and the default of unset) selects the schema-first
   auto-policy, which falls back to introspection only when the schema
   backend cannot decode a topic. See `src/core/decoder/decoder_factory.cpp`.
+- `BAGWIZ_LOG_LEVEL`: minimum severity for diagnostic log lines on stderr,
+  one of `debug`, `info`, `warn`, `error`, `fatal` (case-insensitive). Unset
+  defaults to `info`. Set it to `debug` to surface the lower-level diagnostics
+  that are otherwise suppressed — for example the per-topic decoder backend
+  selection (`backend=schema` / `backend=introspection`), which the interactive
+  `walk` preview would otherwise never print. An unrecognised value is ignored
+  with a warning. See `src/core/logging.cpp`.
 
 ## Example
 

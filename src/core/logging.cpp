@@ -8,6 +8,7 @@
 
 #include "bagwiz/core/logging.hpp"
 
+#include <rcutils/allocator.h>
 #include <rcutils/logging.h>
 #include <rcutils/time.h>
 #include <unistd.h>
@@ -171,6 +172,35 @@ void console_output_handler(
     name != nullptr ? name : "", message.c_str(), reset);
 }
 
+// Apply the BAGWIZ_LOG_LEVEL environment variable to rcutils' default logger
+// level, which governs every "bagwiz.*" logger that has no explicit level of its
+// own. Severity names are accepted case-insensitively (debug, info, warn, error,
+// fatal). An unset or empty value leaves rcutils' default (INFO) untouched, and
+// an unrecognised value is reported once via WARN and otherwise ignored, so a
+// typo never silently changes verbosity. Lowering to "debug" is how the
+// normally-suppressed BAGWIZ_LOG_DEBUG diagnostics (e.g. decoder backend
+// selection) are surfaced.
+void apply_log_level_from_env()
+{
+  const char * raw = std::getenv("BAGWIZ_LOG_LEVEL");
+  if (raw == nullptr || raw[0] == '\0') {
+    return;
+  }
+
+  int severity = RCUTILS_LOG_SEVERITY_INFO;
+  const rcutils_ret_t parsed =
+    rcutils_logging_severity_level_from_string(raw, rcutils_get_default_allocator(), &severity);
+  if (parsed != RCUTILS_RET_OK) {
+    BAGWIZ_LOG_WARN(
+      "bagwiz.core.logging",
+      "ignoring unrecognised BAGWIZ_LOG_LEVEL='%s' (expected debug, info, warn, error, or fatal)",
+      raw);
+    return;
+  }
+
+  rcutils_logging_set_default_logger_level(severity);
+}
+
 }  // namespace
 
 void init_logging()
@@ -181,8 +211,14 @@ void init_logging()
 
   // Override the default handler so the timestamp renders as a human-readable
   // calendar date instead of a raw unix epoch, uniformly across every level.
-  // Re-installing the same handler on subsequent calls is harmless.
+  // Re-installing the same handler on subsequent calls is harmless. Installed
+  // before applying the level so any warning about an invalid BAGWIZ_LOG_LEVEL
+  // is rendered with the same layout as every other line.
   rcutils_logging_set_output_handler(console_output_handler);
+
+  // Honour BAGWIZ_LOG_LEVEL (e.g. "debug") so the DEBUG diagnostics that sit
+  // below rcutils' default INFO threshold can be surfaced on demand.
+  apply_log_level_from_env();
 }
 
 }  // namespace bagwiz::core

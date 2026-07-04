@@ -87,6 +87,32 @@ TEST(Smoke, LoggingColorizesPerSeverityWhenForced)
   ::unsetenv("RCUTILS_COLORIZED_OUTPUT");
 }
 
+// BAGWIZ_LOG_LEVEL lowers rcutils' default logger threshold so DEBUG lines,
+// which are suppressed at the default INFO level, become visible. The value is
+// case-insensitive; an unset value leaves the default in place.
+TEST(Smoke, LogLevelEnvControlsDebugVisibility)
+{
+  // Default threshold (env unset): a DEBUG line is suppressed.
+  ::unsetenv("BAGWIZ_LOG_LEVEL");
+  bagwiz::core::init_logging();
+  testing::internal::CaptureStderr();
+  BAGWIZ_LOG_DEBUG("bagwiz.test", "quiet-debug");
+  EXPECT_EQ(testing::internal::GetCapturedStderr().find("quiet-debug"), std::string::npos);
+
+  // BAGWIZ_LOG_LEVEL=debug (matched case-insensitively): the DEBUG line appears.
+  ::setenv("BAGWIZ_LOG_LEVEL", "DeBuG", /*overwrite=*/1);
+  bagwiz::core::init_logging();
+  testing::internal::CaptureStderr();
+  BAGWIZ_LOG_DEBUG("bagwiz.test", "loud-debug");
+  EXPECT_NE(testing::internal::GetCapturedStderr().find("loud-debug"), std::string::npos);
+
+  // Restore the default INFO threshold so tests running afterward are unaffected,
+  // then leave the environment clean.
+  ::setenv("BAGWIZ_LOG_LEVEL", "info", /*overwrite=*/1);
+  bagwiz::core::init_logging();
+  ::unsetenv("BAGWIZ_LOG_LEVEL");
+}
+
 TEST(Smoke, RegistryIsAccessible)
 {
   auto & registry = bagwiz::commands::Registry::instance();
