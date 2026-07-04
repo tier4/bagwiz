@@ -1158,10 +1158,19 @@ public:
       // truncating the row. The wrapped legend is pinned to the bottom and the
       // image region above shrinks to make room, mirroring how build_frame
       // derives its body height from the wrapped footer.
-      const std::vector<std::string> legend_lines = core::tui::wrap_to_width(
+      // The pcd overlay adjustment keys (f/c/r/=/-/[/]) are only meaningful once
+      // a PointCloud2 topic is selected, so surface them in the legend under the
+      // same condition the info row uses to show pcd state. The toggle/select
+      // keys ([p]/[t]) stay visible unconditionally to guide the user to enable
+      // the overlay in the first place.
+      std::string legend_text =
         "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [g] first   [G] last   [s] save   "
-        "[u] undistort   [p] project pcd   [t] select pcd topics   [i] back   [q] quit",
-        cols);
+        "[u] undistort   [p] project pcd   [t] select pcd topics";
+      if (!pcd.topics.empty()) {
+        legend_text += "   [f] property   [c] scheme   [r] range   [= / -] size   [ [ / ] ] alpha";
+      }
+      legend_text += "   [i] back   [q] quit";
+      const std::vector<std::string> legend_lines = core::tui::wrap_to_width(legend_text, cols);
       const int legend_top = std::max(1, rows - static_cast<int>(legend_lines.size()) + 1);
 
       // Image region: from the row just below the wrapped header down to the row

@@ -138,7 +138,9 @@ selection. The selected topics are remembered for the rest of the walk session.
 
 Defaults on first enable are: property `distance`, scheme `jet`, range `auto`,
 point size `2`, alpha `1.0`. The status line at the bottom of the preview shows
-the current property, scheme, range mode, point size, and alpha.
+the current property, scheme, range mode, point size, and alpha. Once a topic is
+selected, the preview's key legend also lists these adjustment keys
+(`f`/`c`/`r`/`=`/`-`/`[`/`]`) so they are discoverable without leaving the TUI.
 
 The overlay is applied to both the on-screen preview and the image saved by `s`.
 If no TF data is available, no CameraInfo was resolved, or the selected topic has
