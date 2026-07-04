@@ -66,6 +66,7 @@ PackedRasterResult from_raw(std::span<const std::byte> payload)
   out.width = view.width;
   out.height = view.height;
   out.encoding = view.encoding;
+  out.header_stamp_ns = view.header_stamp_ns;
   out.bgr.resize(row_bytes * height);
 
   for (std::uint32_t y = 0; y < view.height; ++y) {
@@ -111,6 +112,7 @@ PackedRasterResult from_compressed(std::span<const std::byte> payload)
   out.height = decoded.image->height;
   out.bgr = std::move(decoded.image->bgr);
   out.encoding = compressed.image->format;
+  out.header_stamp_ns = compressed.image->header_stamp_ns;
   result.raster = std::move(out);
   return result;
 }

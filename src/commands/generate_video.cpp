@@ -464,7 +464,8 @@ int run_generate_video(const GenerateVideoArgs & args)
   // point-cloud overlay paths.
   struct FrameBuffer
   {
-    std::int64_t timestamp_ns = 0;
+    std::int64_t timestamp_ns = 0;     // bag record time
+    std::int64_t header_stamp_ns = 0;  // image header.stamp (0 if unset)
     std::uint32_t width = 0;
     std::uint32_t height = 0;
     std::uint32_t step = 0;
@@ -486,6 +487,7 @@ int run_generate_video(const GenerateVideoArgs & args)
     }
     FrameBuffer frame;
     frame.timestamp_ns = timestamp_ns;
+    frame.header_stamp_ns = pr.raster->header_stamp_ns;
     frame.width = pr.raster->width;
     frame.height = pr.raster->height;
     frame.step = pr.raster->width * 3U;
@@ -493,6 +495,12 @@ int run_generate_video(const GenerateVideoArgs & args)
     frame.encoding = "bgr8";
     frame.data = std::move(pr.raster->bgr);
     return frame;
+  };
+
+  // Point clouds are matched to a camera frame by capture time (header.stamp);
+  // fall back to the bag record time when the source left header.stamp unset.
+  auto frame_match_ns = [](const FrameBuffer & frame) {
+    return frame.header_stamp_ns > 0 ? frame.header_stamp_ns : frame.timestamp_ns;
   };
 
   // Resize a decoded frame in-place by `args.resize_scale`, preserving aspect ratio.
@@ -656,7 +664,7 @@ int run_generate_video(const GenerateVideoArgs & args)
         return 1;
       }
       auto pending_projection =
-        launch_projection(current->timestamp_ns, current->width, current->height);
+        launch_projection(frame_match_ns(*current), current->width, current->height);
 
       while (true) {
         auto projected = pending_projection.get();
@@ -684,7 +692,7 @@ int run_generate_video(const GenerateVideoArgs & args)
             return 1;
           }
           next_projection =
-            launch_projection(next_frame->timestamp_ns, next_frame->width, next_frame->height);
+            launch_projection(frame_match_ns(*next_frame), next_frame->width, next_frame->height);
         }
 
         if (!encode_frame(*current, &projected.points)) {
@@ -721,7 +729,7 @@ int run_generate_video(const GenerateVideoArgs & args)
         if (!pcd_fetchers.empty()) {
           for (std::size_t i = 0; i < pcd_fetchers.size(); ++i) {
             std::string pcd_error;
-            const auto * cloud = pcd_fetchers[i].fetch(raw.timestamp_ns, pcd_error);
+            const auto * cloud = pcd_fetchers[i].fetch(frame_match_ns(*frame), pcd_error);
             if (cloud == nullptr) {
               BAGWIZ_LOG_ERROR(kLogger, "frame %" PRIu64 ": %s", written, pcd_error.c_str());
               encoder.reset();

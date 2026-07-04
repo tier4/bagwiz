@@ -35,6 +35,10 @@ struct PackedRaster
   std::uint32_t height = 0;
   std::vector<std::byte> bgr;  // packed BGR24, width * 3 * height bytes
   std::string encoding;        // source ROS/codec string (e.g. "rgb8", "jpeg")
+  // Source message header.stamp as sec * 1e9 + nanosec. 0 when the publisher
+  // left it unset. Carried through so consumers can time-align against other
+  // topics by capture time rather than bag record time.
+  std::int64_t header_stamp_ns = 0;
 
   [[nodiscard]] bool empty() const noexcept { return width == 0 || height == 0 || bgr.empty(); }
 };

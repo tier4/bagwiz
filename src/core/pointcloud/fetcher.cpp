@@ -122,20 +122,21 @@ std::optional<PointCloudIndex> build_point_cloud_index(
   io::RawMessage raw;
   try {
     while (reader->next(raw)) {
-      result.entries.push_back({raw.timestamp_ns});
-
-      // Parse at least the first message to learn field layout, and scan values
-      // when an auto range is required.
-      if (!need_value_scan && result.has_intensity) {
-        continue;
-      }
-
+      // Every message is parsed so its header.stamp is available as the matching
+      // key. parse_pointcloud2 only reads the header + field layout and takes a
+      // zero-copy view of the point bytes, so this stays cheap regardless of
+      // cloud size; the per-point value scan below is still gated on need.
       const auto parsed = parse_pointcloud2(raw.payload);
       if (!parsed.ok()) {
         error = parsed.error;
         return std::nullopt;
       }
       const auto & cloud = *parsed.cloud;
+
+      // Match by header.stamp; fall back to the bag record time when the source
+      // left header.stamp unset (0). record_ns always seeks the message later.
+      const std::int64_t stamp_ns = cloud.timestamp_ns > 0 ? cloud.timestamp_ns : raw.timestamp_ns;
+      result.entries.push_back({stamp_ns, raw.timestamp_ns});
 
       if (!result.has_intensity) {
         result.has_intensity = cloud.field_offset("intensity").has_value();
@@ -185,6 +186,14 @@ std::optional<PointCloudIndex> build_point_cloud_index(
     error = "point-cloud topic '" + topic + "' has no messages";
     return std::nullopt;
   }
+
+  // Bag order follows record time, which need not be monotonic in header.stamp.
+  // find_nearest_index binary-searches on stamp_ns, so sort by it here.
+  std::sort(
+    result.entries.begin(), result.entries.end(),
+    [](const PointCloudIndexEntry & a, const PointCloudIndexEntry & b) {
+      return a.stamp_ns < b.stamp_ns;
+    });
 
   result.property_min = need_auto_min ? running_min : *manual_min;
   result.property_max = need_auto_max ? running_max : *manual_max;
@@ -292,7 +301,10 @@ std::optional<PointCloudScan> scan_point_cloud(
   io::RawMessage raw;
   try {
     while (reader->next(raw)) {
-      scan.entries.push_back({raw.timestamp_ns});
+      // walk matches its image cache by bag record time, so record time is both
+      // the matching key and the seek key here (behavior unchanged). Bag order
+      // is already ascending in record time, so no re-sort is needed.
+      scan.entries.push_back({raw.timestamp_ns, raw.timestamp_ns});
       const auto parsed = parse_pointcloud2(raw.payload);
       if (!parsed.ok()) {
         error = parsed.error;
@@ -328,18 +340,18 @@ const PointCloud2 * PointCloudFetcher::fetch(std::int64_t target_ns, std::string
   }
 
   const std::size_t idx = find_nearest_index(target_ns);
-  const std::int64_t target_ts = entries_[idx].timestamp_ns;
+  const std::int64_t record_ns = entries_[idx].record_ns;
 
-  if (cached_cloud_.has_value() && cached_timestamp_ns_ == target_ts) {
+  if (cached_cloud_.has_value() && cached_record_ns_ == record_ns) {
     return &*cached_cloud_;
   }
 
-  auto cloud = load_at(target_ts, error);
+  auto cloud = load_at(record_ns, error);
   if (!cloud.has_value()) {
     return nullptr;
   }
   cached_cloud_ = std::move(*cloud);
-  cached_timestamp_ns_ = target_ts;
+  cached_record_ns_ = record_ns;
   return &*cached_cloud_;
 }
 
@@ -347,7 +359,7 @@ std::size_t PointCloudFetcher::find_nearest_index(std::int64_t target_ns) const
 {
   auto it = std::lower_bound(
     entries_.begin(), entries_.end(), target_ns,
-    [](const PointCloudIndexEntry & e, std::int64_t ns) { return e.timestamp_ns < ns; });
+    [](const PointCloudIndexEntry & e, std::int64_t ns) { return e.stamp_ns < ns; });
 
   if (it == entries_.begin()) {
     return 0;
@@ -357,15 +369,15 @@ std::size_t PointCloudFetcher::find_nearest_index(std::int64_t target_ns) const
   }
 
   const auto prev = it - 1;
-  const std::int64_t prev_delta = target_ns - prev->timestamp_ns;
-  const std::int64_t next_delta = it->timestamp_ns - target_ns;
+  const std::int64_t prev_delta = target_ns - prev->stamp_ns;
+  const std::int64_t next_delta = it->stamp_ns - target_ns;
   if (prev_delta <= next_delta) {
     return static_cast<std::size_t>(prev - entries_.begin());
   }
   return static_cast<std::size_t>(it - entries_.begin());
 }
 
-std::optional<PointCloud2> PointCloudFetcher::load_at(std::int64_t ts, std::string & error)
+std::optional<PointCloud2> PointCloudFetcher::load_at(std::int64_t record_ns, std::string & error)
 {
   std::unique_ptr<io::BagReader> reader;
   try {
@@ -375,16 +387,18 @@ std::optional<PointCloud2> PointCloudFetcher::load_at(std::int64_t ts, std::stri
     return std::nullopt;
   }
 
+  // The storage layer indexes by bag record time, so seek by record_ns even
+  // though matching upstream is done by header.stamp.
   io::ReadFilter filter;
   filter.topics.push_back(topic_);
-  filter.start_ns = ts - 1;
-  filter.end_ns = ts + 1;
+  filter.start_ns = record_ns - 1;
+  filter.end_ns = record_ns + 1;
   reader->set_filter(filter);
 
   io::RawMessage raw;
   try {
     while (reader->next(raw)) {
-      if (raw.timestamp_ns == ts) {
+      if (raw.timestamp_ns == record_ns) {
         const auto parsed = parse_pointcloud2(raw.payload);
         if (!parsed.ok()) {
           error = parsed.error;
@@ -398,7 +412,7 @@ std::optional<PointCloud2> PointCloudFetcher::load_at(std::int64_t ts, std::stri
     return std::nullopt;
   }
 
-  error = "point-cloud message at timestamp " + std::to_string(ts) + " not found";
+  error = "point-cloud message at record time " + std::to_string(record_ns) + " not found";
   return std::nullopt;
 }
 

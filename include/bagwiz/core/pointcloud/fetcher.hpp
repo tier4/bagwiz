@@ -26,7 +26,13 @@ namespace bagwiz::core::pointcloud
 
 struct PointCloudIndexEntry
 {
-  std::int64_t timestamp_ns = 0;
+  // Matching key: the cloud's header.stamp (sec * 1e9 + nanosec), used to find
+  // the cloud nearest a camera frame's header.stamp. Falls back to record_ns
+  // when the source header.stamp is unset (0). Entries are kept sorted by this.
+  std::int64_t stamp_ns = 0;
+  // Seek key: the bag record time. The storage layer indexes messages by record
+  // time (not header.stamp), so loading a matched cloud seeks by this value.
+  std::int64_t record_ns = 0;
 };
 
 struct PointCloudIndex
@@ -89,8 +95,10 @@ struct PointCloudScan
 [[nodiscard]] std::optional<PointCloudScan> scan_point_cloud(
   const std::filesystem::path & input, const std::string & topic, std::string & error);
 
-// Fetch the PointCloud2 message whose timestamp is closest to target_ns.
-// The returned pointer is valid until the next fetch() call or destruction.
+// Fetch the PointCloud2 message whose header.stamp is closest to target_ns
+// (itself a header.stamp). The matched cloud is then loaded from storage by its
+// bag record time. The returned pointer is valid until the next fetch() call or
+// destruction.
 class PointCloudFetcher
 {
 public:
@@ -102,13 +110,13 @@ public:
 
 private:
   [[nodiscard]] std::size_t find_nearest_index(std::int64_t target_ns) const;
-  [[nodiscard]] std::optional<PointCloud2> load_at(std::int64_t ts, std::string & error);
+  [[nodiscard]] std::optional<PointCloud2> load_at(std::int64_t record_ns, std::string & error);
 
   const std::filesystem::path input_;
   const std::string topic_;
   const std::vector<PointCloudIndexEntry> entries_;
   std::optional<PointCloud2> cached_cloud_;
-  std::int64_t cached_timestamp_ns_ = 0;
+  std::int64_t cached_record_ns_ = 0;
 };
 
 }  // namespace bagwiz::core::pointcloud

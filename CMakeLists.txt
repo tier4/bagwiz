@@ -832,6 +832,9 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_overlay_test test/core/pointcloud/overlay_test.cpp)
   target_link_libraries(bagwiz_overlay_test bagwiz_core)
 
+  ament_add_gtest(bagwiz_pointcloud_fetcher_test test/core/pointcloud/fetcher_test.cpp)
+  target_link_libraries(bagwiz_pointcloud_fetcher_test bagwiz_core)
+
   ament_add_gtest(
     bagwiz_pointcloud_property_ranges_test test/core/pointcloud/property_ranges_test.cpp)
   target_link_libraries(bagwiz_pointcloud_property_ranges_test bagwiz_core)

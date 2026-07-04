@@ -50,6 +50,11 @@ bagwiz generate video [OPTIONS] <input> <img_topic> <output>
 
 - **Frame rate** is derived from the topic's message timestamps; a topic with
   fewer than two distinct timestamps falls back to 10 fps.
+- **Point-cloud overlay time alignment.** Each frame is paired with the point
+  cloud whose `header.stamp` (sensor capture time) is nearest the image's own
+  `header.stamp`, rather than the bag record time — so overlays stay aligned even
+  when recording latency differs between the camera and lidar. When a message
+  leaves `header.stamp` unset (0), its bag record time is used as a fallback.
 - **Geometry and encoding are locked to the first frame.** A later frame with a
   different resolution or pixel encoding stops the run.
 - **Streaming output.** Frames are decoded and encoded one at a time; the video

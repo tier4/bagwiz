@@ -84,15 +84,16 @@ std::vector<std::byte> iota_bytes(std::size_t n)
   return v;
 }
 
-// Build a valid sensor_msgs/msg/Image CDR payload.
+// Build a valid sensor_msgs/msg/Image CDR payload. `stamp_ns` sets header.stamp
+// (sec/nanosec split); the default of 0 leaves it unset.
 CdrBuilder make_image(
   std::uint32_t width, std::uint32_t height, std::uint32_t step, const std::string & encoding,
-  std::span<const std::byte> data)
+  std::span<const std::byte> data, std::int64_t stamp_ns = 0)
 {
   CdrBuilder b;
-  b.i32(0);      // header.stamp.sec
-  b.u32(0);      // header.stamp.nanosec
-  b.str("cam");  // header.frame_id
+  b.i32(static_cast<std::int32_t>(stamp_ns / 1'000'000'000LL));   // header.stamp.sec
+  b.u32(static_cast<std::uint32_t>(stamp_ns % 1'000'000'000LL));  // header.stamp.nanosec
+  b.str("cam");                                                   // header.frame_id
   b.u32(height);
   b.u32(width);
   b.str(encoding);
@@ -116,6 +117,25 @@ TEST(RawImageTest, ParsesTightlyPackedBgr8)
   // Zero-copy: the view's data points into the original payload buffer (the
   // pixel bytes are the tail of the serialized message).
   EXPECT_EQ(r.image->data.data(), buf.view().data() + (buf.view().size() - data.size()));
+}
+
+TEST(RawImageTest, ParsesHeaderStamp)
+{
+  const auto data = iota_bytes(2 * 2 * 3);
+  // 1700000000.250000000 s -> 1700000000250000000 ns
+  const auto buf = make_image(2, 2, 6, "bgr8", data, 1'700'000'000'250'000'000LL);
+  const auto r = extract_raw_image(buf.view());
+  ASSERT_TRUE(r.ok()) << r.error;
+  EXPECT_EQ(r.image->header_stamp_ns, 1'700'000'000'250'000'000LL);
+}
+
+TEST(RawImageTest, UnsetHeaderStampIsZero)
+{
+  const auto data = iota_bytes(2 * 2 * 3);
+  const auto buf = make_image(2, 2, 6, "bgr8", data);  // default stamp 0
+  const auto r = extract_raw_image(buf.view());
+  ASSERT_TRUE(r.ok()) << r.error;
+  EXPECT_EQ(r.image->header_stamp_ns, 0);
 }
 
 TEST(RawImageTest, ParsesRowPaddedImage)

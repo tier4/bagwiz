@@ -39,9 +39,9 @@ RawImageResult extract_raw_image(std::span<const std::byte> payload)
   try {
     cdr_walker::CdrReader reader(payload);
 
-    (void)reader.read_i32();     // header.stamp.sec
-    (void)reader.read_u32();     // header.stamp.nanosec
-    (void)reader.read_string();  // header.frame_id
+    const std::int32_t stamp_sec = reader.read_i32();       // header.stamp.sec
+    const std::uint32_t stamp_nanosec = reader.read_u32();  // header.stamp.nanosec
+    (void)reader.read_string();                             // header.frame_id
 
     const std::uint32_t height = reader.read_u32();
     const std::uint32_t width = reader.read_u32();
@@ -58,6 +58,7 @@ RawImageResult extract_raw_image(std::span<const std::byte> payload)
     view.step = step;
     view.encoding = std::move(encoding);
     view.data = data;
+    view.header_stamp_ns = static_cast<std::int64_t>(stamp_sec) * 1'000'000'000LL + stamp_nanosec;
     result.image = std::move(view);
   } catch (const std::exception & e) {
     result.image.reset();

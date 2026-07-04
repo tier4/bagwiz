@@ -68,13 +68,13 @@ private:
 };
 
 // Serialize a sensor_msgs/msg/CompressedImage with the given format string and
-// compressed bytes.
+// compressed bytes. `stamp_ns` sets header.stamp; the default of 0 leaves it unset.
 std::vector<std::byte> make_compressed_payload(
-  const std::string & format, std::span<const std::byte> data)
+  const std::string & format, std::span<const std::byte> data, std::int64_t stamp_ns = 0)
 {
   CdrBuilder b;
-  b.i32(0);  // header.stamp.sec
-  b.u32(0);  // header.stamp.nanosec
+  b.i32(static_cast<std::int32_t>(stamp_ns / 1'000'000'000LL));   // header.stamp.sec
+  b.u32(static_cast<std::uint32_t>(stamp_ns % 1'000'000'000LL));  // header.stamp.nanosec
   b.str("cam");
   b.str(format);
   b.byte_seq(data);
@@ -82,6 +82,17 @@ std::vector<std::byte> make_compressed_payload(
 }
 
 }  // namespace
+
+TEST(CompressedImageTest, ParsesHeaderStamp)
+{
+  const std::vector<std::byte> blob{std::byte{0xFF}, std::byte{0xD8}};
+  // 1700000000.250000000 s -> 1700000000250000000 ns
+  const auto payload =
+    make_compressed_payload("jpeg", {blob.data(), blob.size()}, 1'700'000'000'250'000'000LL);
+  const auto result = extract_compressed_image({payload.data(), payload.size()});
+  ASSERT_TRUE(result.ok()) << result.error;
+  EXPECT_EQ(result.image->header_stamp_ns, 1'700'000'000'250'000'000LL);
+}
 
 TEST(CompressedImageTest, ParsesFormatAndData)
 {

@@ -36,9 +36,9 @@ CompressedImageResult extract_compressed_image(std::span<const std::byte> payloa
   try {
     cdr_walker::CdrReader reader(payload);
 
-    (void)reader.read_i32();     // header.stamp.sec
-    (void)reader.read_u32();     // header.stamp.nanosec
-    (void)reader.read_string();  // header.frame_id
+    const std::int32_t stamp_sec = reader.read_i32();       // header.stamp.sec
+    const std::uint32_t stamp_nanosec = reader.read_u32();  // header.stamp.nanosec
+    (void)reader.read_string();                             // header.frame_id
 
     std::string format = reader.read_string();
 
@@ -48,6 +48,7 @@ CompressedImageResult extract_compressed_image(std::span<const std::byte> payloa
     CompressedImageView view;
     view.format = std::move(format);
     view.data = data;
+    view.header_stamp_ns = static_cast<std::int64_t>(stamp_sec) * 1'000'000'000LL + stamp_nanosec;
     result.image = std::move(view);
   } catch (const std::exception & e) {
     result.image.reset();
