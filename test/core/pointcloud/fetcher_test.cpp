@@ -262,4 +262,28 @@ TEST_F(PointCloudFetcherTest, FallsBackToRecordTimeWhenHeaderStampUnset)
   EXPECT_FLOAT_EQ(first_point_x(*b), 20.0f);
 }
 
+// scan_point_cloud (used by `walk`'s preview overlay) must also key the index by
+// header.stamp, so walk pairs frames with clouds by capture time.
+TEST_F(PointCloudFetcherTest, ScanPointCloudMatchesByHeaderStamp)
+{
+  const std::string topic = "/points";
+  const std::vector<CloudSpec> specs{
+    {1'000'000'000, 3'000'000'000, 10.0f},  // A
+    {2'000'000'000, 1'000'000'000, 20.0f},  // B
+    {3'000'000'000, 2'000'000'000, 30.0f},  // C
+  };
+  const auto bag = write_cloud_bag(tmp_dir_, topic, specs);
+
+  std::string error;
+  auto scan = bagwiz::core::pointcloud::scan_point_cloud(bag, topic, error);
+  ASSERT_TRUE(scan.has_value()) << error;
+  ASSERT_EQ(scan->entries.size(), 3U);
+
+  PointCloudFetcher fetcher(bag, topic, std::move(scan->entries));
+  // target == B's header.stamp -> B (x=20), not A (record-time nearest).
+  const auto * b = fetcher.fetch(1'000'000'000, error);
+  ASSERT_NE(b, nullptr) << error;
+  EXPECT_FLOAT_EQ(first_point_x(*b), 20.0f);
+}
+
 }  // namespace

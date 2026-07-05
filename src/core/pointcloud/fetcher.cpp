@@ -301,16 +301,19 @@ std::optional<PointCloudScan> scan_point_cloud(
   io::RawMessage raw;
   try {
     while (reader->next(raw)) {
-      // walk matches its image cache by bag record time, so record time is both
-      // the matching key and the seek key here (behavior unchanged). Bag order
-      // is already ascending in record time, so no re-sort is needed.
-      scan.entries.push_back({raw.timestamp_ns, raw.timestamp_ns});
       const auto parsed = parse_pointcloud2(raw.payload);
       if (!parsed.ok()) {
         error = parsed.error;
         return std::nullopt;
       }
-      if (!accumulate_property_ranges(*parsed.cloud, scan.ranges, error)) {
+      const auto & cloud = *parsed.cloud;
+
+      // Match by header.stamp; fall back to the bag record time when the source
+      // left header.stamp unset (0). record_ns always seeks the message later.
+      const std::int64_t stamp_ns = cloud.timestamp_ns > 0 ? cloud.timestamp_ns : raw.timestamp_ns;
+      scan.entries.push_back({stamp_ns, raw.timestamp_ns});
+
+      if (!accumulate_property_ranges(cloud, scan.ranges, error)) {
         return std::nullopt;
       }
     }
@@ -323,6 +326,15 @@ std::optional<PointCloudScan> scan_point_cloud(
     error = "point-cloud topic '" + topic + "' has no messages";
     return std::nullopt;
   }
+
+  // Bag order follows record time, which need not be monotonic in header.stamp.
+  // find_nearest_index binary-searches on stamp_ns, so sort by it here.
+  std::sort(
+    scan.entries.begin(), scan.entries.end(),
+    [](const PointCloudIndexEntry & a, const PointCloudIndexEntry & b) {
+      return a.stamp_ns < b.stamp_ns;
+    });
+
   return scan;
 }
 

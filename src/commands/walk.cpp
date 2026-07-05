@@ -939,11 +939,17 @@ public:
       }
       const auto effective_ci = helper->effective_camera_info();
 
+      // Pair the frame with the point cloud captured nearest in time. The image's
+      // header.stamp (capture time) is the match target and the TF-lookup time;
+      // fall back to the bag record time when the source left header.stamp unset.
+      const std::int64_t match_ns =
+        img.header_stamp_ns > 0 ? img.header_stamp_ns : cache[index].timestamp_ns;
+
       std::vector<core::pointcloud::ProjectedPoint> all_points;
       std::string last_error;
       for (auto & fetcher : pcd_fetchers) {
         std::string error;
-        const auto * cloud = fetcher.fetch(cache[index].timestamp_ns, error);
+        const auto * cloud = fetcher.fetch(match_ns, error);
         if (cloud == nullptr) {
           last_error = std::move(error);
           continue;
@@ -951,7 +957,7 @@ public:
 
         const auto projected = core::pointcloud::project_cloud_for_frame(
           *cloud, effective_ci, *tf_buffer, img.width, img.height, pcd.property,
-          /*use_rectified=*/undistort_enabled, cache[index].timestamp_ns);
+          /*use_rectified=*/undistort_enabled, match_ns);
         if (!projected.ok()) {
           last_error = std::move(projected.error);
           continue;
