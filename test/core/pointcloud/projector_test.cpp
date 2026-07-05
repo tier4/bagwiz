@@ -327,6 +327,44 @@ TEST(Projector, RectifiedPathIgnoresDistortion)
   EXPECT_EQ(result.points[0].v, 240);
 }
 
+TEST(Projector, RoundTripGuardDropsFoldedOutOfFovPoint)
+{
+  // A strong barrel distortion (k1=-0.5) makes r' = r*(1 - 0.5*r^2) non-monotonic
+  // past r=0.816, so points beyond that fold back toward the image center. Point
+  // (1.5, 0, 1) -> a=1.5 (well past the fold) distorts to x'=-0.1875 and would
+  // otherwise project to u=301 (inside the image) as a spurious fold-back point.
+  // The round-trip validity guard must drop it.
+  const auto cloud = make_xyz_cloud({{1.5f, 0.0f, 1.0f}});
+  auto camera = make_pinhole_camera(100.0, 100.0, 320.0, 240.0, 640, 480);
+  camera.distortion_model = "plumb_bob";
+  camera.d = {-0.5, 0.0, 0.0, 0.0, 0.0};
+
+  const auto result = project_pointcloud(
+    cloud, camera, identity_transform(), 640, 480, PointCloudProperty::kDistance, false);
+
+  ASSERT_TRUE(result.ok());
+  EXPECT_TRUE(result.points.empty());
+}
+
+TEST(Projector, RoundTripGuardKeepsInDomainDistortedPoint)
+{
+  // With the same k1=-0.5 distortion, an in-domain point (a=0.5 < fold radius
+  // 0.816) round-trips cleanly and must still be projected. radial = 1 +
+  // (-0.5)(0.25) = 0.875, x' = 0.4375, u = 100*0.4375 + 320 = 363.
+  const auto cloud = make_xyz_cloud({{0.5f, 0.0f, 1.0f}});
+  auto camera = make_pinhole_camera(100.0, 100.0, 320.0, 240.0, 640, 480);
+  camera.distortion_model = "plumb_bob";
+  camera.d = {-0.5, 0.0, 0.0, 0.0, 0.0};
+
+  const auto result = project_pointcloud(
+    cloud, camera, identity_transform(), 640, 480, PointCloudProperty::kDistance, false);
+
+  ASSERT_TRUE(result.ok());
+  ASSERT_EQ(result.points.size(), 1u);
+  EXPECT_EQ(result.points[0].u, 363);
+  EXPECT_EQ(result.points[0].v, 240);
+}
+
 TEST(Projector, EquidistantDistortionAppliesFisheyeModel)
 {
   // Point (2.5, 0, 5) -> a=0.5, r=0.5, theta=atan(0.5)=0.46365. With k1=0.1:
@@ -344,4 +382,22 @@ TEST(Projector, EquidistantDistortionAppliesFisheyeModel)
   ASSERT_EQ(result.points.size(), 1u);
   EXPECT_EQ(result.points[0].u, 367);
   EXPECT_EQ(result.points[0].v, 240);
+}
+
+TEST(Projector, RoundTripGuardDropsFoldedEquidistantPoint)
+{
+  // A fisheye ring distortion (k1=-0.5) makes theta_d = theta*(1 - 0.5*theta^2)
+  // non-monotonic past theta=0.816, so points beyond that fold. Point (2.0, 0, 1)
+  // -> a=2.0, theta=atan(2)=1.107 (past the fold) distorts to x'=0.4287 and would
+  // otherwise project to u=362 (inside the image). The round-trip guard drops it.
+  const auto cloud = make_xyz_cloud({{2.0f, 0.0f, 1.0f}});
+  auto camera = make_pinhole_camera(100.0, 100.0, 320.0, 240.0, 640, 480);
+  camera.distortion_model = "equidistant";
+  camera.d = {-0.5, 0.0, 0.0, 0.0};
+
+  const auto result = project_pointcloud(
+    cloud, camera, identity_transform(), 640, 480, PointCloudProperty::kDistance, false);
+
+  ASSERT_TRUE(result.ok());
+  EXPECT_TRUE(result.points.empty());
 }
