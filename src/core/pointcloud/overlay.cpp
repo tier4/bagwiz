@@ -46,10 +46,23 @@ std::string overlay_projected_points(
     return a.depth < b.depth;
   });
 
-  const int radius = static_cast<int>(point_size) / 2;
+  // Draw each point as a filled square whose side is point_size pixels, so the
+  // rendered size grows one pixel per unit and its on-screen extent equals
+  // point_size (the documented meaning of --point-size). Deriving a circle
+  // radius as point_size / 2 instead quantized odd sizes onto the even size
+  // below them (2 and 3 both radius 1, 4 and 5 both radius 2), so in the walk
+  // preview the size only appeared to change on even values. `half` is the
+  // top-left offset that keeps the square centered on the projected pixel.
+  const int side = std::max(1, static_cast<int>(point_size));
+  const int half = side / 2;
 
-  auto in_bounds = [width_i, height_i, radius](const ProjectedPoint & p) -> bool {
-    return p.u >= -radius && p.u < width_i + radius && p.v >= -radius && p.v < height_i + radius;
+  auto in_bounds = [width_i, height_i, side](const ProjectedPoint & p) -> bool {
+    return p.u >= -side && p.u < width_i + side && p.v >= -side && p.v < height_i + side;
+  };
+
+  auto draw_point = [half, side](
+                      cv::Mat & target, const ProjectedPoint & p, const cv::Scalar & bgr) {
+    cv::rectangle(target, cv::Rect(p.u - half, p.v - half, side, side), bgr, cv::FILLED);
   };
 
   ColorMapper mapper(scheme);
@@ -61,7 +74,7 @@ std::string overlay_projected_points(
       }
       const auto color = mapper.map(p.value, property_min, property_max);
       const cv::Scalar bgr(color[0], color[1], color[2]);
-      cv::circle(canvas, {p.u, p.v}, radius, bgr, cv::FILLED);
+      draw_point(canvas, p, bgr);
     }
   } else {
     // Alpha-blend the points onto the image. The overlay starts as a copy of the
@@ -77,7 +90,7 @@ std::string overlay_projected_points(
       }
       const auto color = mapper.map(p.value, property_min, property_max);
       const cv::Scalar bgr(color[0], color[1], color[2]);
-      cv::circle(overlay, {p.u, p.v}, radius, bgr, cv::FILLED);
+      draw_point(overlay, p, bgr);
     }
     cv::Mat blended;
     cv::addWeighted(canvas, 1.0 - alpha, overlay, alpha, 0.0, blended);

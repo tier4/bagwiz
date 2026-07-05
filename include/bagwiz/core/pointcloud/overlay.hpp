@@ -21,7 +21,9 @@ namespace bagwiz::core::pointcloud
 {
 
 // Draw `projected` points onto a copy of `src` using OpenCV, writing the
-// result into `out`. `out` must have the same dimensions as `src`.
+// result into `out`. `out` must have the same dimensions as `src`. Each point
+// is drawn as a filled square whose side is `point_size` pixels; callers pass a
+// value in the range 1-64, and any value below 1 is clamped up to 1.
 // Returns an empty string on success, otherwise an error message.
 [[nodiscard]] std::string overlay_projected_points(
   const image::PackedRaster & src, const std::vector<ProjectedPoint> & projected,

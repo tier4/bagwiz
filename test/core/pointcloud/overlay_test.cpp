@@ -89,6 +89,77 @@ TEST(PointCloudOverlay, PartialAlphaLeavesBackgroundPixelsUntouched)
   EXPECT_TRUE(center_changed);
 }
 
+// Regression: the drawn point must grow with EVERY unit increase in point size.
+// The buggy implementation derived the circle radius as `point_size / 2` with
+// integer division, so consecutive sizes collapsed in pairs (2 and 3 share
+// radius 1, 4 and 5 share radius 2, ...). In the walk preview that made the
+// point size appear to change only on even values: pressing "=" from 4 to 5 did
+// nothing, 5 to 6 grew, 6 to 7 did nothing. The point is drawn as a square whose
+// side equals point_size, so each step adds a visible pixel ring.
+TEST(PointCloudOverlay, PointSizeGrowsOnEveryStep)
+{
+  // Black canvas so any drawn (non-black) pixel is a point pixel. A single point
+  // at the center, far enough from the edges that the largest size never clips.
+  const PackedRaster src = solid_raster(64, 64, 0, 0, 0);
+  const std::vector<ProjectedPoint> points{ProjectedPoint{32, 32, 1.0F, 0.5F}};
+
+  auto drawn_pixel_count = [&](std::uint32_t point_size) {
+    PackedRaster out;
+    const std::string err =
+      overlay_projected_points(src, points, 0.0, 1.0, ColorScheme::kJet, point_size, 1.0F, out);
+    EXPECT_TRUE(err.empty()) << err;
+    int count = 0;
+    for (std::uint32_t y = 0; y < out.height; ++y) {
+      for (std::uint32_t x = 0; x < out.width; ++x) {
+        const bool is_point = channel_at(out, static_cast<int>(x), static_cast<int>(y), 0) != 0 ||
+                              channel_at(out, static_cast<int>(x), static_cast<int>(y), 1) != 0 ||
+                              channel_at(out, static_cast<int>(x), static_cast<int>(y), 2) != 0;
+        if (is_point) {
+          ++count;
+        }
+      }
+    }
+    return count;
+  };
+
+  int prev = drawn_pixel_count(1);
+  for (std::uint32_t size = 2; size <= 8; ++size) {
+    const int cur = drawn_pixel_count(size);
+    EXPECT_GT(cur, prev) << "point_size " << size << " drew no more pixels than point_size "
+                         << (size - 1) << " (size change had no visible effect)";
+    prev = cur;
+  }
+}
+
+// The drawn point is a square whose side length equals point_size in pixels,
+// matching the documented "side length of drawn square points in pixels".
+TEST(PointCloudOverlay, PointSizeEqualsSquareSideInPixels)
+{
+  const PackedRaster src = solid_raster(64, 64, 0, 0, 0);
+  const std::vector<ProjectedPoint> points{ProjectedPoint{32, 32, 1.0F, 0.5F}};
+
+  for (const std::uint32_t point_size : {1U, 2U, 3U, 4U, 5U}) {
+    PackedRaster out;
+    const std::string err =
+      overlay_projected_points(src, points, 0.0, 1.0, ColorScheme::kJet, point_size, 1.0F, out);
+    ASSERT_TRUE(err.empty()) << err;
+    int count = 0;
+    for (std::uint32_t y = 0; y < out.height; ++y) {
+      for (std::uint32_t x = 0; x < out.width; ++x) {
+        if (
+          channel_at(out, static_cast<int>(x), static_cast<int>(y), 0) != 0 ||
+          channel_at(out, static_cast<int>(x), static_cast<int>(y), 1) != 0 ||
+          channel_at(out, static_cast<int>(x), static_cast<int>(y), 2) != 0) {
+          ++count;
+        }
+      }
+    }
+    EXPECT_EQ(count, static_cast<int>(point_size * point_size))
+      << "point_size " << point_size << " should fill a " << point_size << "x" << point_size
+      << " square";
+  }
+}
+
 // Sanity: the opaque fast path (alpha == 1) also leaves the background intact.
 TEST(PointCloudOverlay, OpaqueAlphaLeavesBackgroundPixelsUntouched)
 {

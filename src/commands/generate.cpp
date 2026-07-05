@@ -151,7 +151,9 @@ private:
     sub->add_option("--scheme", video_args_.colorscheme, "Color scheme for point coloring.")
       ->transform(CLI::CheckedTransformer{scheme_map})
       ->default_val(core::pointcloud::ColorScheme::kViridis);
-    sub->add_option("--point-size", video_args_.point_size, "Diameter of drawn points in pixels.")
+    sub
+      ->add_option(
+        "--point-size", video_args_.point_size, "Side length of drawn square points in pixels.")
       ->default_val(2U)
       ->check(CLI::Range(1U, 64U));
     sub->add_option("--alpha", video_args_.alpha, "Point overlay opacity.")
