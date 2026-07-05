@@ -32,8 +32,8 @@ enum class NavKey {
   kLast,             // jump to last item
   kStepForward1s,    // jump to the next item at least one second ahead
   kStepBackward1s,   // jump to the previous item at least one second behind
-  kStepForward10s,   // jump ~10 seconds ahead (rapid double-tap of '.')
-  kStepBackward10s,  // jump ~10 seconds behind (rapid double-tap of ',')
+  kStepForward10s,   // jump ~10 seconds ahead ('>')
+  kStepBackward10s,  // jump ~10 seconds behind ('<')
   kScrollUp,         // scroll body up by one line
   kScrollDown,       // scroll body down by one line
   kScrollHead,       // jump body to first line

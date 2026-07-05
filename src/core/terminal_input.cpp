@@ -15,7 +15,6 @@
 #include <unistd.h>
 
 #include <cerrno>
-#include <chrono>
 #include <cstring>
 #include <string_view>
 
@@ -118,6 +117,10 @@ KeyEvent classify_key(std::string_view bytes)
         return KeyEvent::kStepForward1s;
       case ',':
         return KeyEvent::kStepBackward1s;
+      case '>':
+        return KeyEvent::kStepForward10s;
+      case '<':
+        return KeyEvent::kStepBackward10s;
       case 'k':
         return KeyEvent::kScrollUp;
       case 'j':
@@ -224,12 +227,7 @@ TerminalRawMode::~TerminalRawMode()
   }
 }
 
-namespace
-{
-
-// Raw single-event read with no double-tap tracking. read_key_event()
-// layers '.'/',' double-tap detection on top of this.
-KeyEvent read_key_event_raw()
+KeyEvent read_key_event()
 {
   const int first = read_byte();
   if (first == kReadResizeInterrupt) {
@@ -270,46 +268,6 @@ KeyEvent read_key_event_raw()
   }
   const char seq[3] = {'\x1B', follow[0], follow[1]};
   return classify_key(std::string_view(seq, 3));
-}
-
-}  // namespace
-
-KeyEvent upgrade_step_double_tap(
-  KeyEvent ev, KeyEvent prev, std::chrono::steady_clock::duration since_prev,
-  KeyEvent & remember) noexcept
-{
-  const bool is_step = ev == KeyEvent::kStepForward1s || ev == KeyEvent::kStepBackward1s;
-  if (!is_step) {
-    remember = KeyEvent::kUnknown;  // any other event breaks a pending double-tap
-    return ev;
-  }
-  if (ev == prev && since_prev <= kStepDoubleTapWindow) {
-    // Second rapid press of the same step key: upgrade to its 10s variant and
-    // clear the memory so a third press starts a fresh single step.
-    remember = KeyEvent::kUnknown;
-    return ev == KeyEvent::kStepForward1s ? KeyEvent::kStepForward10s : KeyEvent::kStepBackward10s;
-  }
-  remember = ev;  // first press: remember it as a possible double-tap opener
-  return ev;
-}
-
-KeyEvent read_key_event()
-{
-  const KeyEvent ev = read_key_event_raw();
-
-  // Double-tap memory persists across calls for the lifetime of the process.
-  // The interactive loops are single-threaded, so plain function-local statics
-  // are safe. prev_time starts at the clock epoch, so the first press is always
-  // outside the window and treated as a single step.
-  static KeyEvent prev_step = KeyEvent::kUnknown;
-  static std::chrono::steady_clock::time_point prev_time{};
-
-  const auto now = std::chrono::steady_clock::now();
-  KeyEvent remember = KeyEvent::kUnknown;
-  const KeyEvent out = upgrade_step_double_tap(ev, prev_step, now - prev_time, remember);
-  prev_step = remember;
-  prev_time = now;
-  return out;
 }
 
 }  // namespace bagwiz::core

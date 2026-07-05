@@ -262,8 +262,10 @@ std::string rainbow_text(std::string_view text)
 // Keys:
 //   right / Space : next message (wraps from last back to first)
 //   left / b      : previous message
-//   .             : jump forward ~1 second in time (double-tap: ~10 seconds)
-//   ,             : jump backward ~1 second in time (double-tap: ~10 seconds)
+//   .             : jump forward ~1 second in time
+//   ,             : jump backward ~1 second in time
+//   >             : jump forward ~10 seconds in time
+//   <             : jump backward ~10 seconds in time
 //   up / k        : scroll body up one line
 //   down / j      : scroll body down one line
 //   Home / H      : jump body scroll to the head
@@ -501,7 +503,7 @@ public:
       // visible body window.
       footer_logical.emplace_back();
       std::string legend =
-        "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [,,] -10s   [..] +10s   [↑ / k] "
+        "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [<] -10s   [>] +10s   [↑ / k] "
         "up   [↓ / j] down   "
         "[Home / H] head   [End / T] tail   [g] first   [G] last   [s] save as yaml   "
         "[a] expand arrays   ";
@@ -1187,7 +1189,7 @@ public:
       // keys ([p]/[t]) stay visible unconditionally to guide the user to enable
       // the overlay in the first place.
       std::string legend_text =
-        "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [,,] -10s   [..] +10s   [g] first "
+        "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [<] -10s   [>] +10s   [g] first "
         "  [G] last   [s] save   "
         "[u] undistort   [p] project pcd   [t] select pcd topics";
       if (!pcd.topics.empty()) {
