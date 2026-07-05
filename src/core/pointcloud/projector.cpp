@@ -222,8 +222,8 @@ NormalizedPoint undistort_normalized(
   return {xd, yd};
 }
 
-// True when the distorted point is a fold-back artifact: undistorting it fails to
-// return to the original ray (a, b). Outside the distortion model's valid domain
+// True when the distorted point is a fold-back artifact: the inverse distortion
+// does not return to the original ray (a, b). Outside the model's valid domain
 // the forward map is non-injective, so points beyond the FOV fold back into the
 // image; those must not be drawn on the raw overlay.
 bool is_foldback(
