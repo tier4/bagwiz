@@ -12,13 +12,20 @@
 
 #include <cstdint>
 #include <exception>
+#include <optional>
 #include <span>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace bagwiz::core::pointcloud
 {
 
-std::optional<std::uint32_t> PointCloud2::field_offset(const std::string & name) const
+namespace
+{
+
+std::optional<std::uint32_t> find_field_offset(
+  const std::vector<PointField> & fields, const std::string & name)
 {
   for (const auto & f : fields) {
     if (f.name == name) {
@@ -26,6 +33,47 @@ std::optional<std::uint32_t> PointCloud2::field_offset(const std::string & name)
     }
   }
   return std::nullopt;
+}
+
+// Read the header (stamp .. row_step) from `reader`, leaving it positioned at
+// the point-data sequence-length prefix. No point bytes are read.
+PointCloud2Header read_header(cdr_walker::CdrReader & reader)
+{
+  PointCloud2Header header;
+
+  const std::int32_t sec = reader.read_i32();
+  const std::uint32_t nanosec = reader.read_u32();
+  header.timestamp_ns = static_cast<std::int64_t>(sec) * 1'000'000'000LL + nanosec;
+  header.frame_id = reader.read_string();
+  header.height = reader.read_u32();
+  header.width = reader.read_u32();
+
+  const std::uint32_t field_count = reader.read_sequence_length();
+  header.fields.resize(field_count);
+  for (std::uint32_t i = 0; i < field_count; ++i) {
+    auto & f = header.fields[i];
+    f.name = reader.read_string();
+    f.offset = reader.read_u32();
+    f.datatype = static_cast<PointFieldType>(reader.read_u8());
+    f.count = reader.read_u32();
+  }
+
+  header.is_bigendian = reader.read_bool();
+  header.point_step = reader.read_u32();
+  header.row_step = reader.read_u32();
+  return header;
+}
+
+}  // namespace
+
+std::optional<std::uint32_t> PointCloud2Header::field_offset(const std::string & name) const
+{
+  return find_field_offset(fields, name);
+}
+
+std::optional<std::uint32_t> PointCloud2::field_offset(const std::string & name) const
+{
+  return find_field_offset(fields, name);
 }
 
 // sensor_msgs/msg/PointCloud2 CDR layout (CDR-1, as written by Fast/Cyclone DDS):
@@ -46,43 +94,47 @@ std::optional<std::uint32_t> PointCloud2::field_offset(const std::string & name)
 //   uint8[] data            // length-prefixed; point_step * height * width bytes
 //   bool   is_dense
 //
-// CdrReader::read_bytes returns a zero-copy view into the CDR payload, which is
-// then copied into result.cloud->data so the returned PointCloud2 owns its bytes.
-// This avoids materialising a large point cloud element-by-element while still
-// giving the caller an independent data vector.
+// read_header() decodes everything up to (but not including) the point data, so
+// this parses only the metadata and never touches the point bytes.
+PointCloud2HeaderResult parse_pointcloud2_header(std::span<const std::byte> payload)
+{
+  PointCloud2HeaderResult result;
+  try {
+    cdr_walker::CdrReader reader(payload);
+    result.header = read_header(reader);
+  } catch (const std::exception & e) {
+    result.header.reset();
+    result.error = std::string("failed to parse sensor_msgs/msg/PointCloud2 payload: ") + e.what();
+  }
+  return result;
+}
+
+// Parse the full message. The header is decoded by read_header(); the point data
+// that follows is a zero-copy view from CdrReader::read_bytes(), copied into
+// result.cloud->data so the returned PointCloud2 owns its bytes.
 PointCloud2Result parse_pointcloud2(std::span<const std::byte> payload)
 {
   PointCloud2Result result;
   try {
     cdr_walker::CdrReader reader(payload);
 
-    const std::int32_t sec = reader.read_i32();
-    const std::uint32_t nanosec = reader.read_u32();
+    PointCloud2Header header = read_header(reader);
     result.cloud.emplace();
-    result.cloud->timestamp_ns = static_cast<std::int64_t>(sec) * 1'000'000'000LL + nanosec;
-    result.cloud->frame_id = reader.read_string();
-    result.cloud->height = reader.read_u32();
-    result.cloud->width = reader.read_u32();
-
-    const std::uint32_t field_count = reader.read_sequence_length();
-    result.cloud->fields.resize(field_count);
-    for (std::uint32_t i = 0; i < field_count; ++i) {
-      auto & f = result.cloud->fields[i];
-      f.name = reader.read_string();
-      f.offset = reader.read_u32();
-      f.datatype = static_cast<PointFieldType>(reader.read_u8());
-      f.count = reader.read_u32();
-    }
-
-    result.cloud->is_bigendian = reader.read_bool();
-    result.cloud->point_step = reader.read_u32();
-    result.cloud->row_step = reader.read_u32();
+    auto & cloud = *result.cloud;
+    cloud.timestamp_ns = header.timestamp_ns;
+    cloud.frame_id = std::move(header.frame_id);
+    cloud.height = header.height;
+    cloud.width = header.width;
+    cloud.fields = std::move(header.fields);
+    cloud.is_bigendian = header.is_bigendian;
+    cloud.point_step = header.point_step;
+    cloud.row_step = header.row_step;
 
     const std::uint32_t data_len = reader.read_sequence_length();
     const auto data_span = reader.read_bytes(data_len);
-    result.cloud->data.assign(data_span.begin(), data_span.end());
+    cloud.data.assign(data_span.begin(), data_span.end());
 
-    result.cloud->is_dense = reader.read_bool();
+    cloud.is_dense = reader.read_bool();
   } catch (const std::exception & e) {
     result.cloud.reset();
     result.error = std::string("failed to parse sensor_msgs/msg/PointCloud2 payload: ") + e.what();

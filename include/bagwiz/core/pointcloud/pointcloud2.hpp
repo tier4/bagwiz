@@ -37,6 +37,24 @@ struct PointField
   std::uint32_t count = 1;
 };
 
+// The PointCloud2 metadata that precedes the point payload on the wire: the
+// header stamp plus the field layout. Parsing this alone skips the (potentially
+// large) point-data copy, so callers that only need timing or field layout can
+// avoid materialising the whole cloud.
+struct PointCloud2Header
+{
+  std::int64_t timestamp_ns = 0;
+  std::string frame_id;
+  std::uint32_t height = 0;
+  std::uint32_t width = 0;
+  std::vector<PointField> fields;
+  bool is_bigendian = false;
+  std::uint32_t point_step = 0;
+  std::uint32_t row_step = 0;
+
+  std::optional<std::uint32_t> field_offset(const std::string & name) const;
+};
+
 struct PointCloud2
 {
   std::int64_t timestamp_ns = 0;
@@ -53,6 +71,14 @@ struct PointCloud2
   std::optional<std::uint32_t> field_offset(const std::string & name) const;
 };
 
+struct PointCloud2HeaderResult
+{
+  std::optional<PointCloud2Header> header;
+  std::string error;
+
+  [[nodiscard]] bool ok() const noexcept { return header.has_value() && error.empty(); }
+};
+
 struct PointCloud2Result
 {
   std::optional<PointCloud2> cloud;
@@ -60,6 +86,10 @@ struct PointCloud2Result
 
   [[nodiscard]] bool ok() const noexcept { return cloud.has_value() && error.empty(); }
 };
+
+// Parse only the header (stamp + field layout), stopping before the point data.
+// Cheap regardless of cloud size: no point bytes are read or copied.
+[[nodiscard]] PointCloud2HeaderResult parse_pointcloud2_header(std::span<const std::byte> payload);
 
 [[nodiscard]] PointCloud2Result parse_pointcloud2(std::span<const std::byte> payload);
 

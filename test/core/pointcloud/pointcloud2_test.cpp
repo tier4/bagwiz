@@ -156,3 +156,41 @@ TEST(PointCloud2FieldOffset, MissingFieldReturnsNullopt)
   const auto offset = cloud.field_offset("z");
   EXPECT_FALSE(offset.has_value());
 }
+
+// parse_pointcloud2_header decodes the same stamp and field layout as the full
+// parse, without reading the point data. This is the cheap path the index
+// builder uses to key entries by header.stamp.
+TEST(PointCloud2Header, MatchesFullParseWithoutData)
+{
+  using bagwiz::core::pointcloud::parse_pointcloud2;
+  using bagwiz::core::pointcloud::parse_pointcloud2_header;
+  const auto payload = make_pointcloud2_payload();
+
+  const auto header = parse_pointcloud2_header(payload);
+  ASSERT_TRUE(header.ok()) << header.error;
+  const auto full = parse_pointcloud2(payload);
+  ASSERT_TRUE(full.ok()) << full.error;
+
+  EXPECT_EQ(header.header->timestamp_ns, full.cloud->timestamp_ns);
+  EXPECT_EQ(header.header->frame_id, "lidar");
+  EXPECT_EQ(header.header->height, 1u);
+  EXPECT_EQ(header.header->width, 2u);
+  EXPECT_EQ(header.header->point_step, 12u);
+  ASSERT_EQ(header.header->fields.size(), full.cloud->fields.size());
+  EXPECT_EQ(*header.header->field_offset("x"), 0u);
+  EXPECT_EQ(*header.header->field_offset("z"), 8u);
+  EXPECT_FALSE(header.header->field_offset("intensity").has_value());
+}
+
+// The header parse must still reach row_step, so a payload truncated before the
+// field table is rejected rather than yielding a partial header.
+TEST(PointCloud2Header, RejectsTruncatedPayload)
+{
+  using bagwiz::core::pointcloud::parse_pointcloud2_header;
+  auto payload = make_pointcloud2_payload();
+  // Keep only the stamp; drop frame_id onward.
+  payload.resize(12);
+  const auto header = parse_pointcloud2_header(payload);
+  EXPECT_FALSE(header.ok());
+  EXPECT_FALSE(header.error.empty());
+}

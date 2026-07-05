@@ -122,29 +122,36 @@ std::optional<PointCloudIndex> build_point_cloud_index(
   io::RawMessage raw;
   try {
     while (reader->next(raw)) {
-      // Every message is parsed so its header.stamp is available as the matching
-      // key. parse_pointcloud2 only reads the header + field layout and takes a
-      // zero-copy view of the point bytes, so this stays cheap regardless of
-      // cloud size; the per-point value scan below is still gated on need.
+      // Only the header is needed for the matching key and intensity detection.
+      // parse_pointcloud2_header skips the point-data copy, so this stays cheap
+      // regardless of cloud size; the full parse below runs only for the
+      // per-point value scan, which genuinely needs the point bytes.
+      const auto header = parse_pointcloud2_header(raw.payload);
+      if (!header.ok()) {
+        error = header.error;
+        return std::nullopt;
+      }
+
+      // Match by header.stamp; fall back to the bag record time when the source
+      // left header.stamp unset (0). record_ns always seeks the message later.
+      const std::int64_t stamp_ns =
+        header.header->timestamp_ns > 0 ? header.header->timestamp_ns : raw.timestamp_ns;
+      result.entries.push_back({stamp_ns, raw.timestamp_ns});
+
+      if (!result.has_intensity) {
+        result.has_intensity = header.header->field_offset("intensity").has_value();
+      }
+
+      if (!need_value_scan) {
+        continue;
+      }
+
       const auto parsed = parse_pointcloud2(raw.payload);
       if (!parsed.ok()) {
         error = parsed.error;
         return std::nullopt;
       }
       const auto & cloud = *parsed.cloud;
-
-      // Match by header.stamp; fall back to the bag record time when the source
-      // left header.stamp unset (0). record_ns always seeks the message later.
-      const std::int64_t stamp_ns = cloud.timestamp_ns > 0 ? cloud.timestamp_ns : raw.timestamp_ns;
-      result.entries.push_back({stamp_ns, raw.timestamp_ns});
-
-      if (!result.has_intensity) {
-        result.has_intensity = cloud.field_offset("intensity").has_value();
-      }
-
-      if (!need_value_scan) {
-        continue;
-      }
 
       const auto off_x = cloud.field_offset("x");
       const auto off_y = cloud.field_offset("y");
