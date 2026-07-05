@@ -376,6 +376,7 @@ int run_generate_video(const GenerateVideoArgs & args)
   std::vector<PointCloudSpan> pcd_spans;
   double global_property_min = 0.0;
   double global_property_max = 0.0;
+  bool clouds_have_stamps = false;
   if (!args.pointcloud_topics.empty()) {
     pcd_spans.resize(args.pointcloud_topics.size());
     double running_min = std::numeric_limits<double>::infinity();
@@ -387,6 +388,7 @@ int run_generate_video(const GenerateVideoArgs & args)
           args.property_max, pcd_spans[i]) != 0) {
         return 1;
       }
+      clouds_have_stamps = clouds_have_stamps || pcd_spans[i].header_stamps_present;
       if (!args.property_min.has_value()) {
         running_min = std::min(running_min, pcd_spans[i].property_min);
       }
@@ -499,8 +501,22 @@ int run_generate_video(const GenerateVideoArgs & args)
 
   // Point clouds are matched to a camera frame by capture time (header.stamp);
   // fall back to the bag record time when the source left header.stamp unset.
-  auto frame_match_ns = [](const FrameBuffer & frame) {
-    return frame.header_stamp_ns > 0 ? frame.header_stamp_ns : frame.timestamp_ns;
+  // Warn once if the camera and cloud topics disagree on header.stamp
+  // availability: one side would match by capture time and the other by record
+  // time, so the overlay could be silently offset.
+  bool warned_stamp_domain_mismatch = false;
+  auto frame_match_ns = [&, clouds_have_stamps](const FrameBuffer & frame) {
+    const bool image_has_stamp = frame.header_stamp_ns > 0;
+    if (!warned_stamp_domain_mismatch && image_has_stamp != clouds_have_stamps) {
+      BAGWIZ_LOG_WARN(
+        kLogger,
+        "camera topic '%s' %s header.stamp but the point-cloud topic(s) %s; overlay matching "
+        "falls back to bag record time on one side and may be misaligned.",
+        args.topic.c_str(), image_has_stamp ? "has" : "lacks",
+        clouds_have_stamps ? "have it" : "lack it");
+      warned_stamp_domain_mismatch = true;
+    }
+    return image_has_stamp ? frame.header_stamp_ns : frame.timestamp_ns;
   };
 
   // Resize a decoded frame in-place by `args.resize_scale`, preserving aspect ratio.

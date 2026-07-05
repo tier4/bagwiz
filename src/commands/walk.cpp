@@ -732,6 +732,10 @@ public:
       double computed_min = 0.0;
       double computed_max = 1.0;
       bool has_intensity = false;
+      // True when at least one selected cloud topic carries a real header.stamp,
+      // so overlays match by capture time; false when all fell back to record
+      // time. Used to warn on a camera/cloud header.stamp mismatch.
+      bool header_stamps_present = false;
       // Min/max of every colour property, captured once when the topics are
       // selected. Switching the active property then reuses these instead of
       // re-scanning the bag, so [f] is instant even with auto range on.
@@ -741,6 +745,8 @@ public:
 
     std::optional<tf2::BufferCore> tf_buffer;
     std::vector<core::pointcloud::PointCloudFetcher> pcd_fetchers;
+    // Latches the one-time camera/cloud header.stamp mismatch warning.
+    bool warned_stamp_domain_mismatch = false;
 
     auto property_name = [](core::pointcloud::PointCloudProperty prop) -> std::string_view {
       switch (prop) {
@@ -899,6 +905,7 @@ public:
       core::pointcloud::PropertyRanges merged_ranges;
       std::vector<std::string> initialized_topics;
       std::vector<core::pointcloud::PointCloudFetcher> new_fetchers;
+      bool any_header_stamps = false;
 
       for (const auto & topic : topics) {
         std::string error;
@@ -908,6 +915,7 @@ public:
           return false;
         }
         merged_ranges.merge(scan->ranges);
+        any_header_stamps = any_header_stamps || scan->header_stamps_present;
         initialized_topics.push_back(topic);
         new_fetchers.emplace_back(input_path_, topic, std::move(scan->entries));
       }
@@ -915,10 +923,14 @@ public:
       const auto range = merged_ranges.resolve(pcd.property);
       pcd.topics = std::move(initialized_topics);
       pcd.has_intensity = merged_ranges.has_intensity;
+      pcd.header_stamps_present = any_header_stamps;
       pcd.ranges = merged_ranges;
       pcd.computed_min = range.first;
       pcd.computed_max = range.second;
       pcd_fetchers = std::move(new_fetchers);
+      // A fresh topic selection may flip header.stamp availability; re-arm the
+      // mismatch warning so it can fire again for the new pairing.
+      warned_stamp_domain_mismatch = false;
       return true;
     };
 
@@ -942,8 +954,21 @@ public:
       // Pair the frame with the point cloud captured nearest in time. The image's
       // header.stamp (capture time) is the match target and the TF-lookup time;
       // fall back to the bag record time when the source left header.stamp unset.
+      const bool image_has_stamp = img.header_stamp_ns > 0;
       const std::int64_t match_ns =
-        img.header_stamp_ns > 0 ? img.header_stamp_ns : cache[index].timestamp_ns;
+        image_has_stamp ? img.header_stamp_ns : cache[index].timestamp_ns;
+
+      // Warn once if the camera and cloud topics disagree on header.stamp
+      // availability: one side matches by capture time and the other by record
+      // time, so the overlay could be silently offset.
+      if (!warned_stamp_domain_mismatch && image_has_stamp != pcd.header_stamps_present) {
+        BAGWIZ_LOG_WARN(
+          kLogger,
+          "camera frame %s header.stamp but the point-cloud topic(s) %s; overlay matching falls "
+          "back to bag record time on one side and may be misaligned.",
+          image_has_stamp ? "has" : "lacks", pcd.header_stamps_present ? "have it" : "lack it");
+        warned_stamp_domain_mismatch = true;
+      }
 
       std::vector<core::pointcloud::ProjectedPoint> all_points;
       std::string last_error;

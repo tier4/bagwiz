@@ -41,6 +41,11 @@ struct PointCloudIndex
   double property_min = 0.0;
   double property_max = 0.0;
   bool has_intensity = false;
+  // True when at least one message carried a real header.stamp (so entries are
+  // keyed by capture time). False when every message fell back to record time.
+  // Used to warn when a camera topic and this cloud topic disagree on header
+  // stamp availability, which would silently misalign the overlay.
+  bool header_stamps_present = false;
 };
 
 // Scan a PointCloud2 topic, recording every timestamp and (when no manual
@@ -86,6 +91,8 @@ struct PointCloudScan
 {
   std::vector<PointCloudIndexEntry> entries;
   PropertyRanges ranges;
+  // See PointCloudIndex::header_stamps_present.
+  bool header_stamps_present = false;
 };
 
 // Single-pass scan of a PointCloud2 topic: records every message timestamp and

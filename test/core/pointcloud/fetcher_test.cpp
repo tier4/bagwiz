@@ -286,4 +286,48 @@ TEST_F(PointCloudFetcherTest, ScanPointCloudMatchesByHeaderStamp)
   EXPECT_FLOAT_EQ(first_point_x(*b), 20.0f);
 }
 
+// header_stamps_present drives the camera/cloud mismatch warning. It is true
+// when any cloud carried a real header.stamp (even if others fell back).
+TEST_F(PointCloudFetcherTest, HeaderStampsPresentWhenAnyStampSet)
+{
+  const std::string topic = "/points";
+  const std::vector<CloudSpec> specs{
+    {1'000'000'000, 5'000'000'000, 10.0f},
+    {2'000'000'000, 0, 20.0f},  // one unset among set -> still present
+  };
+  const auto bag = write_cloud_bag(tmp_dir_, topic, specs);
+
+  std::string error;
+  auto idx = build_point_cloud_index(
+    bag, topic, PointCloudProperty::kDistance, std::nullopt, std::nullopt, error);
+  ASSERT_TRUE(idx.has_value()) << error;
+  EXPECT_TRUE(idx->header_stamps_present);
+
+  auto scan = bagwiz::core::pointcloud::scan_point_cloud(bag, topic, error);
+  ASSERT_TRUE(scan.has_value()) << error;
+  EXPECT_TRUE(scan->header_stamps_present);
+}
+
+// When every cloud left header.stamp unset, the flag is false (matching fell
+// back to record time on this topic).
+TEST_F(PointCloudFetcherTest, HeaderStampsAbsentWhenAllUnset)
+{
+  const std::string topic = "/points";
+  const std::vector<CloudSpec> specs{
+    {1'000'000'000, 0, 10.0f},
+    {2'000'000'000, 0, 20.0f},
+  };
+  const auto bag = write_cloud_bag(tmp_dir_, topic, specs);
+
+  std::string error;
+  auto idx = build_point_cloud_index(
+    bag, topic, PointCloudProperty::kDistance, std::nullopt, std::nullopt, error);
+  ASSERT_TRUE(idx.has_value()) << error;
+  EXPECT_FALSE(idx->header_stamps_present);
+
+  auto scan = bagwiz::core::pointcloud::scan_point_cloud(bag, topic, error);
+  ASSERT_TRUE(scan.has_value()) << error;
+  EXPECT_FALSE(scan->header_stamps_present);
+}
+
 }  // namespace

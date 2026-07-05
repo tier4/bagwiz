@@ -137,6 +137,7 @@ std::optional<PointCloudIndex> build_point_cloud_index(
       const std::int64_t stamp_ns =
         header.header->timestamp_ns > 0 ? header.header->timestamp_ns : raw.timestamp_ns;
       result.entries.push_back({stamp_ns, raw.timestamp_ns});
+      result.header_stamps_present |= header.header->timestamp_ns > 0;
 
       if (!result.has_intensity) {
         result.has_intensity = header.header->field_offset("intensity").has_value();
@@ -319,6 +320,7 @@ std::optional<PointCloudScan> scan_point_cloud(
       // left header.stamp unset (0). record_ns always seeks the message later.
       const std::int64_t stamp_ns = cloud.timestamp_ns > 0 ? cloud.timestamp_ns : raw.timestamp_ns;
       scan.entries.push_back({stamp_ns, raw.timestamp_ns});
+      scan.header_stamps_present |= cloud.timestamp_ns > 0;
 
       if (!accumulate_property_ranges(cloud, scan.ranges, error)) {
         return std::nullopt;
