@@ -30,6 +30,17 @@ namespace bagwiz::core::pointcloud
 namespace
 {
 
+// Entries must be sorted by stamp_ns: find_nearest_index binary-searches on it,
+// and bag/record order need not be monotonic in header.stamp.
+void sort_entries_by_stamp(std::vector<PointCloudIndexEntry> & entries)
+{
+  std::sort(
+    entries.begin(), entries.end(),
+    [](const PointCloudIndexEntry & a, const PointCloudIndexEntry & b) {
+      return a.stamp_ns < b.stamp_ns;
+    });
+}
+
 const PointField * find_point_field(const PointCloud2 & cloud, const std::string & name)
 {
   for (const auto & f : cloud.fields) {
@@ -195,13 +206,7 @@ std::optional<PointCloudIndex> build_point_cloud_index(
     return std::nullopt;
   }
 
-  // Bag order follows record time, which need not be monotonic in header.stamp.
-  // find_nearest_index binary-searches on stamp_ns, so sort by it here.
-  std::sort(
-    result.entries.begin(), result.entries.end(),
-    [](const PointCloudIndexEntry & a, const PointCloudIndexEntry & b) {
-      return a.stamp_ns < b.stamp_ns;
-    });
+  sort_entries_by_stamp(result.entries);
 
   result.property_min = need_auto_min ? running_min : *manual_min;
   result.property_max = need_auto_max ? running_max : *manual_max;
@@ -336,13 +341,7 @@ std::optional<PointCloudScan> scan_point_cloud(
     return std::nullopt;
   }
 
-  // Bag order follows record time, which need not be monotonic in header.stamp.
-  // find_nearest_index binary-searches on stamp_ns, so sort by it here.
-  std::sort(
-    scan.entries.begin(), scan.entries.end(),
-    [](const PointCloudIndexEntry & a, const PointCloudIndexEntry & b) {
-      return a.stamp_ns < b.stamp_ns;
-    });
+  sort_entries_by_stamp(scan.entries);
 
   return scan;
 }
