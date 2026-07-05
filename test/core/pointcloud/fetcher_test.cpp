@@ -31,6 +31,7 @@ using bagwiz::core::pointcloud::build_point_cloud_index;
 using bagwiz::core::pointcloud::PointCloud2;
 using bagwiz::core::pointcloud::PointCloudFetcher;
 using bagwiz::core::pointcloud::PointCloudIndexEntry;
+using bagwiz::core::pointcloud::PointCloudMatchKey;
 using bagwiz::core::pointcloud::PointCloudProperty;
 
 // Little-endian CDR-1 builder (see raw_image_test.cpp for the alignment rule:
@@ -219,17 +220,46 @@ TEST_F(PointCloudFetcherTest, MatchesByHeaderStampNotRecordTime)
 
   std::string error;
   // target == B's header.stamp -> B (x=20). A record-time match would give A.
-  const auto * b = fetcher.fetch(1'000'000'000, error);
+  const auto * b = fetcher.fetch(1'000'000'000, PointCloudMatchKey::kHeaderStamp, error);
   ASSERT_NE(b, nullptr) << error;
   EXPECT_FLOAT_EQ(first_point_x(*b), 20.0f);
 
   // target == A's header.stamp -> A (x=10), loaded via A's record time.
-  const auto * a = fetcher.fetch(3'000'000'000, error);
+  const auto * a = fetcher.fetch(3'000'000'000, PointCloudMatchKey::kHeaderStamp, error);
   ASSERT_NE(a, nullptr) << error;
   EXPECT_FLOAT_EQ(first_point_x(*a), 10.0f);
 
   // target == C's header.stamp -> C (x=30).
-  const auto * c = fetcher.fetch(2'000'000'000, error);
+  const auto * c = fetcher.fetch(2'000'000'000, PointCloudMatchKey::kHeaderStamp, error);
+  ASSERT_NE(c, nullptr) << error;
+  EXPECT_FLOAT_EQ(first_point_x(*c), 30.0f);
+}
+
+// The record-time key matches by bag record time regardless of header.stamp.
+// Same clouds as above (header stamps out of record order); fetching by record
+// time must select by record_ns, i.e. the opposite cloud from the stamp key.
+TEST_F(PointCloudFetcherTest, MatchesByRecordTimeWhenRequested)
+{
+  const std::string topic = "/points";
+  const std::vector<CloudSpec> specs{
+    {1'000'000'000, 3'000'000'000, 10.0f},  // A: record 1e9, stamp 3e9
+    {2'000'000'000, 1'000'000'000, 20.0f},  // B: record 2e9, stamp 1e9
+    {3'000'000'000, 2'000'000'000, 30.0f},  // C: record 3e9, stamp 2e9
+  };
+  const auto bag = write_cloud_bag(tmp_dir_, topic, specs);
+  auto entries = build(bag, topic);
+  ASSERT_EQ(entries.size(), 3U);
+
+  PointCloudFetcher fetcher(bag, topic, std::move(entries));
+
+  std::string error;
+  // target == A's record time -> A (x=10). A stamp match on 1e9 would give B.
+  const auto * a = fetcher.fetch(1'000'000'000, PointCloudMatchKey::kRecordTime, error);
+  ASSERT_NE(a, nullptr) << error;
+  EXPECT_FLOAT_EQ(first_point_x(*a), 10.0f);
+
+  // target == C's record time -> C (x=30).
+  const auto * c = fetcher.fetch(3'000'000'000, PointCloudMatchKey::kRecordTime, error);
   ASSERT_NE(c, nullptr) << error;
   EXPECT_FLOAT_EQ(first_point_x(*c), 30.0f);
 }
@@ -251,13 +281,13 @@ TEST_F(PointCloudFetcherTest, FallsBackToRecordTimeWhenHeaderStampUnset)
   PointCloudFetcher fetcher(bag, topic, std::move(entries));
 
   std::string error;
-  // Without the record-time fallback both entries would key on 0 and this would
-  // resolve to the last entry (B); the fallback makes it match A.
-  const auto * a = fetcher.fetch(1'000'000'000, error);
+  // With every stamp unset the topic can't be matched by capture time, so the
+  // caller uses the record-time key; each entry resolves by its record time.
+  const auto * a = fetcher.fetch(1'000'000'000, PointCloudMatchKey::kRecordTime, error);
   ASSERT_NE(a, nullptr) << error;
   EXPECT_FLOAT_EQ(first_point_x(*a), 10.0f);
 
-  const auto * b = fetcher.fetch(2'000'000'000, error);
+  const auto * b = fetcher.fetch(2'000'000'000, PointCloudMatchKey::kRecordTime, error);
   ASSERT_NE(b, nullptr) << error;
   EXPECT_FLOAT_EQ(first_point_x(*b), 20.0f);
 }
@@ -281,19 +311,19 @@ TEST_F(PointCloudFetcherTest, ScanPointCloudMatchesByHeaderStamp)
 
   PointCloudFetcher fetcher(bag, topic, std::move(scan->entries));
   // target == B's header.stamp -> B (x=20), not A (record-time nearest).
-  const auto * b = fetcher.fetch(1'000'000'000, error);
+  const auto * b = fetcher.fetch(1'000'000'000, PointCloudMatchKey::kHeaderStamp, error);
   ASSERT_NE(b, nullptr) << error;
   EXPECT_FLOAT_EQ(first_point_x(*b), 20.0f);
 }
 
-// header_stamps_present drives the camera/cloud mismatch warning. It is true
-// when any cloud carried a real header.stamp (even if others fell back).
-TEST_F(PointCloudFetcherTest, HeaderStampsPresentWhenAnyStampSet)
+// header_stamps_present decides whether a topic can be matched by capture time.
+// It is true only when *every* cloud carried a real header.stamp.
+TEST_F(PointCloudFetcherTest, HeaderStampsPresentWhenAllStampsSet)
 {
   const std::string topic = "/points";
   const std::vector<CloudSpec> specs{
     {1'000'000'000, 5'000'000'000, 10.0f},
-    {2'000'000'000, 0, 20.0f},  // one unset among set -> still present
+    {2'000'000'000, 6'000'000'000, 20.0f},
   };
   const auto bag = write_cloud_bag(tmp_dir_, topic, specs);
 
@@ -308,14 +338,14 @@ TEST_F(PointCloudFetcherTest, HeaderStampsPresentWhenAnyStampSet)
   EXPECT_TRUE(scan->header_stamps_present);
 }
 
-// When every cloud left header.stamp unset, the flag is false (matching fell
-// back to record time on this topic).
-TEST_F(PointCloudFetcherTest, HeaderStampsAbsentWhenAllUnset)
+// A single unset header.stamp makes the stamp axis mixed, so the flag is false
+// and callers must match this topic by record time.
+TEST_F(PointCloudFetcherTest, HeaderStampsAbsentWhenAnyUnset)
 {
   const std::string topic = "/points";
   const std::vector<CloudSpec> specs{
-    {1'000'000'000, 0, 10.0f},
-    {2'000'000'000, 0, 20.0f},
+    {1'000'000'000, 5'000'000'000, 10.0f},
+    {2'000'000'000, 0, 20.0f},  // one unset -> whole topic falls back
   };
   const auto bag = write_cloud_bag(tmp_dir_, topic, specs);
 

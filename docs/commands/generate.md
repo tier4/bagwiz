@@ -53,8 +53,11 @@ bagwiz generate video [OPTIONS] <input> <img_topic> <output>
 - **Point-cloud overlay time alignment.** Each frame is paired with the point
   cloud whose `header.stamp` (sensor capture time) is nearest the image's own
   `header.stamp`, rather than the bag record time — so overlays stay aligned even
-  when recording latency differs between the camera and lidar. When a message
-  leaves `header.stamp` unset (0), its bag record time is used as a fallback.
+  when recording latency differs between the camera and lidar. If either the
+  camera frame or the point-cloud topic leaves `header.stamp` unset, that pairing
+  falls back to matching by bag record time on **both** sides, so the two are
+  always compared on the same clock rather than mixing capture time with record
+  time.
 - **Geometry and encoding are locked to the first frame.** A later frame with a
   different resolution or pixel encoding stops the run.
 - **Streaming output.** Frames are decoded and encoded one at a time; the video

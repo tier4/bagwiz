@@ -30,15 +30,20 @@ namespace bagwiz::core::pointcloud
 namespace
 {
 
-// Entries must be sorted by stamp_ns: find_nearest_index binary-searches on it,
-// and bag/record order need not be monotonic in header.stamp.
-void sort_entries_by_stamp(std::vector<PointCloudIndexEntry> & entries)
+std::int64_t entry_key(const PointCloudIndexEntry & e, PointCloudMatchKey key)
+{
+  return key == PointCloudMatchKey::kHeaderStamp ? e.stamp_ns : e.record_ns;
+}
+
+std::vector<PointCloudIndexEntry> sorted_by(
+  std::vector<PointCloudIndexEntry> entries, PointCloudMatchKey key)
 {
   std::sort(
     entries.begin(), entries.end(),
-    [](const PointCloudIndexEntry & a, const PointCloudIndexEntry & b) {
-      return a.stamp_ns < b.stamp_ns;
+    [key](const PointCloudIndexEntry & a, const PointCloudIndexEntry & b) {
+      return entry_key(a, key) < entry_key(b, key);
     });
+  return entries;
 }
 
 const PointField * find_point_field(const PointCloud2 & cloud, const std::string & name)
@@ -127,6 +132,8 @@ std::optional<PointCloudIndex> build_point_cloud_index(
   PointCloudIndex result;
   double running_min = std::numeric_limits<double>::infinity();
   double running_max = -std::numeric_limits<double>::infinity();
+  // True only while every message seen so far carried a header.stamp.
+  bool all_header_stamps = true;
 
   const bool need_intensity = (property == PointCloudProperty::kIntensity);
 
@@ -143,12 +150,12 @@ std::optional<PointCloudIndex> build_point_cloud_index(
         return std::nullopt;
       }
 
-      // Match by header.stamp; fall back to the bag record time when the source
-      // left header.stamp unset (0). record_ns always seeks the message later.
+      // stamp_ns is the header.stamp when present, else the bag record time so
+      // the entry still has a usable key. record_ns always seeks the message.
       const std::int64_t stamp_ns =
         header.header->timestamp_ns > 0 ? header.header->timestamp_ns : raw.timestamp_ns;
       result.entries.push_back({stamp_ns, raw.timestamp_ns});
-      result.header_stamps_present |= header.header->timestamp_ns > 0;
+      all_header_stamps = all_header_stamps && header.header->timestamp_ns > 0;
 
       if (!result.has_intensity) {
         result.has_intensity = header.header->field_offset("intensity").has_value();
@@ -206,7 +213,10 @@ std::optional<PointCloudIndex> build_point_cloud_index(
     return std::nullopt;
   }
 
-  sort_entries_by_stamp(result.entries);
+  // Entries stay in read (record) order; PointCloudFetcher builds whichever
+  // sorted view it needs. header_stamps_present gates capture-time matching, so
+  // it is true only when no message fell back to record time.
+  result.header_stamps_present = all_header_stamps;
 
   result.property_min = need_auto_min ? running_min : *manual_min;
   result.property_max = need_auto_max ? running_max : *manual_max;
@@ -311,6 +321,7 @@ std::optional<PointCloudScan> scan_point_cloud(
   reader->set_filter(filter);
 
   PointCloudScan scan;
+  bool all_header_stamps = true;
   io::RawMessage raw;
   try {
     while (reader->next(raw)) {
@@ -321,11 +332,11 @@ std::optional<PointCloudScan> scan_point_cloud(
       }
       const auto & cloud = *parsed.cloud;
 
-      // Match by header.stamp; fall back to the bag record time when the source
-      // left header.stamp unset (0). record_ns always seeks the message later.
+      // stamp_ns is the header.stamp when present, else the bag record time so
+      // the entry still has a usable key. record_ns always seeks the message.
       const std::int64_t stamp_ns = cloud.timestamp_ns > 0 ? cloud.timestamp_ns : raw.timestamp_ns;
       scan.entries.push_back({stamp_ns, raw.timestamp_ns});
-      scan.header_stamps_present |= cloud.timestamp_ns > 0;
+      all_header_stamps = all_header_stamps && cloud.timestamp_ns > 0;
 
       if (!accumulate_property_ranges(cloud, scan.ranges, error)) {
         return std::nullopt;
@@ -341,26 +352,33 @@ std::optional<PointCloudScan> scan_point_cloud(
     return std::nullopt;
   }
 
-  sort_entries_by_stamp(scan.entries);
+  // Entries stay in read (record) order; the fetcher builds whichever sorted view
+  // it needs. header_stamps_present is true only when no message fell back.
+  scan.header_stamps_present = all_header_stamps;
 
   return scan;
 }
 
 PointCloudFetcher::PointCloudFetcher(
   const std::filesystem::path & input, std::string topic, std::vector<PointCloudIndexEntry> entries)
-: input_(input), topic_(std::move(topic)), entries_(std::move(entries))
+: input_(input),
+  topic_(std::move(topic)),
+  by_stamp_(sorted_by(entries, PointCloudMatchKey::kHeaderStamp)),
+  by_record_(sorted_by(std::move(entries), PointCloudMatchKey::kRecordTime))
 {
 }
 
-const PointCloud2 * PointCloudFetcher::fetch(std::int64_t target_ns, std::string & error)
+const PointCloud2 * PointCloudFetcher::fetch(
+  std::int64_t target_ns, PointCloudMatchKey key, std::string & error)
 {
-  if (entries_.empty()) {
+  const auto & entries = key == PointCloudMatchKey::kHeaderStamp ? by_stamp_ : by_record_;
+  if (entries.empty()) {
     error = "no point-cloud messages available";
     return nullptr;
   }
 
-  const std::size_t idx = find_nearest_index(target_ns);
-  const std::int64_t record_ns = entries_[idx].record_ns;
+  const std::size_t idx = find_nearest_index(entries, target_ns, key);
+  const std::int64_t record_ns = entries[idx].record_ns;
 
   if (cached_cloud_.has_value() && cached_record_ns_ == record_ns) {
     return &*cached_cloud_;
@@ -375,26 +393,27 @@ const PointCloud2 * PointCloudFetcher::fetch(std::int64_t target_ns, std::string
   return &*cached_cloud_;
 }
 
-std::size_t PointCloudFetcher::find_nearest_index(std::int64_t target_ns) const
+std::size_t PointCloudFetcher::find_nearest_index(
+  const std::vector<PointCloudIndexEntry> & entries, std::int64_t target_ns, PointCloudMatchKey key)
 {
   auto it = std::lower_bound(
-    entries_.begin(), entries_.end(), target_ns,
-    [](const PointCloudIndexEntry & e, std::int64_t ns) { return e.stamp_ns < ns; });
+    entries.begin(), entries.end(), target_ns,
+    [key](const PointCloudIndexEntry & e, std::int64_t ns) { return entry_key(e, key) < ns; });
 
-  if (it == entries_.begin()) {
+  if (it == entries.begin()) {
     return 0;
   }
-  if (it == entries_.end()) {
-    return entries_.size() - 1;
+  if (it == entries.end()) {
+    return entries.size() - 1;
   }
 
   const auto prev = it - 1;
-  const std::int64_t prev_delta = target_ns - prev->stamp_ns;
-  const std::int64_t next_delta = it->stamp_ns - target_ns;
+  const std::int64_t prev_delta = target_ns - entry_key(*prev, key);
+  const std::int64_t next_delta = entry_key(*it, key) - target_ns;
   if (prev_delta <= next_delta) {
-    return static_cast<std::size_t>(prev - entries_.begin());
+    return static_cast<std::size_t>(prev - entries.begin());
   }
-  return static_cast<std::size_t>(it - entries_.begin());
+  return static_cast<std::size_t>(it - entries.begin());
 }
 
 std::optional<PointCloud2> PointCloudFetcher::load_at(std::int64_t record_ns, std::string & error)
@@ -407,8 +426,8 @@ std::optional<PointCloud2> PointCloudFetcher::load_at(std::int64_t record_ns, st
     return std::nullopt;
   }
 
-  // The storage layer indexes by bag record time, so seek by record_ns even
-  // though matching upstream is done by header.stamp.
+  // The storage layer indexes by bag record time, so seek by record_ns
+  // regardless of which clock the caller matched in.
   io::ReadFilter filter;
   filter.topics.push_back(topic_);
   filter.start_ns = record_ns - 1;

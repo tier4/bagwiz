@@ -41,10 +41,11 @@ struct PointCloudIndex
   double property_min = 0.0;
   double property_max = 0.0;
   bool has_intensity = false;
-  // True when at least one message carried a real header.stamp (so entries are
-  // keyed by capture time). False when every message fell back to record time.
-  // Used to warn when a camera topic and this cloud topic disagree on header
-  // stamp availability, which would silently misalign the overlay.
+  // True only when *every* message carried a real header.stamp, so stamp_ns is a
+  // pure capture-time axis that can be matched against a camera frame's
+  // header.stamp. False if any message fell back to record time: the axis is then
+  // mixed and can't be compared to either clock, so callers must match this topic
+  // by record time (PointCloudMatchKey::kRecordTime) instead.
   bool header_stamps_present = false;
 };
 
@@ -102,9 +103,16 @@ struct PointCloudScan
 [[nodiscard]] std::optional<PointCloudScan> scan_point_cloud(
   const std::filesystem::path & input, const std::string & topic, std::string & error);
 
-// Fetch the PointCloud2 message whose header.stamp is closest to target_ns
-// (itself a header.stamp). The matched cloud is then loaded from storage by its
-// bag record time. The returned pointer is valid until the next fetch() call or
+// Which clock a fetch matches against. A cloud topic can be matched by capture
+// time only when every message carries a header.stamp (see
+// PointCloudIndex::header_stamps_present); otherwise both the camera frame and
+// the cloud must be matched by bag record time so the comparison stays within a
+// single clock.
+enum class PointCloudMatchKey { kHeaderStamp, kRecordTime };
+
+// Fetch the PointCloud2 message whose key (header.stamp or record time) is
+// closest to target_ns. The matched cloud is then loaded from storage by its bag
+// record time. The returned pointer is valid until the next fetch() call or
 // destruction.
 class PointCloudFetcher
 {
@@ -113,15 +121,25 @@ public:
     const std::filesystem::path & input, std::string topic,
     std::vector<PointCloudIndexEntry> entries);
 
-  [[nodiscard]] const PointCloud2 * fetch(std::int64_t target_ns, std::string & error);
+  // Fetch the cloud whose `key` clock is closest to target_ns; target_ns must be
+  // expressed in that same clock (a header.stamp for kHeaderStamp, a bag record
+  // time for kRecordTime).
+  [[nodiscard]] const PointCloud2 * fetch(
+    std::int64_t target_ns, PointCloudMatchKey key, std::string & error);
 
 private:
-  [[nodiscard]] std::size_t find_nearest_index(std::int64_t target_ns) const;
+  [[nodiscard]] static std::size_t find_nearest_index(
+    const std::vector<PointCloudIndexEntry> & entries, std::int64_t target_ns,
+    PointCloudMatchKey key);
   [[nodiscard]] std::optional<PointCloud2> load_at(std::int64_t record_ns, std::string & error);
 
   const std::filesystem::path input_;
   const std::string topic_;
-  const std::vector<PointCloudIndexEntry> entries_;
+  // The same entries in two orders so fetch() can binary-search whichever clock
+  // the caller matches in: by_stamp_ is sorted by stamp_ns, by_record_ by
+  // record_ns.
+  const std::vector<PointCloudIndexEntry> by_stamp_;
+  const std::vector<PointCloudIndexEntry> by_record_;
   std::optional<PointCloud2> cached_cloud_;
   std::int64_t cached_record_ns_ = 0;
 };
