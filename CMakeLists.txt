@@ -591,6 +591,11 @@ if(BUILD_TESTING)
     src/commands/tf_static_cp.cpp)
   target_link_libraries(bagwiz_tf_static_cp_test bagwiz_core fmt::fmt)
 
+  ament_add_gtest(bagwiz_pcd_concat_command_test
+    test/commands/pcd_concat_test.cpp
+    src/commands/pcd_concat.cpp)
+  target_link_libraries(bagwiz_pcd_concat_command_test bagwiz_core fmt::fmt)
+
   ament_add_gtest(bagwiz_smoke_test test/smoke_test.cpp)
   ament_add_gtest(bagwiz_yaml_msg_validate_test test/core/yaml_msg_validate_test.cpp)
   target_link_libraries(bagwiz_yaml_msg_validate_test bagwiz_core)
