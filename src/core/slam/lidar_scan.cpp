@@ -8,6 +8,7 @@
 
 #include "bagwiz/core/slam/lidar_scan.hpp"
 
+#include "bagwiz/core/pointcloud/point_time.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
 
 #include <array>
@@ -31,17 +32,6 @@ const PointField * find_field(const PointCloud2 & cloud, const std::string & nam
   for (const auto & f : cloud.fields) {
     if (f.name == name) {
       return &f;
-    }
-  }
-  return nullptr;
-}
-
-// First of glim's recognised per-point time field names, or nullptr.
-const PointField * find_time_field(const PointCloud2 & cloud)
-{
-  for (const char * name : {"t", "time", "time_stamp", "timestamp"}) {
-    if (const PointField * f = find_field(cloud, name)) {
-      return f;
     }
   }
   return nullptr;
@@ -102,24 +92,6 @@ double read_as_double(
   return 0.0;
 }
 
-// Per-point time read in glim's convention: UINT32 -> seconds via /1e9, FLOAT32
-// / FLOAT64 -> as-is seconds.
-double read_time_seconds(
-  const PointCloud2 & cloud, std::uint32_t point_idx, const PointField & field)
-{
-  const std::size_t base = static_cast<std::size_t>(point_idx) * cloud.point_step + field.offset;
-  switch (field.datatype) {
-    case PointFieldType::kUint32:
-      return static_cast<double>(load<std::uint32_t>(cloud.data, base)) / 1e9;
-    case PointFieldType::kFloat32:
-      return static_cast<double>(load<float>(cloud.data, base));
-    case PointFieldType::kFloat64:
-      return load<double>(cloud.data, base);
-    default:
-      return 0.0;
-  }
-}
-
 bool is_float(PointFieldType dt) noexcept
 {
   return dt == PointFieldType::kFloat32 || dt == PointFieldType::kFloat64;
@@ -155,21 +127,24 @@ LidarScanResult to_lidar_scan(const PointCloud2 & cloud, const std::string & int
   }
 
   const PointField * fi = find_field(cloud, intensity_field);
-  const PointField * ft = find_time_field(cloud);
-  // A time field of an unsupported datatype is treated as no time field.
-  const bool use_time = ft != nullptr && (ft->datatype == PointFieldType::kUint32 ||
-                                          ft->datatype == PointFieldType::kFloat32 ||
-                                          ft->datatype == PointFieldType::kFloat64);
+  const auto ft = core::pointcloud::find_point_time_field(cloud);
+  const bool use_time = ft.has_value();
 
   if (cloud.point_step == 0) {
     result.error = "PointCloud2 point_step is zero";
     return result;
   }
-  for (const PointField * f : {fx, fy, fz, fi, ft}) {
+  for (const PointField * f : {fx, fy, fz, fi}) {
     if (f != nullptr && !field_fits(cloud, *f)) {
       result.error = "a PointCloud2 field extends past point_step";
       return result;
     }
+  }
+  if (
+    use_time &&
+    static_cast<std::size_t>(ft->offset) + datatype_size(ft->datatype) > cloud.point_step) {
+    result.error = "a PointCloud2 field extends past point_step";
+    return result;
   }
 
   const std::size_t num_points = static_cast<std::size_t>(cloud.width) * cloud.height;
@@ -199,7 +174,8 @@ LidarScanResult to_lidar_scan(const PointCloud2 & cloud, const std::string & int
       scan.intensities.push_back(read_as_double(cloud, i, fi->offset, fi->datatype));
     }
     if (use_time) {
-      scan.times.push_back(read_time_seconds(cloud, i, *ft));
+      const std::size_t base = static_cast<std::size_t>(i) * cloud.point_step + ft->offset;
+      scan.times.push_back(core::pointcloud::point_time_seconds(cloud.data.data() + base, *ft));
     }
   }
 
