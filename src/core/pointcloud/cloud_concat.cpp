@@ -198,14 +198,16 @@ ConcatResult concat_clouds(
   }
 
   const auto time_field = find_time_field(first);
-  // A UINT32 header-relative time (nanoseconds, unsigned) cannot hold the negative
-  // value re-basing produces when an input is earlier than out_stamp, so it is
-  // widened to FLOAT64 seconds in the output. FLOAT32/FLOAT64 times are already
-  // signed and are re-based in place. UINT32 is always relative (it cannot encode
-  // an epoch-scale absolute stamp), so it needs no absolute-vs-relative test.
-  const bool widen_time = time_field.has_value() && time_field->type == PointFieldType::kUint32;
+  // A UINT32 header-relative time (unsigned ns) cannot hold the negative value
+  // re-basing produces when an input is earlier than out_stamp, so its output
+  // field is emitted as FLOAT32 seconds (same 4-byte width; the value may be
+  // negative). FLOAT32/FLOAT64 times are already signed and are re-based in place.
+  // UINT32 is always relative (it cannot encode an epoch-scale absolute stamp), so
+  // it needs no absolute-vs-relative test.
+  const bool time_u32_to_f32 =
+    time_field.has_value() && time_field->type == PointFieldType::kUint32;
   const bool has_relative_time =
-    time_field.has_value() && !widen_time && !detect_absolute_time(inputs, *time_field);
+    time_field.has_value() && !time_u32_to_f32 && !detect_absolute_time(inputs, *time_field);
 
   PointCloud2 out;
   out.timestamp_ns = out_stamp_ns;
@@ -214,18 +216,10 @@ ConcatResult concat_clouds(
   out.is_bigendian = false;
   out.fields = first.fields;
   out.point_step = first.point_step;
-
-  // Widen the time field to FLOAT64: it keeps its offset, fields after it shift by
-  // +4, and point_step grows by 4.
-  std::uint32_t time_off = 0;
-  if (widen_time) {
-    time_off = time_field->offset;
-    out.point_step = first.point_step + 4;
+  if (time_u32_to_f32) {
     for (auto & f : out.fields) {
-      if (f.offset == time_off) {
-        f.datatype = PointFieldType::kFloat64;
-      } else if (f.offset > time_off) {
-        f.offset += 4;
+      if (f.offset == time_field->offset) {
+        f.datatype = PointFieldType::kFloat32;
       }
     }
   }
@@ -241,42 +235,33 @@ ConcatResult concat_clouds(
       return result;
     }
 
-    if (widen_time) {
-      // Rebuild each point into the wider layout, converting the UINT32-ns time to
-      // FLOAT64 seconds re-based to out_stamp: t' = t_ns/1e9 + (header_stamp_k -
-      // out_stamp)/1e9, so out_stamp + t' == header_stamp_k + t_ns exactly (and t'
-      // may be negative when this input is earlier than out_stamp).
+    // Copy only the meaningful point bytes (n * point_step); an organized cloud
+    // is flattened, and any trailing slack in c.data is dropped.
+    std::vector<std::byte> block(
+      c.data.begin(), c.data.begin() + static_cast<std::ptrdiff_t>(need));
+
+    if (time_u32_to_f32) {
+      // Rewrite each UINT32-ns time slot in place as FLOAT32 seconds re-based to
+      // out_stamp: t' = t_ns/1e9 + (header_stamp_k - out_stamp)/1e9, so out_stamp +
+      // t' == header_stamp_k + t_ns (t' may be negative for an earlier input).
       const double delta_sec = static_cast<double>(in.header_stamp_ns - out_stamp_ns) * 1e-9;
-      const std::size_t out_ps = out.point_step;
-      const std::size_t tail = c.point_step - time_off - 4;  // bytes after the time field
-      const std::size_t base = out.data.size();
-      out.data.resize(base + n * out_ps);
       for (std::size_t i = 0; i < n; ++i) {
-        const std::byte * src = c.data.data() + i * c.point_step;
-        std::byte * dst = out.data.data() + base + i * out_ps;
-        std::memcpy(dst, src, time_off);  // fields before the time field
+        std::byte * ptr = block.data() + i * c.point_step + time_field->offset;
         std::uint32_t t_ns = 0;
-        std::memcpy(&t_ns, src + time_off, sizeof(t_ns));
-        const double t_sec = static_cast<double>(t_ns) * 1e-9 + delta_sec;
-        std::memcpy(dst + time_off, &t_sec, sizeof(t_sec));
-        std::memcpy(dst + time_off + 8, src + time_off + 4, tail);  // fields after, shifted +4
+        std::memcpy(&t_ns, ptr, sizeof(t_ns));
+        const float t_sec = static_cast<float>(static_cast<double>(t_ns) * 1e-9 + delta_sec);
+        std::memcpy(ptr, &t_sec, sizeof(t_sec));
       }
-    } else {
-      // Copy only the meaningful point bytes (n * point_step); an organized cloud
-      // is flattened, and any trailing slack in c.data is dropped.
-      std::vector<std::byte> block(
-        c.data.begin(), c.data.begin() + static_cast<std::ptrdiff_t>(need));
-      if (has_relative_time) {
-        const std::int64_t delta_ns = in.header_stamp_ns - out_stamp_ns;
-        if (delta_ns != 0) {
-          if (!rebase_time(block, n, out.point_step, *time_field, delta_ns, result.error)) {
-            return result;
-          }
+    } else if (has_relative_time) {
+      const std::int64_t delta_ns = in.header_stamp_ns - out_stamp_ns;
+      if (delta_ns != 0) {
+        if (!rebase_time(block, n, out.point_step, *time_field, delta_ns, result.error)) {
+          return result;
         }
       }
-      out.data.insert(out.data.end(), block.begin(), block.end());
     }
 
+    out.data.insert(out.data.end(), block.begin(), block.end());
     total_points += n;
     is_dense = is_dense && c.is_dense;
   }

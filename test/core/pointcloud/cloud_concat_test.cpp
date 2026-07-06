@@ -87,13 +87,6 @@ PointCloud2 make_cloud_u32(
   return c;
 }
 
-double f64_time_at(const PointCloud2 & c, std::size_t i)
-{
-  double t = 0.0;
-  std::memcpy(&t, c.data.data() + i * c.point_step + 12, sizeof(double));
-  return t;
-}
-
 }  // namespace
 
 TEST(CloudConcat, ConcatenatesInOrderAndSumsWidth)
@@ -179,9 +172,10 @@ TEST(CloudConcat, AbsoluteTimeCopiedVerbatim)
 }
 
 // A UINT32-ns header-relative time cannot hold the negative value re-basing needs
-// when an input is earlier than out_stamp, so the output widens it to FLOAT64
-// seconds (point_step 16 -> 20) and preserves each point's absolute time exactly.
-TEST(CloudConcat, Uint32TimeWidenedToFloat64)
+// when an input is earlier than out_stamp, so the output emits it as FLOAT32
+// seconds (same 4-byte slot, point_step unchanged) and preserves each point's
+// absolute time.
+TEST(CloudConcat, Uint32TimeConvertedToFloat32)
 {
   const std::int64_t h_ref = 1700 * kSec;
   const std::int64_t h_early = h_ref - kSec / 20;                   // 50 ms earlier
@@ -192,22 +186,21 @@ TEST(CloudConcat, Uint32TimeWidenedToFloat64)
   const auto r = concat_clouds(inputs, h_ref, "base_link");
   ASSERT_TRUE(r.ok()) << r.error;
   EXPECT_EQ(r.cloud->width, 2u);
-  EXPECT_EQ(r.cloud->point_step, 20u);  // time field widened 4 -> 8 bytes
+  EXPECT_EQ(r.cloud->point_step, 16u);  // same 4-byte slot, no widening
   ASSERT_EQ(r.cloud->fields.size(), 4u);
   EXPECT_EQ(r.cloud->fields[3].name, "time");
-  EXPECT_EQ(r.cloud->fields[3].datatype, PointFieldType::kFloat64);
+  EXPECT_EQ(r.cloud->fields[3].datatype, PointFieldType::kFloat32);
   EXPECT_EQ(r.cloud->fields[3].offset, 12u);
-  // xyz stays readable (x at offset 0 is before the widened time field).
   EXPECT_FLOAT_EQ(x_at(*r.cloud, 0), 1.0f);
   EXPECT_FLOAT_EQ(x_at(*r.cloud, 1), 2.0f);
   // reference point: delta 0 -> 0.02 s.
-  EXPECT_NEAR(f64_time_at(*r.cloud, 0), 0.02, 1e-9);
+  EXPECT_NEAR(time_at(*r.cloud, 0), 0.02f, 1e-6);
   // early point: 0.03 + (h_early - h_ref) = 0.03 - 0.05 = -0.02 s (negative, OK).
-  EXPECT_NEAR(f64_time_at(*r.cloud, 1), -0.02, 1e-9);
+  EXPECT_NEAR(time_at(*r.cloud, 1), -0.02f, 1e-6);
   // absolute time preserved: out_stamp + t' == h_early + 0.03.
-  const double abs_out = static_cast<double>(h_ref) * 1e-9 + f64_time_at(*r.cloud, 1);
+  const double abs_out = static_cast<double>(h_ref) * 1e-9 + time_at(*r.cloud, 1);
   const double abs_in = static_cast<double>(h_early) * 1e-9 + 0.03;
-  EXPECT_NEAR(abs_out, abs_in, 1e-9);
+  EXPECT_NEAR(abs_out, abs_in, 1e-6);
 }
 
 TEST(CloudConcat, FlattensOrganizedCloud)

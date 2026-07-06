@@ -53,10 +53,10 @@ struct ConcatResult
 // (name t / time / time_stamp / timestamp), each point's ORIGINAL ABSOLUTE
 // acquisition time is preserved. An absolute-encoded field is copied verbatim; a
 // header-relative FLOAT field is re-based in place by (header_stamp_ns[k] -
-// out_stamp_ns); a header-relative UINT32 field is WIDENED to FLOAT64 seconds and
-// re-based, so the value stays representable even when negative (an input earlier
-// than out_stamp). In every case out_stamp + t' == header_stamp_k + t exactly.
-// Widening a time field grows point_step by 4 and shifts later fields by 4.
+// out_stamp_ns); a header-relative UINT32 field is emitted as FLOAT32 seconds
+// (same 4-byte width, point_step unchanged) and re-based, so the value stays
+// representable even when negative (an input earlier than out_stamp). In every
+// case out_stamp + t' == header_stamp_k + t.
 ConcatResult concat_clouds(
   std::span<const ConcatInput> inputs, std::int64_t out_stamp_ns, std::string out_frame);
 

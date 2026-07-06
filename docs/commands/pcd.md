@@ -45,9 +45,9 @@ bagwiz pcd concat <input> <output_topic_name> --input-topics <t1> <t2> [<t3> ...
 - **Per-point time preservation:** each point's original absolute acquisition
   time is preserved. A header-relative FLOAT time field is re-based in place by
   `(source_header_stamp - output_stamp)`; a header-relative UINT32 time field is
-  widened to FLOAT64 seconds and re-based (its value may go negative when an input
-  is earlier than the output stamp, which grows `point_step` by 4); an
-  absolute-encoded field is copied verbatim.
+  emitted as FLOAT32 seconds (same 4-byte width) and re-based (its value may go
+  negative when an input is earlier than the output stamp); an absolute-encoded
+  field is copied verbatim.
 - **Output header:** `frame_id` = `--frame`, `stamp` = the reference message's
   real stamp. The merged cloud is unorganized (`height = 1`).
 - **Determinism:** CPU-only, no GLIM — deterministic output for a given input.
