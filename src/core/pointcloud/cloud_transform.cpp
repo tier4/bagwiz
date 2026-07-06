@@ -45,14 +45,22 @@ struct XyzLayout
   PointFieldType type = PointFieldType::kFloat32;
 };
 
-std::optional<PointFieldType> field_type(const PointCloud2 & cloud, const std::string & name)
+struct ScalarField
+{
+  std::uint32_t offset = 0;
+  PointFieldType datatype = PointFieldType::kFloat32;
+};
+
+// The named field's offset + datatype in a single scan, or nullopt when absent
+// or not a scalar (count != 1).
+std::optional<ScalarField> find_scalar_field(const PointCloud2 & cloud, const std::string & name)
 {
   for (const auto & f : cloud.fields) {
     if (f.name == name) {
       if (f.count != 1) {
         return std::nullopt;
       }
-      return f.datatype;
+      return ScalarField{f.offset, f.datatype};
     }
   }
   return std::nullopt;
@@ -80,27 +88,27 @@ CloudTransformResult transform_cloud_xyz(PointCloud2 & cloud, const RigidTransfo
     return result;
   }
 
-  const auto tx = field_type(cloud, "x");
-  const auto ty = field_type(cloud, "y");
-  const auto tz = field_type(cloud, "z");
-  if (!tx || !ty || !tz) {
+  const auto fx = find_scalar_field(cloud, "x");
+  const auto fy = find_scalar_field(cloud, "y");
+  const auto fz = find_scalar_field(cloud, "z");
+  if (!fx || !fy || !fz) {
     result.error = "cloud is missing x/y/z fields (or a coordinate field has count != 1)";
     return result;
   }
-  if (*tx != *ty || *tx != *tz) {
+  if (fx->datatype != fy->datatype || fx->datatype != fz->datatype) {
     result.error = "x/y/z fields must share the same datatype";
     return result;
   }
-  if (*tx != PointFieldType::kFloat32 && *tx != PointFieldType::kFloat64) {
+  if (fx->datatype != PointFieldType::kFloat32 && fx->datatype != PointFieldType::kFloat64) {
     result.error = "x/y/z fields must be FLOAT32 or FLOAT64";
     return result;
   }
 
   XyzLayout layout;
-  layout.x_off = *cloud.field_offset("x");
-  layout.y_off = *cloud.field_offset("y");
-  layout.z_off = *cloud.field_offset("z");
-  layout.type = *tx;
+  layout.x_off = fx->offset;
+  layout.y_off = fy->offset;
+  layout.z_off = fz->offset;
+  layout.type = fx->datatype;
 
   if (cloud.point_step == 0) {
     result.error = "cloud has point_step == 0";

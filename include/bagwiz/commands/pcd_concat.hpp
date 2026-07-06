@@ -9,6 +9,7 @@
 #ifndef BAGWIZ__COMMANDS__PCD_CONCAT_HPP_
 #define BAGWIZ__COMMANDS__PCD_CONCAT_HPP_
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -20,11 +21,11 @@ namespace bagwiz::commands
 // .claude/plans/pcd-concat.spec.md for the full behaviour.
 struct PcdConcatArgs
 {
-  std::string input_path;                  // <input> bag
-  std::string output_topic;                // <output_topic_name> (the new topic)
-  std::vector<std::string> input_topics;   // --input-topics (>= 2)
-  std::optional<std::string> frame;        // --frame; empty => default base_link
-  std::optional<std::string> output_path;  // -o/--output; empty => in-place
+  std::filesystem::path input_path;                  // <input> bag
+  std::string output_topic;                          // <output_topic_name> (the new topic)
+  std::vector<std::string> input_topics;             // --input-topics (>= 2)
+  std::optional<std::string> frame;                  // --frame; empty => default base_link
+  std::optional<std::filesystem::path> output_path;  // -o/--output; empty => in-place
   std::optional<std::string>
     tolerance;  // --tolerance (num + unit ns/us/ms/s, def ms); auto if empty
   std::vector<std::string> stamp_offsets;  // --stamp-offset "topic=value" entries

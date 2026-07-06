@@ -254,21 +254,20 @@ int run_pcd_concat(const PcdConcatArgs & args)
   }
   reader->populate_schemas();
 
-  const io::TopicInfo * ref_info = nullptr;
+  // Resolve output-topic existence and every input topic's TopicInfo in a single
+  // pass over the bag's topics, using the topic_index built above.
+  std::vector<const io::TopicInfo *> info_by_index(num_topics, nullptr);
   bool output_topic_exists = false;
   for (const auto & t : reader->topics()) {
     if (t.name == args.output_topic) {
       output_topic_exists = true;
     }
+    if (const auto it = topic_index.find(t.name); it != topic_index.end()) {
+      info_by_index[it->second] = &t;
+    }
   }
   for (std::size_t i = 0; i < num_topics; ++i) {
-    const io::TopicInfo * info = nullptr;
-    for (const auto & t : reader->topics()) {
-      if (t.name == args.input_topics[i]) {
-        info = &t;
-        break;
-      }
-    }
+    const io::TopicInfo * info = info_by_index[i];
     if (info == nullptr) {
       BAGWIZ_LOG_ERROR(
         kLogger, "Topic '%s' is not present in %s", args.input_topics[i].c_str(),
@@ -281,10 +280,8 @@ int run_pcd_concat(const PcdConcatArgs & args)
         kPointCloud2Type);
       return 1;
     }
-    if (i == ref_idx) {
-      ref_info = info;
-    }
   }
+  const io::TopicInfo * ref_info = info_by_index[ref_idx];
 
   if (output_topic_exists && !args.force) {
     BAGWIZ_LOG_ERROR(
