@@ -175,6 +175,7 @@ configure_file(
 # ---------------------------------------------------------------------------
 add_library(bagwiz_core
   src/core/cdr_walker/cdr_reader.cpp
+  src/core/cdr_walker/cdr_writer.cpp
   src/core/cdr_walker/walker.cpp
   src/core/decoder/decoder_factory.cpp
   src/core/decoder/introspection_decoder.cpp
@@ -182,6 +183,7 @@ add_library(bagwiz_core
   src/core/decoder/schema_decoder.cpp
   src/core/introspection_loader.cpp
   src/core/joke/jokes.cpp
+  src/core/duration_parse.cpp
   src/core/joke/joke_layout.cpp
   src/core/logging.cpp
   src/core/message_deserializer.cpp
@@ -224,6 +226,9 @@ add_library(bagwiz_core
   src/core/image/packed_raster.cpp
   src/core/image/undistort.cpp
   src/core/pointcloud/pointcloud2.cpp
+  src/core/pointcloud/cloud_transform.cpp
+  src/core/pointcloud/cloud_concat.cpp
+  src/core/pointcloud/concat_sync.cpp
   src/core/pointcloud/color_mapper.cpp
   src/core/pointcloud/projector.cpp
   src/core/pointcloud/fetcher.cpp
@@ -341,6 +346,8 @@ add_executable(bagwiz
   src/commands/generate_video.cpp
   src/commands/joke.cpp
   src/commands/ls.cpp
+  src/commands/pcd.cpp
+  src/commands/pcd_concat.cpp
   src/commands/walk.cpp
   src/commands/traj.cpp
   src/commands/tf.cpp
@@ -822,6 +829,18 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_pointcloud2_test test/core/pointcloud/pointcloud2_test.cpp)
   target_link_libraries(bagwiz_pointcloud2_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_cloud_transform_test test/core/pointcloud/cloud_transform_test.cpp)
+  target_link_libraries(bagwiz_cloud_transform_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_cloud_concat_test test/core/pointcloud/cloud_concat_test.cpp)
+  target_link_libraries(bagwiz_cloud_concat_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_duration_parse_test test/core/duration_parse_test.cpp)
+  target_link_libraries(bagwiz_duration_parse_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_concat_sync_test test/core/pointcloud/concat_sync_test.cpp)
+  target_link_libraries(bagwiz_concat_sync_test bagwiz_core)
 
   ament_add_gtest(bagwiz_color_mapper_test test/core/pointcloud/color_mapper_test.cpp)
   target_link_libraries(bagwiz_color_mapper_test bagwiz_core)

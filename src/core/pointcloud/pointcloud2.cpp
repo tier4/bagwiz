@@ -9,6 +9,7 @@
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
 
 #include "bagwiz/core/cdr_walker/cdr_reader.hpp"
+#include "bagwiz/core/cdr_walker/cdr_writer.hpp"
 
 #include <cstdint>
 #include <exception>
@@ -140,6 +141,40 @@ PointCloud2Result parse_pointcloud2(std::span<const std::byte> payload)
     result.error = std::string("failed to parse sensor_msgs/msg/PointCloud2 payload: ") + e.what();
   }
   return result;
+}
+
+// Inverse of parse_pointcloud2: emit the CDR-1 layout documented above via
+// CdrWriter (which mirrors CdrReader's alignment), so parse(serialize(c)) == c.
+std::vector<std::byte> serialize_pointcloud2(const PointCloud2 & cloud)
+{
+  cdr_walker::CdrWriter writer;
+
+  // builtin_interfaces/Time: int32 sec + uint32 nanosec, recomposed by the
+  // reader as sec * 1e9 + nanosec. ROS stamps are non-negative.
+  const std::int64_t ts = cloud.timestamp_ns;
+  writer.write_i32(static_cast<std::int32_t>(ts / 1'000'000'000LL));
+  writer.write_u32(static_cast<std::uint32_t>(ts % 1'000'000'000LL));
+  writer.write_string(cloud.frame_id);
+  writer.write_u32(cloud.height);
+  writer.write_u32(cloud.width);
+
+  writer.write_sequence_length(static_cast<std::uint32_t>(cloud.fields.size()));
+  for (const auto & f : cloud.fields) {
+    writer.write_string(f.name);
+    writer.write_u32(f.offset);
+    writer.write_u8(static_cast<std::uint8_t>(f.datatype));
+    writer.write_u32(f.count);
+  }
+
+  writer.write_bool(cloud.is_bigendian);
+  writer.write_u32(cloud.point_step);
+  writer.write_u32(cloud.row_step);
+
+  writer.write_sequence_length(static_cast<std::uint32_t>(cloud.data.size()));
+  writer.write_bytes(cloud.data);
+
+  writer.write_bool(cloud.is_dense);
+  return writer.take();
 }
 
 }  // namespace bagwiz::core::pointcloud

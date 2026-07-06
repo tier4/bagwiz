@@ -93,6 +93,14 @@ struct PointCloud2Result
 
 [[nodiscard]] PointCloud2Result parse_pointcloud2(std::span<const std::byte> payload);
 
+// Serialize a PointCloud2 back to a plain little-endian CDR-1 payload (the
+// inverse of parse_pointcloud2). The result round-trips through
+// parse_pointcloud2 field-for-field and byte-for-byte for the point data. The
+// output always uses little-endian encapsulation regardless of the host, so it
+// is deterministic; `cloud.is_bigendian` is written as the field value but the
+// point bytes are emitted verbatim (callers must ensure they are little-endian).
+[[nodiscard]] std::vector<std::byte> serialize_pointcloud2(const PointCloud2 & cloud);
+
 }  // namespace bagwiz::core::pointcloud
 
 #endif  // BAGWIZ__CORE__POINTCLOUD__POINTCLOUD2_HPP_

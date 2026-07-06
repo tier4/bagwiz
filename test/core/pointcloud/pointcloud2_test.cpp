@@ -194,3 +194,58 @@ TEST(PointCloud2Header, RejectsTruncatedPayload)
   EXPECT_FALSE(header.ok());
   EXPECT_FALSE(header.error.empty());
 }
+
+// serialize_pointcloud2 is the exact inverse of parse: re-serializing a parsed
+// canonical payload reproduces the original bytes (same LE encoding, alignment,
+// and canonical string length), so downstream writers are byte-deterministic.
+TEST(PointCloud2Serialize, RoundTripsBytesForCanonicalPayload)
+{
+  using bagwiz::core::pointcloud::parse_pointcloud2;
+  using bagwiz::core::pointcloud::serialize_pointcloud2;
+  const auto payload = make_pointcloud2_payload();
+  const auto parsed = parse_pointcloud2(payload);
+  ASSERT_TRUE(parsed.ok());
+  const auto reserialized = serialize_pointcloud2(*parsed.cloud);
+  EXPECT_EQ(reserialized, payload);
+}
+
+// Field-for-field round trip through the struct, including a non-zero stamp that
+// must decompose into sec/nanosec and recompose exactly.
+TEST(PointCloud2Serialize, ParseOfSerializedMatchesStruct)
+{
+  using bagwiz::core::pointcloud::parse_pointcloud2;
+  using bagwiz::core::pointcloud::PointCloud2;
+  using bagwiz::core::pointcloud::PointFieldType;
+  using bagwiz::core::pointcloud::serialize_pointcloud2;
+
+  PointCloud2 cloud;
+  cloud.timestamp_ns = 1'700'000'000'123'456'789LL;
+  cloud.frame_id = "lidar_front";
+  cloud.height = 1;
+  cloud.width = 2;
+  cloud.fields = {
+    {"x", 0, PointFieldType::kFloat32, 1},
+    {"y", 4, PointFieldType::kFloat32, 1},
+    {"z", 8, PointFieldType::kFloat32, 1},
+  };
+  cloud.is_bigendian = false;
+  cloud.point_step = 12;
+  cloud.row_step = 24;
+  cloud.data.assign(24, std::byte{0});
+  const float pts[6] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  std::memcpy(cloud.data.data(), pts, sizeof(pts));
+  cloud.is_dense = true;
+
+  const auto payload = serialize_pointcloud2(cloud);
+  const auto parsed = parse_pointcloud2(payload);
+  ASSERT_TRUE(parsed.ok());
+  EXPECT_EQ(parsed.cloud->timestamp_ns, cloud.timestamp_ns);
+  EXPECT_EQ(parsed.cloud->frame_id, cloud.frame_id);
+  EXPECT_EQ(parsed.cloud->height, cloud.height);
+  EXPECT_EQ(parsed.cloud->width, cloud.width);
+  ASSERT_EQ(parsed.cloud->fields.size(), cloud.fields.size());
+  EXPECT_EQ(parsed.cloud->point_step, cloud.point_step);
+  EXPECT_EQ(parsed.cloud->row_step, cloud.row_step);
+  EXPECT_EQ(parsed.cloud->is_dense, cloud.is_dense);
+  EXPECT_EQ(parsed.cloud->data, cloud.data);
+}

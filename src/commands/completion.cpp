@@ -1203,6 +1203,61 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
   return {};
 }
 
+// `pcd` is a command group for PointCloud2 topic processing. Its sole subcommand
+// is `concat`. At the subcommand slot (word 1) the only candidate is `concat` (or
+// the implicit help flags for a `-` word). `<input>` is a path that falls through
+// to the shell's file completion, and `<output_topic>` is a free-form new topic
+// name with nothing to suggest. Past the subcommand we surface `concat`'s flags
+// for any `-` word, plus PointCloud2 topic values for every `--input-topics`
+// value (read from the bag named at word 2). `--frame`, `--tolerance`,
+// `--stamp-offset`, and `-o`/`--output` take free-form / numeric / path values,
+// so they get no value completion.
+//
+//   concat: `pcd`(0) `concat`(1) `<input>`(2) `<output_topic>`(3)
+//           --input-topics <t...> [--frame <f>] [--tolerance <val>]
+//           [--stamp-offset <t=v>]... [-o <out>] [--drop-inputs] [--force]
+//           [-w|--overwrite]
+std::vector<std::string> complete_pcd(const CompletionRequest & request)
+{
+  const auto current = current_word(request);
+  if (request.cursor_word == kFirstCommandArgWord) {
+    if (current.starts_with("-")) {
+      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
+    }
+    return matching({"concat"}, current);
+  }
+
+  if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
+    const auto & sub = request.words[kFirstCommandArgWord];
+    if (sub == "concat") {
+      return matching(
+        with_help(
+          {"--drop-inputs", "--force", "--frame", "--input-topics", "--output", "--overwrite",
+           "--stamp-offset", "--tolerance", "-o", "-w"}),
+        current);
+    }
+  }
+
+  // --input-topics is variadic: complete PointCloud2 topics for every value in
+  // its run, not just the first. Walk back from the cursor to the nearest option
+  // word; if it is --input-topics, the cursor is still consuming its values, so
+  // offer topics from the bag named at word 2 (the <input> positional).
+  for (std::size_t w = request.cursor_word; w > kSecondCommandArgWord;) {
+    const auto & word = request.words[--w];
+    if (!word.starts_with("-")) {
+      continue;  // a topic value already given to --input-topics; keep scanning
+    }
+    if (word == "--input-topics") {
+      const auto & bag_arg = request.words[kSecondCommandArgWord];
+      if (!bag_arg.empty() && !bag_arg.starts_with("-")) {
+        return complete_topics(expand_current_user_home(bag_arg), current, kPointCloud2Type);
+      }
+    }
+    break;  // the nearest option decides; a non-input-topics option ends the run
+  }
+  return {};
+}
+
 std::vector<std::string> complete_request(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -1238,6 +1293,9 @@ std::vector<std::string> complete_request(const CompletionRequest & request)
   }
   if (command == "cam-info") {
     return complete_cam_info(request);
+  }
+  if (command == "pcd") {
+    return complete_pcd(request);
   }
   if (command == "check") {
     return complete_check(request);
