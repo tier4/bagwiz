@@ -203,6 +203,78 @@ TEST(CloudConcat, Uint32TimeConvertedToFloat32)
   EXPECT_NEAR(abs_out, abs_in, 1e-6);
 }
 
+// A FLOAT64 header-relative time is re-based in place (rebase_time's FLOAT64
+// branch), preserving each point's absolute time exactly.
+TEST(CloudConcat, Float64RelativeTimeRebased)
+{
+  const std::int64_t h_ref = 1700 * kSec;
+  const std::int64_t h_early = h_ref - kSec / 20;  // 50 ms earlier
+  const auto make_f64 = [](float x, double t) {
+    PointCloud2 c;
+    c.height = 1;
+    c.width = 1;
+    c.fields = {{"x", 0, PointFieldType::kFloat32, 1}, {"time", 4, PointFieldType::kFloat64, 1}};
+    c.point_step = 12;
+    c.is_dense = true;
+    c.data.assign(12, std::byte{0});
+    std::memcpy(c.data.data(), &x, sizeof(x));
+    std::memcpy(c.data.data() + 4, &t, sizeof(t));
+    return c;
+  };
+  const auto ref = make_f64(1.0f, 0.02);
+  const auto early = make_f64(2.0f, 0.03);
+  const std::array<ConcatInput, 2> inputs{ConcatInput{&ref, h_ref}, ConcatInput{&early, h_early}};
+  const auto r = concat_clouds(inputs, h_ref, "base_link");
+  ASSERT_TRUE(r.ok()) << r.error;
+  EXPECT_EQ(r.cloud->fields[1].datatype, PointFieldType::kFloat64);
+  double t0 = 0.0;
+  double t1 = 0.0;
+  std::memcpy(&t0, r.cloud->data.data() + 4, sizeof(double));
+  std::memcpy(&t1, r.cloud->data.data() + r.cloud->point_step + 4, sizeof(double));
+  EXPECT_NEAR(t0, 0.02, 1e-12);   // reference: delta 0
+  EXPECT_NEAR(t1, -0.02, 1e-12);  // 0.03 + (h_early - h_ref)
+}
+
+// With no recognised per-point time field, clouds are concatenated verbatim.
+TEST(CloudConcat, NoTimeFieldConcatenatesVerbatim)
+{
+  const auto make_xyz = [](float x) {
+    PointCloud2 c;
+    c.height = 1;
+    c.width = 1;
+    c.fields = {
+      {"x", 0, PointFieldType::kFloat32, 1},
+      {"y", 4, PointFieldType::kFloat32, 1},
+      {"z", 8, PointFieldType::kFloat32, 1},
+    };
+    c.point_step = 12;
+    c.is_dense = true;
+    c.data.assign(12, std::byte{0});
+    std::memcpy(c.data.data(), &x, sizeof(x));
+    return c;
+  };
+  const auto a = make_xyz(1.0f);
+  const auto b = make_xyz(2.0f);
+  const std::array<ConcatInput, 2> inputs{
+    ConcatInput{&a, 1700 * kSec}, ConcatInput{&b, 1699 * kSec}};
+  const auto r = concat_clouds(inputs, 1700 * kSec, "base_link");
+  ASSERT_TRUE(r.ok()) << r.error;
+  EXPECT_EQ(r.cloud->width, 2u);
+  EXPECT_EQ(r.cloud->point_step, 12u);
+  EXPECT_FLOAT_EQ(x_at(*r.cloud, 0), 1.0f);
+  EXPECT_FLOAT_EQ(x_at(*r.cloud, 1), 2.0f);
+}
+
+TEST(CloudConcat, BigEndianIsError)
+{
+  auto a = make_cloud({{1.0f, 0, 0, 0.0f}});
+  a.is_bigendian = true;
+  const std::array<ConcatInput, 1> inputs{ConcatInput{&a, 0}};
+  const auto r = concat_clouds(inputs, 0, "f");
+  EXPECT_FALSE(r.ok());
+  EXPECT_FALSE(r.error.empty());
+}
+
 TEST(CloudConcat, FlattensOrganizedCloud)
 {
   auto org = make_cloud({{1, 0, 0, 0}, {2, 0, 0, 0}, {3, 0, 0, 0}, {4, 0, 0, 0}});

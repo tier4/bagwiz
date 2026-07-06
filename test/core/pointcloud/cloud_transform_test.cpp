@@ -69,6 +69,35 @@ TEST(CloudTransform, PureTranslation)
   EXPECT_FLOAT_EQ(p[2], 33.0f);
 }
 
+TEST(CloudTransform, BigEndianIsError)
+{
+  auto c = make_cloud_f32({{1.0f, 0, 0}}, 0);
+  c.is_bigendian = true;
+  EXPECT_FALSE(transform_cloud_xyz(c, RigidTransform{}).ok);
+}
+
+TEST(CloudTransform, NonFloatXyzIsError)
+{
+  PointCloud2 c;
+  c.height = 1;
+  c.width = 1;
+  c.fields = {
+    {"x", 0, PointFieldType::kInt32, 1},
+    {"y", 4, PointFieldType::kInt32, 1},
+    {"z", 8, PointFieldType::kInt32, 1},
+  };
+  c.point_step = 12;
+  c.data.assign(12, std::byte{0});
+  EXPECT_FALSE(transform_cloud_xyz(c, RigidTransform{}).ok);
+}
+
+TEST(CloudTransform, PointStepZeroIsError)
+{
+  auto c = make_cloud_f32({{1.0f, 0, 0}}, 0);
+  c.point_step = 0;
+  EXPECT_FALSE(transform_cloud_xyz(c, RigidTransform{}).ok);
+}
+
 // A field whose offset + size exceeds point_step would make the per-point loop
 // read/write past the data buffer; it must be rejected before that happens.
 TEST(CloudTransform, FieldPastPointStepIsError)

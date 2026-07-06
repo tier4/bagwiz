@@ -293,6 +293,10 @@ int run_pcd_concat(const PcdConcatArgs & args)
     return 1;
   }
 
+  // Per-topic diagnostics surfaced in the end-of-run summary.
+  std::vector<std::int64_t> header_fail(num_topics, 0);  // undecodable header in Pass A
+  std::vector<char> non_monotonic(num_topics, 0);        // header stamps went backwards
+
   // ---- Pass A: collect per-topic header stamps + first frame_id -----------
   std::vector<TopicState> topics(num_topics);
   for (std::size_t i = 0; i < num_topics; ++i) {
@@ -320,6 +324,9 @@ int run_pcd_concat(const PcdConcatArgs & args)
         TopicState & ts = topics[it->second];
         const auto header = core::pointcloud::parse_pointcloud2_header(raw.payload);
         if (header.ok()) {
+          if (!ts.stamps_ns.empty() && header.header->timestamp_ns < ts.stamps_ns.back()) {
+            non_monotonic[it->second] = 1;
+          }
           ts.stamps_ns.push_back(header.header->timestamp_ns);
           if (ts.frame_id.empty()) {
             ts.frame_id = header.header->frame_id;
@@ -327,6 +334,7 @@ int run_pcd_concat(const PcdConcatArgs & args)
         } else {
           // keep index alignment with Pass B by recording the bag stamp
           ts.stamps_ns.push_back(raw.timestamp_ns);
+          ++header_fail[it->second];
         }
       }
     } catch (const std::exception & e) {
@@ -468,6 +476,8 @@ int run_pcd_concat(const PcdConcatArgs & args)
   std::int64_t written_groups = 0;
   std::int64_t partial_groups = 0;
   std::vector<std::int64_t> matched(num_topics, 0);
+  std::vector<std::int64_t> parse_fail(num_topics, 0);
+  std::vector<std::int64_t> transform_fail(num_topics, 0);
 
   const auto execute_pass = [&](io::BagWriter & writer) -> int {
     // declare surviving input topics + the new output topic
@@ -519,7 +529,11 @@ int run_pcd_concat(const PcdConcatArgs & args)
           c.refcount = refs[t][idx].size();
           c.cloud = std::move(cloud);
           cache.emplace(key(t, idx), std::move(c));
+        } else {
+          ++transform_fail[t];
         }
+      } else {
+        ++parse_fail[t];
       }
 
       // notify referencing groups; fire the ones now complete
@@ -640,6 +654,18 @@ int run_pcd_concat(const PcdConcatArgs & args)
     BAGWIZ_LOG_INFO(
       kLogger, "  %s: matched %" PRId64 " (frame '%s', offset %.3f ms)", topics[i].name.c_str(),
       matched[i], topics[i].frame_id.c_str(), static_cast<double>(topics[i].offset_ns) / 1e6);
+  }
+  for (std::size_t i = 0; i < num_topics; ++i) {
+    if (
+      header_fail[i] != 0 || parse_fail[i] != 0 || transform_fail[i] != 0 ||
+      non_monotonic[i] != 0) {
+      BAGWIZ_LOG_WARN(
+        kLogger,
+        "  %s: %" PRId64 " undecodable header(s) [bag time used for matching], %" PRId64
+        " parse + %" PRId64 " transform failure(s) dropped from concat%s",
+        topics[i].name.c_str(), header_fail[i], parse_fail[i], transform_fail[i],
+        non_monotonic[i] != 0 ? "; header stamps are not monotonic (matching may be wrong)" : "");
+    }
   }
   return 0;
 }

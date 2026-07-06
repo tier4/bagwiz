@@ -93,6 +93,33 @@ TEST(ConcatSync, TieResolvesToEarliest)
   EXPECT_EQ(*g[0].picks[1], 0u);  // earliest stamp wins the tie
 }
 
+// A message exactly `tolerance_ns` away still matches (inclusive boundary).
+TEST(ConcatSync, ToleranceBoundaryIsInclusive)
+{
+  std::vector<SyncTopic> topics{
+    SyncTopic{{1000 * kMs}, 0},
+    SyncTopic{{1050 * kMs}, 0},  // exactly 50 ms away
+  };
+  const auto g = plan_sync(topics, 0, 50 * kMs);
+  ASSERT_EQ(g.size(), 1u);
+  EXPECT_TRUE(g[0].picks[1].has_value());
+}
+
+// The reference topic's own --stamp-offset shifts the match target for the other
+// topics (match_target = ref.stamp + ref.offset).
+TEST(ConcatSync, ReferenceOffsetShiftsMatchTarget)
+{
+  std::vector<SyncTopic> topics{
+    SyncTopic{{1000 * kMs}, 50 * kMs},  // reference: target = 1050 ms
+    SyncTopic{{1000 * kMs, 1050 * kMs}, 0},
+  };
+  const auto g = plan_sync(topics, 0, 10 * kMs);  // tight tolerance
+  ASSERT_EQ(g.size(), 1u);
+  ASSERT_TRUE(g[0].picks[1].has_value());
+  EXPECT_EQ(*g[0].picks[1], 1u);                // the 1050 ms message aligns to the shifted target
+  EXPECT_EQ(g[0].output_stamp_ns, 1000 * kMs);  // output stamp is the raw ref stamp
+}
+
 TEST(ConcatSync, EmptyOtherTopicIsMissing)
 {
   std::vector<SyncTopic> topics{
