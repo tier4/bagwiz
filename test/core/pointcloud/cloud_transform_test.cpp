@@ -69,6 +69,25 @@ TEST(CloudTransform, PureTranslation)
   EXPECT_FLOAT_EQ(p[2], 33.0f);
 }
 
+// A field whose offset + size exceeds point_step would make the per-point loop
+// read/write past the data buffer; it must be rejected before that happens.
+TEST(CloudTransform, FieldPastPointStepIsError)
+{
+  PointCloud2 c;
+  c.height = 1;
+  c.width = 1;
+  c.fields = {
+    {"x", 0, PointFieldType::kFloat32, 1},
+    {"y", 4, PointFieldType::kFloat32, 1},
+    {"z", 12, PointFieldType::kFloat32, 1},  // 12 + 4 = 16 > point_step 12
+  };
+  c.point_step = 12;
+  c.data.assign(12, std::byte{0});
+  const auto r = transform_cloud_xyz(c, RigidTransform{});
+  EXPECT_FALSE(r.ok);
+  EXPECT_FALSE(r.error.empty());
+}
+
 TEST(CloudTransform, PureRotationAboutZ)
 {
   auto c = make_cloud_f32({{1.0f, 0.0f, 0.0f}}, 0);

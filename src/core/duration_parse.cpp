@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <string>
 
 namespace bagwiz::core
@@ -63,8 +64,8 @@ std::optional<std::int64_t> parse_duration_ns(std::string_view text)
   const char * begin = buf.c_str();
   char * num_end = nullptr;
   const double value = std::strtod(begin, &num_end);
-  if (num_end == begin) {
-    return std::nullopt;  // no leading number
+  if (num_end == begin || !std::isfinite(value)) {
+    return std::nullopt;  // no leading number, or NaN/Inf (strtod parses "nan"/"inf")
   }
 
   const std::string_view unit = trim(std::string_view(num_end, buf.c_str() + buf.size() - num_end));
@@ -73,7 +74,13 @@ std::optional<std::int64_t> parse_duration_ns(std::string_view text)
     return std::nullopt;  // unknown unit / trailing garbage
   }
 
-  return static_cast<std::int64_t>(std::llround(value * static_cast<double>(factor)));
+  const double ns = value * static_cast<double>(factor);
+  if (
+    !std::isfinite(ns) || ns < static_cast<double>(std::numeric_limits<std::int64_t>::min()) ||
+    ns > static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+    return std::nullopt;  // out of the representable int64 nanosecond range
+  }
+  return static_cast<std::int64_t>(std::llround(ns));
 }
 
 }  // namespace bagwiz::core

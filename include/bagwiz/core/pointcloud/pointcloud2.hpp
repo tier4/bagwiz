@@ -9,6 +9,7 @@
 #ifndef BAGWIZ__CORE__POINTCLOUD__POINTCLOUD2_HPP_
 #define BAGWIZ__CORE__POINTCLOUD__POINTCLOUD2_HPP_
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -36,6 +37,9 @@ struct PointField
   PointFieldType datatype = PointFieldType::kFloat32;
   std::uint32_t count = 1;
 };
+
+// Size in bytes of one element of a `PointFieldType`.
+[[nodiscard]] std::size_t datatype_size(PointFieldType datatype);
 
 // The PointCloud2 metadata that precedes the point payload on the wire: the
 // header stamp plus the field layout. Parsing this alone skips the (potentially

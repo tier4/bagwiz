@@ -221,3 +221,24 @@ TEST(CloudConcat, EmptyInputsIsError)
   EXPECT_FALSE(r.ok());
   EXPECT_FALSE(r.error.empty());
 }
+
+// A time field whose offset + size exceeds point_step would read past the buffer
+// during re-basing; it must be rejected.
+TEST(CloudConcat, TimeFieldPastPointStepIsError)
+{
+  PointCloud2 c;
+  c.height = 1;
+  c.width = 1;
+  c.fields = {
+    {"x", 0, PointFieldType::kFloat32, 1},
+    {"y", 4, PointFieldType::kFloat32, 1},
+    {"z", 8, PointFieldType::kFloat32, 1},
+    {"time", 12, PointFieldType::kUint32, 1},  // 12 + 4 = 16 > point_step 14
+  };
+  c.point_step = 14;
+  c.data.assign(14, std::byte{0});
+  const std::array<ConcatInput, 1> inputs{ConcatInput{&c, 1000}};
+  const auto r = concat_clouds(inputs, 1000, "base_link");
+  EXPECT_FALSE(r.ok());
+  EXPECT_FALSE(r.error.empty());
+}

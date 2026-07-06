@@ -11,6 +11,7 @@
 #include "bagwiz/core/cdr_walker/cdr_reader.hpp"
 #include "bagwiz/core/cdr_walker/cdr_writer.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <optional>
@@ -75,6 +76,25 @@ std::optional<std::uint32_t> PointCloud2Header::field_offset(const std::string &
 std::optional<std::uint32_t> PointCloud2::field_offset(const std::string & name) const
 {
   return find_field_offset(fields, name);
+}
+
+std::size_t datatype_size(PointFieldType datatype)
+{
+  switch (datatype) {
+    case PointFieldType::kInt8:
+    case PointFieldType::kUint8:
+      return 1;
+    case PointFieldType::kInt16:
+    case PointFieldType::kUint16:
+      return 2;
+    case PointFieldType::kInt32:
+    case PointFieldType::kUint32:
+    case PointFieldType::kFloat32:
+      return 4;
+    case PointFieldType::kFloat64:
+      return 8;
+  }
+  return 0;
 }
 
 // sensor_msgs/msg/PointCloud2 CDR layout (CDR-1, as written by Fast/Cyclone DDS):

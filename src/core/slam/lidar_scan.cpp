@@ -37,25 +37,6 @@ const PointField * find_field(const PointCloud2 & cloud, const std::string & nam
   return nullptr;
 }
 
-std::size_t datatype_size(PointFieldType dt) noexcept
-{
-  switch (dt) {
-    case PointFieldType::kInt8:
-    case PointFieldType::kUint8:
-      return 1;
-    case PointFieldType::kInt16:
-    case PointFieldType::kUint16:
-      return 2;
-    case PointFieldType::kInt32:
-    case PointFieldType::kUint32:
-    case PointFieldType::kFloat32:
-      return 4;
-    case PointFieldType::kFloat64:
-      return 8;
-  }
-  return 0;
-}
-
 // Copy `sizeof(T)` bytes out of the (possibly unaligned) cloud buffer. memcpy
 // keeps this free of alignment / strict-aliasing UB.
 template <typename T>

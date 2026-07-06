@@ -157,6 +157,26 @@ ConcatResult concat_clouds(
   // it needs no absolute-vs-relative test.
   const bool time_u32_to_f32 =
     time_field.has_value() && time_field->datatype == PointFieldType::kUint32;
+
+  // Validate before any byte-level access (detect_absolute_time below and the
+  // per-point loops): the time field must fit inside a point, and every input's
+  // data buffer must hold height*width*point_step bytes. parse_pointcloud2 does
+  // not validate field offsets against point_step.
+  if (
+    time_field.has_value() &&
+    static_cast<std::size_t>(time_field->offset) + datatype_size(time_field->datatype) >
+      first.point_step) {
+    result.error = "per-point time field extends past point_step";
+    return result;
+  }
+  for (const auto & in : inputs) {
+    const PointCloud2 & c = *in.cloud;
+    if (c.data.size() < point_count(c) * c.point_step) {
+      result.error = "input cloud data is shorter than height * width * point_step";
+      return result;
+    }
+  }
+
   const bool has_relative_time =
     time_field.has_value() && !time_u32_to_f32 && !detect_absolute_time(inputs, *time_field);
 
@@ -181,10 +201,6 @@ ConcatResult concat_clouds(
     const PointCloud2 & c = *in.cloud;
     const std::size_t n = point_count(c);
     const std::size_t need = n * c.point_step;
-    if (c.data.size() < need) {
-      result.error = "input cloud data is shorter than height * width * point_step";
-      return result;
-    }
 
     // Copy only the meaningful point bytes (n * point_step); an organized cloud
     // is flattened, and any trailing slack in c.data is dropped.

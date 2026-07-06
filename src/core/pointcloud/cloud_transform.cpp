@@ -106,6 +106,18 @@ CloudTransformResult transform_cloud_xyz(PointCloud2 & cloud, const RigidTransfo
     result.error = "cloud has point_step == 0";
     return result;
   }
+
+  // Every x/y/z field must fit inside a point; otherwise the per-point loop below
+  // reads/writes past the data buffer (parse_pointcloud2 does not validate field
+  // offsets against point_step).
+  const std::size_t elem = datatype_size(layout.type);
+  if (
+    static_cast<std::size_t>(layout.x_off) + elem > cloud.point_step ||
+    static_cast<std::size_t>(layout.y_off) + elem > cloud.point_step ||
+    static_cast<std::size_t>(layout.z_off) + elem > cloud.point_step) {
+    result.error = "x/y/z field extends past point_step";
+    return result;
+  }
   const std::size_t num_points =
     static_cast<std::size_t>(cloud.height) * static_cast<std::size_t>(cloud.width);
   const std::size_t need = num_points * cloud.point_step;

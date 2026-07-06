@@ -56,3 +56,13 @@ TEST(ParseDurationNs, RejectsGarbage)
   EXPECT_EQ(parse_duration_ns("5x"), std::nullopt);
   EXPECT_EQ(parse_duration_ns("ms"), std::nullopt);  // no number
 }
+
+TEST(ParseDurationNs, RejectsNonFinite)
+{
+  EXPECT_EQ(parse_duration_ns("nan"), std::nullopt);
+  EXPECT_EQ(parse_duration_ns("inf"), std::nullopt);
+  EXPECT_EQ(parse_duration_ns("infinity"), std::nullopt);
+  EXPECT_EQ(parse_duration_ns("-inf"), std::nullopt);
+  EXPECT_EQ(parse_duration_ns("1e400ms"), std::nullopt);  // strtod overflows to +inf
+  EXPECT_EQ(parse_duration_ns("1e30s"), std::nullopt);    // finite but out of int64 ns range
+}
