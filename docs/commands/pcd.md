@@ -66,3 +66,142 @@ bagwiz pcd concat drive.mcap /sensing/lidar/concatenated/points \
   --stamp-offset /sensing/lidar/right/seyond_points=50ms \
   -o concatenated.mcap
 ```
+
+---
+
+## `bagwiz pcd undistort`
+
+Motion-deskew (undistort) one or more `sensor_msgs/msg/PointCloud2` topics
+using an external pose topic as the motion source. `pcd undistort` never
+estimates motion itself — no SLAM, no scan matching — it only reads a
+pose/trajectory topic that is already in the bag (or joined into it
+beforehand, e.g. with `traj join`) and moves every point back to one
+reference time per scan. Given the same input, it always produces the same
+output.
+
+This is the per-cloud counterpart to `pcd concat` above, which does not
+compensate for motion at all. Since deskew rewrites only xyz and per-point
+time, running `undistort` before `concat` still leaves per-point timestamps
+intact for the downstream merge.
+
+```text
+bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
+    [--from <frame>] [--to <frame>] [-o|--output <path>] [-w|--overwrite] \
+    [--no-progress]
+```
+
+### Positional arguments
+
+| Name         | Description                                                                                                                                                                                           |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input`      | Input bag (file or directory).                                                                                                                                                                        |
+| `pose_topic` | Self-position source topic already in the bag. Type must be one of `tf2_msgs/msg/TFMessage`, `nav_msgs/msg/Odometry`, `geometry_msgs/msg/PoseStamped`, `geometry_msgs/msg/PoseWithCovarianceStamped`. |
+
+### Options
+
+| Flag                  | Default      | Description                                                                                                                                                                      |
+| --------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--pcd <topic>`       | _(required)_ | PointCloud2 topic to deskew. Repeatable — pass `--pcd` once per topic (e.g. `--pcd /a --pcd /b`) to deskew several topics against the same trajectory. At least one is required. |
+| `--from <frame>`      | `map`        | Reference frame the trajectory is resolved in (same convention as `traj dump`).                                                                                                  |
+| `--to <frame>`        | `base_link`  | Tracked body frame. The trajectory is obtained as `T_from_to` (e.g. `T_map_base_link`).                                                                                          |
+| `-o, --output <path>` | _(unset)_    | Output bag. When omitted, `<input>` is rewritten in place (atomic tmp swap).                                                                                                     |
+| `-w, --overwrite`     | `false`      | Replace `-o/--output` if it already exists. Has no effect in in-place mode.                                                                                                      |
+| `--no-progress`       | `false`      | Suppress the completion summary log line. There is no live progress bar during the rewrite.                                                                                      |
+
+### Behavior
+
+1. **Resolve the trajectory (Pass 1).** `<input>` must have a `...tf_static`
+   topic — it is loaded together with `<pose_topic>` to resolve `--from` →
+   `--to`. Only `<pose_topic>` and the bag's static TF feed the trajectory; no
+   other topic (e.g. a bag's own dynamic `/tf`) is read automatically. The
+   composition mirrors `traj dump`'s (see above): for `TFMessage`, the
+   `--from` → `--to` chain is
+   resolved against tf_static plus the edges carried on `<pose_topic>` itself,
+   then sampled at every stamp published on that chain; for `Odometry` /
+   `PoseStamped` / `PoseWithCovarianceStamped`, each message's own pose is
+   bridged into `--from`/`--to` via the bag's static TF when its frames don't
+   already match (`T_from_to = T_from_header · T_header_body · T_body_to`).
+   One difference from `traj dump`: an unresolvable bridge is fatal here,
+   where `traj dump` would just skip that one sample. An unresolvable
+   `--from` → `--to` overall is likewise fatal — checked before anything is
+   written.
+2. **Resolve each topic's extrinsic.** For every `--pcd` topic, the sensor
+   extrinsic `E = T_to_C` (`C` = that topic's cloud `frame_id`) is resolved
+   from the bag's static TF (identity when `C == --to`). A missing chain is
+   fatal. Each topic's first message must also already carry a per-point time
+   field (checked by name: `t`, `time`, `time_stamp`, or `timestamp`); a topic
+   without one is fatal, since undistort cannot deskew without per-point time.
+3. **Rewrite (Pass 2).** Every message is copied through unchanged except
+   `--pcd` topics. For each cloud on a `--pcd` topic:
+   - per-point time is normalized to an absolute timestamp per point
+     (relative-to-header vs. absolute is auto-detected);
+   - each point's xyz is moved from its own timestamp's pose to the pose at
+     `t_ref = header.stamp` via
+     `p' = E⁻¹·(T_from_to(t_ref)⁻¹·T_from_to(t_i))·E·p`, interpolating the
+     trajectory (SLERP + lerp) and clamping to the nearest endpoint pose for
+     points outside its time span;
+   - the per-point time field is rewritten to the `t_ref`-equivalent value
+     (`0` for a relative field, `header.stamp` for an absolute one), so a
+     later `undistort` or `concat` run can't double-deskew the cloud;
+   - non-finite (NaN/Inf) points are left byte-for-byte unchanged;
+   - every other field, the point count, `point_step`/`row_step` (organized
+     clouds included), and `frame_id` are unchanged — points never leave
+     their own cloud's frame;
+   - `FLOAT32` and `FLOAT64` xyz are both supported (computed internally as
+     `double`). A cloud that is big-endian, or is missing/misshapes its x/y/z
+     fields, aborts the whole run rather than being skipped; a cloud that
+     merely fails to parse as `PointCloud2` is instead copied through
+     unchanged with a warning.
+   - The trajectory is built once and shared by every `--pcd` topic; only the
+     extrinsic `E` changes per topic, so sensors with different mount points
+     can be deskewed together in one run.
+4. **Output.** `-o` writes a new bag inheriting `<input>`'s storage format;
+   omitting it rewrites `<input>` in place through a tmp file and an atomic
+   swap, so a mid-pass failure leaves the original bag untouched.
+5. **Determinism.** No SLAM and no threading/backend choices are involved —
+   the same input always produces the same output.
+
+To deskew against SLAM-derived poses rather than an existing localization
+topic, compose it from `map slam` and `traj join`: generate a trajectory,
+embed it into the bag as a topic, then point `pcd undistort` at that topic
+(see the third example below).
+
+### Examples
+
+```bash
+# Deskew one topic in place, using an existing localization pose (Odometry).
+bagwiz pcd undistort drive.mcap /localization/kinematic_state \
+  --pcd /sensing/lidar/top/pointcloud
+
+# Deskew multiple topics against the same pose, into a new bag.
+bagwiz pcd undistort drive.mcap /localization/kinematic_state \
+  --pcd /sensing/lidar/top/pointcloud --pcd /sensing/lidar/left/pointcloud \
+  -o undistorted.mcap
+
+# Composition workflow: derive a trajectory with SLAM, embed it as a topic,
+# then deskew against it.
+bagwiz map slam drive.mcap /points out/                 # -> out/traj.tum
+bagwiz traj join drive.mcap out/traj.tum /slam/tf --from map --to base_link
+bagwiz pcd undistort drive.mcap /slam/tf --pcd /points -o undistorted.mcap
+```
+
+### Errors
+
+| Situation                                                                    | Result                                                                                                    |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| No `--pcd` given                                                             | Error.                                                                                                    |
+| `pose_topic` absent from `<input>`, or not one of the four supported types   | Error.                                                                                                    |
+| A `--pcd` topic absent from `<input>`, or not `PointCloud2`                  | Error.                                                                                                    |
+| `<input>` has no `...tf_static` topic                                        | Fatal — needed to resolve `--from` → `--to` and every `--pcd` topic's extrinsic.                          |
+| `--from` → `--to` cannot be resolved from `pose_topic` + the bag's static TF | Fatal.                                                                                                    |
+| A `--pcd` topic's first message has no per-point time field                  | Fatal.                                                                                                    |
+| `--to` → a `--pcd` topic's cloud frame has no static TF chain                | Fatal.                                                                                                    |
+| A cloud reaching the rewrite step is big-endian, or is missing/misshapes xyz | Aborts the run (a cloud that merely fails to _parse_ is copied through unchanged with a warning instead). |
+| `-o` output path already exists without `-w`/`--overwrite`                   | Error.                                                                                                    |
+
+### Exit status
+
+| Code | Meaning                                                                                                 |
+| ---- | ------------------------------------------------------------------------------------------------------- |
+| `0`  | The rewrite completed: every `--pcd` topic validated in Pass 1, and Pass 2 finished.                    |
+| `1`  | Any of the error/fatal conditions above, a writer/I/O failure, or a cloud that failed the rewrite step. |

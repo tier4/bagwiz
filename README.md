@@ -75,20 +75,20 @@ libraries stay ABI compatible with bagwiz.
 `bagwiz` is a single executable that dispatches to one subcommand per
 invocation. Click through for full usage, options, and examples:
 
-| Command                                        | What it does                                                                                                    |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| [`bagwiz ls`](docs/commands/ls.md)             | List topics in a ROS 2 rosbag (add `-l` for per-topic counts and average frequencies).                          |
-| [`bagwiz walk`](docs/commands/walk.md)         | Interactively walk a ROS 2 topic's messages as decoded YAML.                                                    |
-| [`bagwiz convert`](docs/commands/convert.md)   | Repack a ROS 2 rosbag between storage backends/layouts, or convert topic message types (NavSatFix → pose).      |
-| [`bagwiz topic`](docs/commands/topic.md)       | Keep (`keep`), drop (`drop`), or rename (`rename`) topics in a ROS 2 rosbag.                                    |
-| [`bagwiz cam-info`](docs/commands/cam-info.md) | Replace (`replace`) one or more CameraInfo topics' calibration with values from a camera_calibration YAML file. |
-| [`bagwiz generate`](docs/commands/generate.md) | Generate non-rosbag media from a rosbag — e.g. render an image topic to a video (`video`).                      |
-| [`bagwiz traj`](docs/commands/traj.md)         | Dump a topic's pose trajectory to TUM, or join a trajectory file back into a bag.                               |
-| [`bagwiz tf`](docs/commands/tf.md)             | Inspect the TF frame tree in a ROS 2 rosbag.                                                                    |
-| [`bagwiz pcd`](docs/commands/pcd.md)           | PointCloud2 topic processing: concatenate multiple LiDAR topics into one (`concat`) via static TF + time sync.  |
-| [`bagwiz map`](docs/commands/map.md)           | LiDAR map generation and filtering: `map slam`, `map viewer`, `map filter`. Optional build.                     |
-| [`bagwiz check`](docs/commands/check.md)       | Find rosbags whose storage is corrupt / unreadable, and optionally delete them.                                 |
-| [`bagwiz complete`](docs/commands/complete.md) | Generate a shell completion script (`bash`, `zsh`, `fish`).                                                     |
+| Command                                        | What it does                                                                                                                                                                       |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`bagwiz ls`](docs/commands/ls.md)             | List topics in a ROS 2 rosbag (add `-l` for per-topic counts and average frequencies).                                                                                             |
+| [`bagwiz walk`](docs/commands/walk.md)         | Interactively walk a ROS 2 topic's messages as decoded YAML.                                                                                                                       |
+| [`bagwiz convert`](docs/commands/convert.md)   | Repack a ROS 2 rosbag between storage backends/layouts, or convert topic message types (NavSatFix → pose).                                                                         |
+| [`bagwiz topic`](docs/commands/topic.md)       | Keep (`keep`), drop (`drop`), or rename (`rename`) topics in a ROS 2 rosbag.                                                                                                       |
+| [`bagwiz cam-info`](docs/commands/cam-info.md) | Replace (`replace`) one or more CameraInfo topics' calibration with values from a camera_calibration YAML file.                                                                    |
+| [`bagwiz generate`](docs/commands/generate.md) | Generate non-rosbag media from a rosbag — e.g. render an image topic to a video (`video`).                                                                                         |
+| [`bagwiz traj`](docs/commands/traj.md)         | Dump a topic's pose trajectory to TUM, or join a trajectory file back into a bag.                                                                                                  |
+| [`bagwiz tf`](docs/commands/tf.md)             | Inspect the TF frame tree in a ROS 2 rosbag.                                                                                                                                       |
+| [`bagwiz pcd`](docs/commands/pcd.md)           | PointCloud2 topic processing: concatenate multiple LiDAR topics into one (`concat`) via static TF + time sync, or motion-deskew a topic from an external pose topic (`undistort`). |
+| [`bagwiz map`](docs/commands/map.md)           | LiDAR map generation and filtering: `map slam`, `map viewer`, `map filter`. Optional build.                                                                                        |
+| [`bagwiz check`](docs/commands/check.md)       | Find rosbags whose storage is corrupt / unreadable, and optionally delete them.                                                                                                    |
+| [`bagwiz complete`](docs/commands/complete.md) | Generate a shell completion script (`bash`, `zsh`, `fish`).                                                                                                                        |
 
 `bagwiz <subcommand> --help` is always available and reflects the same
 options documented in the per-command pages.
