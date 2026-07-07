@@ -673,14 +673,6 @@ function buildUI(): void {
   };
   minInput.addEventListener("change", applyManual);
   maxInput.addEventListener("change", applyManual);
-  el<HTMLButtonElement>("resetRange").addEventListener("click", () => {
-    autoBox.checked = true;
-    state.autoRange = true;
-    setManualRangeEnabled(true);
-    syncAutoRange();
-    recolor();
-  });
-
   const material = state.material;
   if (material) {
     const sizeSlider = el<HTMLInputElement>("pointSize");
