@@ -114,10 +114,10 @@ bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
    topic — it is loaded together with `<pose_topic>` to resolve `--from` →
    `--to`. Only `<pose_topic>` and the bag's static TF feed the trajectory; no
    other topic (e.g. a bag's own dynamic `/tf`) is read automatically. The
-   composition mirrors `traj dump`'s (see above): for `TFMessage`, the
-   `--from` → `--to` chain is
-   resolved against tf_static plus the edges carried on `<pose_topic>` itself,
-   then sampled at every stamp published on that chain; for `Odometry` /
+   composition mirrors `traj dump`'s: for `TFMessage`, the `--from` → `--to`
+   chain is resolved against tf_static plus the edges carried on
+   `<pose_topic>` itself, then sampled at every stamp published on that
+   chain; for `Odometry` /
    `PoseStamped` / `PoseWithCovarianceStamped`, each message's own pose is
    bridged into `--from`/`--to` via the bag's static TF when its frames don't
    already match (`T_from_to = T_from_header · T_header_body · T_body_to`).
@@ -127,8 +127,11 @@ bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
    written.
 2. **Resolve each topic's extrinsic.** For every `--pcd` topic, the sensor
    extrinsic `E = T_to_C` (`C` = that topic's cloud `frame_id`) is resolved
-   from the bag's static TF (identity when `C == --to`). A missing chain is
-   fatal. Each topic's first message must also already carry a per-point time
+   from the same frame sources as `--from` → `--to`: the bag's `*tf_static`,
+   plus `<pose_topic>` itself when it is a `TFMessage` topic (identity when
+   `C == --to`). For a statically-mounted sensor — the normal case — this
+   extrinsic comes from `tf_static` alone. A missing chain is fatal. Each
+   topic's first message must also already carry a per-point time
    field (checked by name: `t`, `time`, `time_stamp`, or `timestamp`); a topic
    without one is fatal, since undistort cannot deskew without per-point time.
 3. **Rewrite (Pass 2).** Every message is copied through unchanged except
@@ -148,10 +151,10 @@ bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
      clouds included), and `frame_id` are unchanged — points never leave
      their own cloud's frame;
    - `FLOAT32` and `FLOAT64` xyz are both supported (computed internally as
-     `double`). A cloud that is big-endian, or is missing/misshapes its x/y/z
-     fields, aborts the whole run rather than being skipped; a cloud that
-     merely fails to parse as `PointCloud2` is instead copied through
-     unchanged with a warning.
+     `double`). A malformed cloud — big-endian, missing/misshapen x/y/z, or an
+     inconsistent point/row layout — aborts the whole run rather than being
+     skipped; a cloud that merely fails to parse as `PointCloud2` is instead
+     copied through unchanged with a warning.
    - The trajectory is built once and shared by every `--pcd` topic; only the
      extrinsic `E` changes per topic, so sensors with different mount points
      can be deskewed together in one run.
@@ -187,17 +190,17 @@ bagwiz pcd undistort drive.mcap /slam/tf --pcd /points -o undistorted.mcap
 
 ### Errors
 
-| Situation                                                                    | Result                                                                                                    |
-| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| No `--pcd` given                                                             | Error.                                                                                                    |
-| `pose_topic` absent from `<input>`, or not one of the four supported types   | Error.                                                                                                    |
-| A `--pcd` topic absent from `<input>`, or not `PointCloud2`                  | Error.                                                                                                    |
-| `<input>` has no `...tf_static` topic                                        | Fatal — needed to resolve `--from` → `--to` and every `--pcd` topic's extrinsic.                          |
-| `--from` → `--to` cannot be resolved from `pose_topic` + the bag's static TF | Fatal.                                                                                                    |
-| A `--pcd` topic's first message has no per-point time field                  | Fatal.                                                                                                    |
-| `--to` → a `--pcd` topic's cloud frame has no static TF chain                | Fatal.                                                                                                    |
-| A cloud reaching the rewrite step is big-endian, or is missing/misshapes xyz | Aborts the run (a cloud that merely fails to _parse_ is copied through unchanged with a warning instead). |
-| `-o` output path already exists without `-w`/`--overwrite`                   | Error.                                                                                                    |
+| Situation                                                                                                                 | Result                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| No `--pcd` given                                                                                                          | Error.                                                                                                    |
+| `pose_topic` absent from `<input>`, or not one of the four supported types                                                | Error.                                                                                                    |
+| A `--pcd` topic absent from `<input>`, or not `PointCloud2`                                                               | Error.                                                                                                    |
+| `<input>` has no `...tf_static` topic                                                                                     | Fatal — needed to resolve `--from` → `--to` and every `--pcd` topic's extrinsic.                          |
+| `--from` → `--to` cannot be resolved from `pose_topic` + the bag's static TF                                              | Fatal.                                                                                                    |
+| A `--pcd` topic's first message has no per-point time field                                                               | Fatal.                                                                                                    |
+| `--to` → a `--pcd` topic's cloud frame is not reachable via `*tf_static` + `<pose_topic>`                                 | Fatal.                                                                                                    |
+| A cloud reaching the rewrite step is malformed (big-endian, missing/misshapen x/y/z, or an inconsistent point/row layout) | Aborts the run (a cloud that merely fails to _parse_ is copied through unchanged with a warning instead). |
+| `-o` output path already exists without `-w`/`--overwrite`                                                                | Error.                                                                                                    |
 
 ### Exit status
 
