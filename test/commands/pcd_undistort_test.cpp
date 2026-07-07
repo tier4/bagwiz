@@ -173,6 +173,61 @@ void write_undistort_input_no_static_topic(const std::filesystem::path & path)
   w->close();
 }
 
+// A malformed cloud: declares a "t" field whose offset+size runs past
+// point_step (data buffer sized to the too-small point_step). Used to
+// exercise the upfront per-`--pcd`-topic bounds check on the per-point time
+// field: an out-of-bounds field must be rejected the same way an absent one
+// is (deskew_pointcloud2 applies the identical bounds check and would
+// otherwise silently pass the cloud through un-deskewed).
+std::vector<std::byte> serialize_cloud_oob_time_field(
+  std::int64_t stamp_ns, const std::string & frame_id)
+{
+  pc::PointCloud2 c;
+  c.timestamp_ns = stamp_ns;
+  c.frame_id = frame_id;
+  c.height = 1;
+  c.width = 1;
+  c.fields = {
+    {"x", 0, pc::PointFieldType::kFloat32, 1},
+    {"y", 4, pc::PointFieldType::kFloat32, 1},
+    {"z", 8, pc::PointFieldType::kFloat32, 1},
+    {"t", 12, pc::PointFieldType::kFloat32, 1},  // offset 12 + 4 bytes = 16, past point_step below
+  };
+  c.point_step = 12;  // deliberately too small: "t" doesn't fit
+  c.row_step = c.point_step;
+  c.is_dense = true;
+  c.data.assign(c.point_step, std::byte{0});
+  return pc::serialize_pointcloud2(c);
+}
+
+// Same as write_undistort_input(path, /*with_time_field=*/true), but /points'
+// "t" field is out-of-bounds (see serialize_cloud_oob_time_field) instead of
+// simply absent.
+void write_undistort_input_oob_time_field(const std::filesystem::path & path)
+{
+  auto w = bagwiz::io::open_write(path, mcap_options());
+  w->declare_topic(bagwiz::core::make_tf_message_topic_info("/pose_tf"));
+  w->declare_topic(bagwiz::core::make_tf_message_topic_info("/tf_static"));
+  w->declare_topic(pcd_topic_info("/points"));
+
+  const std::vector<geometry_msgs::msg::TransformStamped> edges0{
+    make_map_to_base_link(kPoseT0Ns, 0.0)};
+  const std::vector<geometry_msgs::msg::TransformStamped> edges1{
+    make_map_to_base_link(kPoseT1Ns, 1.0)};
+  const auto p0 = bagwiz::core::serialize_tf_message(edges0);
+  const auto p1 = bagwiz::core::serialize_tf_message(edges1);
+  w->write("/pose_tf", kPoseT0Ns, std::span<const std::byte>(p0.data(), p0.size()));
+  w->write("/pose_tf", kPoseT1Ns, std::span<const std::byte>(p1.data(), p1.size()));
+
+  const std::vector<geometry_msgs::msg::TransformStamped> no_edges;
+  const auto s = bagwiz::core::serialize_tf_message(no_edges);
+  w->write("/tf_static", 0, std::span<const std::byte>(s.data(), s.size()));
+
+  const auto pts = serialize_cloud_oob_time_field(kPoseT0Ns, "base_link");
+  w->write("/points", kPoseT0Ns, std::span<const std::byte>(pts.data(), pts.size()));
+  w->close();
+}
+
 std::optional<float> read_first_point_x(
   const std::filesystem::path & path, const std::string & topic)
 {
@@ -271,6 +326,15 @@ TEST_F(PcdUndistortTest, DeskewsTargetTopicAndPreservesOthers)
 TEST_F(PcdUndistortTest, MissingPerPointTimeIsFatal)
 {
   write_undistort_input(in_, /*with_time_field=*/false);
+  EXPECT_EQ(run_pcd_undistort(base_args(in_, out_)), 1);
+}
+
+// A "t" field declared past point_step must be rejected the same way an
+// absent one is, not silently passed through un-deskewed (see
+// cloud_has_usable_point_time in the runner).
+TEST_F(PcdUndistortTest, OutOfBoundsTimeFieldIsFatal)
+{
+  write_undistort_input_oob_time_field(in_);
   EXPECT_EQ(run_pcd_undistort(base_args(in_, out_)), 1);
 }
 

@@ -386,12 +386,24 @@ TrajectoryBuildResult build_trajectory_from_pose_topic(
 
 // find_point_time_field only reads `.fields`, so a header-only peek (no point
 // data copy) is enough to tell whether a --pcd topic has a usable per-point
-// time field.
-bool fields_have_point_time(const std::vector<core::pointcloud::PointField> & fields)
+// time field. A field that is present by name but whose declared offset runs
+// past `point_step` is treated the same as an absent field: deskew_pointcloud2
+// applies the identical bounds check (its own `fits()` guard) and silently
+// falls back to "no usable time" rather than erroring, which would otherwise
+// let an out-of-bounds field slip past this upfront, required-time-field
+// check and get passed through un-deskewed with no warning.
+bool cloud_has_usable_point_time(
+  const std::vector<core::pointcloud::PointField> & fields, std::uint32_t point_step)
 {
   core::pointcloud::PointCloud2 shim;
   shim.fields = fields;
-  return core::pointcloud::find_point_time_field(shim).has_value();
+  const auto field = core::pointcloud::find_point_time_field(shim);
+  if (!field.has_value()) {
+    return false;
+  }
+  return static_cast<std::size_t>(field->offset) +
+           core::pointcloud::datatype_size(field->datatype) <=
+         point_step;
 }
 
 }  // namespace
@@ -517,7 +529,7 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
         }
         PcdTopicState st;
         st.frame_id = header.header->frame_id;
-        st.has_time = fields_have_point_time(header.header->fields);
+        st.has_time = cloud_has_usable_point_time(header.header->fields, header.header->point_step);
         pcd_state.emplace(raw.topic->name, st);
         pending.erase(it);
       }
@@ -608,6 +620,21 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
         BAGWIZ_LOG_ERROR(
           kLogger, "pcd undistort: deskew failed on '%s': %s", name.c_str(), res.error.c_str());
         return 1;
+      }
+      // The upfront per-topic check only guarantees the FIRST cloud on this
+      // topic had a usable time field; a heterogeneous stream could still
+      // hand deskew_pointcloud2 a later cloud that ends up moving nothing
+      // (no usable time/pose/finite xyz on any point). ok() is still true —
+      // the cloud passes through verbatim by design — but that must not be
+      // silent, or a bug upstream of this topic could go unnoticed.
+      if (res.points_deskewed == 0 && res.points_total > 0) {
+        BAGWIZ_LOG_WARN(
+          kLogger,
+          "pcd undistort: cloud on '%s' had nothing deskewed of %" PRIu64
+          " point(s) (no_time=%" PRIu64 ", no_pose=%" PRIu64 ", nonfinite=%" PRIu64
+          "); passed through un-deskewed",
+          name.c_str(), res.points_total, res.points_no_time, res.points_no_pose,
+          res.points_nonfinite);
       }
       const auto payload = core::pointcloud::serialize_pointcloud2(*res.cloud);
       writer.write(name, raw.timestamp_ns, payload);
