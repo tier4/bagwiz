@@ -1203,13 +1203,15 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
   return {};
 }
 
-// `pcd` is a command group for PointCloud2 topic processing. Its sole subcommand
-// is `concat`. At the subcommand slot (word 1) the only candidate is `concat` (or
-// the implicit help flags for a `-` word). `<input>` is a path that falls through
-// to the shell's file completion, and `<output_topic>` is a free-form new topic
-// name with nothing to suggest. Past the subcommand we surface `concat`'s flags
-// for any `-` word, plus PointCloud2 topic values for every `--input-topics`
-// value (read from the bag named at word 2). `--stamp-offset` takes a single
+// `pcd` is a command group for PointCloud2 topic processing. Its subcommands are
+// `concat` and `undistort`. At the subcommand slot (word 1) the candidates are
+// those two (or the implicit help flags for a `-` word). `<input>` is a path
+// that falls through to the shell's file completion. Past the subcommand we
+// surface each subcommand's own flags for any `-` word.
+//
+// For `concat`, `<output_topic>` is a free-form new topic name with nothing to
+// suggest. PointCloud2 topic values complete for every `--input-topics` value
+// (read from the bag named at word 2). `--stamp-offset` takes a single
 // `<topic>=<value>`, so its `<topic>` half completes to the same PointCloud2
 // topics (as `<topic>=`) until the value word contains `=`. `--frame`,
 // `--tolerance`, and `-o`/`--output` take free-form / numeric / path values, so
@@ -1219,6 +1221,17 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
 //           --input-topics <t...> [--frame <f>] [--tolerance <val>]
 //           [--stamp-offset <t=v>]... [-o <out>] [--drop-inputs] [--force]
 //           [-w|--overwrite]
+//
+// For `undistort`, `<pose_topic>` is a free-form topic name (accepted types are
+// TFMessage / Odometry / PoseStamped / PoseWithCovarianceStamped) with nothing
+// to suggest. `--pcd` is variadic and completes PointCloud2 topics from the bag
+// named at word 2, mirroring concat's `--input-topics`. `--from`/`--to` complete
+// the bag's TF frame ids, mirroring `traj dump`/`join`. `-o`/`--output` takes a
+// path, so it gets no value completion.
+//
+//   undistort: `pcd`(0) `undistort`(1) `<input>`(2) `<pose_topic>`(3)
+//              --pcd <t...> [--from <frame>] [--to <frame>] [-o <out>]
+//              [-w|--overwrite] [--no-progress]
 std::vector<std::string> complete_pcd(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -1226,7 +1239,7 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"concat"}, current);
+    return matching({"concat", "undistort"}, current);
   }
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
@@ -1236,6 +1249,12 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
         with_help(
           {"--drop-inputs", "--force", "--frame", "--input-topics", "--output", "--overwrite",
            "--stamp-offset", "--tolerance", "-o", "-w"}),
+        current);
+    }
+    if (sub == "undistort") {
+      return matching(
+        with_help(
+          {"--from", "--no-progress", "--output", "--overwrite", "--pcd", "--to", "-o", "-w"}),
         current);
     }
   }
@@ -1275,6 +1294,31 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
       }
     }
     break;  // the nearest option decides; a non-input-topics option ends the run
+  }
+
+  // undistort's --pcd is likewise variadic: complete PointCloud2 topics for
+  // every value in its run, not just the first, mirroring --input-topics above.
+  for (std::size_t w = request.cursor_word; w > kSecondCommandArgWord;) {
+    const auto & word = request.words[--w];
+    if (!word.starts_with("-")) {
+      continue;  // a topic value already given to --pcd; keep scanning
+    }
+    if (word == "--pcd") {
+      const auto & bag_arg = request.words[kSecondCommandArgWord];
+      if (!bag_arg.empty() && !bag_arg.starts_with("-")) {
+        return complete_topics(expand_current_user_home(bag_arg), current, kPointCloud2Type);
+      }
+    }
+    break;  // the nearest option decides; a non-pcd option ends the run
+  }
+
+  // undistort's --from/--to complete the bag's TF frame ids, mirroring
+  // `traj dump`/`join` (bag path at the same word 2 <input> slot).
+  if (request.cursor_word > 0) {
+    const auto & previous = request.words[request.cursor_word - 1];
+    if (previous == "--from" || previous == "--to") {
+      return complete_frame_id_arg(request, kSecondCommandArgWord, current);
+    }
   }
   return {};
 }

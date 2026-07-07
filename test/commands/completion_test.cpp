@@ -1183,6 +1183,65 @@ TEST_F(CompletionTest, PcdConcatStampOffsetUnknownBagYieldsNoCandidates)
     "");
 }
 
+// `pcd <TAB>` lists the command group's two subcommands.
+TEST(FlagCompletionTest, PcdSubcommandListsConcatAndUndistort)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "pcd", ""}), "concat\nundistort\n");
+}
+
+// `pcd undistort -` surfaces undistort's flags plus the implicit help flags,
+// sorted.
+TEST(FlagCompletionTest, PcdUndistortDashListsUndistortFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "pcd", "undistort", "-"}),
+    "--from\n--help\n--no-progress\n--output\n--overwrite\n--pcd\n--to\n-h\n-o\n-w\n");
+}
+
+// `pcd undistort <bag> <pose_topic> --pcd <TAB>` completes PointCloud2 topics
+// from the bag named at the <input> slot, mirroring concat's --input-topics.
+TEST_F(CompletionTest, PcdUndistortPcdCompletesPointCloud2Topics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_pointcloud2_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "pcd", "undistort", "~/fixture.mcap", "/pose",
+       "--pcd", ""}),
+    "/points\n");
+}
+
+// `--from <TAB>` after a TF-bearing bag lists every distinct frame id
+// reachable from the bag's /tf message(s), sorted and deduplicated — pcd
+// undistort reuses the same complete_frame_id_arg helper as traj dump/join.
+TEST_F(CompletionTest, PcdUndistortFromFlagListsBagFrameIds)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "pcd", "undistort", "~/tf.mcap", "/pose", "--from"}),
+    "base_link\nlidar\nmap\nodom\n");
+}
+
+// `--to <TAB>` shares the same value source as `--from`. Pin both so that a
+// future divergence cannot silently regress one branch.
+TEST_F(CompletionTest, PcdUndistortToFlagListsBagFrameIds)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "pcd", "undistort", "~/tf.mcap", "/pose", "--to"}),
+    "base_link\nlidar\nmap\nodom\n");
+}
+
 // `bagwiz topic -` is the command-group slot; only the implicit help flags
 // appear (drop's own flags live one slot deeper).
 TEST(FlagCompletionTest, TopicParentDashListsHelpFlags)
