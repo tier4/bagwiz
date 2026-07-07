@@ -188,7 +188,7 @@ const state: ViewerState = {
   trajMaterials: [],
   // Metres; must match the #trajAxisLen / #trajAxisSpacing slider defaults in
   // map_viewer.html.
-  axisLength: 1.0,
+  axisLength: 1.5,
   axisSpacing: 1.5,
   showTrajectory: false,
 };
