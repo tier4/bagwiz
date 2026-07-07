@@ -9,7 +9,7 @@
 // X/Y/Z axes and snaps the view on click, and a scale bar reports the on-screen
 // distance scale. When a sibling traj.tum exists next to map.pcd, an optional
 // (default off) trajectory overlay is also offered — an axis triad with
-// arrowheads at every 10th pose, joined by a backbone line through every pose
+// arrowheads at every 5th pose, joined by a backbone line through every pose
 // origin; see the Trajectory section below. TypeScript
 // source; compiled to map_viewer.js at build time and
 // embedded into bagwiz (see CMakeLists.txt). three.js is resolved from a CDN at
@@ -723,7 +723,7 @@ function buildUI(): void {
 // Each selected pose is drawn as an X/Y/Z coordinate triad built from its
 // orientation quaternion, colored to match the corner orientation gizmo
 // (three.js ViewHelper's defaults): X red, Y green, Z blue. A small cone at
-// the positive end of each axis acts as an arrowhead. Triads sit at every 10th
+// the positive end of each axis acts as an arrowhead. Triads sit at every 5th
 // real pose (plus the first and last), and a neutral "backbone" line joins the
 // origins of every pose so the path stays continuous. The vehicle's forward
 // axis is X, so the red axis doubles as a direction-of-travel cue.
@@ -744,9 +744,10 @@ const TRAJ_AXIS_WIDTH_PX = 2.5;
 // so they read over any colormap — jet's low end (the default; see
 // map_colormaps.ts) is itself blue.
 const TRAJ_BACKBONE_COLOR = 0xd5d9e2;
-const TRAJ_BACKBONE_WIDTH_PX = 2;
+const TRAJ_BACKBONE_WIDTH_PX = 1.2;
+const TRAJ_BACKBONE_JOINT_RADIUS = 0.06; // metres; rounds every backbone joint
 const TRAJ_OUTLINE_COLOR = 0x08090c;
-const TRAJ_OUTLINE_EXTRA_PX = 2; // an outline is this many px wider than its line
+const TRAJ_OUTLINE_EXTRA_PX = 1.5; // an outline is this many px wider than its line
 
 // Start (oldest) / end (newest) pose markers — a hollow teal ring and a filled
 // blue node — so the open path's two ends are told apart at a glance.
@@ -805,12 +806,12 @@ function parseTumPoses(text: string): TrajPoses {
   };
 }
 
-// Pick the poses that get an axis triad: every 10th pose, plus the first and
+// Pick the poses that get an axis triad: every 5th pose, plus the first and
 // last so both ends of an open path always carry a frame. The returned indices
 // are always real poses from traj.tum -- axes are never placed at interpolated
 // points -- and the backbone still runs through every pose regardless of this
 // subset.
-const TRAJ_GIZMO_INTERVAL = 10;
+const TRAJ_GIZMO_INTERVAL = 5;
 function selectAxisFrames(poses: TrajPoses): number[] {
   const frames: number[] = [];
   if (poses.count === 0) {
@@ -859,7 +860,25 @@ function buildTrajectory(poses: TrajPoses): {
   group.add(backboneOutline, backbone);
   materials.push(backboneOutlineMat, backboneMat);
 
-  // Pose-axis triads with arrowheads at every-10th real pose.
+  // Rounded joints at every pose origin so the straight backbone segments read
+  // as a continuous tube rather than a chain of mitered rectangles.
+  const jointGeom = new THREE.SphereGeometry(TRAJ_BACKBONE_JOINT_RADIUS, 12, 10);
+  const jointMat = new THREE.MeshBasicMaterial({ color: TRAJ_BACKBONE_COLOR });
+  const joints = new THREE.InstancedMesh(jointGeom, jointMat, poses.count);
+  joints.renderOrder = 1;
+  const jointMatrix = new THREE.Matrix4();
+  for (let i = 0; i < poses.count; i += 1) {
+    jointMatrix.setPosition(
+      poses.positions[i * 3],
+      poses.positions[i * 3 + 1],
+      poses.positions[i * 3 + 2],
+    );
+    joints.setMatrixAt(i, jointMatrix);
+  }
+  joints.instanceMatrix.needsUpdate = true;
+  group.add(joints);
+
+  // Pose-axis triads with arrowheads at every-5th real pose.
   const frames = selectAxisFrames(poses);
   const axisPositions: number[] = [];
   const axisColors: number[] = [];
