@@ -262,7 +262,7 @@ function aspect(): number {
 }
 
 function defaultPointSize(radius: number): number {
-  return Math.min(Math.max(radius * 0.001, 0.02), 0.3);
+  return Math.min(Math.max(radius * 0.0005, 0.02), 0.3);
 }
 
 // 2D bird's-eye pose. `TOP_OFFSET` is the unit direction from the target to the
