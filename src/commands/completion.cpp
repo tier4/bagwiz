@@ -1209,9 +1209,11 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
 // to the shell's file completion, and `<output_topic>` is a free-form new topic
 // name with nothing to suggest. Past the subcommand we surface `concat`'s flags
 // for any `-` word, plus PointCloud2 topic values for every `--input-topics`
-// value (read from the bag named at word 2). `--frame`, `--tolerance`,
-// `--stamp-offset`, and `-o`/`--output` take free-form / numeric / path values,
-// so they get no value completion.
+// value (read from the bag named at word 2). `--stamp-offset` takes a single
+// `<topic>=<value>`, so its `<topic>` half completes to the same PointCloud2
+// topics (as `<topic>=`) until the value word contains `=`. `--frame`,
+// `--tolerance`, and `-o`/`--output` take free-form / numeric / path values, so
+// they get no value completion.
 //
 //   concat: `pcd`(0) `concat`(1) `<input>`(2) `<output_topic>`(3)
 //           --input-topics <t...> [--frame <f>] [--tolerance <val>]
@@ -1235,6 +1237,25 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
           {"--drop-inputs", "--force", "--frame", "--input-topics", "--output", "--overwrite",
            "--stamp-offset", "--tolerance", "-o", "-w"}),
         current);
+    }
+  }
+
+  // --stamp-offset takes a single <topic>=<value>; complete the <topic> half from
+  // the bag's PointCloud2 topics (like --input-topics) while the value word has no
+  // '=' yet. Each candidate carries a trailing '=' so the shell scripts drop the
+  // auto-space and leave the cursor on the value. Unlike --input-topics this is
+  // single-valued, so only the word immediately after --stamp-offset is its value.
+  if (
+    request.cursor_word > kSecondCommandArgWord &&
+    request.words[request.cursor_word - 1] == "--stamp-offset" &&
+    current.find('=') == std::string::npos) {
+    const auto & bag_arg = request.words[kSecondCommandArgWord];
+    if (!bag_arg.empty() && !bag_arg.starts_with("-")) {
+      auto topics = complete_topics(expand_current_user_home(bag_arg), current, kPointCloud2Type);
+      for (auto & topic : topics) {
+        topic += '=';
+      }
+      return topics;
     }
   }
 
@@ -1337,6 +1358,17 @@ _bagwiz_completion()
 
   local IFS=$'\n'
   COMPREPLY=($(compgen -W "${out}" -- "${cur}"))
+
+  # `<topic>=` candidates (e.g. `pcd concat --stamp-offset <topic>=<value>`) must
+  # not receive the default trailing space, so the value can be typed right after
+  # the `=`. Suppress it only when every candidate ends with `=`.
+  if [[ ${#COMPREPLY[@]} -gt 0 ]]; then
+    local __bw_all_eq=1 __bw_c
+    for __bw_c in "${COMPREPLY[@]}"; do
+      [[ "${__bw_c}" == *= ]] || { __bw_all_eq=0; break; }
+    done
+    [[ ${__bw_all_eq} -eq 1 ]] && compopt -o nospace
+  fi
 }
 
 complete -o default -F _bagwiz_completion bagwiz
@@ -1373,6 +1405,19 @@ _bagwiz()
   candidates=(${(f)out})
 
   if (( ${#candidates} == 0 )); then
+    _files
+    return 0
+  fi
+
+  # `<topic>=` candidates (e.g. `pcd concat --stamp-offset <topic>=<value>`) must
+  # keep the cursor on the value, so add them with an empty suffix (no trailing
+  # space) instead of via _describe. Only when every candidate ends with `=`.
+  local __bw_all_eq=1 __bw_c
+  for __bw_c in "${candidates[@]}"; do
+    [[ "${__bw_c}" == *= ]] || { __bw_all_eq=0; break; }
+  done
+  if (( __bw_all_eq )); then
+    compadd -S '' -- "${candidates[@]}" && return 0
     _files
     return 0
   fi

@@ -164,6 +164,13 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz generate video <input> ... --pcd <topic>` — `sensor_msgs/msg/PointCloud2` topics
   - `bagwiz map slam <input> ... --imu <topic>` — `sensor_msgs/msg/Imu` topics
   - `bagwiz walk <input> <topic> --cam-info <topic>` — `sensor_msgs/msg/CameraInfo` topics
+  - `bagwiz pcd concat <input> ... --input-topics <topic>...` —
+    `sensor_msgs/msg/PointCloud2` topics, offered at every value of the variadic
+    run
+  - `bagwiz pcd concat <input> ... --stamp-offset <topic>=<val>` — the `<topic>`
+    half is completed to the same `sensor_msgs/msg/PointCloud2` topics (as
+    `<topic>=`) until the value word contains `=`; the `<val>` duration has
+    nothing to suggest
 - Commands that take a `<topic>` positional argument complete it by opening
   `<input>` as a ROS 2 rosbag and listing topics with names that start with
   the current prefix. The currently-covered positions are:

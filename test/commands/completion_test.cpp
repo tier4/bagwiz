@@ -1117,6 +1117,72 @@ TEST_F(CompletionTest, MapFilterRemovertTopicCompletionListsOnlyPointCloud2)
     "/points\n");
 }
 
+// `pcd concat -` surfaces concat's flags plus the implicit help flags, sorted.
+// Guards the flag list against drift and proves the --stamp-offset value
+// completion below did not disturb the `-` branch.
+TEST(FlagCompletionTest, PcdConcatDashListsConcatFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "pcd", "concat", "-"}),
+    "--drop-inputs\n--force\n--frame\n--help\n--input-topics\n--output\n--overwrite\n"
+    "--stamp-offset\n--tolerance\n-h\n-o\n-w\n");
+}
+
+// `pcd concat <bag> <out> --stamp-offset <TAB>` completes the <topic> half of the
+// topic=value argument from the bag's PointCloud2 topics (like --input-topics),
+// emitting a trailing '=' so the shell leaves the cursor ready for the value.
+TEST_F(CompletionTest, PcdConcatStampOffsetCompletesPointCloud2TopicsWithEquals)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_pointcloud2_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
+       "--stamp-offset"}),
+    "/points=\n");
+}
+
+// A typed prefix narrows the --stamp-offset topic candidates.
+TEST_F(CompletionTest, PcdConcatStampOffsetRespectsPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_pointcloud2_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
+       "--stamp-offset", "/po"}),
+    "/points=\n");
+}
+
+// Once the value word already contains '=', the topic is chosen and the value (a
+// duration) has nothing to suggest.
+TEST_F(CompletionTest, PcdConcatStampOffsetOffersNothingAfterEquals)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_pointcloud2_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
+       "--stamp-offset", "/points=50"}),
+    "");
+}
+
+// A bag that fails to open yields no --stamp-offset candidates; completion is
+// best-effort and falls through to the shell's file completion.
+TEST_F(CompletionTest, PcdConcatStampOffsetUnknownBagYieldsNoCandidates)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "pcd", "concat", "~/missing.mcap", "/out",
+       "--stamp-offset"}),
+    "");
+}
+
 // `bagwiz topic -` is the command-group slot; only the implicit help flags
 // appear (drop's own flags live one slot deeper).
 TEST(FlagCompletionTest, TopicParentDashListsHelpFlags)
@@ -1557,6 +1623,24 @@ TEST(CompletionScriptTest, FishScriptFallsBackToFileCompletion)
   // -F (force file completion) gated by a "no candidates" condition is the
   // canonical fish equivalent of bash's `complete -o default` fallback.
   EXPECT_NE(script->find("-F"), std::string::npos);
+}
+
+// `--stamp-offset` emits `<topic>=` candidates; the bash script must suppress the
+// auto-inserted trailing space for those so the value can follow the '='.
+TEST(CompletionScriptTest, BashScriptSuppressesSpaceForEqualsCandidates)
+{
+  const auto script = bagwiz::commands::completion_script_for("bash");
+  ASSERT_TRUE(script.has_value());
+  EXPECT_NE(script->find("compopt -o nospace"), std::string::npos);
+}
+
+// zsh equivalent: `<topic>=` candidates are added with an empty suffix so no
+// trailing space is inserted after the '='.
+TEST(CompletionScriptTest, ZshScriptSuppressesSpaceForEqualsCandidates)
+{
+  const auto script = bagwiz::commands::completion_script_for("zsh");
+  ASSERT_TRUE(script.has_value());
+  EXPECT_NE(script->find("compadd -S ''"), std::string::npos);
 }
 
 class InstallPathTest : public ::testing::Test
