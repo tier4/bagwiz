@@ -165,6 +165,18 @@ geometry_msgs::msg::Pose compose_trajectory_pose(
   const geometry_msgs::msg::Pose & body_pose,
   const std::optional<geometry_msgs::msg::Transform> & body_to);
 
+// Interpolate between two poses. `t` in [0,1]: position lerp, orientation
+// shortest-path SLERP (nlerp near-parallel), result normalized. The returned
+// pose is stamped with `a.timestamp_ns` (callers that need the target stamp
+// overwrite it). Preconditions: quaternions normalized.
+TrajectoryPose interpolate_poses(const TrajectoryPose & a, const TrajectoryPose & b, double t);
+
+// Find the pose at `stamp_ns`: exact hit, else linear interpolation of the two
+// surrounding poses; clamps to the first/last pose outside the span. nullopt only
+// for an empty trajectory. Preconditions: `poses` sorted ascending by timestamp_ns.
+std::optional<TrajectoryPose> lookup_pose(
+  std::int64_t stamp_ns, std::span<const TrajectoryPose> poses);
+
 }  // namespace bagwiz::core
 
 #endif  // BAGWIZ__CORE__TRAJECTORY_HPP_

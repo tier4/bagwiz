@@ -24,6 +24,8 @@ namespace
 {
 
 using bagwiz::core::compose_trajectory_pose;
+using bagwiz::core::interpolate_poses;
+using bagwiz::core::lookup_pose;
 using bagwiz::core::parse_upsample_spec;
 using bagwiz::core::pose_to_transform_stamped;
 using bagwiz::core::read_tum;
@@ -549,6 +551,45 @@ TEST(UpsampleTrajectory, PreservesOriginalTimestampsAndPosesOnNonUniformInput)
   // The 0.13 s segment is subdivided (round(0.13 * 20) == 3 -> 2 interior
   // points), so densification did happen beyond the three originals.
   EXPECT_GT(r.poses.size(), in.size());
+}
+
+TEST(LookupPose, EmptyReturnsNullopt)
+{
+  std::vector<TrajectoryPose> poses;
+  EXPECT_FALSE(lookup_pose(100, poses).has_value());
+}
+
+TEST(LookupPose, ExactHitReturnsThatPose)
+{
+  std::vector<TrajectoryPose> poses{{100, 1, 0, 0, 0, 0, 0, 1}, {200, 3, 0, 0, 0, 0, 0, 1}};
+  auto p = lookup_pose(200, poses);
+  ASSERT_TRUE(p.has_value());
+  EXPECT_DOUBLE_EQ(p->tx, 3.0);
+}
+
+TEST(LookupPose, InterpolatesMidpointPosition)
+{
+  std::vector<TrajectoryPose> poses{{100, 0, 0, 0, 0, 0, 0, 1}, {200, 10, 0, 0, 0, 0, 0, 1}};
+  auto p = lookup_pose(150, poses);
+  ASSERT_TRUE(p.has_value());
+  EXPECT_NEAR(p->tx, 5.0, 1e-9);
+}
+
+TEST(LookupPose, ClampsBeforeFirstAndAfterLast)
+{
+  std::vector<TrajectoryPose> poses{{100, 1, 0, 0, 0, 0, 0, 1}, {200, 9, 0, 0, 0, 0, 0, 1}};
+  EXPECT_NEAR(lookup_pose(50, poses)->tx, 1.0, 1e-9);
+  EXPECT_NEAR(lookup_pose(999, poses)->tx, 9.0, 1e-9);
+}
+
+TEST(InterpolatePoses, SlerpHalfwayAcross90Degrees)
+{
+  // a = identity, b = 90 deg about Z; halfway = 45 deg (qz = sin(22.5), qw = cos(22.5)).
+  TrajectoryPose a{0, 0, 0, 0, 0, 0, 0, 1};
+  TrajectoryPose b{100, 0, 0, 0, 0, 0, kSinPiOver4, kSinPiOver4};  // 90 deg about Z
+  auto m = interpolate_poses(a, b, 0.5);
+  EXPECT_NEAR(m.qz, kSin22p5, 1e-9);
+  EXPECT_NEAR(m.qw, kCos22p5, 1e-9);
 }
 
 }  // namespace

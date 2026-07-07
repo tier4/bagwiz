@@ -24,7 +24,6 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -94,89 +93,6 @@ std::array<double, 3> rotate_vector(
     vy + qw * ty + (qz * tx - qx * tz),
     vz + qw * tz + (qx * ty - qy * tx),
   };
-}
-
-// Interpolate between two trajectory poses. `t` is in [0, 1].
-core::TrajectoryPose interpolate_poses(
-  const core::TrajectoryPose & a, const core::TrajectoryPose & b, double t)
-{
-  core::TrajectoryPose out;
-  out.timestamp_ns = a.timestamp_ns;
-  const double t1 = 1.0 - t;
-  out.tx = t1 * a.tx + t * b.tx;
-  out.ty = t1 * a.ty + t * b.ty;
-  out.tz = t1 * a.tz + t * b.tz;
-
-  // SLERP on the quaternion.
-  double dot = a.qx * b.qx + a.qy * b.qy + a.qz * b.qz + a.qw * b.qw;
-  double bx = b.qx;
-  double by = b.qy;
-  double bz = b.qz;
-  double bw = b.qw;
-  if (dot < 0.0) {
-    dot = -dot;
-    bx = -bx;
-    by = -by;
-    bz = -bz;
-    bw = -bw;
-  }
-  if (dot > 0.9995) {
-    out.qx = a.qx + t * (bx - a.qx);
-    out.qy = a.qy + t * (by - a.qy);
-    out.qz = a.qz + t * (bz - a.qz);
-    out.qw = a.qw + t * (bw - a.qw);
-  } else {
-    const double omega = std::acos(dot);
-    const double sin_omega = std::sin(omega);
-    const double s0 = std::sin(t1 * omega) / sin_omega;
-    const double s1 = std::sin(t * omega) / sin_omega;
-    out.qx = s0 * a.qx + s1 * bx;
-    out.qy = s0 * a.qy + s1 * by;
-    out.qz = s0 * a.qz + s1 * bz;
-    out.qw = s0 * a.qw + s1 * bw;
-  }
-  // Normalize to be safe.
-  const double norm =
-    std::sqrt(out.qx * out.qx + out.qy * out.qy + out.qz * out.qz + out.qw * out.qw);
-  if (norm > 0.0) {
-    out.qx /= norm;
-    out.qy /= norm;
-    out.qz /= norm;
-    out.qw /= norm;
-  }
-  return out;
-}
-
-// Find the pose for `stamp_ns`. Prefer an exact timestamp; otherwise linearly
-// interpolate the two surrounding poses. Falls back to the first/last pose if
-// the stamp lies outside the trajectory span.
-std::optional<core::TrajectoryPose> lookup_pose(
-  std::int64_t stamp_ns, const std::vector<core::TrajectoryPose> & poses)
-{
-  if (poses.empty()) {
-    return std::nullopt;
-  }
-  const auto cmp = [](const core::TrajectoryPose & p, std::int64_t t) {
-    return p.timestamp_ns < t;
-  };
-  const auto it = std::lower_bound(poses.begin(), poses.end(), stamp_ns, cmp);
-  if (it == poses.end()) {
-    return poses.back();
-  }
-  if (it->timestamp_ns == stamp_ns) {
-    return *it;
-  }
-  if (it == poses.begin()) {
-    return poses.front();
-  }
-  const auto & prev = *(it - 1);
-  const auto & next = *it;
-  const double dt = static_cast<double>(next.timestamp_ns - prev.timestamp_ns);
-  if (dt <= 0.0) {
-    return prev;
-  }
-  const double t = static_cast<double>(stamp_ns - prev.timestamp_ns) / dt;
-  return interpolate_poses(prev, next, t);
 }
 
 }  // namespace
@@ -335,7 +251,7 @@ int run_map_filter_removert(const MapFilterRemovertArgs & args)
         progress.update(processed, scans);
         continue;
       }
-      const auto pose = lookup_pose(scan.scan->stamp_ns, traj);
+      const auto pose = core::lookup_pose(scan.scan->stamp_ns, traj);
       if (!pose) {
         ++no_pose;
         progress.update(processed, scans);
