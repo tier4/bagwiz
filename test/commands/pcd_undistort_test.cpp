@@ -148,6 +148,31 @@ void write_undistort_input(const std::filesystem::path & path, bool with_time_fi
   w->close();
 }
 
+// Same as write_undistort_input, but omits /tf_static entirely: a realistic
+// minimal SLAM-free bag that never published any static TF at all (as
+// opposed to write_undistort_input's /tf_static, which is present but
+// carries zero edges). Used to exercise load_static_tf_buffer's "no static TF
+// topic" failure without a --pcd-topic-frame extrinsic hop muddying it.
+void write_undistort_input_no_static_topic(const std::filesystem::path & path)
+{
+  auto w = bagwiz::io::open_write(path, mcap_options());
+  w->declare_topic(bagwiz::core::make_tf_message_topic_info("/pose_tf"));
+  w->declare_topic(pcd_topic_info("/points"));
+
+  const std::vector<geometry_msgs::msg::TransformStamped> edges0{
+    make_map_to_base_link(kPoseT0Ns, 0.0)};
+  const std::vector<geometry_msgs::msg::TransformStamped> edges1{
+    make_map_to_base_link(kPoseT1Ns, 1.0)};
+  const auto p0 = bagwiz::core::serialize_tf_message(edges0);
+  const auto p1 = bagwiz::core::serialize_tf_message(edges1);
+  w->write("/pose_tf", kPoseT0Ns, std::span<const std::byte>(p0.data(), p0.size()));
+  w->write("/pose_tf", kPoseT1Ns, std::span<const std::byte>(p1.data(), p1.size()));
+
+  const auto pts = serialize_cloud(kPoseT0Ns, "base_link", 0.0f, 0.1f);
+  w->write("/points", kPoseT0Ns, std::span<const std::byte>(pts.data(), pts.size()));
+  w->close();
+}
+
 std::optional<float> read_first_point_x(
   const std::filesystem::path & path, const std::string & topic)
 {
@@ -255,4 +280,48 @@ TEST_F(PcdUndistortTest, UnresolvableToIsFatal)
   auto a = base_args(in_, out_);
   a.to_frame = "no_such_frame";
   EXPECT_EQ(run_pcd_undistort(a), 1);
+}
+
+// A bag with no static TF topic at all (a realistic minimal SLAM-free bag)
+// must fail fast. This is a regression test for a defect where the surfaced
+// error forwarded load_static_tf_buffer's message verbatim, which ends in
+// "...--frame" (pcd concat's flag; pcd undistort has none). The exact log
+// text isn't asserted here (this suite only checks exit codes, matching
+// every other test in this file); it was verified by hand — see the task-4
+// report's "Fix + test results" section for the exact printed line.
+TEST_F(PcdUndistortTest, MissingStaticTfTopicIsFatal)
+{
+  write_undistort_input_no_static_topic(in_);
+  EXPECT_EQ(run_pcd_undistort(base_args(in_, out_)), 1);
+}
+
+// In-place mode (output_path unset) is the default entry point. Run it on a
+// copy of the fixture bag so `in_` stays untouched as the "before" reference
+// that other_before / pose_before are read from.
+TEST_F(PcdUndistortTest, InPlaceRewritesTargetTopicAndPreservesOthers)
+{
+  write_undistort_input(in_, /*with_time_field=*/true);
+  const auto other_before = read_raw_payloads(in_, "/other");
+  const auto pose_before = read_raw_payloads(in_, "/pose_tf");
+  ASSERT_EQ(other_before.size(), 1u);
+  ASSERT_EQ(pose_before.size(), 2u);
+
+  const auto inplace_path = tmp_ / "inplace.mcap";
+  std::filesystem::copy_file(in_, inplace_path);
+
+  PcdUndistortArgs a;
+  a.input_path = inplace_path;
+  a.pose_topic = "/pose_tf";
+  a.pcd_topics = {"/points"};
+  a.from_frame = "map";
+  a.to_frame = "base_link";
+  // a.output_path is left unset -> in-place.
+  ASSERT_EQ(run_pcd_undistort(a), 0);
+
+  const auto x = read_first_point_x(inplace_path, "/points");
+  ASSERT_TRUE(x.has_value());
+  EXPECT_NEAR(*x, 1.0f, 1e-4f);
+
+  EXPECT_EQ(read_raw_payloads(inplace_path, "/other"), other_before);
+  EXPECT_EQ(read_raw_payloads(inplace_path, "/pose_tf"), pose_before);
 }
