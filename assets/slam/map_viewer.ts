@@ -18,8 +18,6 @@
 import * as THREE from "three";
 import { PCDLoader } from "three/addons/loaders/PCDLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { Line2 } from "three/addons/lines/Line2.js";
-import { LineGeometry } from "three/addons/lines/LineGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -739,13 +737,9 @@ const TRAJ_AXIS_LENGTH = 1.5; // metres
 const TRAJ_AXIS_ARROW_SIZE = 0.18; // metres; arrowhead radius / half-length
 const TRAJ_AXIS_WIDTH_PX = 2.5;
 
-// A neutral backbone (not the teal/blue accent) stays distinct from the blue Z
-// axis and the point cloud. Both the backbone and the axes get a dark outline
-// so they read over any colormap — jet's low end (the default; see
-// map_colormaps.ts) is itself blue.
-const TRAJ_BACKBONE_COLOR = 0xd5d9e2;
-const TRAJ_BACKBONE_WIDTH_PX = 1.2;
-const TRAJ_BACKBONE_JOINT_RADIUS = 0.06; // metres; rounds every backbone joint
+// A neon-green backbone joins the gizmo origins. It is rendered as a simple
+// THREE.Line so it reads as a wire-like path over the point cloud.
+const TRAJ_BACKBONE_COLOR = 0x39ff14; // neon green
 const TRAJ_OUTLINE_COLOR = 0x08090c;
 const TRAJ_OUTLINE_EXTRA_PX = 1.5; // an outline is this many px wider than its line
 
@@ -826,14 +820,14 @@ function selectAxisFrames(poses: TrajPoses): number[] {
   return frames;
 }
 
-// Build the trajectory group: a neutral backbone (Line2) through every pose
-// origin, an X/Y/Z axis triad with arrowheads at each selected pose, and start
-// / end origin markers. Fat lines come from three/addons (Line2 /
-// LineSegments2) for real pixel-width control that plain THREE.Line lacks; each
-// gets a dark outline drawn under it on identical geometry, so draw order alone
-// (not z-fighting) decides what shows on top. Every LineMaterial is returned so
-// the caller can track it for .resolution updates on resize. The frame count is
-// returned for the inspector's hint.
+// Build the trajectory group: a neon-green backbone (THREE.Line) through every
+// pose origin, an X/Y/Z axis triad with arrowheads at each selected pose, and
+// start / end origin markers. Axis fat lines come from three/addons
+// (LineSegments2) for real pixel-width control; each gets a dark outline drawn
+// under it on identical geometry, so draw order alone (not z-fighting) decides
+// what shows on top. Every LineMaterial is returned so the caller can track it
+// for .resolution updates on resize. The frame count is returned for the
+// inspector's hint.
 function buildTrajectory(poses: TrajPoses): {
   group: THREE.Group;
   materials: LineMaterial[];
@@ -842,41 +836,18 @@ function buildTrajectory(poses: TrajPoses): {
   const group = new THREE.Group();
   const materials: LineMaterial[] = [];
 
-  // Backbone through all pose origins.
-  const backboneGeom = new LineGeometry();
-  backboneGeom.setPositions(poses.positions);
-  const backboneOutlineMat = new LineMaterial({
-    color: TRAJ_OUTLINE_COLOR,
-    linewidth: TRAJ_BACKBONE_WIDTH_PX + TRAJ_OUTLINE_EXTRA_PX,
-  });
-  const backboneMat = new LineMaterial({
-    color: TRAJ_BACKBONE_COLOR,
-    linewidth: TRAJ_BACKBONE_WIDTH_PX,
-  });
-  const backboneOutline = new Line2(backboneGeom, backboneOutlineMat);
-  backboneOutline.renderOrder = 0;
-  const backbone = new Line2(backboneGeom, backboneMat);
+  // Backbone through all pose origins, rendered as a simple neon-green line.
+  const backboneGeom = new THREE.BufferGeometry();
+  backboneGeom.setAttribute(
+    "position",
+    new THREE.BufferAttribute(new Float32Array(poses.positions), 3),
+  );
+  const backbone = new THREE.Line(
+    backboneGeom,
+    new THREE.LineBasicMaterial({ color: TRAJ_BACKBONE_COLOR }),
+  );
   backbone.renderOrder = 1;
-  group.add(backboneOutline, backbone);
-  materials.push(backboneOutlineMat, backboneMat);
-
-  // Rounded joints at every pose origin so the straight backbone segments read
-  // as a continuous tube rather than a chain of mitered rectangles.
-  const jointGeom = new THREE.SphereGeometry(TRAJ_BACKBONE_JOINT_RADIUS, 12, 10);
-  const jointMat = new THREE.MeshBasicMaterial({ color: TRAJ_BACKBONE_COLOR });
-  const joints = new THREE.InstancedMesh(jointGeom, jointMat, poses.count);
-  joints.renderOrder = 1;
-  const jointMatrix = new THREE.Matrix4();
-  for (let i = 0; i < poses.count; i += 1) {
-    jointMatrix.setPosition(
-      poses.positions[i * 3],
-      poses.positions[i * 3 + 1],
-      poses.positions[i * 3 + 2],
-    );
-    joints.setMatrixAt(i, jointMatrix);
-  }
-  joints.instanceMatrix.needsUpdate = true;
-  group.add(joints);
+  group.add(backbone);
 
   // Pose-axis triads with arrowheads at every-5th real pose.
   const frames = selectAxisFrames(poses);
@@ -1116,8 +1087,8 @@ window.addEventListener("resize", () => {
   // Re-fit the ortho frustum's width to the new aspect, preserving zoom/height.
   setOrthoExtent(orthoCamera.top);
   renderer.setSize(window.innerWidth, window.innerHeight);
-  // LineMaterial (Line2) sizes its screen-space width from this uniform, so it
-  // must track the viewport like the cameras above.
+  // LineMaterial sizes its screen-space width from this uniform, so it must
+  // track the viewport like the cameras above.
   for (const material of state.trajMaterials) {
     material.resolution.set(window.innerWidth, window.innerHeight);
   }
