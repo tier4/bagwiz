@@ -164,7 +164,7 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz generate video <input> ... --pcd <topic>` — `sensor_msgs/msg/PointCloud2` topics
   - `bagwiz map slam <input> ... --imu <topic>` — `sensor_msgs/msg/Imu` topics
   - `bagwiz walk <input> <topic> --cam-info <topic>` — `sensor_msgs/msg/CameraInfo` topics
-  - `bagwiz pcd concat <input> ... --input-topics <topic>...` —
+  - `bagwiz pcd concat <input> ... --pcd <topic>...` —
     `sensor_msgs/msg/PointCloud2` topics, offered at every value of the variadic
     run
   - `bagwiz pcd concat <input> ... --stamp-offset <topic>=<val>` — the `<topic>`

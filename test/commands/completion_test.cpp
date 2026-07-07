@@ -1124,12 +1124,12 @@ TEST(FlagCompletionTest, PcdConcatDashListsConcatFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "pcd", "concat", "-"}),
-    "--drop-inputs\n--force\n--frame\n--help\n--input-topics\n--output\n--overwrite\n"
+    "--drop-inputs\n--force\n--frame\n--help\n--output\n--overwrite\n--pcd\n"
     "--stamp-offset\n--tolerance\n-h\n-o\n-w\n");
 }
 
 // `pcd concat <bag> <out> --stamp-offset <TAB>` completes the <topic> half of the
-// topic=value argument from the bag's PointCloud2 topics (like --input-topics),
+// topic=value argument from the bag's PointCloud2 topics (like --pcd),
 // emitting a trailing '=' so the shell leaves the cursor ready for the value.
 TEST_F(CompletionTest, PcdConcatStampOffsetCompletesPointCloud2TopicsWithEquals)
 {

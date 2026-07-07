@@ -175,33 +175,33 @@ std::int64_t median_period_ns(const std::vector<std::int64_t> & stamps)
 int run_pcd_concat(const PcdConcatArgs & args)
 {
   // ---- validate arguments -------------------------------------------------
-  if (args.input_topics.size() < 2) {
-    BAGWIZ_LOG_ERROR(kLogger, "pcd concat: --input-topics needs at least 2 topics");
+  if (args.pcd_topics.size() < 2) {
+    BAGWIZ_LOG_ERROR(kLogger, "pcd concat: --pcd needs at least 2 topics");
     return 1;
   }
   // --frame defaults to base_link. When it is not given and the default cannot
-  // reach every --input-topics frame via static TF, --frame becomes required
+  // reach every --pcd frame via static TF, --frame becomes required
   // (enforced during extrinsic resolution below).
   const bool frame_explicit = args.frame.has_value();
   const std::string target_frame = frame_explicit ? *args.frame : std::string(kDefaultFrame);
   {
     std::unordered_set<std::string> seen;
-    for (const auto & t : args.input_topics) {
+    for (const auto & t : args.pcd_topics) {
       if (!seen.insert(t).second) {
-        BAGWIZ_LOG_ERROR(kLogger, "pcd concat: duplicate topic in --input-topics: '%s'", t.c_str());
+        BAGWIZ_LOG_ERROR(kLogger, "pcd concat: duplicate topic in --pcd: '%s'", t.c_str());
         return 1;
       }
     }
   }
 
-  // The first --input-topics topic is always the reference that drives the output
+  // The first --pcd topic is always the reference that drives the output
   // rate and per-message timestamps.
   const std::size_t ref_idx = 0;
 
-  const std::size_t num_topics = args.input_topics.size();
+  const std::size_t num_topics = args.pcd_topics.size();
   std::unordered_map<std::string, std::size_t> topic_index;
   for (std::size_t i = 0; i < num_topics; ++i) {
-    topic_index[args.input_topics[i]] = i;
+    topic_index[args.pcd_topics[i]] = i;
   }
 
   // parse --stamp-offset entries
@@ -218,7 +218,7 @@ int run_pcd_concat(const PcdConcatArgs & args)
     const auto it = topic_index.find(topic);
     if (it == topic_index.end()) {
       BAGWIZ_LOG_ERROR(
-        kLogger, "pcd concat: --stamp-offset topic '%s' is not in --input-topics", topic.c_str());
+        kLogger, "pcd concat: --stamp-offset topic '%s' is not in --pcd", topic.c_str());
       return 1;
     }
     const auto ns = core::parse_duration_ns(value);
@@ -270,13 +270,13 @@ int run_pcd_concat(const PcdConcatArgs & args)
     const io::TopicInfo * info = info_by_index[i];
     if (info == nullptr) {
       BAGWIZ_LOG_ERROR(
-        kLogger, "Topic '%s' is not present in %s", args.input_topics[i].c_str(),
+        kLogger, "Topic '%s' is not present in %s", args.pcd_topics[i].c_str(),
         args.input_path.c_str());
       return 1;
     }
     if (info->type != kPointCloud2Type) {
       BAGWIZ_LOG_ERROR(
-        kLogger, "Topic '%s' is %s, expected %s", args.input_topics[i].c_str(), info->type.c_str(),
+        kLogger, "Topic '%s' is %s, expected %s", args.pcd_topics[i].c_str(), info->type.c_str(),
         kPointCloud2Type);
       return 1;
     }
@@ -297,7 +297,7 @@ int run_pcd_concat(const PcdConcatArgs & args)
   // ---- Pass A: collect per-topic header stamps + first frame_id -----------
   std::vector<TopicState> topics(num_topics);
   for (std::size_t i = 0; i < num_topics; ++i) {
-    topics[i].name = args.input_topics[i];
+    topics[i].name = args.pcd_topics[i];
     topics[i].offset_ns = offsets[i];
   }
   {
@@ -309,7 +309,7 @@ int run_pcd_concat(const PcdConcatArgs & args)
       return 1;
     }
     io::ReadFilter filter;
-    filter.topics = args.input_topics;
+    filter.topics = args.pcd_topics;
     sreader->set_filter(filter);
     io::RawMessage raw;
     try {
@@ -445,7 +445,7 @@ int run_pcd_concat(const PcdConcatArgs & args)
   // output topic being replaced (--force).
   std::unordered_set<std::string> suppress;
   if (args.drop_inputs) {
-    for (const auto & t : args.input_topics) {
+    for (const auto & t : args.pcd_topics) {
       suppress.insert(t);
     }
   }
@@ -542,7 +542,7 @@ int run_pcd_concat(const PcdConcatArgs & args)
           continue;
         }
         fired[g] = 1;
-        // assemble inputs in --input-topics order from cached picks
+        // assemble inputs in --pcd order from cached picks
         std::vector<core::pointcloud::ConcatInput> inputs;
         for (std::size_t k = 0; k < num_topics; ++k) {
           if (!groups[g].picks[k].has_value()) {

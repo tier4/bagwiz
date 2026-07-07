@@ -62,7 +62,7 @@ private:
       "concat",
       "Merge multiple PointCloud2 topics into one new topic. Each topic is rigidly "
       "transformed into --frame using the bag's static TF, and messages are matched against "
-      "the first --input-topics topic within --tolerance (nearest-in-time). Writes a new rosbag "
+      "the first --pcd topic within --tolerance (nearest-in-time). Writes a new rosbag "
       "with -o, or rewrites the input in place when omitted.");
     sub->add_option("input", concat_args_.input_path, "Bag path (file or directory)")
       ->required()
@@ -73,20 +73,20 @@ private:
       ->required();
     sub
       ->add_option(
-        "--input-topics", concat_args_.input_topics,
+        "--pcd", concat_args_.pcd_topics,
         "PointCloud2 topics to concatenate (2 or more). Concatenation order follows this list.")
       ->required()
       ->expected(-1);
     sub->add_option(
       "--frame", concat_args_.frame,
       "Target frame all clouds are transformed into. Default: base_link. Required when the "
-      "default is not reachable from every --input-topics frame via the bag's static TF.");
+      "default is not reachable from every --pcd frame via the bag's static TF.");
     sub->add_option(
       "-o,--output", concat_args_.output_path,
       "Output bag path. When omitted, the input bag is rewritten in place (atomic tmp swap).");
     sub->add_option(
       "--tolerance", concat_args_.tolerance,
-      "Nearest-match tolerance for pairing the other topics to the first --input-topics topic. "
+      "Nearest-match tolerance for pairing the other topics to the first --pcd topic. "
       "Takes an optional unit ns/us/ms/s (no unit = ms), e.g. 50ms. "
       "Default: half the first topic's median period.");
     sub->add_option(
@@ -96,7 +96,7 @@ private:
       "ns/us/ms/s (no unit = ms), e.g. '/lidar/left/points=50ms'. Repeatable.");
     sub->add_flag(
       "--drop-inputs", concat_args_.drop_inputs,
-      "Drop the source --input-topics from the output (default: keep them).");
+      "Drop the source --pcd topics from the output (default: keep them).");
     sub->add_flag(
       "--force", concat_args_.force,
       "Proceed even if <output_topic> already exists in the bag (replaces that topic).");

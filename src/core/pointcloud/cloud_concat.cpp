@@ -143,7 +143,7 @@ ConcatResult concat_clouds(
     if (!same_layout(first, *inputs[k].cloud)) {
       result.error =
         "input clouds have mismatched PointField layouts; concat requires identical fields and "
-        "point_step across all --input-topics";
+        "point_step across all --pcd topics";
       return result;
     }
   }

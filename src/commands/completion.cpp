@@ -1207,7 +1207,7 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
 // the implicit help flags for a `-` word). `<input>` is a path that falls through
 // to the shell's file completion, and `<output_topic>` is a free-form new topic
 // name with nothing to suggest. Past the subcommand we surface `concat`'s flags
-// for any `-` word, plus PointCloud2 topic values for every `--input-topics`
+// for any `-` word, plus PointCloud2 topic values for every `--pcd`
 // value (read from the bag named at word 2). `--stamp-offset` takes a single
 // `<topic>=<value>`, so its `<topic>` half completes to the same PointCloud2
 // topics (as `<topic>=`) until the value word contains `=`. `--frame`,
@@ -1215,7 +1215,7 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
 // they get no value completion.
 //
 //   concat: `pcd`(0) `concat`(1) `<input>`(2) `<output_topic>`(3)
-//           --input-topics <t...> [--frame <f>] [--tolerance <val>]
+//           --pcd <t...> [--frame <f>] [--tolerance <val>]
 //           [--stamp-offset <t=v>]... [-o <out>] [--drop-inputs] [--force]
 //           [-w|--overwrite]
 std::vector<std::string> complete_pcd(const CompletionRequest & request)
@@ -1233,16 +1233,16 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
     if (sub == "concat") {
       return matching(
         with_help(
-          {"--drop-inputs", "--force", "--frame", "--input-topics", "--output", "--overwrite",
+          {"--drop-inputs", "--force", "--frame", "--output", "--overwrite", "--pcd",
            "--stamp-offset", "--tolerance", "-o", "-w"}),
         current);
     }
   }
 
   // --stamp-offset takes a single <topic>=<value>; complete the <topic> half from
-  // the bag's PointCloud2 topics (like --input-topics) while the value word has no
+  // the bag's PointCloud2 topics (like --pcd) while the value word has no
   // '=' yet. Each candidate carries a trailing '=' so the shell scripts drop the
-  // auto-space and leave the cursor on the value. Unlike --input-topics this is
+  // auto-space and leave the cursor on the value. Unlike --pcd this is
   // single-valued, so only the word immediately after --stamp-offset is its value.
   if (
     request.cursor_word > kSecondCommandArgWord &&
@@ -1258,22 +1258,22 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
     }
   }
 
-  // --input-topics is variadic: complete PointCloud2 topics for every value in
+  // --pcd is variadic: complete PointCloud2 topics for every value in
   // its run, not just the first. Walk back from the cursor to the nearest option
-  // word; if it is --input-topics, the cursor is still consuming its values, so
+  // word; if it is --pcd, the cursor is still consuming its values, so
   // offer topics from the bag named at word 2 (the <input> positional).
   for (std::size_t w = request.cursor_word; w > kSecondCommandArgWord;) {
     const auto & word = request.words[--w];
     if (!word.starts_with("-")) {
-      continue;  // a topic value already given to --input-topics; keep scanning
+      continue;  // a topic value already given to --pcd; keep scanning
     }
-    if (word == "--input-topics") {
+    if (word == "--pcd") {
       const auto & bag_arg = request.words[kSecondCommandArgWord];
       if (!bag_arg.empty() && !bag_arg.starts_with("-")) {
         return complete_topics(expand_current_user_home(bag_arg), current, kPointCloud2Type);
       }
     }
-    break;  // the nearest option decides; a non-input-topics option ends the run
+    break;  // the nearest option decides; a non-pcd option ends the run
   }
   return {};
 }
