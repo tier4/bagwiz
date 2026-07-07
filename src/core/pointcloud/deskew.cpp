@@ -131,14 +131,20 @@ DeskewResult deskew_pointcloud2(
     out.error = "point_step is zero";
     return out;
   }
-  const auto fits = [&](const PointField & f) {
-    return f.offset + datatype_size(f.datatype) <= input.point_step;
+  const auto fits = [&](std::uint32_t offset, PointFieldType dt) {
+    return static_cast<std::size_t>(offset) + datatype_size(dt) <= input.point_step;
   };
-  if (!fits(*fx) || !fits(*fy) || !fits(*fz)) {
+  if (
+    !fits(fx->offset, fx->datatype) || !fits(fy->offset, fy->datatype) ||
+    !fits(fz->offset, fz->datatype)) {
     out.error = "x/y/z field exceeds point_step";
     return out;
   }
   const std::uint32_t rstep = input.row_step != 0 ? input.row_step : input.width * input.point_step;
+  if (static_cast<std::size_t>(input.width) * input.point_step > rstep) {
+    out.error = "row_step is smaller than width*point_step";
+    return out;
+  }
   if (input.data.size() < static_cast<std::size_t>(input.height) * rstep) {
     out.error = "point data buffer too small";
     return out;
@@ -148,6 +154,17 @@ DeskewResult deskew_pointcloud2(
 
   const auto time_field = find_point_time_field(input);
   if (!time_field) {
+    out.cloud = input;
+    out.points_no_time = out.points_total;
+    return out;
+  }
+  if (!fits(time_field->offset, time_field->datatype)) {
+    // find_point_time_field / point_time_seconds do not bounds-check the
+    // field against point_step (point_time.hpp: that is the caller's job) --
+    // a malformed cloud whose declared time field runs past point_step would
+    // otherwise read past its own point and write past it too, corrupting
+    // the next point (or, for the last point, the end of `data`). Treat it
+    // exactly like "no usable time field".
     out.cloud = input;
     out.points_no_time = out.points_total;
     return out;

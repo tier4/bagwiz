@@ -157,6 +157,7 @@ TEST(Deskew, RefTimePointUnchanged)
   auto r = deskew_pointcloud2(cloud, 0, traj);
   ASSERT_TRUE(r.ok());
   EXPECT_NEAR(xyz_at(*r.cloud, 0)[0], 1.0f, 1e-5);  // t==t_ref -> no motion
+  EXPECT_NEAR(t_at(*r.cloud, 0), 0.0f, 1e-6);       // time field reset to 0 too
 }
 
 TEST(Deskew, RejectsBigEndian)
@@ -289,4 +290,102 @@ TEST(Deskew, NonIdentityExtrinsicRotatesTheMotionDelta)
   EXPECT_NEAR(xyz[0], 1.0f, 1e-4);
   EXPECT_NEAR(xyz[1], -2.0f, 1e-4);
   EXPECT_NEAR(xyz[2], 0.0f, 1e-4);
+}
+
+TEST(Deskew, TimeFieldExceedingPointStepTreatedAsNoTime)
+{
+  // "t" declared as FLOAT64 (8 bytes) at offset 12 with point_step 16: the
+  // field's own bytes [12,20) run 4 bytes past the point. Regression test for
+  // an OOB read (the relative/absolute scan and point_time_seconds) and OOB
+  // write (write_ref_time) this layout used to trigger -- corrupting the next
+  // point's x and, for the last point, writing past the end of `data`
+  // entirely. Built by hand (not make_cloud_xyzt, whose "t" is FLOAT32) so
+  // the mismatched field/point_step combination is explicit.
+  PointCloud2 c;
+  c.height = 1;
+  c.width = 2;
+  c.point_step = 16;
+  c.row_step = c.point_step * c.width;
+  c.is_bigendian = false;
+  c.is_dense = true;
+  c.frame_id = "lidar";
+  c.fields = {
+    {"x", 0, PointFieldType::kFloat32, 1},
+    {"y", 4, PointFieldType::kFloat32, 1},
+    {"z", 8, PointFieldType::kFloat32, 1},
+    {"t", 12, PointFieldType::kFloat64, 1},  // offset 12 + size 8 = 20 > point_step 16
+  };
+  c.data.resize(static_cast<std::size_t>(c.point_step) * c.width);
+  const std::array<float, 3> p0{1.0f, 2.0f, 3.0f};
+  const std::array<float, 3> p1{4.0f, 5.0f, 6.0f};
+  std::memcpy(c.data.data(), p0.data(), sizeof(float) * 3);
+  std::memcpy(c.data.data() + c.point_step, p1.data(), sizeof(float) * 3);
+
+  std::vector<TrajectoryPose> traj{{0, 0, 0, 0, 0, 0, 0, 1}, {100'000'000, 2, 0, 0, 0, 0, 0, 1}};
+  auto r = deskew_pointcloud2(c, 0, traj);
+  ASSERT_TRUE(r.ok());
+  EXPECT_EQ(r.points_total, 2u);
+  EXPECT_EQ(r.points_no_time, 2u);
+  EXPECT_EQ(r.points_deskewed, 0u);
+  const auto xyz0 = xyz_at(*r.cloud, 0);
+  const auto xyz1 = xyz_at(*r.cloud, 1);
+  EXPECT_NEAR(xyz0[0], 1.0f, 1e-6);
+  EXPECT_NEAR(xyz0[1], 2.0f, 1e-6);
+  EXPECT_NEAR(xyz0[2], 3.0f, 1e-6);
+  EXPECT_NEAR(xyz1[0], 4.0f, 1e-6);  // unchanged: not corrupted by point 0's time write
+  EXPECT_NEAR(xyz1[1], 5.0f, 1e-6);
+  EXPECT_NEAR(xyz1[2], 6.0f, 1e-6);
+}
+
+TEST(Deskew, RowStepSmallerThanWidthTimesPointStepIsError)
+{
+  // width=2, point_step=16 needs row_step >= 32; row_step is set to 16 (one
+  // point's worth), which would let col=1's point run past the row (and, on
+  // the last row, past `data`). Verifies the row_step hardening added
+  // alongside the time-field bounds fix actually rejects this.
+  auto cloud = make_cloud_xyzt({{0, 0, 0, 0}, {0, 0, 0, 0}});
+  cloud.row_step = cloud.point_step;  // 16, but width*point_step = 32
+  auto r = deskew_pointcloud2(cloud, 0, std::vector<TrajectoryPose>{{0, 0, 0, 0, 0, 0, 0, 1}});
+  EXPECT_FALSE(r.ok());
+  EXPECT_NE(r.error.find("row_step"), std::string::npos);
+}
+
+TEST(Deskew, OrganizedCloudWithRowPadding)
+{
+  // height=2, width=1, but row_step (32) is LARGER than width*point_step
+  // (16): 16 bytes of padding after each row's single point. Complements
+  // OrganizedCloudHeightTwoWidthOne (row_step == width*point_step, no
+  // padding) by confirming the padding bytes are correctly skipped rather
+  // than read as point data.
+  PointCloud2 c;
+  c.height = 2;
+  c.width = 1;
+  c.point_step = 16;
+  c.row_step = 32;  // 16 bytes of padding per row
+  c.is_bigendian = false;
+  c.is_dense = true;
+  c.frame_id = "lidar";
+  c.fields = {
+    {"x", 0, PointFieldType::kFloat32, 1},
+    {"y", 4, PointFieldType::kFloat32, 1},
+    {"z", 8, PointFieldType::kFloat32, 1},
+    {"t", 12, PointFieldType::kFloat32, 1},
+  };
+  c.data.assign(static_cast<std::size_t>(c.row_step) * c.height, std::byte{0});
+  const std::array<float, 4> row0{0.0f, 0.0f, 0.0f, 0.1f};  // PureTranslation-style point
+  const std::array<float, 4> row1{1.0f, 2.0f, 3.0f, 0.0f};  // RefTimeUnchanged-style point
+  std::memcpy(c.data.data(), row0.data(), sizeof(float) * 4);
+  std::memcpy(c.data.data() + c.row_step, row1.data(), sizeof(float) * 4);
+
+  std::vector<TrajectoryPose> traj{{0, 0, 0, 0, 0, 0, 0, 1}, {100'000'000, 2, 0, 0, 0, 0, 0, 1}};
+  auto r = deskew_pointcloud2(c, 0, traj);
+  ASSERT_TRUE(r.ok());
+  EXPECT_EQ(r.points_deskewed, 2u);
+
+  std::array<float, 3> xyz0{};
+  std::memcpy(xyz0.data(), r.cloud->data.data(), sizeof(float) * 3);
+  std::array<float, 3> xyz1{};
+  std::memcpy(xyz1.data(), r.cloud->data.data() + c.row_step, sizeof(float) * 3);
+  EXPECT_NEAR(xyz0[0], 2.0f, 1e-4);  // row 0: moved to ref pose
+  EXPECT_NEAR(xyz1[0], 1.0f, 1e-5);  // row 1: t==t_ref, unchanged
 }
