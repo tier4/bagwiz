@@ -1211,7 +1211,7 @@ public:
       if (!pcd.topics.empty()) {
         legend_text += "   [f] property   [c] scheme   [r] range   [= / -] size   [ [ / ] ] alpha";
       }
-      legend_text += "   [i] back";
+      legend_text += "   [q] back";
       const std::vector<std::string> legend_lines = core::tui::wrap_to_width(legend_text, cols);
       const int legend_top = std::max(1, rows - static_cast<int>(legend_lines.size()) + 1);
 
@@ -1326,7 +1326,7 @@ public:
 
     // Image-preview sub-loop. Runs inside on_app_key, reusing the raw-mode +
     // SIGWINCH scope the pager already holds. Navigation keys re-decode and
-    // re-render; i returns to the YAML view, which the pager then repaints.
+    // re-render; q returns to the YAML view, which the pager then repaints.
     auto run_preview = [&]() {
       std::ostream & out = std::cout;
       bool running = true;
@@ -1443,7 +1443,7 @@ public:
             pcd.alpha = std::max(pcd.alpha - 0.1f, 0.0f);
             needs_render = true;
             break;
-          case core::KeyEvent::kTogglePreview:
+          case core::KeyEvent::kQuit:
             running = false;
             break;
           default:
