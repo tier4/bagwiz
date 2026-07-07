@@ -90,6 +90,11 @@ private:
       "<- NavSatFix frame_id) and removed (a missing TF only warns). Each prior is "
       "weighted by the fix's reported position covariance (falling back to a fixed "
       "precision when unknown). Requires global mapping.");
+    sub->add_option(
+      "--frame", slam_args_.output_frame,
+      "Output trajectory frame. Defaults to the PointCloud2 topic's frame_id; a "
+      "different value is resolved through the bag's static TF and the trajectory is "
+      "transformed so each pose expresses the requested frame in the SLAM world.");
     sub
       ->add_option(
         "--input-res", slam_args_.input_resolution,

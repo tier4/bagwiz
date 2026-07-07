@@ -30,6 +30,7 @@
 #include <tf2/buffer_core.hpp>
 #include <tf2/time.hpp>
 
+#include <geometry_msgs/msg/pose.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include <fmt/core.h>
@@ -246,6 +247,41 @@ private:
     return true;
   }
 
+  // First decodable header.frame_id of the cloud topic. Empty on failure.
+  bool peek_cloud_frame(std::string & cloud_frame)
+  {
+    std::unique_ptr<io::BagReader> reader;
+    try {
+      reader = io::open_read(args_.input_path);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to reopen %s: %s", args_.input_path.c_str(), e.what());
+      return false;
+    }
+    io::ReadFilter filter;
+    filter.topics.push_back(args_.cloud_topic);
+    reader->set_filter(filter);
+
+    std::int64_t cloud_fail = 0;
+    io::RawMessage raw;
+    while (cloud_frame.empty() && reader->next(raw)) {
+      if (raw.topic->name == args_.cloud_topic) {
+        const auto parsed = core::pointcloud::parse_pointcloud2(raw.payload);
+        if (parsed.ok()) {
+          cloud_frame = parsed.cloud->frame_id;
+        } else {
+          ++cloud_fail;
+        }
+      }
+    }
+    if (cloud_frame.empty()) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "Could not read a PointCloud2 frame_id from '%s' (%s message(s) failed to parse)",
+        args_.cloud_topic.c_str(), std::to_string(cloud_fail).c_str());
+      return false;
+    }
+    return true;
+  }
+
   // First decodable header.frame_id of the cloud and IMU topics, captured in a
   // single bounded pass (stops once both are known). Empty strings on failure.
   bool peek_frames(std::string & cloud_frame, std::string & imu_frame)
@@ -301,7 +337,9 @@ private:
 
   // Build a tf2 buffer from every static TF topic in the bag. Returns false (and
   // logs) when the bag has no static TF topic or a TF message fails to decode.
-  bool build_static_tf_buffer(tf2::BufferCore & buffer)
+  // `purpose` is included in the "no static TF topic" error so the message matches
+  // the caller's context (IMU extrinsic, GNSS lever-arm, output-frame remap, ...).
+  bool build_static_tf_buffer(tf2::BufferCore & buffer, std::string_view purpose)
   {
     std::unique_ptr<io::BagReader> reader;
     try {
@@ -320,8 +358,9 @@ private:
     if (static_topics.empty()) {
       BAGWIZ_LOG_ERROR(
         kLogger,
-        "Bag has no static TF topic (…tf_static); cannot resolve the LiDAR<-IMU extrinsic. "
-        "Provide a bag whose /tf_static connects the cloud and IMU frames.");
+        "Bag has no static TF topic (…tf_static); cannot resolve %.*s. "
+        "Provide a bag whose /tf_static contains the needed transforms.",
+        static_cast<int>(purpose.size()), purpose.data());
       return false;
     }
 
@@ -387,7 +426,7 @@ private:
     }
 
     tf2::BufferCore buffer{kTfBufferCacheTime};
-    if (!build_static_tf_buffer(buffer)) {
+    if (!build_static_tf_buffer(buffer, "the LiDAR<-IMU extrinsic")) {
       return false;
     }
 
@@ -510,7 +549,7 @@ private:
     }
 
     tf2::BufferCore buffer{kTfBufferCacheTime};
-    if (!build_static_tf_buffer(buffer)) {
+    if (!build_static_tf_buffer(buffer, "the GNSS antenna lever-arm")) {
       BAGWIZ_LOG_WARN(
         kLogger,
         "Could not read static TF for the GNSS antenna lever-arm; GNSS constraints use the raw "
@@ -639,6 +678,104 @@ private:
     return true;
   }
 
+  // Convert a TrajectoryPose to the geometry_msgs Pose representation used by
+  // core::compose_trajectory_pose.
+  static geometry_msgs::msg::Pose to_geometry_pose(const core::TrajectoryPose & p)
+  {
+    geometry_msgs::msg::Pose out;
+    out.position.x = p.tx;
+    out.position.y = p.ty;
+    out.position.z = p.tz;
+    out.orientation.x = p.qx;
+    out.orientation.y = p.qy;
+    out.orientation.z = p.qz;
+    out.orientation.w = p.qw;
+    return out;
+  }
+
+  // Convert a geometry_msgs Pose back to a TrajectoryPose, preserving the stamp.
+  static core::TrajectoryPose to_trajectory_pose(
+    const geometry_msgs::msg::Pose & p, std::int64_t stamp_ns)
+  {
+    core::TrajectoryPose out;
+    out.timestamp_ns = stamp_ns;
+    out.tx = p.position.x;
+    out.ty = p.position.y;
+    out.tz = p.position.z;
+    out.qx = p.orientation.x;
+    out.qy = p.orientation.y;
+    out.qz = p.orientation.z;
+    out.qw = p.orientation.w;
+    return out;
+  }
+
+  // Apply a cloud-frame -> output-frame static transform to every pose. The
+  // incoming poses are T_world_cloud; right-multiplying by T_cloud_output yields
+  // T_world_output, i.e. the requested frame's pose in the SLAM world.
+  void transform_trajectory_to_frame(
+    std::vector<core::TrajectoryPose> & poses, const geometry_msgs::msg::Transform & t_cloud_output)
+  {
+    for (auto & p : poses) {
+      const auto remapped =
+        core::compose_trajectory_pose(std::nullopt, to_geometry_pose(p), t_cloud_output);
+      p = to_trajectory_pose(remapped, p.timestamp_ns);
+    }
+  }
+
+  // Resolve the optional --frame remapping. Returns true when no remapping is
+  // requested or when the transform was found. On failure logs and returns false.
+  // On success, `cloud_frame` holds the PointCloud2 frame_id and `body_to` is
+  // set to the cloud-frame -> output-frame transform when remapping is needed.
+  bool resolve_output_transform(
+    std::string & cloud_frame, std::optional<geometry_msgs::msg::Transform> & body_to)
+  {
+    body_to = std::nullopt;
+    if (args_.output_frame.empty()) {
+      return true;
+    }
+
+    if (!peek_cloud_frame(cloud_frame)) {
+      return false;
+    }
+
+    if (args_.output_frame == cloud_frame) {
+      BAGWIZ_LOG_INFO(
+        kLogger, "Output frame '%s' matches the cloud frame; trajectory is not remapped.",
+        args_.output_frame.c_str());
+      return true;
+    }
+
+    tf2::BufferCore buffer{kTfBufferCacheTime};
+    if (!build_static_tf_buffer(buffer, "the output-frame remap")) {
+      return false;
+    }
+
+    const auto missing = core::missing_frames(buffer, cloud_frame, args_.output_frame);
+    if (!missing.empty()) {
+      std::string names;
+      for (std::size_t i = 0; i < missing.size(); ++i) {
+        names += (i ? ", " : "") + missing[i];
+      }
+      BAGWIZ_LOG_ERROR(
+        kLogger, "Frame(s) not present in the bag's static TF tree: %s", names.c_str());
+      return false;
+    }
+
+    try {
+      const auto ts = buffer.lookupTransform(cloud_frame, args_.output_frame, tf2::TimePointZero);
+      body_to = ts.transform;
+      BAGWIZ_LOG_INFO(
+        kLogger, "Remapping trajectory from cloud frame '%s' to output frame '%s' using static TF.",
+        cloud_frame.c_str(), args_.output_frame.c_str());
+      return true;
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "No static TF chain from '%s' to '%s': %s", cloud_frame.c_str(),
+        args_.output_frame.c_str(), e.what());
+      return false;
+    }
+  }
+
   // Resolve --backend plus a CUDA device probe into use_gpu_. Returns false
   // (logged) only when 'cuda' was forced but is unavailable; 'auto' silently uses
   // CPU when GPU is unavailable (announcing the fallback when a CUDA build merely
@@ -715,6 +852,17 @@ private:
     if (config.enable_gnss) {
       config.gnss_antenna_offset = resolve_gnss_offset();
     }
+
+    // Resolve the optional --frame remapping up front. The trajectory is expressed
+    // in the PointCloud2 frame_id by default; a requested --frame is resolved
+    // through the bag's static TF and applied after optimization. Resolving here
+    // avoids running the full SLAM pipeline only to fail on an invalid frame.
+    std::string cloud_frame;
+    std::optional<geometry_msgs::msg::Transform> output_body_to;
+    if (!resolve_output_transform(cloud_frame, output_body_to)) {
+      return 1;
+    }
+
     core::slam::CloudMapper mapper(config);
 
     // Projects each NavSatFix to a local ENU frame (origin = first fix) before
@@ -786,6 +934,11 @@ private:
       BAGWIZ_LOG_ERROR(
         kLogger, "SLAM produced no trajectory poses from %s scans", std::to_string(scans).c_str());
       return 1;
+    }
+
+    // Apply the optional --frame remapping before writing.
+    if (output_body_to.has_value()) {
+      transform_trajectory_to_frame(map.trajectory, *output_body_to);
     }
 
     // Open the map stream before committing the trajectory so an unwritable

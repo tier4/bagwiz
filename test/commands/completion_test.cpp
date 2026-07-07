@@ -1054,7 +1054,7 @@ TEST(FlagCompletionTest, MapSlamDashListsSlamFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "map", "slam", "-"}),
-    "--backend\n--gnss\n--help\n--imu\n--input-res\n--max-range\n--min-range\n"
+    "--backend\n--frame\n--gnss\n--help\n--imu\n--input-res\n--max-range\n--min-range\n"
     "--no-cooldown-recovery\n--no-progress\n--no-warmup-recovery\n--overwrite\n"
     "--recovery-min-inliers\n--submap-keyframes\n--threads\n--viewer\n-h\n-t\n-w\n");
 }

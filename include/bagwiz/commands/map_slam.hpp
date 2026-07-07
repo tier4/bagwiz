@@ -39,6 +39,10 @@ struct MapSlamArgs
   std::string gnss_topic;
   // Output root directory; receives traj.tum and map.pcd.
   std::filesystem::path output_root;
+  // Frame the output trajectory is expressed in. Empty (the default) keeps the
+  // trajectory in the PointCloud2 topic's frame_id. A different value is resolved
+  // through the bag's static TF and each output pose is transformed accordingly.
+  std::string output_frame;
   // Voxel size in meters used for BOTH the GLIM LiDAR input downsample and the
   // exported-map merge — the single "map resolution" knob. Default 0.15 matches
   // GLIM's stock downsample, so the default trajectory is unchanged. Because it

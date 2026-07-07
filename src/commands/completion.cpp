@@ -981,8 +981,8 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 // every argument one word to the right of a flat command.
 //
 //   slam:   `map`(0) `slam`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
-//           [--backend <cpu|cuda|auto>] [--imu <topic>] [--gnss <topic>]
-//           [--input-res <m>] [--min-range <m>] [--max-range <m>]
+//           [--backend <cpu|cuda|auto>] [--frame <frame_id>] [--imu <topic>]
+//           [--gnss <topic>] [--input-res <m>] [--min-range <m>] [--max-range <m>]
 //           [-t|--threads <N>] [--viewer] [-w|--overwrite]
 //           [--no-progress] [--no-warmup-recovery] [--no-cooldown-recovery]
 //           [--recovery-min-inliers <f>] [--submap-keyframes <N>]
@@ -1021,7 +1021,7 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
   if (current.starts_with("-")) {
     return matching(
       with_help(
-        {"--backend", "--gnss", "--imu", "--input-res", "--max-range", "--min-range",
+        {"--backend", "--frame", "--gnss", "--imu", "--input-res", "--max-range", "--min-range",
          "--no-cooldown-recovery", "--no-progress", "--no-warmup-recovery", "--overwrite",
          "--recovery-min-inliers", "--submap-keyframes", "--threads", "--viewer", "-t", "-w"}),
       current);
