@@ -9,6 +9,7 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/pcd_concat.hpp"
+#include "bagwiz/commands/pcd_undistort.hpp"
 #include "bagwiz/core/logging.hpp"
 
 #include <string_view>
@@ -22,8 +23,9 @@ constexpr const char * kLogger = "bagwiz.cmd.pcd";
 }  // namespace
 
 // `bagwiz pcd` is a command group for PointCloud2 topic processing.
-//   concat  - merge multiple PointCloud2 topics into one new topic (static TF +
-//             first-topic-driven time sync)
+//   concat    - merge multiple PointCloud2 topics into one new topic (static TF +
+//               first-topic-driven time sync)
+//   undistort - motion-deskew PointCloud2 topic(s) using external pose topic + tf_static
 class PcdCommand : public Command
 {
 public:
@@ -37,6 +39,7 @@ public:
   {
     app.require_subcommand(1);
     configure_concat(app);
+    configure_undistort(app);
   }
 
   int run() override
@@ -44,6 +47,8 @@ public:
     switch (selected_) {
       case Subcommand::kConcat:
         return run_pcd_concat(concat_args_);
+      case Subcommand::kUndistort:
+        return run_pcd_undistort(undistort_args_);
       case Subcommand::kNone:
         BAGWIZ_LOG_ERROR(kLogger, "no subcommand selected");
         return 1;
@@ -52,9 +57,10 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kConcat };
+  enum class Subcommand { kNone, kConcat, kUndistort };
   Subcommand selected_ = Subcommand::kNone;
   PcdConcatArgs concat_args_;
+  PcdUndistortArgs undistort_args_;
 
   void configure_concat(CLI::App & app)
   {
@@ -103,6 +109,34 @@ private:
     sub->add_flag(
       "-w,--overwrite", concat_args_.overwrite, "Overwrite an existing -o/--output path.");
     sub->callback([this]() { selected_ = Subcommand::kConcat; });
+  }
+
+  void configure_undistort(CLI::App & app)
+  {
+    auto * sub = app.add_subcommand(
+      "undistort", "Motion-deskew PointCloud2 topic(s) using an external pose topic + tf_static.");
+    sub->add_option("input", undistort_args_.input_path, "Input bag (file or directory).")
+      ->required()
+      ->check(CLI::ExistingPath);
+    sub
+      ->add_option(
+        "pose_topic", undistort_args_.pose_topic,
+        "Self-position topic (TFMessage / Odometry / PoseStamped / PoseWithCovarianceStamped).")
+      ->required();
+    sub
+      ->add_option(
+        "--pcd", undistort_args_.pcd_topics, "PointCloud2 topic(s) to deskew (repeatable).")
+      ->required()
+      ->expected(-1);
+    sub->add_option("--from", undistort_args_.from_frame, "Reference frame (default: map).");
+    sub->add_option("--to", undistort_args_.to_frame, "Tracked body frame (default: base_link).");
+    sub->add_option(
+      "-o,--output", undistort_args_.output_path,
+      "Output bag. Omitted => rewrite <input> in place.");
+    sub->add_flag(
+      "-w,--overwrite", undistort_args_.overwrite, "Replace -o output if it already exists.");
+    sub->add_flag("--no-progress", undistort_args_.no_progress, "Disable the progress output.");
+    sub->callback([this]() { selected_ = Subcommand::kUndistort; });
   }
 };
 
