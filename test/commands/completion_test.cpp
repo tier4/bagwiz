@@ -1057,7 +1057,7 @@ TEST(FlagCompletionTest, MapSlamDashListsSlamFlags)
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "map", "slam", "-"}),
     "--backend\n--gnss\n--help\n--imu\n--input-res\n--max-range\n--min-range\n"
     "--no-cooldown-recovery\n--no-progress\n--no-warmup-recovery\n--overwrite\n"
-    "--recovery-min-inliers\n--submap-keyframes\n--threads\n--upsample\n--viewer\n-h\n-t\n-w\n");
+    "--recovery-min-inliers\n--submap-keyframes\n--threads\n--viewer\n-h\n-t\n-w\n");
 }
 
 // `map slam --backend <TAB>` lists the three backend modes.
@@ -1124,12 +1124,12 @@ TEST(FlagCompletionTest, PcdConcatDashListsConcatFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "pcd", "concat", "-"}),
-    "--drop-inputs\n--force\n--frame\n--help\n--input-topics\n--output\n--overwrite\n"
+    "--drop-inputs\n--force\n--frame\n--help\n--output\n--overwrite\n--pcd\n"
     "--stamp-offset\n--tolerance\n-h\n-o\n-w\n");
 }
 
 // `pcd concat <bag> <out> --stamp-offset <TAB>` completes the <topic> half of the
-// topic=value argument from the bag's PointCloud2 topics (like --input-topics),
+// topic=value argument from the bag's PointCloud2 topics (like --pcd),
 // emitting a trailing '=' so the shell leaves the cursor ready for the value.
 TEST_F(CompletionTest, PcdConcatStampOffsetCompletesPointCloud2TopicsWithEquals)
 {
@@ -1200,7 +1200,7 @@ TEST(FlagCompletionTest, PcdUndistortDashListsUndistortFlags)
 }
 
 // `pcd undistort <bag> <pose_topic> --pcd <TAB>` completes PointCloud2 topics
-// from the bag named at the <input> slot, mirroring concat's --input-topics.
+// from the bag named at the <input> slot, mirroring concat's --pcd.
 TEST_F(CompletionTest, PcdUndistortPcdCompletesPointCloud2Topics)
 {
   const HomeEnvGuard home_guard(tmp_dir_);

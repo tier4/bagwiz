@@ -36,7 +36,7 @@ struct SyncGroup
   std::vector<std::optional<std::size_t>> picks;  // one per topic, input order
 };
 
-// Reference-driven nearest-match plan. `topics` are in --input-topics order and
+// Reference-driven nearest-match plan. `topics` are in --pcd order and
 // `reference` indexes the reference topic. For each reference message, every
 // other topic contributes the message whose matching stamp is nearest to the
 // reference matching stamp within `tolerance_ns` (ties resolve to the earliest

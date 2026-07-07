@@ -138,7 +138,7 @@ PcdConcatArgs base_args(const std::filesystem::path & in, const std::filesystem:
   PcdConcatArgs a;
   a.input_path = in;
   a.output_topic = "/concat";
-  a.input_topics = {"/front", "/rear"};
+  a.pcd_topics = {"/front", "/rear"};
   a.frame = "base_link";
   a.output_path = out;
   a.overwrite = true;
@@ -217,6 +217,6 @@ TEST_F(PcdConcatTest, MissingInputTopicIsError)
   const auto out = tmp_ / "out.mcap";
   write_input(in);
   auto args = base_args(in, out);
-  args.input_topics = {"/front", "/nope"};  // /nope is not in the bag
+  args.pcd_topics = {"/front", "/nope"};  // /nope is not in the bag
   EXPECT_EQ(run_pcd_concat(args), 1);
 }

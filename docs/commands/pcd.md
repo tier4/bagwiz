@@ -6,7 +6,7 @@ PointCloud2 topic processing.
 
 Merge multiple `sensor_msgs/msg/PointCloud2` topics into one new topic. Each
 input topic is rigidly transformed into a common `--frame` using the bag's
-static TF, and messages are paired against the first `--input-topics` topic — the
+static TF, and messages are paired against the first `--pcd` topic — the
 reference — nearest-in-time within a tolerance. The result is written as a new
 rosbag with `-o`, or the input bag is rewritten in place when `-o` is omitted.
 
@@ -17,7 +17,7 @@ if you need per-cloud deskew; per-point timestamps are preserved so a downstream
 undistort still sees correct absolute times.
 
 ```text
-bagwiz pcd concat <input> <output_topic_name> --input-topics <t1> <t2> [<t3> ...] \
+bagwiz pcd concat <input> <output_topic_name> --pcd <t1> <t2> [<t3> ...] \
     [--frame <frame>] [-o|--output <path>] [--tolerance <val>] \
     [--stamp-offset <topic>=<val>]... [--drop-inputs] [--force] [-w|--overwrite]
 ```
@@ -26,18 +26,18 @@ bagwiz pcd concat <input> <output_topic_name> --input-topics <t1> <t2> [<t3> ...
 | ------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<input>`                      | ✔        | Input bag (file or directory).                                                                                                                                                                                                                                                                                |
 | `<output_topic_name>`          | ✔        | Name of the new concatenated PointCloud2 topic.                                                                                                                                                                                                                                                               |
-| `--input-topics <t...>`        | ✔        | PointCloud2 topics to concatenate (2 or more). The first topic is the reference; concatenation order follows this list.                                                                                                                                                                                       |
-| `--frame <frame>`              |          | Target frame all clouds are transformed into. Default: `base_link`. Required when the default is not reachable from every `--input-topics` frame via the bag's static TF.                                                                                                                                     |
+| `--pcd <t...>`                 | ✔        | PointCloud2 topics to concatenate (2 or more). The first topic is the reference; concatenation order follows this list.                                                                                                                                                                                       |
+| `--frame <frame>`              |          | Target frame all clouds are transformed into. Default: `base_link`. Required when the default is not reachable from every `--pcd` frame via the bag's static TF.                                                                                                                                              |
 | `-o, --output <path>`          |          | Output bag. When omitted, the input bag is rewritten in place (atomic tmp swap).                                                                                                                                                                                                                              |
-| `--tolerance <val>`            |          | Nearest-match tolerance for pairing the other topics to the first `--input-topics` topic. Takes an optional unit `ns`/`us`/`ms`/`s` (no unit = ms), e.g. `50ms`. Default: half the first topic's median period.                                                                                               |
+| `--tolerance <val>`            |          | Nearest-match tolerance for pairing the other topics to the first `--pcd` topic. Takes an optional unit `ns`/`us`/`ms`/`s` (no unit = ms), e.g. `50ms`. Default: half the first topic's median period.                                                                                                        |
 | `--stamp-offset <topic>=<val>` |          | Per-topic offset **added to `header.stamp` for matching only** (the real stamp and per-point times are never rewritten). `<val>` takes an optional unit `ns`/`us`/`ms`/`s` (no unit = ms), signed, e.g. `=-50ms`, `=500ns`. Repeatable. Use it when a sensor triggers early/late relative to the first topic. |
-| `--drop-inputs`                |          | Drop the source `--input-topics` from the output (default: keep them).                                                                                                                                                                                                                                        |
+| `--drop-inputs`                |          | Drop the source `--pcd` topics from the output (default: keep them).                                                                                                                                                                                                                                          |
 | `--force`                      |          | Proceed even if `<output_topic_name>` already exists in the bag (replaces that topic).                                                                                                                                                                                                                        |
 | `-w, --overwrite`              |          | Overwrite an existing `-o/--output` path.                                                                                                                                                                                                                                                                     |
 
 ### Behaviour notes
 
-- **Field layout:** all `--input-topics` must share an identical PointField
+- **Field layout:** all `--pcd` topics must share an identical PointField
   layout (fields and `point_step`); a mismatch is an error.
 - **Missing sensor (partial emit):** if a topic has no message within tolerance
   for a given reference message, it is skipped for that output message and the
@@ -60,8 +60,8 @@ the left/right sensors triggering ~50 ms early:
 ```bash
 bagwiz pcd concat drive.mcap /sensing/lidar/concatenated/points \
   --frame base_link \
-  --input-topics /sensing/lidar/front/seyond_points /sensing/lidar/rear/seyond_points \
-                 /sensing/lidar/left/seyond_points  /sensing/lidar/right/seyond_points \
+  --pcd /sensing/lidar/front/seyond_points /sensing/lidar/rear/seyond_points \
+        /sensing/lidar/left/seyond_points  /sensing/lidar/right/seyond_points \
   --stamp-offset /sensing/lidar/left/seyond_points=50ms \
   --stamp-offset /sensing/lidar/right/seyond_points=50ms \
   -o concatenated.mcap

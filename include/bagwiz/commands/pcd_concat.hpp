@@ -23,7 +23,7 @@ struct PcdConcatArgs
 {
   std::filesystem::path input_path;                  // <input> bag
   std::string output_topic;                          // <output_topic_name> (the new topic)
-  std::vector<std::string> input_topics;             // --input-topics (>= 2)
+  std::vector<std::string> pcd_topics;               // --pcd (>= 2)
   std::optional<std::string> frame;                  // --frame; empty => default base_link
   std::optional<std::filesystem::path> output_path;  // -o/--output; empty => in-place
   std::optional<std::string>
