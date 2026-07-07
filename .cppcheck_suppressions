@@ -5,6 +5,10 @@
 *:*/benchmarks/*
 *:benchmarks/*
 
+# `block` in rebase_time is written through .data(); older cppcheck (CI) mis-flags
+# it as constParameterReference.
+constParameterReference:*/cloud_concat.cpp
+
 checkersReport
 missingInclude
 missingIncludeSystem
