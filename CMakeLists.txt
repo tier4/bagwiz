@@ -350,6 +350,7 @@ add_executable(bagwiz
   src/commands/ls.cpp
   src/commands/pcd.cpp
   src/commands/pcd_concat.cpp
+  src/commands/pcd_undistort.cpp
   src/commands/walk.cpp
   src/commands/traj.cpp
   src/commands/tf.cpp
@@ -596,6 +597,11 @@ if(BUILD_TESTING)
     test/commands/pcd_concat_test.cpp
     src/commands/pcd_concat.cpp)
   target_link_libraries(bagwiz_pcd_concat_command_test bagwiz_core fmt::fmt)
+
+  ament_add_gtest(bagwiz_pcd_undistort_command_test
+    test/commands/pcd_undistort_test.cpp
+    src/commands/pcd_undistort.cpp)
+  target_link_libraries(bagwiz_pcd_undistort_command_test bagwiz_core fmt::fmt)
 
   ament_add_gtest(bagwiz_smoke_test test/smoke_test.cpp)
   ament_add_gtest(bagwiz_yaml_msg_validate_test test/core/yaml_msg_validate_test.cpp)

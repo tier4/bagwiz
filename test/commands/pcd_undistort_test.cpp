@@ -1,0 +1,258 @@
+// Copyright 2026 TIER IV, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+
+#include "bagwiz/commands/pcd_undistort.hpp"
+
+#include "bagwiz/core/pointcloud/pointcloud2.hpp"
+#include "bagwiz/core/tf_message_wire.hpp"
+#include "bagwiz/io/bag_io.hpp"
+
+#include <geometry_msgs/msg/transform_stamped.hpp>
+
+#include <gtest/gtest.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <optional>
+#include <span>
+#include <string>
+#include <vector>
+
+namespace
+{
+
+using bagwiz::commands::PcdUndistortArgs;
+using bagwiz::commands::run_pcd_undistort;
+namespace pc = bagwiz::core::pointcloud;
+
+constexpr std::int64_t kMs = 1'000'000;
+// map->base_link translates +1m in x over these 100ms; the /points message
+// below samples a per-point time exactly 0.1s after its header stamp, so the
+// deskewed point lands on the base_link pose recorded at kPoseT1Ns with no
+// interpolation ambiguity.
+constexpr std::int64_t kPoseT0Ns = 1000 * kMs;
+constexpr std::int64_t kPoseT1Ns = 1100 * kMs;
+
+bagwiz::io::TopicInfo pcd_topic_info(const std::string & name)
+{
+  bagwiz::io::TopicInfo t;
+  t.name = name;
+  t.type = "sensor_msgs/msg/PointCloud2";
+  t.serialization_format = "cdr";
+  return t;
+}
+
+bagwiz::io::CreateOptions mcap_options()
+{
+  bagwiz::io::CreateOptions o;
+  o.format = bagwiz::io::Format::Mcap;
+  o.layout = bagwiz::io::Layout::SingleFile;
+  o.mcap_compression = "none";
+  return o;
+}
+
+geometry_msgs::msg::TransformStamped make_map_to_base_link(std::int64_t stamp_ns, double tx)
+{
+  geometry_msgs::msg::TransformStamped ts;
+  ts.header.frame_id = "map";
+  ts.header.stamp.sec = static_cast<std::int32_t>(stamp_ns / 1'000'000'000LL);
+  ts.header.stamp.nanosec = static_cast<std::uint32_t>(stamp_ns % 1'000'000'000LL);
+  ts.child_frame_id = "base_link";
+  ts.transform.translation.x = tx;
+  ts.transform.rotation.w = 1.0;
+  return ts;
+}
+
+// One point [x y z] (+ optional "t" relative-seconds field), all float32.
+std::vector<std::byte> serialize_cloud(
+  std::int64_t stamp_ns, const std::string & frame_id, float x, std::optional<float> t_sec)
+{
+  pc::PointCloud2 c;
+  c.timestamp_ns = stamp_ns;
+  c.frame_id = frame_id;
+  c.height = 1;
+  c.width = 1;
+  c.fields = {
+    {"x", 0, pc::PointFieldType::kFloat32, 1},
+    {"y", 4, pc::PointFieldType::kFloat32, 1},
+    {"z", 8, pc::PointFieldType::kFloat32, 1},
+  };
+  c.point_step = 12;
+  if (t_sec.has_value()) {
+    c.fields.push_back({"t", 12, pc::PointFieldType::kFloat32, 1});
+    c.point_step = 16;
+  }
+  c.row_step = c.point_step;
+  c.is_dense = true;
+  c.data.assign(c.point_step, std::byte{0});
+  const float zero = 0.0f;
+  std::memcpy(c.data.data() + 0, &x, sizeof(float));
+  std::memcpy(c.data.data() + 4, &zero, sizeof(float));
+  std::memcpy(c.data.data() + 8, &zero, sizeof(float));
+  if (t_sec.has_value()) {
+    const float t = *t_sec;
+    std::memcpy(c.data.data() + 12, &t, sizeof(float));
+  }
+  return pc::serialize_pointcloud2(c);
+}
+
+// Writes:
+//   /pose_tf   tf2_msgs/msg/TFMessage, map->base_link, tx 0.0 (t0) -> 1.0 (t1)
+//   /tf_static tf2_msgs/msg/TFMessage, present but carries no edges (base_link
+//              already equals --to for /points, so no extrinsic hop is needed;
+//              load_static_tf_buffer only requires the topic to exist)
+//   /points    sensor_msgs/msg/PointCloud2, frame base_link, one point at
+//              local x=0 with per-point relative time 0.1s (when
+//              with_time_field); header.stamp = t0
+//   /other     sensor_msgs/msg/PointCloud2, an unrelated topic (not in --pcd)
+//              used to check verbatim copy-through
+void write_undistort_input(const std::filesystem::path & path, bool with_time_field)
+{
+  auto w = bagwiz::io::open_write(path, mcap_options());
+  w->declare_topic(bagwiz::core::make_tf_message_topic_info("/pose_tf"));
+  w->declare_topic(bagwiz::core::make_tf_message_topic_info("/tf_static"));
+  w->declare_topic(pcd_topic_info("/points"));
+  w->declare_topic(pcd_topic_info("/other"));
+
+  {
+    const std::vector<geometry_msgs::msg::TransformStamped> edges0{
+      make_map_to_base_link(kPoseT0Ns, 0.0)};
+    const std::vector<geometry_msgs::msg::TransformStamped> edges1{
+      make_map_to_base_link(kPoseT1Ns, 1.0)};
+    const auto p0 = bagwiz::core::serialize_tf_message(edges0);
+    const auto p1 = bagwiz::core::serialize_tf_message(edges1);
+    w->write("/pose_tf", kPoseT0Ns, std::span<const std::byte>(p0.data(), p0.size()));
+    w->write("/pose_tf", kPoseT1Ns, std::span<const std::byte>(p1.data(), p1.size()));
+  }
+  {
+    const std::vector<geometry_msgs::msg::TransformStamped> no_edges;
+    const auto s = bagwiz::core::serialize_tf_message(no_edges);
+    w->write("/tf_static", 0, std::span<const std::byte>(s.data(), s.size()));
+  }
+  {
+    const auto pts = with_time_field ? serialize_cloud(kPoseT0Ns, "base_link", 0.0f, 0.1f)
+                                     : serialize_cloud(kPoseT0Ns, "base_link", 0.0f, std::nullopt);
+    w->write("/points", kPoseT0Ns, std::span<const std::byte>(pts.data(), pts.size()));
+  }
+  {
+    const auto other = serialize_cloud(kPoseT0Ns, "some_other_frame", 42.0f, std::nullopt);
+    w->write("/other", kPoseT0Ns, std::span<const std::byte>(other.data(), other.size()));
+  }
+  w->close();
+}
+
+std::optional<float> read_first_point_x(
+  const std::filesystem::path & path, const std::string & topic)
+{
+  auto reader = bagwiz::io::open_read(path);
+  bagwiz::io::ReadFilter filter;
+  filter.topics = {topic};
+  reader->set_filter(filter);
+  bagwiz::io::RawMessage raw;
+  if (!reader->next(raw)) {
+    return std::nullopt;
+  }
+  const auto parsed = pc::parse_pointcloud2(raw.payload);
+  if (!parsed.ok() || parsed.cloud->width == 0) {
+    return std::nullopt;
+  }
+  float x = 0.0f;
+  std::memcpy(&x, parsed.cloud->data.data(), sizeof(float));
+  return x;
+}
+
+// Raw per-message payload bytes for a topic, in bag order. Used to assert
+// verbatim (byte-identical) copy-through.
+std::vector<std::vector<std::byte>> read_raw_payloads(
+  const std::filesystem::path & path, const std::string & topic)
+{
+  std::vector<std::vector<std::byte>> out;
+  auto reader = bagwiz::io::open_read(path);
+  bagwiz::io::ReadFilter filter;
+  filter.topics = {topic};
+  reader->set_filter(filter);
+  bagwiz::io::RawMessage raw;
+  while (reader->next(raw)) {
+    out.emplace_back(raw.payload.begin(), raw.payload.end());
+  }
+  return out;
+}
+
+PcdUndistortArgs base_args(const std::filesystem::path & in, const std::filesystem::path & out)
+{
+  PcdUndistortArgs a;
+  a.input_path = in;
+  a.pose_topic = "/pose_tf";
+  a.pcd_topics = {"/points"};
+  a.from_frame = "map";
+  a.to_frame = "base_link";
+  a.output_path = out;
+  a.overwrite = true;
+  return a;
+}
+
+class PcdUndistortTest : public ::testing::Test
+{
+protected:
+  void SetUp() override
+  {
+    tmp_ = std::filesystem::temp_directory_path() /
+           ("bagwiz_pcd_undistort_" +
+            std::to_string(::testing::UnitTest::GetInstance()->current_test_info()->line()));
+    std::filesystem::remove_all(tmp_);
+    std::filesystem::create_directories(tmp_);
+    in_ = tmp_ / "in.mcap";
+    out_ = tmp_ / "out.mcap";
+  }
+  void TearDown() override { std::filesystem::remove_all(tmp_); }
+
+  std::filesystem::path tmp_;
+  std::filesystem::path in_;
+  std::filesystem::path out_;
+};
+
+}  // namespace
+
+// map->base_link moves +1m in x over 100ms. The lone /points point sits at
+// the sensor origin with a per-point relative time of 0.1s, so deskewing to
+// the cloud's header stamp (t0) carries it to the base_link pose recorded at
+// t0+0.1s = t1, i.e. local x=0 -> x=+1. See deskew_test.cpp's
+// PureTranslationMovesPointToRefPose for the same scenario at the kernel level.
+TEST_F(PcdUndistortTest, DeskewsTargetTopicAndPreservesOthers)
+{
+  write_undistort_input(in_, /*with_time_field=*/true);
+  const auto other_before = read_raw_payloads(in_, "/other");
+  const auto pose_before = read_raw_payloads(in_, "/pose_tf");
+  ASSERT_EQ(other_before.size(), 1u);
+  ASSERT_EQ(pose_before.size(), 2u);
+
+  ASSERT_EQ(run_pcd_undistort(base_args(in_, out_)), 0);
+
+  const auto x = read_first_point_x(out_, "/points");
+  ASSERT_TRUE(x.has_value());
+  EXPECT_NEAR(*x, 1.0f, 1e-4f);
+
+  EXPECT_EQ(read_raw_payloads(out_, "/other"), other_before);
+  EXPECT_EQ(read_raw_payloads(out_, "/pose_tf"), pose_before);
+}
+
+TEST_F(PcdUndistortTest, MissingPerPointTimeIsFatal)
+{
+  write_undistort_input(in_, /*with_time_field=*/false);
+  EXPECT_EQ(run_pcd_undistort(base_args(in_, out_)), 1);
+}
+
+TEST_F(PcdUndistortTest, UnresolvableToIsFatal)
+{
+  write_undistort_input(in_, /*with_time_field=*/true);
+  auto a = base_args(in_, out_);
+  a.to_frame = "no_such_frame";
+  EXPECT_EQ(run_pcd_undistort(a), 1);
+}
