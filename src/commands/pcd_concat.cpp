@@ -284,7 +284,12 @@ int run_pcd_concat(const PcdConcatArgs & args)
     if (need_tf) {
       if (const auto error = core::load_static_tf_buffer(args.input_path, buffer);
           error.has_value()) {
-        BAGWIZ_LOG_ERROR(kLogger, "%s", error->c_str());
+        // load_static_tf_buffer is a shared, caller-neutral helper (it names
+        // no command's flags); pcd concat owns --frame, so it supplies that
+        // context itself here.
+        BAGWIZ_LOG_ERROR(
+          kLogger, "pcd concat: cannot resolve input topic extrinsics to --frame '%s': %s",
+          target_frame.c_str(), error->c_str());
         return 1;
       }
     }

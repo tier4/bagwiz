@@ -456,23 +456,13 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
   // ---- Pass 1: build the --from -> --to trajectory ------------------------
   tf2::BufferCore buffer{kTfBufferCacheTime};
   if (const auto error = core::load_static_tf_buffer(args.input_path, buffer); error.has_value()) {
-    // load_static_tf_buffer is shared with `pcd concat`; its "no static TF
-    // topic" message names --frame (pcd concat's flag, which pcd undistort
-    // does not have). Never forward that string verbatim — emit our own
-    // message and only append the helper's detail when it is flag-free.
-    if (error->find("--frame") != std::string::npos) {
-      BAGWIZ_LOG_ERROR(
-        kLogger,
-        "pcd undistort: could not load the bag's static TF; the bag needs a '...tf_static' "
-        "topic to resolve --from '%s' -> --to '%s' and any --pcd topic's sensor extrinsic",
-        from.c_str(), to.c_str());
-    } else {
-      BAGWIZ_LOG_ERROR(
-        kLogger,
-        "pcd undistort: could not load the bag's static TF (needed to resolve --from '%s' / "
-        "--to '%s' and any --pcd topic's sensor extrinsic); detail: %s",
-        from.c_str(), to.c_str(), error->c_str());
-    }
+    // load_static_tf_buffer is a shared, caller-neutral helper (it names no
+    // command's flags), so its detail is always safe to forward here.
+    BAGWIZ_LOG_ERROR(
+      kLogger,
+      "pcd undistort: could not load the bag's static TF (needed to resolve --from '%s' / --to "
+      "'%s' and any --pcd topic's sensor extrinsic); detail: %s",
+      from.c_str(), to.c_str(), error->c_str());
     return 1;
   }
 
