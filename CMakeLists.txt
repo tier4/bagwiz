@@ -230,6 +230,7 @@ add_library(bagwiz_core
   src/core/pointcloud/cloud_concat.cpp
   src/core/pointcloud/concat_sync.cpp
   src/core/pointcloud/point_time.cpp
+  src/core/pointcloud/deskew.cpp
   src/core/pointcloud/color_mapper.cpp
   src/core/pointcloud/projector.cpp
   src/core/pointcloud/fetcher.cpp
@@ -853,6 +854,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_point_time_test test/core/pointcloud/point_time_test.cpp)
   target_link_libraries(bagwiz_point_time_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_deskew_test test/core/pointcloud/deskew_test.cpp)
+  target_link_libraries(bagwiz_deskew_test bagwiz_core)
 
   ament_add_gtest(bagwiz_color_mapper_test test/core/pointcloud/color_mapper_test.cpp)
   target_link_libraries(bagwiz_color_mapper_test bagwiz_core)
