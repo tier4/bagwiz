@@ -983,7 +983,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //   slam:   `map`(0) `slam`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
 //           [--backend <cpu|cuda|auto>] [--imu <topic>] [--gnss <topic>]
 //           [--input-res <m>] [--min-range <m>] [--max-range <m>]
-//           [-t|--threads <N>] [--upsample <spec>] [--viewer] [-w|--overwrite]
+//           [-t|--threads <N>] [--viewer] [-w|--overwrite]
 //           [--no-progress] [--no-warmup-recovery] [--no-cooldown-recovery]
 //           [--recovery-min-inliers <f>] [--submap-keyframes <N>]
 //   viewer: `map`(0) `viewer`(1) `<map>`(2)
@@ -1029,8 +1029,7 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
       with_help(
         {"--backend", "--gnss", "--imu", "--input-res", "--max-range", "--min-range",
          "--no-cooldown-recovery", "--no-progress", "--no-warmup-recovery", "--overwrite",
-         "--recovery-min-inliers", "--submap-keyframes", "--threads", "--upsample", "--viewer",
-         "-t", "-w"}),
+         "--recovery-min-inliers", "--submap-keyframes", "--threads", "--viewer", "-t", "-w"}),
       current);
   }
 

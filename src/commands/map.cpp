@@ -139,16 +139,6 @@ private:
       "--viewer", slam_args_.viewer,
       "After writing map.pcd, open the default browser to a Three.js point-cloud viewer "
       "served over a loopback HTTP server. Runs until interrupted (Ctrl-C).");
-    sub->add_option(
-      "--upsample", slam_args_.upsample_traj,
-      "Densify traj.tum only (the map is unaffected) to a higher rate. Every original pose is "
-      "kept verbatim and interpolated samples are inserted between consecutive poses. The value "
-      "is a positive magnitude with an optional, case-insensitive unit suffix: 'hz'/'Hz' or no "
-      "suffix = absolute frequency in Hz (e.g. '20' or '20hz'); 'x'/'X' = a multiple of the "
-      "trajectory's native rate (e.g. '2x'). Position is interpolated linearly and orientation "
-      "by SLERP, only within the original time span (no extrapolation). A target at or below the "
-      "native rate writes the trajectory unchanged (warned; never down-sampled); gaps between "
-      "poses wider than a few times the median spacing are left un-interpolated.");
     sub->add_flag(
       "--no-progress", slam_args_.no_progress,
       "Disable the live progress bars. They are also auto-suppressed when stderr is not a "
