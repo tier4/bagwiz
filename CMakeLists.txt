@@ -758,6 +758,9 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_trajectory_test test/core/trajectory_test.cpp)
   target_link_libraries(bagwiz_trajectory_test bagwiz_core)
 
+  ament_add_gtest(bagwiz_tf_buffer_loader_test test/core/tf_buffer_loader_test.cpp)
+  target_link_libraries(bagwiz_tf_buffer_loader_test bagwiz_core)
+
   ament_add_gtest(bagwiz_tf_chain_test test/core/tf_chain_test.cpp)
   target_link_libraries(bagwiz_tf_chain_test bagwiz_core)
 

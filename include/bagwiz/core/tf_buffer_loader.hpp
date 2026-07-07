@@ -23,6 +23,12 @@ namespace bagwiz::core
 [[nodiscard]] std::optional<std::string> load_tf_buffer(
   const std::filesystem::path & input, tf2::BufferCore & buffer);
 
+// Load ONLY the bag's static TF topics (…tf_static) into `buffer` as static
+// transforms (dynamic /tf is ignored). Returns std::nullopt on success, else an
+// error string (no static topic, decode failure, IO error).
+[[nodiscard]] std::optional<std::string> load_static_tf_buffer(
+  const std::filesystem::path & input, tf2::BufferCore & buffer);
+
 }  // namespace bagwiz::core
 
 #endif  // BAGWIZ__CORE__TF_BUFFER_LOADER_HPP_

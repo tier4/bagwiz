@@ -9,7 +9,6 @@
 #include "bagwiz/commands/pcd_concat.hpp"
 
 #include "bagwiz/core/bag_inplace.hpp"
-#include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/duration_parse.hpp"
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/output_path.hpp"
@@ -17,8 +16,8 @@
 #include "bagwiz/core/pointcloud/cloud_transform.hpp"
 #include "bagwiz/core/pointcloud/concat_sync.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
+#include "bagwiz/core/tf_buffer_loader.hpp"
 #include "bagwiz/core/tf_chain.hpp"
-#include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <tf2/buffer_core.hpp>
@@ -36,7 +35,6 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -48,21 +46,9 @@ namespace
 {
 constexpr const char * kLogger = "bagwiz.cmd.pcd";
 constexpr const char * kPointCloud2Type = "sensor_msgs/msg/PointCloud2";
-constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
-constexpr std::string_view kTfStaticSuffix = "tf_static";
 constexpr std::chrono::hours kTfBufferCacheTime{24 * 365};
 constexpr std::int64_t kDefaultToleranceNs = 50'000'000;  // 50 ms fallback
 constexpr const char * kDefaultFrame = "base_link";       // --frame default
-
-bool is_static_tf_topic(std::string_view topic_name)
-{
-  if (topic_name.size() < kTfStaticSuffix.size()) {
-    return false;
-  }
-  return topic_name.compare(
-           topic_name.size() - kTfStaticSuffix.size(), kTfStaticSuffix.size(), kTfStaticSuffix) ==
-         0;
-}
 
 // geometry_msgs quaternion (x,y,z,w) + translation -> RigidTransform (row-major
 // rotation matrix). p_target = R * p_source + t.
@@ -79,71 +65,6 @@ core::pointcloud::RigidTransform to_rigid(const geometry_msgs::msg::TransformSta
   out.translation = {
     ts.transform.translation.x, ts.transform.translation.y, ts.transform.translation.z};
   return out;
-}
-
-// Build a tf2 buffer from every static TF topic in the bag. (Ported from
-// map_slam; promote to a shared core helper when `pcd undistort` also needs it.)
-bool build_static_tf_buffer(
-  const std::string & input_path, tf2::BufferCore & buffer, std::string & error)
-{
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(input_path);
-  } catch (const std::exception & e) {
-    error = std::string("failed to reopen bag for static TF: ") + e.what();
-    return false;
-  }
-
-  std::vector<std::string> static_topics;
-  for (const auto & t : reader->topics()) {
-    if (t.type == kTfMessageType && is_static_tf_topic(t.name)) {
-      static_topics.push_back(t.name);
-    }
-  }
-  if (static_topics.empty()) {
-    error =
-      "bag has no static TF topic (…tf_static); cannot resolve the LiDAR extrinsics to --frame";
-    return false;
-  }
-
-  io::ReadFilter filter;
-  filter.topics = static_topics;
-  reader->set_filter(filter);
-
-  std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> decoders;
-  for (const auto & info : reader->topics()) {
-    if (info.type != kTfMessageType || !is_static_tf_topic(info.name)) {
-      continue;
-    }
-    auto open = core::decoder::open_decoder(info);
-    if (!open.ok()) {
-      error = "could not open decoder for '" + info.name + "': " + open.error;
-      return false;
-    }
-    decoders.emplace(info.name, std::move(open.decoder));
-  }
-
-  io::RawMessage raw;
-  try {
-    while (reader->next(raw)) {
-      const auto it = decoders.find(raw.topic->name);
-      if (it == decoders.end()) {
-        continue;
-      }
-      const auto decoded = it->second->decode(raw.payload);
-      if (!decoded.ok()) {
-        error = "failed to decode static TF on '" + raw.topic->name + "': " + decoded.error;
-        return false;
-      }
-      for (const auto & t : core::extract_tf_message(*decoded.value)) {
-        buffer.setTransform(t, "bagwiz", true);
-      }
-    }
-  } catch (const std::exception & e) {
-    error = std::string("error reading static TF: ") + e.what();
-    return false;
-  }
-  return true;
 }
 
 // One input pcd topic's resolved state.
@@ -361,9 +282,9 @@ int run_pcd_concat(const PcdConcatArgs & args)
       }
     }
     if (need_tf) {
-      std::string error;
-      if (!build_static_tf_buffer(args.input_path, buffer, error)) {
-        BAGWIZ_LOG_ERROR(kLogger, "%s", error.c_str());
+      if (const auto error = core::load_static_tf_buffer(args.input_path, buffer);
+          error.has_value()) {
+        BAGWIZ_LOG_ERROR(kLogger, "%s", error->c_str());
         return 1;
       }
     }

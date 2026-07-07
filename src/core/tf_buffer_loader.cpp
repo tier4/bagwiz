@@ -97,4 +97,61 @@ std::optional<std::string> load_tf_buffer(
   return std::nullopt;
 }
 
+std::optional<std::string> load_static_tf_buffer(
+  const std::filesystem::path & input, tf2::BufferCore & buffer)
+{
+  std::unique_ptr<io::BagReader> reader;
+  try {
+    reader = io::open_read(input);
+  } catch (const std::exception & e) {
+    return std::string("failed to reopen bag for static TF: ") + e.what();
+  }
+
+  std::vector<const io::TopicInfo *> static_topics;
+  for (const auto & t : reader->topics()) {
+    if (t.type == kTfMessageType && is_static_tf_topic(t.name)) {
+      static_topics.push_back(&t);
+    }
+  }
+  if (static_topics.empty()) {
+    return "bag has no static TF topic (…tf_static); cannot resolve the LiDAR extrinsics to "
+           "--frame";
+  }
+
+  io::ReadFilter filter;
+  for (const auto * t : static_topics) {
+    filter.topics.push_back(t->name);
+  }
+  reader->set_filter(filter);
+
+  std::unordered_map<std::string, std::unique_ptr<decoder::Decoder>> decoders;
+  for (const auto * t : static_topics) {
+    auto open = decoder::open_decoder(*t);
+    if (!open.ok()) {
+      return "could not open decoder for '" + t->name + "': " + open.error;
+    }
+    decoders.emplace(t->name, std::move(open.decoder));
+  }
+
+  io::RawMessage raw;
+  try {
+    while (reader->next(raw)) {
+      const auto it = decoders.find(raw.topic->name);
+      if (it == decoders.end()) {
+        continue;
+      }
+      const auto decoded = it->second->decode(raw.payload);
+      if (!decoded.ok()) {
+        return "failed to decode static TF on '" + raw.topic->name + "': " + decoded.error;
+      }
+      for (const auto & t : extract_tf_message(*decoded.value)) {
+        buffer.setTransform(t, "bagwiz", /*is_static=*/true);
+      }
+    }
+  } catch (const std::exception & e) {
+    return std::string("error reading static TF: ") + e.what();
+  }
+  return std::nullopt;
+}
+
 }  // namespace bagwiz::core
