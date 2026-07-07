@@ -6,8 +6,8 @@
 # RoboStack conda channels (one per ROS 2 distro), and the C/C++ toolchain comes
 # from conda-forge. Pick a distro per invocation, e.g.:
 #
-#   pixi run -e humble build-full  # build against ROS 2 Humble (the default env)
-#   pixi run -e jazzy test-full    # build + test against Jazzy
+#   pixi run -e jazzy build-full   # build against ROS 2 Jazzy (the default env)
+#   pixi run -e humble test-full   # build + test against Humble
 #   pixi run -e jazzy run -- --help
 #   pixi shell -e jazzy            # interactive shell with `bagwiz` on PATH
 #
@@ -233,12 +233,12 @@ cuda = "12"
 
 # ---------------------------------------------------------------------------
 # One environment per distro. Each solves independently against its own
-# robostack channel (no shared solve-group). `default` aliases humble so a bare
-# `pixi run build-full` targets Humble. The *-cuda environments add the conda CUDA
+# robostack channel (no shared solve-group). `default` aliases jazzy so a bare
+# `pixi run build-full` targets Jazzy. The *-cuda environments add the conda CUDA
 # toolkit for the GPU SLAM build (humble + jazzy).
 # ---------------------------------------------------------------------------
 [environments]
-default = ["humble"]
+default = ["jazzy"]
 humble = ["humble"]
 jazzy = ["jazzy"]
 humble-cuda = ["humble", "gpu"]

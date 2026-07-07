@@ -156,7 +156,7 @@ govern source code or CLI behavior.
   per distro) and the C/C++ toolchain from conda-forge. Build with
   `pixi run -e <distro> build-full` from the repository root, where `<distro>` is
   `humble` or `jazzy`; a bare `pixi run build-full` targets
-  the default environment (Humble). Each distro builds into its own
+  the default environment (Jazzy). Each distro builds into its own
   `build/<distro>` and `install/<distro>`, so switching distros never reuses
   another distro's CMake cache.
 - Builds are a `{core, full} x {cpu, cuda}` matrix, but the CPU/CUDA choice is

@@ -72,10 +72,10 @@ Read by the wrapper and installer **shell scripts**, not by the `bagwiz`
 binary. They control how the `bagwiz` launcher on your `PATH` is installed and
 which build it runs.
 
-| Variable                | Accepted values (default)              | Effect                                                                                                                                                                      | Source                      |
-| ----------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| `BAGWIZ_DEFAULT_DISTRO` | a built distro name (default `humble`) | Which built distro the installed `bagwiz` launcher runs. Baked in by `pixi run -e <distro> install`; export it to switch the active build at run time without reinstalling. | `scripts/bagwiz-run.sh`     |
-| `BAGWIZ_INSTALL_DIR`    | a directory (default `~/.local/bin`)   | Where `pixi run install` places the `bagwiz` launcher.                                                                                                                      | `scripts/bagwiz-install.sh` |
+| Variable                | Accepted values (default)             | Effect                                                                                                                                                                      | Source                      |
+| ----------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| `BAGWIZ_DEFAULT_DISTRO` | a built distro name (default `jazzy`) | Which built distro the installed `bagwiz` launcher runs. Baked in by `pixi run -e <distro> install`; export it to switch the active build at run time without reinstalling. | `scripts/bagwiz-run.sh`     |
+| `BAGWIZ_INSTALL_DIR`    | a directory (default `~/.local/bin`)  | Where `pixi run install` places the `bagwiz` launcher.                                                                                                                      | `scripts/bagwiz-install.sh` |
 
 ## Shell completion install paths
 

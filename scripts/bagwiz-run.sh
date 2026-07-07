@@ -40,8 +40,8 @@ manifest="${BAGWIZ_REPO}/pixi.toml"
 activate_hook="${_self_dir}/pixi-activate.sh"
 
 # Which built distro to run: the default the launcher was installed with
-# (BAGWIZ_DEFAULT_DISTRO), else Humble.
-distro="${BAGWIZ_DEFAULT_DISTRO:-humble}"
+# (BAGWIZ_DEFAULT_DISTRO), else Jazzy.
+distro="${BAGWIZ_DEFAULT_DISTRO:-jazzy}"
 # The distro indexes both the binary path and the cache filename; reject empty,
 # '.'/'..', and any path- or shell-unsafe character (including '/') so a stray
 # value cannot traverse out of install/ or produce an odd cache name.
