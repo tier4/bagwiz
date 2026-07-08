@@ -125,6 +125,7 @@ CLAUDE.local.md
 
 # Local superpowers design docs (not committed)
 /docs/superpowers/
+.superpowers/
 
 # YAML files (bag dumps, local configs, metadata, etc.)
 *.yaml

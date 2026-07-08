@@ -17,8 +17,6 @@
 import * as THREE from "three";
 import { PCDLoader } from "three/addons/loaders/PCDLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { Line2 } from "three/addons/lines/Line2.js";
-import { LineGeometry } from "three/addons/lines/LineGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -160,8 +158,6 @@ interface ViewerState {
   trajPoses: TrajPoses | null; // parsed traj.tum poses (position + orientation)
   trajGroup: THREE.Group | null; // backbone + pose-axis triads + end markers
   trajMaterials: LineMaterial[]; // every fat-line material, for .resolution on resize
-  axisLength: number; // pose-axis length in metres (inspector-controlled)
-  axisSpacing: number; // along-path spacing between drawn axes, metres
   showTrajectory: boolean; // mirrors #trajToggle; default off
 }
 
@@ -186,10 +182,6 @@ const state: ViewerState = {
   trajPoses: null,
   trajGroup: null,
   trajMaterials: [],
-  // Metres; must match the #trajAxisLen / #trajAxisSpacing slider defaults in
-  // map_viewer.html.
-  axisLength: 1.5,
-  axisSpacing: 1.5,
   showTrajectory: false,
 };
 
@@ -734,19 +726,22 @@ function buildUI(): void {
 const TRAJ_AXIS_X_COLOR = new THREE.Color(0xff4466); // gizmo X
 const TRAJ_AXIS_Y_COLOR = new THREE.Color(0x88ff44); // gizmo Y
 const TRAJ_AXIS_Z_COLOR = new THREE.Color(0x4488ff); // gizmo Z
+const TRAJ_AXIS_LENGTH = 1.5; // metres, fixed; no UI slider
+const TRAJ_AXIS_POSE_STRIDE = 10; // one axis triad every N poses
 const TRAJ_AXIS_DIRS: Array<[THREE.Vector3, THREE.Color]> = [
   [new THREE.Vector3(1, 0, 0), TRAJ_AXIS_X_COLOR],
   [new THREE.Vector3(0, 1, 0), TRAJ_AXIS_Y_COLOR],
   [new THREE.Vector3(0, 0, 1), TRAJ_AXIS_Z_COLOR],
 ];
-const TRAJ_AXIS_WIDTH_PX = 2.5;
+const TRAJ_AXIS_WIDTH_PX = 3.5;
+const TRAJ_ARROWHEAD_HEIGHT_RATIO = 0.22; // arrowhead length as a fraction of axis length
+const TRAJ_ARROWHEAD_RADIUS_RATIO = 0.35; // arrowhead base radius as a fraction of its height
 
 // A neutral backbone (not the teal/blue accent) stays distinct from the blue Z
 // axis and the point cloud. Both the backbone and the axes get a dark outline
 // so they read over any colormap — jet's low end (the default; see
 // map_colormaps.ts) is itself blue.
 const TRAJ_BACKBONE_COLOR = 0xd5d9e2;
-const TRAJ_BACKBONE_WIDTH_PX = 2;
 const TRAJ_OUTLINE_COLOR = 0x08090c;
 const TRAJ_OUTLINE_EXTRA_PX = 2; // an outline is this many px wider than its line
 
@@ -759,6 +754,8 @@ const TRAJ_END_COLOR = 0x4ea1ff; // --a2
 const trajQuat = new THREE.Quaternion();
 const trajOrigin = new THREE.Vector3();
 const trajAxisEnd = new THREE.Vector3();
+const trajArrowDir = new THREE.Vector3();
+const trajArrowUp = new THREE.Vector3(0, 1, 0);
 
 // Parsed traj.tum: pose origins plus the orientation quaternions that rotate the
 // unit axes into world-frame triads. Positions are already in the map's world
@@ -807,29 +804,19 @@ function parseTumPoses(text: string): TrajPoses {
   };
 }
 
-// Pick the poses that get an axis triad: every `spacing` metres of travelled
-// path, plus the first and last so both ends of an open path always carry a
-// frame. The returned indices are always real poses from traj.tum -- axes are
-// never placed at interpolated points -- and the backbone still runs through
-// every pose regardless of this subset.
-function selectAxisFrames(poses: TrajPoses, spacing: number): number[] {
+// Pick the poses that get an axis triad: every `stride` poses, plus the last
+// pose so both ends of an open path always carry a frame. The returned indices
+// are always real poses from traj.tum -- axes are never placed at interpolated
+// points -- and the backbone still runs through every pose regardless of this
+// subset.
+function selectAxisFrames(poses: TrajPoses, stride: number): number[] {
   const frames: number[] = [];
   if (poses.count === 0) {
     return frames;
   }
-  frames.push(0);
-  let travelled = 0;
-  const p = poses.positions;
-  for (let i = 1; i < poses.count; i += 1) {
-    travelled += Math.hypot(
-      p[i * 3] - p[(i - 1) * 3],
-      p[i * 3 + 1] - p[(i - 1) * 3 + 1],
-      p[i * 3 + 2] - p[(i - 1) * 3 + 2],
-    );
-    if (travelled >= spacing) {
-      frames.push(i);
-      travelled = 0;
-    }
+  const step = Math.max(1, Math.floor(stride));
+  for (let i = 0; i < poses.count; i += step) {
+    frames.push(i);
   }
   if (frames[frames.length - 1] !== poses.count - 1) {
     frames.push(poses.count - 1);
@@ -837,44 +824,39 @@ function selectAxisFrames(poses: TrajPoses, spacing: number): number[] {
   return frames;
 }
 
-// Build the trajectory group: a neutral backbone (Line2) through every pose
-// origin, an X/Y/Z axis triad (LineSegments2) at each selected pose, and start
-// / end origin markers. Fat lines come from three/addons (Line2 /
-// LineSegments2) for real pixel-width control that plain THREE.Line lacks; each
-// gets a dark outline drawn under it on identical geometry, so draw order alone
-// (not z-fighting) decides what shows on top. Every LineMaterial is returned so
+// Build the trajectory group: a neutral backbone (simple THREE.Line) through
+// every pose origin, an X/Y/Z axis triad (LineSegments2 plus a cone arrowhead
+// on the positive end) at each selected pose, and start / end origin markers.
+// Axis lines use three/addons LineSegments2 for real pixel-width control and a
+// dark outline; the backbone is intentionally a plain 1 px line so it does not
+// read as a screen-facing ribbon or cylinder. Every LineMaterial is returned so
 // the caller can track it for .resolution updates on resize. The frame count is
 // returned for the inspector's hint.
 function buildTrajectory(
   poses: TrajPoses,
   axisLength: number,
-  axisSpacing: number,
+  axisPoseStride: number,
 ): { group: THREE.Group; materials: LineMaterial[]; frameCount: number } {
   const group = new THREE.Group();
   const materials: LineMaterial[] = [];
 
-  // Backbone through all pose origins.
-  const backboneGeom = new LineGeometry();
-  backboneGeom.setPositions(poses.positions);
-  const backboneOutlineMat = new LineMaterial({
-    color: TRAJ_OUTLINE_COLOR,
-    linewidth: TRAJ_BACKBONE_WIDTH_PX + TRAJ_OUTLINE_EXTRA_PX,
-  });
-  const backboneMat = new LineMaterial({
-    color: TRAJ_BACKBONE_COLOR,
-    linewidth: TRAJ_BACKBONE_WIDTH_PX,
-  });
-  const backboneOutline = new Line2(backboneGeom, backboneOutlineMat);
-  backboneOutline.renderOrder = 0;
-  const backbone = new Line2(backboneGeom, backboneMat);
+  // Backbone through all pose origins, drawn as a simple 1 px line so it does
+  // not look like a screen-facing fat line or a cylinder.
+  const backboneGeom = new THREE.BufferGeometry();
+  backboneGeom.setAttribute("position", new THREE.BufferAttribute(poses.positions, 3));
+  const backboneMat = new THREE.LineBasicMaterial({ color: TRAJ_BACKBONE_COLOR });
+  const backbone = new THREE.Line(backboneGeom, backboneMat);
   backbone.renderOrder = 1;
-  group.add(backboneOutline, backbone);
-  materials.push(backboneOutlineMat, backboneMat);
+  group.add(backbone);
 
-  // Pose-axis triads at arc-length-spaced real poses.
-  const frames = selectAxisFrames(poses, axisSpacing);
+  // Pose-axis triads at fixed pose-count intervals.
+  const frames = selectAxisFrames(poses, axisPoseStride);
   const axisPositions: number[] = [];
   const axisColors: number[] = [];
+  const arrowHeight = axisLength * TRAJ_ARROWHEAD_HEIGHT_RATIO;
+  const arrowRadius = arrowHeight * TRAJ_ARROWHEAD_RADIUS_RATIO;
+  const arrowGeometry = new THREE.ConeGeometry(arrowRadius, arrowHeight, 12);
+  const arrowMaterials = new Map<number, THREE.MeshBasicMaterial>();
   for (const i of frames) {
     trajOrigin.set(poses.positions[i * 3], poses.positions[i * 3 + 1], poses.positions[i * 3 + 2]);
     trajQuat.set(
@@ -894,6 +876,19 @@ function buildTrajectory(
         trajAxisEnd.z,
       );
       axisColors.push(color.r, color.g, color.b, color.r, color.g, color.b);
+
+      // Smooth cone arrowhead on the positive end of the axis.
+      trajArrowDir.copy(dir).applyQuaternion(trajQuat).normalize();
+      let arrowMat = arrowMaterials.get(color.getHex());
+      if (!arrowMat) {
+        arrowMat = new THREE.MeshBasicMaterial({ color });
+        arrowMaterials.set(color.getHex(), arrowMat);
+      }
+      const arrow = new THREE.Mesh(arrowGeometry, arrowMat);
+      arrow.position.copy(trajAxisEnd).addScaledVector(trajArrowDir, -arrowHeight * 0.5);
+      arrow.quaternion.setFromUnitVectors(trajArrowUp, trajArrowDir);
+      arrow.renderOrder = 4;
+      group.add(arrow);
     }
   }
   const axisGeom = new LineSegmentsGeometry();
@@ -939,8 +934,7 @@ function buildTrajectory(
 }
 
 // Free the GPU resources of a trajectory group before dropping it, so repeated
-// rebuilds (dragging the axis-length / spacing sliders) don't leak geometries
-// or materials.
+// rebuilds don't leak geometries or materials.
 function disposeTrajectoryGroup(group: THREE.Group): void {
   group.traverse((obj) => {
     const holder = obj as THREE.Object3D & {
@@ -956,9 +950,8 @@ function disposeTrajectoryGroup(group: THREE.Group): void {
   });
 }
 
-// (Re)build the trajectory group from the current poses and axis settings,
-// swapping it into the scene when the overlay is shown. Called once on load and
-// whenever the axis-length / spacing sliders change.
+// (Re)build the trajectory group from the current poses and fixed axis
+// settings, swapping it into the scene when the overlay is shown.
 function rebuildTrajectory(): void {
   if (!state.trajPoses) {
     return;
@@ -967,7 +960,7 @@ function rebuildTrajectory(): void {
     scene.remove(state.trajGroup);
     disposeTrajectoryGroup(state.trajGroup);
   }
-  const built = buildTrajectory(state.trajPoses, state.axisLength, state.axisSpacing);
+  const built = buildTrajectory(state.trajPoses, TRAJ_AXIS_LENGTH, TRAJ_AXIS_POSE_STRIDE);
   state.trajGroup = built.group;
   state.trajMaterials = built.materials;
   if (state.showTrajectory) {
@@ -975,14 +968,15 @@ function rebuildTrajectory(): void {
   }
   el<HTMLElement>("trajHint").textContent =
     `${state.trajPoses.count.toLocaleString()} poses · ` +
-    `${built.frameCount.toLocaleString()} axis frames · X/Y/Z per pose`;
+    `${built.frameCount.toLocaleString()} axis frames · ` +
+    `${TRAJ_AXIS_POSE_STRIDE} poses per axis`;
   requestFrame();
 }
 
 // Reveal the inspector's Trajectory group (hidden by default in the markup) and
-// wire its toggle plus the axis-length / spacing sliders, once traj.tum has been
-// fetched and parsed into at least one pose. Left untouched -- so the panel
-// stays hidden -- when traj.tum is absent (404) or empty.
+// wire its toggle, once traj.tum has been fetched and parsed into at least one
+// pose. Left untouched -- so the panel stays hidden -- when traj.tum is absent
+// (404) or empty.
 function revealTrajectoryUi(): void {
   el<HTMLElement>("trajGrp").hidden = false;
 
@@ -997,30 +991,6 @@ function revealTrajectoryUi(): void {
       scene.remove(state.trajGroup);
     }
     requestFrame();
-  });
-
-  const lenSlider = el<HTMLInputElement>("trajAxisLen");
-  const lenVal = el<HTMLElement>("trajAxisLenVal");
-  lenSlider.value = String(state.axisLength);
-  lenVal.textContent = `${state.axisLength.toFixed(2)} m`;
-  setSliderFill(lenSlider);
-  lenSlider.addEventListener("input", () => {
-    state.axisLength = parseFloat(lenSlider.value);
-    lenVal.textContent = `${state.axisLength.toFixed(2)} m`;
-    setSliderFill(lenSlider);
-    rebuildTrajectory();
-  });
-
-  const spacingSlider = el<HTMLInputElement>("trajAxisSpacing");
-  const spacingVal = el<HTMLElement>("trajAxisSpacingVal");
-  spacingSlider.value = String(state.axisSpacing);
-  spacingVal.textContent = `${state.axisSpacing.toFixed(1)} m`;
-  setSliderFill(spacingSlider);
-  spacingSlider.addEventListener("input", () => {
-    state.axisSpacing = parseFloat(spacingSlider.value);
-    spacingVal.textContent = `${state.axisSpacing.toFixed(1)} m`;
-    setSliderFill(spacingSlider);
-    rebuildTrajectory();
   });
 }
 
