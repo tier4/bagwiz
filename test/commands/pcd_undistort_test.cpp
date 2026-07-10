@@ -200,6 +200,48 @@ std::vector<std::byte> serialize_cloud_oob_time_field(
   return pc::serialize_pointcloud2(c);
 }
 
+// Writes a two --pcd topic bag:
+//   /points_a and /points_b both have per-point time and require deskew;
+//   /other is a non-target PointCloud2 topic interleaved between them;
+//   /pose_tf and /tf_static supply the map->base_link trajectory.
+// Both /points_a and /points_b contain one point at local x=0 with relative
+// per-point time 0.1s, so deskewing to the header stamp moves each to x=+1.
+void write_two_pcd_topics_input(const std::filesystem::path & path)
+{
+  auto w = bagwiz::io::open_write(path, mcap_options());
+  w->declare_topic(bagwiz::core::make_tf_message_topic_info("/pose_tf"));
+  w->declare_topic(bagwiz::core::make_tf_message_topic_info("/tf_static"));
+  w->declare_topic(pcd_topic_info("/points_a"));
+  w->declare_topic(pcd_topic_info("/points_b"));
+  w->declare_topic(pcd_topic_info("/other"));
+
+  {
+    const std::vector<geometry_msgs::msg::TransformStamped> edges0{
+      make_map_to_base_link(kPoseT0Ns, 0.0)};
+    const std::vector<geometry_msgs::msg::TransformStamped> edges1{
+      make_map_to_base_link(kPoseT1Ns, 1.0)};
+    const auto p0 = bagwiz::core::serialize_tf_message(edges0);
+    const auto p1 = bagwiz::core::serialize_tf_message(edges1);
+    w->write("/pose_tf", kPoseT0Ns, std::span<const std::byte>(p0.data(), p0.size()));
+    w->write("/pose_tf", kPoseT1Ns, std::span<const std::byte>(p1.data(), p1.size()));
+  }
+  {
+    const std::vector<geometry_msgs::msg::TransformStamped> no_edges;
+    const auto s = bagwiz::core::serialize_tf_message(no_edges);
+    w->write("/tf_static", 0, std::span<const std::byte>(s.data(), s.size()));
+  }
+  {
+    const auto a = serialize_cloud(kPoseT0Ns, "base_link", 0.0f, 0.1f);
+    const auto b = serialize_cloud(kPoseT0Ns, "base_link", 0.0f, 0.1f);
+    const auto other = serialize_cloud(kPoseT0Ns, "some_other_frame", 42.0f, std::nullopt);
+    // Interleave the topics so order preservation is non-trivial.
+    w->write("/points_a", kPoseT0Ns, std::span<const std::byte>(a.data(), a.size()));
+    w->write("/other", kPoseT0Ns, std::span<const std::byte>(other.data(), other.size()));
+    w->write("/points_b", kPoseT0Ns, std::span<const std::byte>(b.data(), b.size()));
+  }
+  w->close();
+}
+
 // Same as write_undistort_input(path, /*with_time_field=*/true), but /points'
 // "t" field is out-of-bounds (see serialize_cloud_oob_time_field) instead of
 // simply absent.
@@ -388,4 +430,44 @@ TEST_F(PcdUndistortTest, InPlaceRewritesTargetTopicAndPreservesOthers)
 
   EXPECT_EQ(read_raw_payloads(inplace_path, "/other"), other_before);
   EXPECT_EQ(read_raw_payloads(inplace_path, "/pose_tf"), pose_before);
+}
+
+TEST_F(PcdUndistortTest, DeskewsMultiplePcdTopics)
+{
+  write_two_pcd_topics_input(in_);
+  auto a = base_args(in_, out_);
+  a.pcd_topics = {"/points_a", "/points_b"};
+  a.threads = 2;
+  ASSERT_EQ(run_pcd_undistort(a), 0);
+
+  const auto xa = read_first_point_x(out_, "/points_a");
+  const auto xb = read_first_point_x(out_, "/points_b");
+  ASSERT_TRUE(xa.has_value());
+  ASSERT_TRUE(xb.has_value());
+  EXPECT_NEAR(*xa, 1.0f, 1e-4f);
+  EXPECT_NEAR(*xb, 1.0f, 1e-4f);
+
+  // Verify order preservation on non-pcd topic
+  EXPECT_EQ(read_raw_payloads(out_, "/other"), read_raw_payloads(in_, "/other"));
+}
+
+TEST_F(PcdUndistortTest, SyncAndParallelOutputsAreIdentical)
+{
+  write_two_pcd_topics_input(in_);
+  const auto sync_out = tmp_ / "sync.mcap";
+  const auto par_out = tmp_ / "par.mcap";
+
+  auto sync_args = base_args(in_, sync_out);
+  sync_args.pcd_topics = {"/points_a", "/points_b"};
+  sync_args.threads = 1;
+  ASSERT_EQ(run_pcd_undistort(sync_args), 0);
+
+  auto par_args = base_args(in_, par_out);
+  par_args.pcd_topics = {"/points_a", "/points_b"};
+  par_args.threads = 2;
+  ASSERT_EQ(run_pcd_undistort(par_args), 0);
+
+  EXPECT_EQ(read_raw_payloads(sync_out, "/points_a"), read_raw_payloads(par_out, "/points_a"));
+  EXPECT_EQ(read_raw_payloads(sync_out, "/points_b"), read_raw_payloads(par_out, "/points_b"));
+  EXPECT_EQ(read_raw_payloads(sync_out, "/other"), read_raw_payloads(par_out, "/other"));
 }
