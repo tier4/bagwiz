@@ -153,6 +153,23 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 FetchContent_MakeAvailable(cli11 fmt rang)
 unset(CMAKE_POLICY_VERSION_MINIMUM)
 
+# p-ranav/indicators backs the terminal progress bars used by core commands
+# (`pcd concat`, `pcd undistort`) as well as `map slam`. It is header-only and
+# fetched unconditionally because the shared progress helpers live in
+# bagwiz_core and must compile in the `build-core` (non-SLAM) configuration.
+FetchContent_Declare(
+  indicators
+  GIT_REPOSITORY https://github.com/p-ranav/indicators.git
+  GIT_TAG v2.3
+  GIT_SHALLOW TRUE
+)
+set(INDICATORS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(INDICATORS_SAMPLES OFF CACHE BOOL "" FORCE)
+set(INDICATORS_DEMO OFF CACHE BOOL "" FORCE)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+FetchContent_MakeAvailable(indicators)
+unset(CMAKE_POLICY_VERSION_MINIMUM)
+
 # ---------------------------------------------------------------------------
 # Embedded joke data: read the single source-of-truth JSON at configure time
 # and bake it into a generated header. This keeps `bagwiz joke` self-contained
@@ -236,6 +253,7 @@ add_library(bagwiz_core
   src/core/pointcloud/fetcher.cpp
   src/core/pointcloud/overlay.cpp
   src/core/pointcloud/projector_helpers.cpp
+  src/core/progress.cpp
   src/core/slam/lidar_scan.cpp
   src/core/slam/imu_sample.cpp
   src/core/slam/gnss_sample.cpp
@@ -330,6 +348,10 @@ target_link_libraries(bagwiz_core PRIVATE ${OpenCV_LIBS})
 # fetched via FetchContent and not installable.
 target_compile_definitions(bagwiz_core PRIVATE FMT_HEADER_ONLY)
 target_include_directories(bagwiz_core PRIVATE $<TARGET_PROPERTY:fmt::fmt,INTERFACE_INCLUDE_DIRECTORIES>)
+# indicators is an implementation detail of progress.cpp (the public header
+# holds only a pimpl pointer), so keep it PRIVATE and out of the export set.
+target_include_directories(bagwiz_core SYSTEM PRIVATE
+  $<TARGET_PROPERTY:indicators::indicators,INTERFACE_INCLUDE_DIRECTORIES>)
 
 # ---------------------------------------------------------------------------
 # bagwiz: CLI executable. Installs to bin/ so users run it directly after
@@ -392,37 +414,15 @@ if(BAGWIZ_WITH_SLAM)
   # so depend on it explicitly for its headers and the `gtsam` link target.
   find_package(GTSAM CONFIG REQUIRED)
 
-  # Header-only progress bar for `map slam` (p-ranav/indicators). indicators
-  # auto-detects it is a subproject (PROJECT_NAME already set) and skips its own
-  # install()/export rules, so unlike cpp-httplib below it needs no install
-  # toggle and links cleanly into the (non-exported) bagwiz executable.
-  FetchContent_Declare(
-    indicators
-    GIT_REPOSITORY https://github.com/p-ranav/indicators.git
-    GIT_TAG v2.3
-    GIT_SHALLOW TRUE
-  )
-  set(INDICATORS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-  set(INDICATORS_SAMPLES OFF CACHE BOOL "" FORCE)
-  set(INDICATORS_DEMO OFF CACHE BOOL "" FORCE)
-  set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
-  FetchContent_MakeAvailable(indicators)
-  unset(CMAKE_POLICY_VERSION_MINIMUM)
-
   target_sources(bagwiz PRIVATE
     src/core/slam/cloud_mapper.cpp
     src/core/slam/warmup_recovery.cpp
     src/core/slam/scan_match_recovery.cpp
     src/core/slam/cuda_device.cpp
-    src/core/slam/progress_bar.cpp
     src/commands/map.cpp
     src/commands/map_slam.cpp
     src/commands/map_viewer.cpp)
   target_link_libraries(bagwiz PRIVATE glim::glim gtsam_points::gtsam_points gtsam)
-  # Header-only: pull indicators' include dir as SYSTEM (not a link) so its own
-  # -Wshadow chatter stays out of our build, mirroring httplib below.
-  target_include_directories(bagwiz SYSTEM PRIVATE
-    $<TARGET_PROPERTY:indicators::indicators,INTERFACE_INCLUDE_DIRECTORIES>)
   target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_SLAM)
 
   # GPU fast path: link the CUDA runtime, compile the GPU export voxelizer, and
@@ -712,16 +712,10 @@ if(BUILD_TESTING)
         BAGWIZ_WITH_SLAM BAGWIZ_WITH_SLAM_CUDA)
     endif()
 
-    # Progress-bar helpers + no-op-when-disabled behavior. GLIM-free, but gated
-    # on SLAM since that is where indicators is fetched; its include dir is
-    # pulled like the viewer server test pulls httplib's.
-    ament_add_gtest(bagwiz_slam_progress_bar_test
-      test/core/slam/progress_bar_test.cpp
-      src/core/slam/progress_bar.cpp)
-    target_link_libraries(bagwiz_slam_progress_bar_test bagwiz_core)
-    target_include_directories(bagwiz_slam_progress_bar_test SYSTEM PRIVATE
-      $<TARGET_PROPERTY:indicators::indicators,INTERFACE_INCLUDE_DIRECTORIES>)
   endif()
+
+  ament_add_gtest(bagwiz_progress_test test/core/progress_test.cpp)
+  target_link_libraries(bagwiz_progress_test bagwiz_core)
 
   ament_add_gtest(bagwiz_decoder_test test/core/decoder/decoder_test.cpp)
   target_link_libraries(bagwiz_decoder_test bagwiz_core)

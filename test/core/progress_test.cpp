@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/core/slam/progress_bar.hpp"
+#include "bagwiz/core/progress.hpp"
 
 #include "bagwiz/io/bag_io.hpp"
 
@@ -16,35 +16,35 @@
 #include <unordered_map>
 #include <vector>
 
-// Unit tests for the `map slam` progress helpers. The pure decision functions
+// Unit tests for the progress helpers. The pure decision functions
 // (progress_enabled / progress_total) get a truth-table / edge sweep; the RAII
 // reporters are exercised only on the DISABLED path, which must be a complete
 // no-op (no thread, no terminal output) and is the behavior the rest of the
 // codebase relies on when stderr is not a TTY.
 namespace
 {
-namespace slam = bagwiz::core::slam;
+namespace core = bagwiz::core;
 using bagwiz::io::BagReader;
 
 TEST(ProgressEnabled, ShownOnlyOnInteractiveStderrWithoutOptOut)
 {
   // tty, no NO_COLOR, no --no-progress -> shown.
-  EXPECT_TRUE(slam::progress_enabled(true, false, false));
+  EXPECT_TRUE(core::progress_enabled(true, false, false));
 }
 
 TEST(ProgressEnabled, SuppressedOffATty)
 {
-  EXPECT_FALSE(slam::progress_enabled(false, false, false));
+  EXPECT_FALSE(core::progress_enabled(false, false, false));
 }
 
 TEST(ProgressEnabled, SuppressedUnderNoColor)
 {
-  EXPECT_FALSE(slam::progress_enabled(true, true, false));
+  EXPECT_FALSE(core::progress_enabled(true, true, false));
 }
 
 TEST(ProgressEnabled, SuppressedByNoProgressFlag)
 {
-  EXPECT_FALSE(slam::progress_enabled(true, false, true));
+  EXPECT_FALSE(core::progress_enabled(true, false, true));
 }
 
 TEST(ProgressTotal, SumsCountsForRequestedTopicsOnly)
@@ -56,7 +56,7 @@ TEST(ProgressTotal, SumsCountsForRequestedTopicsOnly)
   stats.per_topic["/camera"] = 99999;  // not requested -> excluded
 
   const std::vector<std::string> topics{"/lidar", "/imu", "/gnss"};
-  EXPECT_EQ(slam::progress_total(stats, topics), 5130);
+  EXPECT_EQ(core::progress_total(stats, topics), 5130);
 }
 
 TEST(ProgressTotal, SkipsEmptyTopicNames)
@@ -66,7 +66,7 @@ TEST(ProgressTotal, SkipsEmptyTopicNames)
 
   // The IMU / GNSS slots are empty (those features off) and must be ignored.
   const std::vector<std::string> topics{"/lidar", "", ""};
-  EXPECT_EQ(slam::progress_total(stats, topics), 42);
+  EXPECT_EQ(core::progress_total(stats, topics), 42);
 }
 
 TEST(ProgressTotal, ZeroWhenNoCountsKnown)
@@ -74,7 +74,7 @@ TEST(ProgressTotal, ZeroWhenNoCountsKnown)
   // e.g. an MCAP without summary statistics: per_topic is empty.
   BagReader::Stats stats;
   const std::vector<std::string> topics{"/lidar", "/imu"};
-  EXPECT_EQ(slam::progress_total(stats, topics), 0);
+  EXPECT_EQ(core::progress_total(stats, topics), 0);
 }
 
 TEST(ProgressTotal, IgnoresNonPositiveCounts)
@@ -83,7 +83,7 @@ TEST(ProgressTotal, IgnoresNonPositiveCounts)
   stats.per_topic["/lidar"] = 0;
   stats.per_topic["/imu"] = -1;  // defensive: never negative in practice
   const std::vector<std::string> topics{"/lidar", "/imu"};
-  EXPECT_EQ(slam::progress_total(stats, topics), 0);
+  EXPECT_EQ(core::progress_total(stats, topics), 0);
 }
 
 TEST(ProgressTotalFromMap, SumsCountsForRequestedTopicsOnly)
@@ -95,7 +95,7 @@ TEST(ProgressTotalFromMap, SumsCountsForRequestedTopicsOnly)
   counts["/camera"] = 99999;
 
   const std::vector<std::string> topics{"/lidar", "/imu", "/gnss"};
-  EXPECT_EQ(slam::progress_total(counts, topics), 5130);
+  EXPECT_EQ(core::progress_total(counts, topics), 5130);
 }
 
 TEST(ProgressTotalFromMap, SkipsEmptyTopicNamesAndMissingTopics)
@@ -104,12 +104,12 @@ TEST(ProgressTotalFromMap, SkipsEmptyTopicNamesAndMissingTopics)
   counts["/lidar"] = 42;
 
   const std::vector<std::string> topics{"/lidar", "", "/missing"};
-  EXPECT_EQ(slam::progress_total(counts, topics), 42);
+  EXPECT_EQ(core::progress_total(counts, topics), 42);
 }
 
 TEST(ScanProgressDisabled, DeterminateIsNoOp)
 {
-  slam::ScanProgress progress(1000, /*enabled=*/false);
+  core::ScanProgress progress(1000, /*enabled=*/false);
   progress.update(0, 0);
   progress.update(500, 17);
   progress.update(1000, 42);
@@ -122,7 +122,7 @@ TEST(ScanProgressDisabled, IndeterminateIsNoOp)
 {
   // total <= 0 would select the indeterminate bar when enabled; disabled it
   // must still be inert.
-  slam::ScanProgress progress(0, /*enabled=*/false);
+  core::ScanProgress progress(0, /*enabled=*/false);
   progress.update(123, 4);
   progress.done();
   SUCCEED();
@@ -130,7 +130,7 @@ TEST(ScanProgressDisabled, IndeterminateIsNoOp)
 
 TEST(FinalizeSpinnerDisabled, StartsNoThreadAndStopsCleanly)
 {
-  slam::FinalizeSpinner spinner("Optimizing global map", /*enabled=*/false);
+  core::FinalizeSpinner spinner("Optimizing global map", /*enabled=*/false);
   spinner.stop();
   spinner.stop();  // idempotent
   SUCCEED();

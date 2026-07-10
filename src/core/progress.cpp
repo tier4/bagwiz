@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/core/slam/progress_bar.hpp"
+#include "bagwiz/core/progress.hpp"
 
 #include <indicators/indeterminate_progress_bar.hpp>
 #include <indicators/progress_bar.hpp>
@@ -21,7 +21,7 @@
 #include <unordered_map>
 #include <utility>
 
-namespace bagwiz::core::slam
+namespace bagwiz::core
 {
 
 bool progress_enabled(bool stderr_is_tty, bool no_color_env_set, bool no_progress_flag)
@@ -66,7 +66,7 @@ namespace
 namespace opt = indicators::option;
 
 // Cap redraw frequency: repaint only when the integer tenths-of-a-percent
-// value advances or ~50 ms have passed, so a high-rate IMU topic cannot flood
+// value advances or ~50 ms have passed, so a high-rate topic cannot flood
 // stderr.
 constexpr auto kMinRedrawInterval = std::chrono::milliseconds(50);
 constexpr int kBarWidth = 40;
@@ -227,4 +227,4 @@ FinalizeSpinner::~FinalizeSpinner()
   stop();
 }
 
-}  // namespace bagwiz::core::slam
+}  // namespace bagwiz::core

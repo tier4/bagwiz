@@ -12,6 +12,7 @@
 #include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/output_path.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
+#include "bagwiz/core/progress.hpp"
 #include "bagwiz/core/slam/cloud_mapper.hpp"
 #include "bagwiz/core/slam/cuda_device.hpp"
 #include "bagwiz/core/slam/gnss_projector.hpp"
@@ -20,7 +21,6 @@
 #include "bagwiz/core/slam/lidar_scan.hpp"
 #include "bagwiz/core/slam/map_viewer.hpp"
 #include "bagwiz/core/slam/point_cloud_io.hpp"
-#include "bagwiz/core/slam/progress_bar.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
 #include "bagwiz/core/tf_chain.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
@@ -595,7 +595,7 @@ private:
   template <typename ScanFn, typename ImuFn, typename GnssFn>
   bool process_messages(
     io::BagReader & reader, ScanFn && on_scan, ImuFn && on_imu, GnssFn && on_gnss,
-    core::slam::ScanProgress & progress, std::int64_t & scans, std::int64_t & skipped,
+    core::ScanProgress & progress, std::int64_t & scans, std::int64_t & skipped,
     std::int64_t & imu_count, std::int64_t & gnss_count)
   {
     io::ReadFilter filter;
@@ -884,7 +884,7 @@ private:
     // off a TTY / under NO_COLOR / with --no-progress (progress_enabled), so it
     // never spams a pipe or log. The total is the number of messages the read
     // loop will stream; a stats failure only forfeits the determinate bar.
-    const bool progress_on = core::slam::progress_enabled(
+    const bool progress_on = core::progress_enabled(
       ::isatty(STDERR_FILENO) != 0, std::getenv("NO_COLOR") != nullptr, args_.no_progress);
     std::int64_t progress_total_msgs = 0;
     if (progress_on) {
@@ -897,14 +897,14 @@ private:
       }
       try {
         const auto topic_counts = reader.compute_topic_counts(progress_topics);
-        progress_total_msgs = core::slam::progress_total(topic_counts, progress_topics);
+        progress_total_msgs = core::progress_total(topic_counts, progress_topics);
       } catch (const std::exception & e) {
         BAGWIZ_LOG_WARN(
           kLogger, "Could not read bag stats for the progress bar (%s); using an indeterminate bar",
           e.what());
       }
     }
-    core::slam::ScanProgress progress(progress_total_msgs, progress_on);
+    core::ScanProgress progress(progress_total_msgs, progress_on);
 
     std::int64_t scans = 0;
     std::int64_t skipped = 0;
@@ -923,7 +923,7 @@ private:
     core::slam::CloudMap map;
     const auto optimize_start = std::chrono::steady_clock::now();
     {
-      core::slam::FinalizeSpinner spinner("Optimizing global map", progress_on);
+      core::FinalizeSpinner spinner("Optimizing global map", progress_on);
       map = mapper.finish();
     }
     const double optimize_seconds =

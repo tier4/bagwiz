@@ -6,8 +6,8 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#ifndef BAGWIZ__CORE__SLAM__PROGRESS_BAR_HPP_
-#define BAGWIZ__CORE__SLAM__PROGRESS_BAR_HPP_
+#ifndef BAGWIZ__CORE__PROGRESS_HPP_
+#define BAGWIZ__CORE__PROGRESS_HPP_
 
 #include "bagwiz/io/bag_io.hpp"
 
@@ -17,18 +17,18 @@
 #include <string>
 #include <unordered_map>
 
-namespace bagwiz::core::slam
+namespace bagwiz::core
 {
 
-// Decide whether the `map slam` progress UI should render. It is shown only on
-// an interactive stderr, with NO_COLOR unset and the user's --no-progress flag
+// Decide whether a live progress UI should render. It is shown only on an
+// interactive stderr, with NO_COLOR unset and the caller's --no-progress flag
 // not passed — mirroring `tf`'s "fancy output" gate (src/commands/tf.cpp:178)
 // so piped / CI runs stay free of carriage-return spam. Pure for unit testing.
 bool progress_enabled(bool stderr_is_tty, bool no_color_env_set, bool no_progress_flag);
 
 // Sum the per-topic message counts (from BagReader::compute_stats) for the
 // given topics, skipping empty names and topics absent from the stats. This is
-// the number of messages the SLAM read loop will stream — the progress bar's
+// the number of messages the read loop will stream — the progress bar's
 // denominator. Returns 0 when none of the topics carry a known count (e.g. an
 // MCAP whose summary statistics are missing), signalling the caller to fall
 // back to an indeterminate bar.
@@ -41,11 +41,11 @@ std::int64_t progress_total(
   const std::unordered_map<std::string, std::int64_t> & counts,
   std::span<const std::string> topics);
 
-// RAII progress reporter for the bag-read / GLIM-feed phase of `map slam`.
-// Determinate (with ETA) when the total message count is known; otherwise an
-// indeterminate bar that animates as messages arrive. A no-op when disabled
-// (non-TTY / --no-progress): every method stays safe to call and renders
-// nothing. Draws to stderr so the run summary on stdout stays clean.
+// RAII progress reporter for long bag-read / rewrite passes. Determinate (with
+// ETA) when the total message count is known; otherwise an indeterminate bar
+// that animates as messages arrive. A no-op when disabled (non-TTY /
+// --no-progress): every method stays safe to call and renders nothing. Draws
+// to stderr so the run summary on stdout stays clean.
 class ScanProgress
 {
 public:
@@ -60,7 +60,7 @@ public:
 
   // Report `processed` messages read so far, with `scans` decoded scans shown
   // as postfix. Redraws are throttled (per-mille change or ~50 ms) so a high
-  // IMU rate cannot flood stderr.
+  // rate topic cannot flood stderr.
   void update(std::int64_t processed, std::int64_t scans);
 
   // Finalize the bar (100% / completed) and drop to a fresh line. Idempotent.
@@ -71,10 +71,10 @@ private:
   std::unique_ptr<Impl> impl_;  // null when disabled
 };
 
-// RAII thread-driven spinner for the blocking global-optimization phase
-// (CloudMapper::finish()), which exposes no per-step progress. A worker thread
-// animates an indeterminate bar from construction until stop() / destruction.
-// A no-op when disabled.
+// RAII thread-driven spinner for blocking phases that expose no per-step
+// progress (e.g. GLIM global optimization). A worker thread animates an
+// indeterminate bar from construction until stop() / destruction. A no-op when
+// disabled.
 class FinalizeSpinner
 {
 public:
@@ -94,6 +94,6 @@ private:
   std::unique_ptr<Impl> impl_;  // null when disabled
 };
 
-}  // namespace bagwiz::core::slam
+}  // namespace bagwiz::core
 
-#endif  // BAGWIZ__CORE__SLAM__PROGRESS_BAR_HPP_
+#endif  // BAGWIZ__CORE__PROGRESS_HPP_
