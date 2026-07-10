@@ -695,11 +695,9 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
     return status;
   }
 
-  if (!args.no_progress) {
-    BAGWIZ_LOG_INFO(
-      kLogger, "pcd undistort: deskewed %" PRIu64 " cloud(s) across %zu topic(s)", total_clouds,
-      args.pcd_topics.size());
-  }
+  BAGWIZ_LOG_INFO(
+    kLogger, "pcd undistort: deskewed %" PRIu64 " cloud(s) across %zu topic(s)", total_clouds,
+    args.pcd_topics.size());
   return 0;
 }
 

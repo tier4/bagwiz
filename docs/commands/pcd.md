@@ -86,8 +86,7 @@ intact for the downstream merge.
 
 ```text
 bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
-    [--from <frame>] [--to <frame>] [-o|--output <path>] [-w|--overwrite] \
-    [--no-progress]
+    [--from <frame>] [--to <frame>] [-o|--output <path>] [-w|--overwrite]
 ```
 
 ### Positional arguments
@@ -106,7 +105,6 @@ bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
 | `--to <frame>`        | `base_link`  | Tracked body frame. The trajectory is obtained as `T_from_to` (e.g. `T_map_base_link`).                                                                                          |
 | `-o, --output <path>` | _(unset)_    | Output bag. When omitted, `<input>` is rewritten in place (atomic tmp swap).                                                                                                     |
 | `-w, --overwrite`     | `false`      | Replace `-o/--output` if it already exists. Has no effect in in-place mode.                                                                                                      |
-| `--no-progress`       | `false`      | Suppress the completion summary log line. There is no live progress bar during the rewrite.                                                                                      |
 
 ### Behavior
 

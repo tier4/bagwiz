@@ -135,7 +135,6 @@ private:
       "Output bag. Omitted => rewrite <input> in place.");
     sub->add_flag(
       "-w,--overwrite", undistort_args_.overwrite, "Replace -o output if it already exists.");
-    sub->add_flag("--no-progress", undistort_args_.no_progress, "Disable the progress output.");
     sub->callback([this]() { selected_ = Subcommand::kUndistort; });
   }
 };

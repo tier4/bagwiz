@@ -29,7 +29,6 @@ struct PcdUndistortArgs
   std::optional<std::string> to_frame;               // --to;   empty => "base_link"
   std::optional<std::filesystem::path> output_path;  // -o; empty => in-place
   bool overwrite = false;                            // -w
-  bool no_progress = false;                          // --no-progress
 };
 
 // Execute `bagwiz pcd undistort`. Returns a process exit code.

@@ -1175,7 +1175,7 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
 //
 //   undistort: `pcd`(0) `undistort`(1) `<input>`(2) `<pose_topic>`(3)
 //              --pcd <t...> [--from <frame>] [--to <frame>] [-o <out>]
-//              [-w|--overwrite] [--no-progress]
+//              [-w|--overwrite]
 std::vector<std::string> complete_pcd(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -1197,9 +1197,7 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
     }
     if (sub == "undistort") {
       return matching(
-        with_help(
-          {"--from", "--no-progress", "--output", "--overwrite", "--pcd", "--to", "-o", "-w"}),
-        current);
+        with_help({"--from", "--output", "--overwrite", "--pcd", "--to", "-o", "-w"}), current);
     }
   }
 
