@@ -217,11 +217,11 @@ in-terminal progress bar, spinner, or similar progress UI.
   [p-ranav/indicators](https://github.com/p-ranav/indicators) library
   rather than hand-rolling terminal control sequences or introducing a
   second progress-bar dependency. indicators is already pulled in via
-  `FetchContent` and wrapped by the SLAM progress reporter
-  (`include/bagwiz/core/slam/progress_bar.hpp`,
-  `src/core/slam/progress_bar.cpp`); reuse that library, and the
-  existing wrapper where it fits, so progress output stays visually
-  consistent across commands and the build depends on a single,
+  `FetchContent` and wrapped by the shared progress reporter
+  (`include/bagwiz/core/progress.hpp`,
+  `src/core/progress.cpp`); reuse that library, and the existing
+  wrapper where it fits, so progress output stays visually consistent
+  across commands and the build depends on a single,
   well-tested implementation.
 
 ### 4. Documentation, Comment & Help Consistency
