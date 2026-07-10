@@ -135,6 +135,11 @@ private:
       "Output bag. Omitted => rewrite <input> in place.");
     sub->add_flag(
       "-w,--overwrite", undistort_args_.overwrite, "Replace -o output if it already exists.");
+    sub
+      ->add_option(
+        "-t,--threads", undistort_args_.threads,
+        "Number of worker threads for deskew (0=default, 1=sync, default: hardware concurrency).")
+      ->check(CLI::Range(0, 256));
     sub->callback([this]() { selected_ = Subcommand::kUndistort; });
   }
 };
