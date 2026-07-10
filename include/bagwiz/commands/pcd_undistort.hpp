@@ -30,6 +30,7 @@ struct PcdUndistortArgs
   std::optional<std::filesystem::path> output_path;  // -o; empty => in-place
   bool overwrite = false;                            // -w
   std::optional<int> threads;  // -t,--threads; 0/omit => hardware concurrency, 1 => sync
+  bool no_progress = false;    // --no-progress (disable live progress bar)
 };
 
 // Execute `bagwiz pcd undistort`. Returns a process exit code.

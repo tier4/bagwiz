@@ -108,6 +108,10 @@ private:
       "Proceed even if <output_topic> already exists in the bag (replaces that topic).");
     sub->add_flag(
       "-w,--overwrite", concat_args_.overwrite, "Overwrite an existing -o/--output path.");
+    sub->add_flag(
+      "--no-progress", concat_args_.no_progress,
+      "Disable the live progress bar. It is also auto-suppressed when stderr is not a "
+      "terminal or NO_COLOR is set, so this is only needed to silence it interactively.");
     sub->callback([this]() { selected_ = Subcommand::kConcat; });
   }
 
@@ -141,6 +145,10 @@ private:
         "Number of worker threads for deskew (0=default, 1=sync, default: hardware concurrency). "
         "Values above hardware concurrency are capped.")
       ->check(CLI::Range(0, 256));
+    sub->add_flag(
+      "--no-progress", undistort_args_.no_progress,
+      "Disable the live progress bar. It is also auto-suppressed when stderr is not a "
+      "terminal or NO_COLOR is set, so this is only needed to silence it interactively.");
     sub->callback([this]() { selected_ = Subcommand::kUndistort; });
   }
 };

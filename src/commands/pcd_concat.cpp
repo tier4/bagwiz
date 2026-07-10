@@ -16,6 +16,7 @@
 #include "bagwiz/core/pointcloud/cloud_transform.hpp"
 #include "bagwiz/core/pointcloud/concat_sync.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
+#include "bagwiz/core/progress.hpp"
 #include "bagwiz/core/tf_buffer_loader.hpp"
 #include "bagwiz/core/tf_chain.hpp"
 #include "bagwiz/io/bag_io.hpp"
@@ -24,6 +25,8 @@
 #include <tf2/time.hpp>
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
+
+#include <unistd.h>
 
 #include <algorithm>
 #include <chrono>
@@ -402,6 +405,27 @@ int run_pcd_concat(const PcdConcatArgs & args)
   std::vector<std::int64_t> parse_fail(num_topics, 0);
   std::vector<std::int64_t> transform_fail(num_topics, 0);
 
+  const bool progress_on = core::progress_enabled(
+    ::isatty(STDERR_FILENO) != 0, std::getenv("NO_COLOR") != nullptr, args.no_progress);
+
+  std::int64_t progress_total_msgs = 0;
+  if (progress_on) {
+    std::vector<std::string> progress_topics;
+    progress_topics.reserve(reader->topics().size());
+    for (const auto & t : reader->topics()) {
+      progress_topics.push_back(t.name);
+    }
+    try {
+      const auto topic_counts = reader->compute_topic_counts(progress_topics);
+      progress_total_msgs = core::progress_total(topic_counts, progress_topics);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_WARN(
+        kLogger, "Could not read bag stats for the progress bar (%s); using an indeterminate bar",
+        e.what());
+    }
+  }
+  core::ScanProgress progress(progress_total_msgs, progress_on);
+
   const auto execute_pass = [&](io::BagWriter & writer) -> int {
     // declare surviving input topics + the new output topic
     for (const auto & t : reader->topics()) {
@@ -423,7 +447,10 @@ int run_pcd_concat(const PcdConcatArgs & args)
 
     std::vector<std::size_t> seen(num_topics, 0);
     io::RawMessage raw;
+    std::int64_t processed = 0;
     while (rd->next(raw)) {
+      ++processed;
+      progress.update(processed, written_groups);
       const std::string & name = raw.topic->name;
       const auto ti = topic_index.find(name);
 
@@ -507,6 +534,7 @@ int run_pcd_concat(const PcdConcatArgs & args)
         }
       }
     }
+    progress.done();
 
     try {
       writer.close();

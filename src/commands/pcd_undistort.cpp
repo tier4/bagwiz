@@ -16,6 +16,7 @@
 #include "bagwiz/core/pointcloud/deskew.hpp"
 #include "bagwiz/core/pointcloud/point_time.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
+#include "bagwiz/core/progress.hpp"
 #include "bagwiz/core/tf_buffer_loader.hpp"
 #include "bagwiz/core/tf_chain.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
@@ -28,6 +29,8 @@
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+
+#include <unistd.h>
 
 #include <algorithm>
 #include <chrono>
@@ -495,7 +498,8 @@ int run_parallel_undistort_pass(
   io::BagWriter & writer, const io::BagReader & topic_reader,
   const std::filesystem::path & input_path, const std::unordered_set<std::string> & pcd_set,
   const std::unordered_map<std::string, std::optional<geometry_msgs::msg::Transform>> & extrinsics,
-  std::span<const core::TrajectoryPose> trajectory, int num_threads, std::uint64_t & total_clouds)
+  std::span<const core::TrajectoryPose> trajectory, int num_threads, std::uint64_t & total_clouds,
+  core::ScanProgress & progress)
 {
   for (const auto & t : topic_reader.topics()) {
     writer.declare_topic(t);
@@ -513,6 +517,7 @@ int run_parallel_undistort_pass(
   ParallelContext ctx;
   ctx.max_in_flight = static_cast<std::size_t>(num_threads) * 3;
 
+  std::int64_t processed = 0;
   int collector_status = 0;
 
   auto worker = [&]() {
@@ -633,6 +638,8 @@ int run_parallel_undistort_pass(
         ++ctx.in_flight;
         ctx.job_queue.push(std::move(job));
         ++total_clouds;
+        ++processed;
+        progress.update(processed, static_cast<std::int64_t>(total_clouds));
         lock.unlock();
         ctx.cv.notify_all();
       } else {
@@ -649,10 +656,13 @@ int run_parallel_undistort_pass(
         const std::size_t seq = ctx.total_submitted++;
         ++ctx.in_flight;
         ctx.completed.emplace(seq, std::move(item));
+        ++processed;
+        progress.update(processed, static_cast<std::int64_t>(total_clouds));
         lock.unlock();
         ctx.cv.notify_all();
       }
     }
+    progress.done();
   } catch (const std::exception & e) {
     BAGWIZ_LOG_ERROR(kLogger, "pcd undistort: read error: %s", e.what());
     {
@@ -864,6 +874,27 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
   const std::unordered_set<std::string> pcd_set(args.pcd_topics.begin(), args.pcd_topics.end());
   std::uint64_t total_clouds = 0;
 
+  const bool progress_on = core::progress_enabled(
+    ::isatty(STDERR_FILENO) != 0, std::getenv("NO_COLOR") != nullptr, args.no_progress);
+
+  std::int64_t progress_total_msgs = 0;
+  if (progress_on) {
+    std::vector<std::string> progress_topics;
+    progress_topics.reserve(reader->topics().size());
+    for (const auto & t : reader->topics()) {
+      progress_topics.push_back(t.name);
+    }
+    try {
+      const auto topic_counts = reader->compute_topic_counts(progress_topics);
+      progress_total_msgs = core::progress_total(topic_counts, progress_topics);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_WARN(
+        kLogger, "Could not read bag stats for the progress bar (%s); using an indeterminate bar",
+        e.what());
+    }
+  }
+  core::ScanProgress progress(progress_total_msgs, progress_on);
+
   const unsigned int hardware = std::thread::hardware_concurrency();
   const int requested = args.threads.value_or(0);
   int num_threads = (requested <= 0) ? static_cast<int>(hardware ? hardware : 1) : requested;
@@ -886,7 +917,10 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
     rd->populate_schemas();
 
     io::RawMessage raw;
+    std::int64_t processed = 0;
     while (rd->next(raw)) {
+      ++processed;
+      progress.update(processed, static_cast<std::int64_t>(total_clouds));
       const std::string & name = raw.topic->name;
       if (pcd_set.count(name) == 0) {
         writer.write(name, raw.timestamp_ns, raw.payload);
@@ -927,6 +961,7 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
       writer.write(name, raw.timestamp_ns, payload);
       ++total_clouds;
     }
+    progress.done();
 
     try {
       writer.close();
@@ -957,7 +992,7 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
     } else {
       status = run_parallel_undistort_pass(
         *writer, *reader, args.input_path, pcd_set, extrinsics, trajectory, num_threads,
-        total_clouds);
+        total_clouds, progress);
     }
   } else {
     const auto inplace_copts = io::create_options_preserving_storage(args.input_path);
@@ -975,7 +1010,7 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
         } else {
           status = run_parallel_undistort_pass(
             *writer, *reader, args.input_path, pcd_set, extrinsics, trajectory, num_threads,
-            total_clouds);
+            total_clouds, progress);
         }
         if (status != 0) {
           throw std::runtime_error("pcd undistort: pass failed; aborting in-place swap");
