@@ -32,13 +32,19 @@
 #include <algorithm>
 #include <chrono>
 #include <cinttypes>
+#include <condition_variable>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <queue>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -406,6 +412,280 @@ bool cloud_has_usable_point_time(
          point_step;
 }
 
+// One PointCloud2 message handed off from the bag reader to a worker thread.
+struct DeskewJob
+{
+  std::size_t seq;
+  std::string topic;
+  std::int64_t timestamp_ns;
+  std::vector<std::byte> payload;
+  std::optional<geometry_msgs::msg::Transform> extrinsic;
+};
+
+// One output message waiting in the in-order completion map for the collector.
+struct OutputItem
+{
+  std::string topic;
+  std::int64_t timestamp_ns;
+  std::vector<std::byte> payload;
+  std::optional<std::string> error;
+};
+
+// Shared state for the parallel reader / worker pool / collector pipeline.
+struct ParallelContext
+{
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::queue<DeskewJob> job_queue;
+  std::map<std::size_t, OutputItem> completed;
+  std::size_t next_output_seq = 0;
+  std::size_t total_submitted = 0;
+  std::size_t in_flight = 0;
+  std::size_t max_in_flight = 0;
+  bool stop = false;
+  bool reader_done = false;
+};
+
+// Parse, deskew, and serialize a single cloud.  Runs on a worker thread and
+// only touches local state plus the read-only trajectory span.
+OutputItem process_deskew_job(DeskewJob job, std::span<const core::TrajectoryPose> trajectory)
+{
+  OutputItem item;
+  item.topic = job.topic;
+  item.timestamp_ns = job.timestamp_ns;
+
+  try {
+    auto parsed = core::pointcloud::parse_pointcloud2(job.payload);
+    if (!parsed.ok()) {
+      BAGWIZ_LOG_WARN(
+        kLogger, "pcd undistort: skipping undecodable cloud on '%s': %s", job.topic.c_str(),
+        parsed.error.c_str());
+      item.payload = std::move(job.payload);
+    } else {
+      const std::int64_t t_ref = parsed.cloud->timestamp_ns;
+      auto res =
+        core::pointcloud::deskew_pointcloud2(*parsed.cloud, t_ref, trajectory, job.extrinsic);
+      if (!res.ok()) {
+        item.error = res.error;
+      } else {
+        if (res.points_deskewed == 0 && res.points_total > 0) {
+          BAGWIZ_LOG_WARN(
+            kLogger,
+            "pcd undistort: cloud on '%s' had nothing deskewed of %" PRIu64
+            " point(s) (no_time=%" PRIu64 ", no_pose=%" PRIu64 ", nonfinite=%" PRIu64
+            "); passed through un-deskewed",
+            job.topic.c_str(), res.points_total, res.points_no_time, res.points_no_pose,
+            res.points_nonfinite);
+        }
+        item.payload = core::pointcloud::serialize_pointcloud2(*res.cloud);
+      }
+    }
+  } catch (const std::exception & e) {
+    item.error = std::string("exception: ") + e.what();
+  }
+  return item;
+}
+
+// Parallel version of Pass 2.  One reader thread, one collector thread that
+// alone calls writer.write(), and a fixed-size std::jthread worker pool that
+// deskews PointCloud2 messages.  Non-pcd messages bypass the job queue and go
+// straight into the in-order completion map.  Output message order is identical
+// to the synchronous path.
+int run_parallel_undistort_pass(
+  io::BagWriter & writer, const io::BagReader & topic_reader,
+  const std::filesystem::path & input_path, const std::unordered_set<std::string> & pcd_set,
+  const std::unordered_map<std::string, std::optional<geometry_msgs::msg::Transform>> & extrinsics,
+  std::span<const core::TrajectoryPose> trajectory, int num_threads, std::uint64_t & total_clouds)
+{
+  for (const auto & t : topic_reader.topics()) {
+    writer.declare_topic(t);
+  }
+
+  std::unique_ptr<io::BagReader> rd;
+  try {
+    rd = io::open_read(input_path);
+  } catch (const std::exception & e) {
+    BAGWIZ_LOG_ERROR(kLogger, "Failed to reopen %s: %s", input_path.c_str(), e.what());
+    return 1;
+  }
+  rd->populate_schemas();
+
+  ParallelContext ctx;
+  ctx.max_in_flight = static_cast<std::size_t>(num_threads) * 3;
+
+  int collector_status = 0;
+
+  auto worker = [&]() {
+    while (true) {
+      DeskewJob job;
+      {
+        std::unique_lock lock(ctx.mutex);
+        ctx.cv.wait(lock, [&] { return ctx.stop || !ctx.job_queue.empty(); });
+        if (ctx.stop && ctx.job_queue.empty()) {
+          return;
+        }
+        job = std::move(ctx.job_queue.front());
+        ctx.job_queue.pop();
+      }
+
+      const std::size_t seq = job.seq;
+      OutputItem item = process_deskew_job(std::move(job), trajectory);
+
+      {
+        std::lock_guard lock(ctx.mutex);
+        ctx.completed.emplace(seq, std::move(item));
+      }
+      ctx.cv.notify_all();
+    }
+  };
+
+  auto collector = [&]() {
+    try {
+      while (true) {
+        OutputItem item;
+        {
+          std::unique_lock lock(ctx.mutex);
+          ctx.cv.wait(lock, [&] {
+            auto it = ctx.completed.find(ctx.next_output_seq);
+            return (it != ctx.completed.end()) ||
+                   (ctx.reader_done && ctx.next_output_seq == ctx.total_submitted);
+          });
+
+          if (ctx.reader_done && ctx.next_output_seq == ctx.total_submitted) {
+            break;
+          }
+
+          auto it = ctx.completed.find(ctx.next_output_seq);
+          if (it == ctx.completed.end()) {
+            continue;
+          }
+          item = std::move(it->second);
+          ctx.completed.erase(it);
+          ++ctx.next_output_seq;
+          --ctx.in_flight;
+        }
+        ctx.cv.notify_all();
+
+        if (item.error.has_value()) {
+          BAGWIZ_LOG_ERROR(
+            kLogger, "pcd undistort: deskew failed on '%s': %s", item.topic.c_str(),
+            item.error->c_str());
+          collector_status = 1;
+          {
+            std::lock_guard lock(ctx.mutex);
+            ctx.stop = true;
+          }
+          ctx.cv.notify_all();
+          try {
+            writer.close();
+          } catch (...) {
+            // A writer close error is secondary to the deskew error already reported.
+          }
+          return;
+        }
+
+        writer.write(item.topic, item.timestamp_ns, item.payload);
+      }
+
+      try {
+        writer.close();
+      } catch (const std::exception & e) {
+        BAGWIZ_LOG_ERROR(kLogger, "Writer close() failed: %s", e.what());
+        collector_status = 1;
+      }
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "pcd undistort: collector error: %s", e.what());
+      collector_status = 1;
+      {
+        std::lock_guard lock(ctx.mutex);
+        ctx.stop = true;
+      }
+      ctx.cv.notify_all();
+    }
+  };
+
+  std::vector<std::jthread> workers;
+  workers.reserve(num_threads);
+  for (int i = 0; i < num_threads; ++i) {
+    workers.emplace_back(worker);
+  }
+  std::jthread collector_thread(collector);
+
+  io::RawMessage raw;
+  try {
+    while (rd->next(raw)) {
+      const std::string & name = raw.topic->name;
+      const bool is_pcd = pcd_set.count(name) != 0;
+
+      if (is_pcd) {
+        DeskewJob job;
+        job.topic = name;
+        job.timestamp_ns = raw.timestamp_ns;
+        job.payload.assign(raw.payload.begin(), raw.payload.end());
+        job.extrinsic = extrinsics.at(name);
+
+        std::unique_lock lock(ctx.mutex);
+        ctx.cv.wait(lock, [&] { return ctx.in_flight < ctx.max_in_flight || ctx.stop; });
+        if (ctx.stop) {
+          break;
+        }
+        job.seq = ctx.total_submitted++;
+        ++ctx.in_flight;
+        ctx.job_queue.push(std::move(job));
+        ++total_clouds;
+        lock.unlock();
+        ctx.cv.notify_all();
+      } else {
+        OutputItem item;
+        item.topic = name;
+        item.timestamp_ns = raw.timestamp_ns;
+        item.payload.assign(raw.payload.begin(), raw.payload.end());
+
+        std::unique_lock lock(ctx.mutex);
+        ctx.cv.wait(lock, [&] { return ctx.in_flight < ctx.max_in_flight || ctx.stop; });
+        if (ctx.stop) {
+          break;
+        }
+        const std::size_t seq = ctx.total_submitted++;
+        ++ctx.in_flight;
+        ctx.completed.emplace(seq, std::move(item));
+        lock.unlock();
+        ctx.cv.notify_all();
+      }
+    }
+  } catch (const std::exception & e) {
+    BAGWIZ_LOG_ERROR(kLogger, "pcd undistort: read error: %s", e.what());
+    {
+      std::lock_guard lock(ctx.mutex);
+      ctx.reader_done = true;
+      ctx.stop = true;
+    }
+    ctx.cv.notify_all();
+    for (auto & t : workers) {
+      t.join();
+    }
+    ctx.cv.notify_all();
+    collector_thread.join();
+    return 1;
+  }
+
+  {
+    std::lock_guard lock(ctx.mutex);
+    ctx.reader_done = true;
+    ctx.stop = true;
+  }
+  ctx.cv.notify_all();
+
+  for (auto & t : workers) {
+    t.join();
+  }
+
+  ctx.cv.notify_all();
+  collector_thread.join();
+
+  return collector_status;
+}
+
 }  // namespace
 
 int run_pcd_undistort(const PcdUndistortArgs & args)
@@ -584,6 +864,13 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
   const std::unordered_set<std::string> pcd_set(args.pcd_topics.begin(), args.pcd_topics.end());
   std::uint64_t total_clouds = 0;
 
+  const unsigned int hardware = std::thread::hardware_concurrency();
+  const int requested = args.threads.value_or(0);
+  int num_threads = (requested <= 0) ? static_cast<int>(hardware ? hardware : 1) : requested;
+  if (hardware > 0 && num_threads > static_cast<int>(hardware)) {
+    num_threads = static_cast<int>(hardware);
+  }
+
   const auto execute_pass = [&](io::BagWriter & writer) -> int {
     for (const auto & t : reader->topics()) {
       writer.declare_topic(t);
@@ -665,7 +952,13 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
       BAGWIZ_LOG_ERROR(kLogger, "Failed to open output writer: %s", e.what());
       return 1;
     }
-    status = execute_pass(*writer);
+    if (num_threads <= 1) {
+      status = execute_pass(*writer);
+    } else {
+      status = run_parallel_undistort_pass(
+        *writer, *reader, args.input_path, pcd_set, extrinsics, trajectory, num_threads,
+        total_clouds);
+    }
   } else {
     const auto inplace_copts = io::create_options_preserving_storage(args.input_path);
     if (inplace_copts.format == io::Format::Auto) {
@@ -677,7 +970,13 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
     try {
       core::write_bag_inplace(args.input_path, [&](const std::filesystem::path & tmp) {
         auto writer = io::open_write(tmp, inplace_copts);
-        status = execute_pass(*writer);
+        if (num_threads <= 1) {
+          status = execute_pass(*writer);
+        } else {
+          status = run_parallel_undistort_pass(
+            *writer, *reader, args.input_path, pcd_set, extrinsics, trajectory, num_threads,
+            total_clouds);
+        }
         if (status != 0) {
           throw std::runtime_error("pcd undistort: pass failed; aborting in-place swap");
         }

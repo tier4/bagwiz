@@ -86,7 +86,8 @@ intact for the downstream merge.
 
 ```text
 bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
-    [--from <frame>] [--to <frame>] [-o|--output <path>] [-w|--overwrite]
+    [--from <frame>] [--to <frame>] [-o|--output <path>] [-w|--overwrite] \
+    [-t|--threads <N>]
 ```
 
 ### Positional arguments
@@ -98,13 +99,14 @@ bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
 
 ### Options
 
-| Flag                  | Default      | Description                                                                                                                                                                      |
-| --------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--pcd <topic>`       | _(required)_ | PointCloud2 topic to deskew. Repeatable — pass `--pcd` once per topic (e.g. `--pcd /a --pcd /b`) to deskew several topics against the same trajectory. At least one is required. |
-| `--from <frame>`      | `map`        | Reference frame the trajectory is resolved in (same convention as `traj dump`).                                                                                                  |
-| `--to <frame>`        | `base_link`  | Tracked body frame. The trajectory is obtained as `T_from_to` (e.g. `T_map_base_link`).                                                                                          |
-| `-o, --output <path>` | _(unset)_    | Output bag. When omitted, `<input>` is rewritten in place (atomic tmp swap).                                                                                                     |
-| `-w, --overwrite`     | `false`      | Replace `-o/--output` if it already exists. Has no effect in in-place mode.                                                                                                      |
+| Flag                  | Default      | Description                                                                                                                                                                          |
+| --------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--pcd <topic>`       | _(required)_ | PointCloud2 topic to deskew. Repeatable — pass `--pcd` once per topic (e.g. `--pcd /a --pcd /b`) to deskew several topics against the same trajectory. At least one is required.     |
+| `--from <frame>`      | `map`        | Reference frame the trajectory is resolved in (same convention as `traj dump`).                                                                                                      |
+| `--to <frame>`        | `base_link`  | Tracked body frame. The trajectory is obtained as `T_from_to` (e.g. `T_map_base_link`).                                                                                              |
+| `-o, --output <path>` | _(unset)_    | Output bag. When omitted, `<input>` is rewritten in place (atomic tmp swap).                                                                                                         |
+| `-w, --overwrite`     | `false`      | Replace `-o/--output` if it already exists. Has no effect in in-place mode.                                                                                                          |
+| `-t, --threads <N>`   | `0`          | Number of worker threads for Pass 2. `0` (or omitted) uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; larger values are capped at hardware concurrency. |
 
 ### Behavior
 
@@ -159,8 +161,10 @@ bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
 4. **Output.** `-o` writes a new bag inheriting `<input>`'s storage format;
    omitting it rewrites `<input>` in place through a tmp file and an atomic
    swap, so a mid-pass failure leaves the original bag untouched.
-5. **Determinism.** No SLAM and no threading/backend choices are involved —
-   the same input always produces the same output.
+5. **Determinism.** No SLAM is involved, and the same input always produces
+   the same output. When `--threads` is greater than 1, deskew work runs in
+   parallel but a single collector thread serializes output, so bag message
+   order is preserved.
 
 To deskew against SLAM-derived poses rather than an existing localization
 topic, compose it from `map slam` and `traj join`: generate a trajectory,
