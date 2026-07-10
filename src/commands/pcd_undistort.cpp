@@ -893,7 +893,7 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
         e.what());
     }
   }
-  core::ScanProgress progress(progress_total_msgs, progress_on);
+  core::ScanProgress progress(progress_total_msgs, progress_on, "clouds");
 
   const unsigned int hardware = std::thread::hardware_concurrency();
   const int requested = args.threads.value_or(0);

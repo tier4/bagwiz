@@ -218,6 +218,29 @@ int run_pcd_concat(const PcdConcatArgs & args)
   std::vector<std::int64_t> header_fail(num_topics, 0);  // undecodable header in Pass A
   std::vector<char> non_monotonic(num_topics, 0);        // header stamps went backwards
 
+  // ---- progress setup (must happen before Pass A so Pass A can report) ----
+  const bool progress_on = core::progress_enabled(
+    ::isatty(STDERR_FILENO) != 0, std::getenv("NO_COLOR") != nullptr, args.no_progress);
+
+  std::int64_t pass_a_total_msgs = 0;
+  std::int64_t progress_total_msgs = 0;
+  if (progress_on) {
+    std::vector<std::string> progress_topics;
+    progress_topics.reserve(reader->topics().size());
+    for (const auto & t : reader->topics()) {
+      progress_topics.push_back(t.name);
+    }
+    try {
+      const auto topic_counts = reader->compute_topic_counts(progress_topics);
+      pass_a_total_msgs = core::progress_total(topic_counts, args.pcd_topics);
+      progress_total_msgs = core::progress_total(topic_counts, progress_topics);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_WARN(
+        kLogger, "Could not read bag stats for the progress bar (%s); using an indeterminate bar",
+        e.what());
+    }
+  }
+
   // ---- Pass A: collect per-topic header stamps + first frame_id -----------
   std::vector<TopicState> topics(num_topics);
   for (std::size_t i = 0; i < num_topics; ++i) {
@@ -225,6 +248,8 @@ int run_pcd_concat(const PcdConcatArgs & args)
     topics[i].offset_ns = offsets[i];
   }
   {
+    core::ScanProgress pass_a_progress(pass_a_total_msgs, progress_on, "messages");
+    std::int64_t pass_a_processed = 0;
     std::unique_ptr<io::BagReader> sreader;
     try {
       sreader = io::open_read(args.input_path);
@@ -238,6 +263,8 @@ int run_pcd_concat(const PcdConcatArgs & args)
     io::RawMessage raw;
     try {
       while (sreader->next(raw)) {
+        ++pass_a_processed;
+        pass_a_progress.update(pass_a_processed, 0);
         const auto it = topic_index.find(raw.topic->name);
         if (it == topic_index.end()) {
           continue;
@@ -262,6 +289,7 @@ int run_pcd_concat(const PcdConcatArgs & args)
       BAGWIZ_LOG_ERROR(kLogger, "read error collecting stamps: %s", e.what());
       return 1;
     }
+    pass_a_progress.done();
   }
   for (std::size_t i = 0; i < num_topics; ++i) {
     if (topics[i].stamps_ns.empty()) {
@@ -405,26 +433,7 @@ int run_pcd_concat(const PcdConcatArgs & args)
   std::vector<std::int64_t> parse_fail(num_topics, 0);
   std::vector<std::int64_t> transform_fail(num_topics, 0);
 
-  const bool progress_on = core::progress_enabled(
-    ::isatty(STDERR_FILENO) != 0, std::getenv("NO_COLOR") != nullptr, args.no_progress);
-
-  std::int64_t progress_total_msgs = 0;
-  if (progress_on) {
-    std::vector<std::string> progress_topics;
-    progress_topics.reserve(reader->topics().size());
-    for (const auto & t : reader->topics()) {
-      progress_topics.push_back(t.name);
-    }
-    try {
-      const auto topic_counts = reader->compute_topic_counts(progress_topics);
-      progress_total_msgs = core::progress_total(topic_counts, progress_topics);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_WARN(
-        kLogger, "Could not read bag stats for the progress bar (%s); using an indeterminate bar",
-        e.what());
-    }
-  }
-  core::ScanProgress progress(progress_total_msgs, progress_on);
+  core::ScanProgress progress(progress_total_msgs, progress_on, "groups");
 
   const auto execute_pass = [&](io::BagWriter & writer) -> int {
     // declare surviving input topics + the new output topic

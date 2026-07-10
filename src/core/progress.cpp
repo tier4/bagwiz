@@ -95,11 +95,12 @@ struct ScanProgress::Impl
   std::int64_t total = 0;
   int last_tenths = -1;
   std::chrono::steady_clock::time_point last_draw{};
+  std::string unit = "scans";
   std::unique_ptr<indicators::ProgressBar> bar;
   std::unique_ptr<indicators::IndeterminateProgressBar> spinner;
 };
 
-ScanProgress::ScanProgress(std::int64_t total, bool enabled)
+ScanProgress::ScanProgress(std::int64_t total, bool enabled, std::string_view unit)
 {
   if (!enabled) {
     return;  // impl_ stays null -> every method is a no-op
@@ -107,6 +108,7 @@ ScanProgress::ScanProgress(std::int64_t total, bool enabled)
   impl_ = std::make_unique<Impl>();
   impl_->total = total;
   impl_->determinate = total > 0;
+  impl_->unit = unit;
 
   if (impl_->determinate) {
     impl_->bar = std::make_unique<indicators::ProgressBar>(
@@ -123,7 +125,7 @@ ScanProgress::ScanProgress(std::int64_t total, bool enabled)
   }
 }
 
-void ScanProgress::update(std::int64_t processed, std::int64_t scans)
+void ScanProgress::update(std::int64_t processed, std::int64_t count)
 {
   if (!impl_ || impl_->finished) {
     return;
@@ -139,7 +141,8 @@ void ScanProgress::update(std::int64_t processed, std::int64_t scans)
     }
     impl_->last_tenths = tenths;
     impl_->last_draw = now;
-    impl_->bar->set_option(indicators::option::PostfixText{std::to_string(scans) + " scans"});
+    impl_->bar->set_option(
+      indicators::option::PostfixText{std::to_string(count) + " " + impl_->unit});
     impl_->bar->set_progress(clamp_to_total(processed, impl_->total));
     return;
   }
@@ -149,7 +152,8 @@ void ScanProgress::update(std::int64_t processed, std::int64_t scans)
     return;
   }
   impl_->last_draw = now;
-  impl_->spinner->set_option(indicators::option::PostfixText{std::to_string(scans) + " scans"});
+  impl_->spinner->set_option(
+    indicators::option::PostfixText{std::to_string(count) + " " + impl_->unit});
   impl_->spinner->tick();
 }
 

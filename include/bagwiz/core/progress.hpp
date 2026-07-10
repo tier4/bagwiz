@@ -50,18 +50,19 @@ class ScanProgress
 {
 public:
   // total <= 0 selects the indeterminate bar. `enabled` false makes this a
-  // complete no-op (no terminal output is ever produced).
-  ScanProgress(std::int64_t total, bool enabled);
+  // complete no-op (no terminal output is ever produced). `unit` is the postfix
+  // label for the second counter (e.g. "scans", "groups").
+  ScanProgress(std::int64_t total, bool enabled, std::string_view unit = "scans");
   ~ScanProgress();
   ScanProgress(const ScanProgress &) = delete;
   ScanProgress & operator=(const ScanProgress &) = delete;
   ScanProgress(ScanProgress &&) = delete;
   ScanProgress & operator=(ScanProgress &&) = delete;
 
-  // Report `processed` messages read so far, with `scans` decoded scans shown
-  // as postfix. Redraws are throttled (per-mille change or ~50 ms) so a high
-  // rate topic cannot flood stderr.
-  void update(std::int64_t processed, std::int64_t scans);
+  // Report `processed` messages read so far, with `count` shown as postfix
+  // using the unit passed to the constructor. Redraws are throttled
+  // (per-mille change or ~50 ms) so a high-rate topic cannot flood stderr.
+  void update(std::int64_t processed, std::int64_t count);
 
   // Finalize the bar (100% / completed) and drop to a fresh line. Idempotent.
   void done();
