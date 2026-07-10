@@ -14,6 +14,8 @@
 #include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 
 #include <gtest/gtest.h>
@@ -454,6 +456,113 @@ TEST_F(ConvertMsgGeoTest, MalformedOriginFails)
   args.origin = "not,a,number";
   args.output_path = out;
   EXPECT_EQ(bagwiz::commands::run_convert_msg_geo(args), 1);
+}
+
+// Serialize a ROS 2 message via rmw_serialize, used as the byte-identical
+// ground truth for the converter's direct CDR output.
+template <typename Msg>
+std::vector<std::byte> rmw_serialize_msg(const Msg & msg, const char * ros_type)
+{
+  auto intro = bagwiz::core::load_introspection(ros_type);
+  EXPECT_TRUE(intro.ok()) << intro.error;
+
+  rmw_serialized_message_t serialized = rmw_get_zero_initialized_serialized_message();
+  rcutils_allocator_t alloc = rcutils_get_default_allocator();
+  EXPECT_EQ(rmw_serialized_message_init(&serialized, 0, &alloc), RMW_RET_OK);
+  EXPECT_EQ(rmw_serialize(&msg, intro.typesupport, &serialized), RMW_RET_OK);
+  std::vector<std::byte> out(serialized.buffer_length);
+  if (serialized.buffer_length > 0) {
+    std::memcpy(out.data(), serialized.buffer, serialized.buffer_length);
+  }
+  rmw_serialized_message_fini(&serialized);
+  return out;
+}
+
+// Decode the converter's CDR output and compare it byte-for-byte with the same
+// message serialized through rmw_serialize.
+TEST_F(ConvertMsgGeoTest, PoseStampedOutputMatchesRmwSerialize)
+{
+  mtc::GeoConvertConfig config;
+  config.crs = mtc::GeoCrs::kEnu;
+  config.origin = mtc::GeoOrigin{35.0, 139.0, 10.0};
+  config.frame_id = "map";
+  config.target_ros_type = mtc::kPoseStampedType;
+  config.target_has_covariance = false;
+
+  mtc::GeoPoseConverter converter(config);
+
+  mtc::NavSatSample sample;
+  sample.stamp_sec = 123;
+  sample.stamp_nanosec = 456U;
+  sample.latitude = 35.001;
+  sample.longitude = 139.0;
+  sample.altitude = 10.0;
+
+  const auto converted = converter.convert(sample);
+
+  bagwiz::io::TopicInfo info;
+  info.type = mtc::kPoseStampedType;
+  info.serialization_format = "cdr";
+  auto open = bagwiz::core::decoder::open_decoder(info);
+  ASSERT_TRUE(open.ok()) << open.error;
+  const auto decoded = open.decoder->decode(converted);
+  ASSERT_TRUE(decoded.ok()) << decoded.error;
+  const auto pose = bagwiz::core::extract_pose_stamped_message(*decoded.value);
+  ASSERT_TRUE(pose.has_value());
+
+  const auto ground_truth = rmw_serialize_msg(*pose, mtc::kPoseStampedType);
+  EXPECT_EQ(converted.size(), ground_truth.size());
+  EXPECT_TRUE(std::equal(converted.begin(), converted.end(), ground_truth.begin()));
+}
+
+TEST_F(ConvertMsgGeoTest, PoseWithCovarianceStampedOutputMatchesRmwSerialize)
+{
+  mtc::GeoConvertConfig config;
+  config.crs = mtc::GeoCrs::kEnu;
+  config.origin = mtc::GeoOrigin{35.0, 139.0, 10.0};
+  config.frame_id = "utm_local";
+  config.target_ros_type = mtc::kPoseWithCovarianceStampedType;
+  config.target_has_covariance = true;
+
+  mtc::GeoPoseConverter converter(config);
+
+  mtc::NavSatSample sample;
+  sample.stamp_sec = 987;
+  sample.stamp_nanosec = 654'321U;
+  sample.latitude = 35.0;
+  sample.longitude = 139.002;
+  sample.altitude = 20.0;
+  for (std::size_t i = 0; i < 9; ++i) {
+    sample.position_covariance[i] = static_cast<double>(i) * 0.1;
+  }
+
+  const auto converted = converter.convert(sample);
+
+  bagwiz::io::TopicInfo info;
+  info.type = mtc::kPoseWithCovarianceStampedType;
+  info.serialization_format = "cdr";
+  auto open = bagwiz::core::decoder::open_decoder(info);
+  ASSERT_TRUE(open.ok()) << open.error;
+  const auto decoded = open.decoder->decode(converted);
+  ASSERT_TRUE(decoded.ok()) << decoded.error;
+  auto pose = bagwiz::core::extract_pose_with_covariance_stamped_message(*decoded.value);
+  ASSERT_TRUE(pose.has_value());
+
+  // extract_pose_with_covariance_stamped_message only fills the nested pose;
+  // populate the covariance block from the source sample before re-serializing
+  // so the byte-identical comparison covers the full message layout.
+  std::array<double, 36> expected_cov{};
+  expected_cov.fill(0.0);
+  for (std::size_t i = 0; i < 3; ++i) {
+    for (std::size_t j = 0; j < 3; ++j) {
+      expected_cov[(i * 6) + j] = sample.position_covariance[(i * 3) + j];
+    }
+  }
+  pose->pose.covariance = expected_cov;
+
+  const auto ground_truth = rmw_serialize_msg(*pose, mtc::kPoseWithCovarianceStampedType);
+  EXPECT_EQ(converted.size(), ground_truth.size());
+  EXPECT_TRUE(std::equal(converted.begin(), converted.end(), ground_truth.begin()));
 }
 
 }  // namespace

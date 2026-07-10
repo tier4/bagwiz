@@ -9,6 +9,7 @@
 #include "bagwiz/commands/cam_info_replace.hpp"
 
 #include "bagwiz/core/bag_inplace.hpp"
+#include "bagwiz/core/cdr_walker/cdr_writer.hpp"
 #include "bagwiz/core/image/camera_calibration_yaml.hpp"
 #include "bagwiz/core/introspection_loader.hpp"
 #include "bagwiz/core/logging.hpp"
@@ -49,34 +50,10 @@ namespace
 {
 
 namespace img = bagwiz::core::image;
+namespace cdr = bagwiz::core::cdr_walker;
 
 constexpr const char * kLogger = "bagwiz.cmd.cam-info.replace";
 constexpr const char * kCameraInfoType = "sensor_msgs/msg/CameraInfo";
-
-// RAII wrapper around an rmw_serialized_message_t that owns its buffer (the
-// destination of rmw_serialize). Mirrors the helper in ros2_yaml_to_cdr.cpp.
-class OwnedSerializedMessage
-{
-public:
-  OwnedSerializedMessage()
-  {
-    rcutils_allocator_t alloc = rcutils_get_default_allocator();
-    if (rmw_serialized_message_init(&msg_, 0, &alloc) != RMW_RET_OK) {
-      throw std::runtime_error("rmw_serialized_message_init failed");
-    }
-  }
-  ~OwnedSerializedMessage() { rmw_serialized_message_fini(&msg_); }
-
-  OwnedSerializedMessage(const OwnedSerializedMessage &) = delete;
-  OwnedSerializedMessage & operator=(const OwnedSerializedMessage &) = delete;
-  OwnedSerializedMessage(OwnedSerializedMessage &&) = delete;
-  OwnedSerializedMessage & operator=(OwnedSerializedMessage &&) = delete;
-
-  rmw_serialized_message_t & get() noexcept { return msg_; }
-
-private:
-  rmw_serialized_message_t msg_ = rmw_get_zero_initialized_serialized_message();
-};
 
 // Most recent rmw error as a string, then reset so it does not leak into a
 // later call. Returns a placeholder when no error state is set.
@@ -169,16 +146,39 @@ public:
       msg.header.frame_id = *frame_id_;
     }
 
-    OwnedSerializedMessage serialized;
-    if (rmw_serialize(&msg, typesupport_, &serialized.get()) != RMW_RET_OK) {
-      throw std::runtime_error(
-        "failed to re-serialize a CameraInfo message on '" + in_topic + "': " + take_rmw_error());
+    // Direct CDR serialization avoids the per-message rmw_serialize cost. The
+    // CameraInfo layout is fixed except for the variable-length D array, so it
+    // can be emitted with CdrWriter using the same field order as the ROS 2
+    // message definition.
+    cdr::CdrWriter writer;
+    writer.write_i32(msg.header.stamp.sec);
+    writer.write_u32(msg.header.stamp.nanosec);
+    writer.write_string(msg.header.frame_id);
+    writer.write_u32(msg.height);
+    writer.write_u32(msg.width);
+    writer.write_string(msg.distortion_model);
+    writer.write_sequence_length(static_cast<std::uint32_t>(msg.d.size()));
+    for (const double v : msg.d) {
+      writer.write_f64(v);
     }
-    const auto * sm = &serialized.get();
-    out.resize(sm->buffer_length);
-    if (sm->buffer_length > 0 && sm->buffer != nullptr) {
-      std::memcpy(out.data(), sm->buffer, sm->buffer_length);
+    for (const double v : msg.k) {
+      writer.write_f64(v);
     }
+    for (const double v : msg.r) {
+      writer.write_f64(v);
+    }
+    for (const double v : msg.p) {
+      writer.write_f64(v);
+    }
+    writer.write_u32(msg.binning_x);
+    writer.write_u32(msg.binning_y);
+    writer.write_u32(msg.roi.x_offset);
+    writer.write_u32(msg.roi.y_offset);
+    writer.write_u32(msg.roi.height);
+    writer.write_u32(msg.roi.width);
+    writer.write_bool(msg.roi.do_rectify);
+    out = writer.take();
+
     ++rewritten_.at(in_topic);
     return core::pipeline::TransformAction::kWrite;
   }

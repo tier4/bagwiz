@@ -464,4 +464,44 @@ TEST_F(CamInfoReplaceTest, DeduplicatesRepeatedTopic)
   expect_replaced(cam1.messages[0], 100);
 }
 
+std::vector<std::vector<std::byte>> read_raw_payloads(
+  const std::filesystem::path & path, const std::string & topic)
+{
+  std::vector<std::vector<std::byte>> out;
+  auto reader = bagwiz::io::open_read(path);
+  bagwiz::io::ReadFilter filter;
+  filter.topics = {topic};
+  reader->set_filter(filter);
+  bagwiz::io::RawMessage raw;
+  while (reader->next(raw)) {
+    out.emplace_back(raw.payload.begin(), raw.payload.end());
+  }
+  return out;
+}
+
+// The rewritten CameraInfo payloads must be byte-identical to the equivalent
+// messages serialized through rmw_serialize.
+TEST_F(CamInfoReplaceTest, RewrittenPayloadMatchesRmwSerialize)
+{
+  const auto in = tmp_dir_ / "in.mcap";
+  const auto out = tmp_dir_ / "out.mcap";
+  write_input_bag(in);
+
+  bagwiz::commands::CamInfoReplaceArgs args;
+  args.input_path = in;
+  args.yaml_path = calib_path_;
+  args.topics = {"/camera/camera_info"};
+  args.output_path = out;
+  ASSERT_EQ(bagwiz::commands::run_cam_info_replace(args), 0);
+
+  const auto readback = read_camera_info(out);
+  const auto payloads = read_raw_payloads(out, "/camera/camera_info");
+  ASSERT_EQ(readback.count, static_cast<int>(payloads.size()));
+  for (std::size_t i = 0; i < payloads.size(); ++i) {
+    const auto expected = serialize_camera_info(readback.messages[i]);
+    EXPECT_EQ(payloads[i].size(), expected.size());
+    EXPECT_TRUE(std::equal(payloads[i].begin(), payloads[i].end(), expected.begin()));
+  }
+}
+
 }  // namespace

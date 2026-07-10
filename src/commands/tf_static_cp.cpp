@@ -318,14 +318,15 @@ int execute_cp_pass(
   }
 
   std::uint64_t injected = 0;
+  core::TfMessageSerializer tf_serializer;
   for (const auto & st : src_topics) {
     auto transforms = st.transforms;
     restamp_transforms(transforms, start_ns);
     std::vector<std::byte> payload;
     try {
-      payload = core::serialize_tf_message(
-        std::span<const geometry_msgs::msg::TransformStamped>(
-          transforms.data(), transforms.size()));
+      tf_serializer.serialize_many(
+        std::span<const geometry_msgs::msg::TransformStamped>(transforms.data(), transforms.size()),
+        payload);
     } catch (const std::exception & e) {
       BAGWIZ_LOG_ERROR(
         kLogger, "Failed to serialize TFMessage for topic '%s': %s", st.name.c_str(), e.what());

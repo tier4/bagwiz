@@ -8,6 +8,7 @@
 
 #include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
 
+#include "bagwiz/core/cdr_walker/cdr_writer.hpp"
 #include "bagwiz/core/introspection_loader.hpp"
 
 #include <GeographicLib/LocalCartesian.hpp>
@@ -16,10 +17,7 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 
-#include <rcutils/allocator.h>
-#include <rcutils/error_handling.h>
 #include <rmw/rmw.h>
-#include <rmw/serialized_message.h>
 
 #include <algorithm>
 #include <array>
@@ -270,51 +268,56 @@ private:
   double utm_off_alt_ = 0.0;
 };
 
-// --- rmw serialization (mirrors tf_message_wire.cpp's SerializedMessageRmw) ---
+// --- direct CDR serialization ---
+//
+// The target messages (PoseStamped / PoseWithCovarianceStamped) have fixed CDR
+// layouts, so we emit them with the project's CdrWriter instead of going
+// through rmw_serialize. This removes the per-sample rmw_serialize cost and
+// the associated RMW buffer management. Byte identity against rmw_serialize is
+// verified by unit tests.
 
-class SerializedMessageRmw
+void write_pose_header(
+  cdr::CdrWriter & writer, std::int32_t sec, std::uint32_t nsec, const std::string & frame_id)
 {
-public:
-  explicit SerializedMessageRmw(std::size_t capacity)
-  {
-    rcutils_allocator_t alloc = rcutils_get_default_allocator();
-    if (rmw_serialized_message_init(&msg_, capacity, &alloc) != RMW_RET_OK) {
-      throw std::runtime_error("rmw_serialized_message_init failed");
-    }
-  }
-  ~SerializedMessageRmw() { rmw_serialized_message_fini(&msg_); }
+  writer.write_i32(sec);
+  writer.write_u32(nsec);
+  writer.write_string(frame_id);
+}
 
-  SerializedMessageRmw(const SerializedMessageRmw &) = delete;
-  SerializedMessageRmw & operator=(const SerializedMessageRmw &) = delete;
-  SerializedMessageRmw(SerializedMessageRmw &&) = delete;
-  SerializedMessageRmw & operator=(SerializedMessageRmw &&) = delete;
-
-  rmw_serialized_message_t & get() noexcept { return msg_; }
-
-private:
-  rmw_serialized_message_t msg_ = rmw_get_zero_initialized_serialized_message();
-};
-
-template <typename MsgT>
-std::vector<std::byte> serialize_message(
-  const MsgT & msg, const rosidl_message_type_support_t * typesupport)
+void write_pose_body(cdr::CdrWriter & writer, const std::array<double, 3> & xyz)
 {
-  SerializedMessageRmw serialized(0);
-  const rmw_ret_t rc = rmw_serialize(&msg, typesupport, &serialized.get());
-  if (rc != RMW_RET_OK) {
-    const rcutils_error_state_t * s = rcutils_get_error_state();
-    std::string err = "rmw_serialize failed: ";
-    err += (s != nullptr) ? s->message : "(no error message)";
-    rcutils_reset_error();
-    throw std::runtime_error(err);
+  // geometry_msgs/Point position
+  writer.write_f64(xyz[0]);
+  writer.write_f64(xyz[1]);
+  writer.write_f64(xyz[2]);
+  // geometry_msgs/Quaternion orientation (identity)
+  writer.write_f64(0.0);
+  writer.write_f64(0.0);
+  writer.write_f64(0.0);
+  writer.write_f64(1.0);
+}
+
+std::vector<std::byte> serialize_pose_stamped(
+  const std::array<double, 3> & xyz, std::int32_t sec, std::uint32_t nsec,
+  const std::string & frame_id)
+{
+  cdr::CdrWriter writer;
+  write_pose_header(writer, sec, nsec, frame_id);
+  write_pose_body(writer, xyz);
+  return writer.take();
+}
+
+std::vector<std::byte> serialize_pose_with_covariance_stamped(
+  const std::array<double, 3> & xyz, const std::array<double, 36> & covariance, std::int32_t sec,
+  std::uint32_t nsec, const std::string & frame_id)
+{
+  cdr::CdrWriter writer;
+  write_pose_header(writer, sec, nsec, frame_id);
+  write_pose_body(writer, xyz);
+  for (const double v : covariance) {
+    writer.write_f64(v);
   }
-  const auto * sm = &serialized.get();
-  std::vector<std::byte> out;
-  out.resize(sm->buffer_length);
-  if (sm->buffer_length > 0 && sm->buffer != nullptr) {
-    std::memcpy(out.data(), sm->buffer, sm->buffer_length);
-  }
-  return out;
+  return writer.take();
 }
 
 }  // namespace
@@ -416,16 +419,6 @@ struct GeoPoseConverter::Impl
 namespace
 {
 
-// Fill a std_msgs/Header-shaped header from the sample's stamp and the
-// configured frame_id. Shared by both target builders.
-template <typename HeaderT>
-void fill_header(HeaderT & header, const NavSatSample & sample, const std::string & frame_id)
-{
-  header.stamp.sec = sample.stamp_sec;
-  header.stamp.nanosec = sample.stamp_nanosec;
-  header.frame_id = frame_id;
-}
-
 // Map NavSatFix's row-major 3x3 ENU position covariance into the upper-left
 // position block of a 6x6 pose covariance (x,y,z,roll,pitch,yaw). Rotation
 // terms stay zero.
@@ -480,33 +473,13 @@ std::vector<std::byte> GeoPoseConverter::convert(const NavSatSample & sample) co
   const std::string & frame_id = impl_->config.frame_id;
 
   if (impl_->config.target_ros_type == kPoseWithCovarianceStampedType) {
-    geometry_msgs::msg::PoseWithCovarianceStamped msg;
-    fill_header(msg.header, sample, frame_id);
-    msg.pose.pose.position.x = xyz[0];
-    msg.pose.pose.position.y = xyz[1];
-    msg.pose.pose.position.z = xyz[2];
-    msg.pose.pose.orientation.x = 0.0;
-    msg.pose.pose.orientation.y = 0.0;
-    msg.pose.pose.orientation.z = 0.0;
-    msg.pose.pose.orientation.w = 1.0;
     std::array<double, 36> cov{};
     fill_pose_covariance(cov, sample.position_covariance);
-    for (std::size_t i = 0; i < 36; ++i) {
-      msg.pose.covariance[i] = cov[i];
-    }
-    return serialize_message(msg, impl_->typesupport);
+    return serialize_pose_with_covariance_stamped(
+      xyz, cov, sample.stamp_sec, sample.stamp_nanosec, frame_id);
   }
 
-  geometry_msgs::msg::PoseStamped msg;
-  fill_header(msg.header, sample, frame_id);
-  msg.pose.position.x = xyz[0];
-  msg.pose.position.y = xyz[1];
-  msg.pose.position.z = xyz[2];
-  msg.pose.orientation.x = 0.0;
-  msg.pose.orientation.y = 0.0;
-  msg.pose.orientation.z = 0.0;
-  msg.pose.orientation.w = 1.0;
-  return serialize_message(msg, impl_->typesupport);
+  return serialize_pose_stamped(xyz, sample.stamp_sec, sample.stamp_nanosec, frame_id);
 }
 
 }  // namespace bagwiz::core::msg_convert

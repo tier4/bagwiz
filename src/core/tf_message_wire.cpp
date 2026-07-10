@@ -8,17 +8,18 @@
 
 #include "bagwiz/core/tf_message_wire.hpp"
 
+#include "bagwiz/core/cdr_walker/cdr_writer.hpp"
 #include "bagwiz/core/introspection_loader.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <tf2_msgs/msg/tf_message.hpp>
 
-#include <rcutils/allocator.h>
 #include <rmw/rmw.h>
 #include <rmw/serialized_message.h>
 
 #include <cstddef>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -135,6 +136,66 @@ std::vector<std::byte> serialize_tf_message(
     std::memcpy(out.data(), sm->buffer, sm->buffer_length);
   }
   return out;
+}
+
+class TfMessageSerializer::Impl
+{
+public:
+  void serialize_one(
+    const geometry_msgs::msg::TransformStamped & transform, std::vector<std::byte> & out)
+  {
+    serialize_many({&transform, 1}, out);
+  }
+
+  void serialize_many(
+    std::span<const geometry_msgs::msg::TransformStamped> transforms, std::vector<std::byte> & out)
+  {
+    cdr_walker::CdrWriter writer;
+    writer.write_sequence_length(static_cast<std::uint32_t>(transforms.size()));
+
+    for (const auto & transform : transforms) {
+      // std_msgs/Header header
+      writer.write_i32(transform.header.stamp.sec);
+      writer.write_u32(transform.header.stamp.nanosec);
+      writer.write_string(transform.header.frame_id);
+
+      // string child_frame_id
+      writer.write_string(transform.child_frame_id);
+
+      // geometry_msgs/Transform transform
+      writer.write_f64(transform.transform.translation.x);
+      writer.write_f64(transform.transform.translation.y);
+      writer.write_f64(transform.transform.translation.z);
+      writer.write_f64(transform.transform.rotation.x);
+      writer.write_f64(transform.transform.rotation.y);
+      writer.write_f64(transform.transform.rotation.z);
+      writer.write_f64(transform.transform.rotation.w);
+    }
+
+    out = writer.take();
+  }
+};
+
+TfMessageSerializer::TfMessageSerializer() : impl_(std::make_unique<Impl>())
+{
+}
+
+TfMessageSerializer::~TfMessageSerializer() = default;
+
+TfMessageSerializer::TfMessageSerializer(TfMessageSerializer &&) noexcept = default;
+
+TfMessageSerializer & TfMessageSerializer::operator=(TfMessageSerializer &&) noexcept = default;
+
+void TfMessageSerializer::serialize_one(
+  const geometry_msgs::msg::TransformStamped & transform, std::vector<std::byte> & out)
+{
+  impl_->serialize_one(transform, out);
+}
+
+void TfMessageSerializer::serialize_many(
+  std::span<const geometry_msgs::msg::TransformStamped> transforms, std::vector<std::byte> & out)
+{
+  impl_->serialize_many(transforms, out);
 }
 
 }  // namespace bagwiz::core

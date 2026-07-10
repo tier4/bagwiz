@@ -1091,12 +1091,13 @@ private:
       return 1;
     }
 
+    core::TfMessageSerializer serializer;
+    std::vector<std::byte> payload;
+    payload.reserve(256);
     std::uint64_t injected = 0;
     for (std::size_t i = 0; i < transforms.size(); ++i) {
-      std::vector<std::byte> payload;
       try {
-        payload = core::serialize_tf_message(
-          std::span<const geometry_msgs::msg::TransformStamped>(transforms.data() + i, 1));
+        serializer.serialize_one(transforms[i], payload);
       } catch (const std::exception & e) {
         BAGWIZ_LOG_ERROR(kLogger, "Failed to serialize TFMessage for sample #%zu: %s", i, e.what());
         return 1;

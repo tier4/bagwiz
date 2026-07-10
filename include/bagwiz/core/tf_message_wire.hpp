@@ -14,6 +14,7 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include <cstddef>
+#include <memory>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -59,6 +60,39 @@ io::TopicInfo make_tf_message_topic_info(std::string_view topic_name);
 // cannot be loaded or rmw_serialize fails.
 std::vector<std::byte> serialize_tf_message(
   std::span<const geometry_msgs::msg::TransformStamped> transforms);
+
+// Stateful serializer for repeated tf2_msgs/msg/TFMessage payloads.
+//
+// This class caches the introspection typesupport and the RMW serialization
+// buffer, so callers that serialize many TF messages (e.g. `bagwiz traj join`)
+// avoid a per-message dlopen/dlsym and repeated buffer allocation. It is NOT
+// thread-safe; use one instance per thread.
+class TfMessageSerializer
+{
+public:
+  TfMessageSerializer();
+  ~TfMessageSerializer();
+
+  TfMessageSerializer(const TfMessageSerializer &) = delete;
+  TfMessageSerializer & operator=(const TfMessageSerializer &) = delete;
+  TfMessageSerializer(TfMessageSerializer &&) noexcept;
+  TfMessageSerializer & operator=(TfMessageSerializer &&) noexcept;
+
+  // Serialize `transform` as a TFMessage containing exactly one
+  // TransformStamped. Writes the CDR bytes into `out`, resizing it to the
+  // exact payload length. The internal state is reused across calls.
+  void serialize_one(
+    const geometry_msgs::msg::TransformStamped & transform, std::vector<std::byte> & out);
+
+  // Serialize `transforms` as a TFMessage carrying N TransformStamped entries.
+  // Writes the CDR bytes into `out`, resizing it to the exact payload length.
+  void serialize_many(
+    std::span<const geometry_msgs::msg::TransformStamped> transforms, std::vector<std::byte> & out);
+
+private:
+  class Impl;
+  std::unique_ptr<Impl> impl_;
+};
 
 }  // namespace bagwiz::core
 

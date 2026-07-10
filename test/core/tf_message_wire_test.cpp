@@ -8,6 +8,7 @@
 
 #include "bagwiz/core/tf_message_wire.hpp"
 
+#include "bagwiz/core/cdr_walker/cdr_writer.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
@@ -27,6 +28,7 @@ namespace
 using bagwiz::core::kTfMessageWireSchema;
 using bagwiz::core::make_tf_message_topic_info;
 using bagwiz::core::serialize_tf_message;
+using bagwiz::core::TfMessageSerializer;
 
 constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
 
@@ -144,6 +146,76 @@ TEST(SerializeTfMessage, PreservesMultipleEdges)
   EXPECT_EQ(out[1].child_frame_id, "base_link");
   EXPECT_EQ(out[2].child_frame_id, "lidar");
   EXPECT_DOUBLE_EQ(out[1].transform.translation.x, 2.0);
+}
+
+// `TfMessageSerializer` must produce byte-identical output to the one-shot
+// `serialize_tf_message` helper so `traj join` can switch to it safely.
+TEST(TfMessageSerializer, MatchesOneShotSerializerForSingleEdge)
+{
+  const auto input = make_edge("map", "base_link", 1.5, /*sec=*/42, /*nsec=*/123U);
+
+  const std::vector<geometry_msgs::msg::TransformStamped> one_shot_input = {input};
+  const auto expected = serialize_tf_message(one_shot_input);
+
+  TfMessageSerializer serializer;
+  std::vector<std::byte> actual;
+  serializer.serialize_one(input, actual);
+
+  EXPECT_EQ(actual, expected);
+
+  const auto decoded = decode_tf_payload(actual);
+  ASSERT_EQ(decoded.size(), 1U);
+  EXPECT_EQ(decoded[0].header.frame_id, "map");
+  EXPECT_EQ(decoded[0].child_frame_id, "base_link");
+  EXPECT_EQ(decoded[0].header.stamp.sec, 42);
+  EXPECT_EQ(decoded[0].header.stamp.nanosec, 123U);
+  EXPECT_DOUBLE_EQ(decoded[0].transform.translation.x, 1.5);
+}
+
+// `serialize_many` must produce byte-identical output to the one-shot helper
+// for the common tf_static_cp case of multiple transforms per message.
+TEST(TfMessageSerializer, MatchesOneShotSerializerForManyEdges)
+{
+  std::vector<geometry_msgs::msg::TransformStamped> input;
+  input.push_back(make_edge("map", "odom", 1.0));
+  input.push_back(make_edge("odom", "base_link", 2.0));
+  input.push_back(make_edge("base_link", "lidar", 3.0));
+
+  const auto expected = serialize_tf_message(input);
+
+  TfMessageSerializer serializer;
+  std::vector<std::byte> actual;
+  serializer.serialize_many(input, actual);
+
+  EXPECT_EQ(actual, expected);
+
+  const auto decoded = decode_tf_payload(actual);
+  ASSERT_EQ(decoded.size(), 3U);
+  EXPECT_EQ(decoded[0].child_frame_id, "odom");
+  EXPECT_EQ(decoded[1].child_frame_id, "base_link");
+  EXPECT_EQ(decoded[2].child_frame_id, "lidar");
+}
+
+// Reusing the serializer across multiple, varying transforms must not leak
+// state between calls.
+TEST(TfMessageSerializer, ReusedAcrossManyEdges)
+{
+  TfMessageSerializer serializer;
+  std::vector<std::byte> payload;
+
+  for (std::int32_t i = 0; i < 10; ++i) {
+    const auto input = make_edge("map", "edge" + std::to_string(i), static_cast<double>(i), i, i);
+    serializer.serialize_one(input, payload);
+
+    const std::vector<geometry_msgs::msg::TransformStamped> one_shot_input = {input};
+    const auto expected = serialize_tf_message(one_shot_input);
+    EXPECT_EQ(payload, expected) << "mismatch at index " << i;
+
+    const auto decoded = decode_tf_payload(payload);
+    ASSERT_EQ(decoded.size(), 1U);
+    EXPECT_EQ(decoded[0].child_frame_id, "edge" + std::to_string(i));
+    EXPECT_DOUBLE_EQ(decoded[0].transform.translation.x, static_cast<double>(i));
+  }
 }
 
 }  // namespace
