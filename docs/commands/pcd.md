@@ -19,7 +19,8 @@ undistort still sees correct absolute times.
 ```text
 bagwiz pcd concat <input> <output_topic_name> --pcd <t1> <t2> [<t3> ...] \
     [--frame <frame>] [-o|--output <path>] [--tolerance <val>] \
-    [--stamp-offset <topic>=<val>]... [--drop-inputs] [--force] [-w|--overwrite]
+    [--stamp-offset <topic>=<val>]... [--drop-inputs] [--force] [-w|--overwrite] \
+    [--no-progress]
 ```
 
 | Argument / option              | Required | Description                                                                                                                                                                                                                                                                                                   |
@@ -34,6 +35,7 @@ bagwiz pcd concat <input> <output_topic_name> --pcd <t1> <t2> [<t3> ...] \
 | `--drop-inputs`                |          | Drop the source `--pcd` topics from the output (default: keep them).                                                                                                                                                                                                                                          |
 | `--force`                      |          | Proceed even if `<output_topic_name>` already exists in the bag (replaces that topic).                                                                                                                                                                                                                        |
 | `-w, --overwrite`              |          | Overwrite an existing `-o/--output` path.                                                                                                                                                                                                                                                                     |
+| `--no-progress`                |          | Disable the live progress bar. Auto-suppressed when stderr is not a terminal or `NO_COLOR` is set.                                                                                                                                                                                                            |
 
 ### Behaviour notes
 
@@ -87,7 +89,7 @@ intact for the downstream merge.
 ```text
 bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
     [--from <frame>] [--to <frame>] [-o|--output <path>] [-w|--overwrite] \
-    [-t|--threads <N>]
+    [-t|--threads <N>] [--no-progress]
 ```
 
 ### Positional arguments
@@ -107,6 +109,7 @@ bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
 | `-o, --output <path>` | _(unset)_    | Output bag. When omitted, `<input>` is rewritten in place (atomic tmp swap).                                                                                                         |
 | `-w, --overwrite`     | `false`      | Replace `-o/--output` if it already exists. Has no effect in in-place mode.                                                                                                          |
 | `-t, --threads <N>`   | `0`          | Number of worker threads for Pass 2. `0` (or omitted) uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; larger values are capped at hardware concurrency. |
+| `--no-progress`       | `false`      | Disable the live progress bar. Auto-suppressed when stderr is not a terminal or `NO_COLOR` is set.                                                                                   |
 
 ### Behavior
 
