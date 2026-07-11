@@ -35,7 +35,9 @@ int main(int argc, char ** argv) noexcept
       return 1;
     }
 
-    CLI::App app{"bagwiz - Fast CLI for analyzing and processing ROS 2 rosbags"};
+    CLI::App app{
+      "bagwiz - Fast CLI for analyzing, processing, and extracting data from ROS 2 rosbags "
+      "offline, without a ROS graph"};
     app.set_version_flag("--version", kVersion);
     app.require_subcommand(1);
     // Word-wrap option and subcommand descriptions to the terminal width so
