@@ -918,17 +918,26 @@ private:
     }
     progress.done();
 
-    // finish() runs the blocking global optimization with no per-step progress;
-    // animate an indeterminate spinner on a worker thread until it returns.
+    // finish() runs the blocking finalization (global optimization + endpoint
+    // recovery + map export) with no per-step progress; animate an indeterminate
+    // spinner on a worker thread until it returns.
     core::slam::CloudMap map;
-    const auto optimize_start = std::chrono::steady_clock::now();
+    const auto finalize_start = std::chrono::steady_clock::now();
     {
-      core::slam::FinalizeSpinner spinner("Optimizing global map", progress_on);
+      core::slam::FinalizeSpinner spinner("Finalizing map", progress_on);
       map = mapper.finish();
     }
-    const double optimize_seconds =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - optimize_start).count();
-    BAGWIZ_LOG_INFO(kLogger, "Global optimization took %.1fs", optimize_seconds);
+    const double finalize_seconds =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - finalize_start).count();
+    // Log the breakdown, not just the total: endpoint recovery (up to a full
+    // odometry smoother window of scan registrations), not the iSAM2 update,
+    // dominates finalization on LiDAR-only runs, and a bare total reads as
+    // "the optimizer is slow".
+    BAGWIZ_LOG_INFO(
+      kLogger,
+      "Finalization took %.1fs (global optimization %.1fs, endpoint recovery %.1fs, "
+      "map export %.1fs)",
+      finalize_seconds, map.optimize_seconds, map.recovery_seconds, map.export_seconds);
 
     if (map.trajectory.empty()) {
       BAGWIZ_LOG_ERROR(

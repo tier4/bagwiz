@@ -74,6 +74,29 @@ slam::LidarScan make_room_scan_with_intensity(std::int64_t stamp_ns, float inten
   return scan;
 }
 
+// finish() reports its wall-clock breakdown (global optimization / endpoint
+// recovery / export fill) so the command layer can log where finalization time
+// went — on LiDAR-only runs the scan-matching endpoint recovery, not the iSAM2
+// update, dominates. Fields must be populated: non-negative everywhere, and a
+// run that exports points spends measurable time in the export fill.
+TEST(CloudMapper, FinishReportsTimingBreakdown)
+{
+  slam::CloudMapper mapper;
+  constexpr std::int64_t kDtNs = 100'000'000;  // 10 Hz
+  std::int64_t stamp = 1'000'000'000'000'000'000LL;
+  for (int i = 0; i < 120; ++i) {
+    mapper.insert(make_room_scan(stamp));
+    stamp += kDtNs;
+  }
+
+  const slam::CloudMap map = mapper.finish();
+
+  ASSERT_FALSE(map.points.empty());
+  EXPECT_GE(map.optimize_seconds, 0.0);
+  EXPECT_GE(map.recovery_seconds, 0.0);
+  EXPECT_GT(map.export_seconds, 0.0);
+}
+
 TEST(CloudMapper, StationarySensorYieldsMapAndTrajectory)
 {
   // Submaps form only after enough keyframes accumulate, and CT odometry

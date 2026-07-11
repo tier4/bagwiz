@@ -47,6 +47,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -241,6 +242,13 @@ ScanMatchParams make_recovery_params(const CloudMapperConfig & cfg)
 {
   ScanMatchParams params;
   params.min_inlier_fraction = cfg.recovery_min_inlier_fraction;
+  // Each registration's covariance estimation and GICP correspondence search
+  // follow the run's --threads, the same policy as odometry (num_threads = 1 is
+  // the deterministic path; more threads are tolerance-level reproducible).
+  // Without this the end-window recovery — up to a full odometry smoother
+  // window of scans (~50 at 10 Hz), registered sequentially — dominates
+  // finish() on LiDAR-only runs (measured 61 s -> 6.9 s at --threads 16).
+  params.num_threads = cfg.num_threads > 0 ? cfg.num_threads : 1;
   return params;
 }
 
@@ -1840,17 +1848,29 @@ CloudMap CloudMapper::finish()
   // Heavy step: global matching-based iSAM2 optimization. Updates each held
   // submap's T_world_origin in place (GlobalMapping::update_submaps). With the
   // GNSS callback registered, the priors enter the graph in this single update.
+  // The optimize / recovery / export phases are timed individually into the
+  // returned CloudMap so the command layer can log where finalization time went
+  // (endpoint recovery, not this update, dominates LiDAR-only runs).
+  const auto optimize_start = std::chrono::steady_clock::now();
   impl_->global_mapping->optimize();
+  const auto optimize_end = std::chrono::steady_clock::now();
 
   CloudMap result;
   result.gnss_factor_count = gnss_count;
+  result.optimize_seconds = std::chrono::duration<double>(optimize_end - optimize_start).count();
   impl_->fill_trajectory(result);
+  const auto recovery_start = std::chrono::steady_clock::now();
   impl_->recover_warmup(result);
   impl_->recover_cooldown(result);
+  result.recovery_seconds =
+    std::chrono::duration<double>(std::chrono::steady_clock::now() - recovery_start).count();
   // Surface a warmup buffer overflow so the caller can distinguish "gave up" from
   // "nothing to recover" (warmup_disable() sets this and clears warmup.active).
   result.warmup_overflowed = impl_->warmup.overflowed;
+  const auto export_start = std::chrono::steady_clock::now();
   impl_->fill_map(result);
+  result.export_seconds =
+    std::chrono::duration<double>(std::chrono::steady_clock::now() - export_start).count();
   return result;
 }
 

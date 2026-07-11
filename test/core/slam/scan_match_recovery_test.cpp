@@ -92,6 +92,34 @@ TEST(ScanMatchRecovery, RecoversKnownTransformFromPerturbedGuess)
   EXPECT_LT(rotation_error(result.T_world_lidar, true_T_world_lidar), kRotTol);
 }
 
+// Threading each registration (ScanMatchParams.num_threads > 1 — wired from the
+// run's --threads by the mapper) must not change convergence: same transform
+// within the same tolerances as the single-threaded default. Guards the
+// endpoint-recovery acceleration on LiDAR-only runs, where the end window alone
+// can hold a full odometry smoother window of scans.
+TEST(ScanMatchRecovery, MultithreadedRegistrationMatchesSingleThreaded)
+{
+  const auto world = make_corner_cloud();
+  const Eigen::Isometry3d true_T_world_lidar = make_pose({0.7, -0.4, 0.25}, 0.12, {0.3, 0.2, 0.93});
+  const auto source_lidar = to_lidar_frame(world, true_T_world_lidar);
+  const Eigen::Isometry3d init =
+    true_T_world_lidar * make_pose({0.2, -0.15, 0.1}, 0.06, {0.1, 0.9, 0.2});
+
+  ScanMatchParams params;
+  params.num_threads = 4;
+  ScanMatchRecoverer recoverer{params};
+  recoverer.insert_target(world);
+  ASSERT_FALSE(recoverer.target_empty());
+
+  const ScanMatchResult result = recoverer.register_scan(source_lidar, init);
+
+  EXPECT_TRUE(result.converged);
+  EXPECT_GT(result.inlier_fraction, 0.9);
+  EXPECT_LT(
+    (result.T_world_lidar.translation() - true_T_world_lidar.translation()).norm(), kTransTol);
+  EXPECT_LT(rotation_error(result.T_world_lidar, true_T_world_lidar), kRotTol);
+}
+
 TEST(ScanMatchRecovery, EmptyTargetReturnsInitGuessUnconverged)
 {
   ScanMatchRecoverer recoverer;

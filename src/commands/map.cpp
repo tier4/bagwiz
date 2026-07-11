@@ -165,8 +165,8 @@ private:
     sub
       ->add_option(
         "-t,--threads", slam_args_.num_threads,
-        "Number of CPU threads for GLIM (default: 4). The host's hardware concurrency is the "
-        "effective maximum.")
+        "Number of CPU threads for GLIM and trajectory endpoint recovery (default: 4). The "
+        "host's hardware concurrency is the effective maximum.")
       ->check(CLI::Range(0, max_threads > 0 ? max_threads : 256));
     sub
       ->add_option(

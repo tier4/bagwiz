@@ -162,9 +162,11 @@ struct CloudMapperConfig
   // using t_lidar_imu.
   std::array<double, 3> gnss_antenna_offset{0.0, 0.0, 0.0};
 
-  // Number of CPU threads passed to GLIM. 0 or a negative value falls back
-  // to the default (4), which matches GLIM's odometry default and avoids the
-  // preprocessor's conservative default of 2.
+  // Number of CPU threads passed to GLIM and to the scan-matching endpoint
+  // recovery's per-registration work (covariance estimation + GICP
+  // correspondences). 0 or a negative value falls back to the default (4),
+  // which matches GLIM's odometry default and avoids the preprocessor's
+  // conservative default of 2. 1 is the deterministic path.
   int num_threads = 4;
 
   // Route GLIM through its CUDA backends and use GPU export voxelization. With
@@ -235,6 +237,16 @@ struct CloudMap
   // the caller distinguish "nothing to recover" from "gave up", which have the
   // same recovered_start_pose_count of 0.
   bool warmup_overflowed = false;
+
+  // Wall-clock breakdown of finish(), for the command layer's log line: the
+  // global iSAM2 optimization, the scan-matching endpoint recovery (start + end
+  // windows together), and the export map fill. Diagnostic only — without the
+  // split, a long endpoint recovery (the end window alone can hold a full
+  // odometry smoother window of scans) is indistinguishable from a slow
+  // optimizer in the finalization total.
+  double optimize_seconds = 0.0;
+  double recovery_seconds = 0.0;
+  double export_seconds = 0.0;
 };
 
 class CloudMapper
