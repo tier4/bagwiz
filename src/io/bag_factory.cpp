@@ -114,28 +114,6 @@ Format infer_inner_format_from_zstd_extension(const std::filesystem::path & path
   return infer_format_from_extension(path.stem());
 }
 
-// True when `path` is a rosbag2 FILE-mode (whole-database zstd envelope) bag:
-// a directory whose metadata.yaml declares `compression_mode: FILE`, or a
-// bare `.db3.zstd` single file. Used to keep in-place rewrites from silently
-// emitting an uncompressed bag over a compressed source. Never throws.
-bool reference_is_file_compressed(const std::filesystem::path & path) noexcept
-{
-  std::error_code ec;
-  if (std::filesystem::is_directory(path, ec)) {
-    const auto metadata_path = path / "metadata.yaml";
-    if (!std::filesystem::exists(metadata_path, ec)) {
-      return false;
-    }
-    try {
-      const auto md = load_metadata_yaml(metadata_path);
-      return to_lower_copy(md.compression_mode) == "file";
-    } catch (const std::exception &) {
-      return false;
-    }
-  }
-  return is_zstd_file(path);
-}
-
 // Magic-byte sniff: opens `path`, reads up to 16 bytes, and matches the
 // MCAP / SQLite3 prefix. Returns Format::Auto on any failure (open error,
 // short read, no match) so callers can fall through to higher-level
@@ -169,6 +147,32 @@ Format sniff_file_magic(const std::filesystem::path & path) noexcept
 }
 
 }  // namespace
+
+// True when `path` is a rosbag2 FILE-mode (whole-database zstd envelope) bag:
+// a directory whose metadata.yaml declares `compression_mode: FILE`, or a
+// bare `.db3.zstd` single file. In both cases the bag cannot be read without
+// first decompressing the entire database, so callers that only need cheap
+// metadata (in-place rewrite guards, shell completion) use this to bail out
+// before triggering a whole-database decompress. MESSAGE-mode bags return
+// false: their topic list comes from metadata.yaml and payloads decompress
+// per-message, so no envelope expansion is involved. Never throws.
+bool is_file_compressed_bag(const std::filesystem::path & path) noexcept
+{
+  std::error_code ec;
+  if (std::filesystem::is_directory(path, ec)) {
+    const auto metadata_path = path / "metadata.yaml";
+    if (!std::filesystem::exists(metadata_path, ec)) {
+      return false;
+    }
+    try {
+      const auto md = load_metadata_yaml(metadata_path);
+      return to_lower_copy(md.compression_mode) == "file";
+    } catch (const std::exception &) {
+      return false;
+    }
+  }
+  return is_zstd_file(path);
+}
 
 Format detect_format(const std::filesystem::path & path) noexcept
 {
@@ -398,7 +402,7 @@ CreateOptions create_options_preserving_storage(
   // would silently replace a `.db3.zstd` envelope with a plain `.db3`. Return
   // Auto/Auto so the caller surfaces a "could not detect storage format"
   // error and asks the user to pass an explicit `-o` output instead.
-  if (reference_is_file_compressed(reference_path)) {
+  if (is_file_compressed_bag(reference_path)) {
     return opts;
   }
 

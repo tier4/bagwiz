@@ -14,9 +14,12 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include <gtest/gtest.h>
+#include <yaml-cpp/yaml.h>
+#include <zstd.h>
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -319,6 +322,75 @@ std::filesystem::path write_pointcloud2_fixture(const std::filesystem::path & pa
   writer->write("/image", 2'000'000'000, bytes);
   writer->close();
   return path;
+}
+
+// Write an uncompressed sqlite3 directory bag declaring the given (name, type)
+// topics with one arbitrary-payload message each. Topic metadata alone drives
+// completion, so the payloads are placeholders.
+std::filesystem::path write_sqlite3_dir_bag(
+  const std::filesystem::path & dir,
+  const std::vector<std::pair<std::string, std::string>> & topics)
+{
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Sqlite3;
+  options.layout = bagwiz::io::Layout::Directory;
+
+  constexpr std::array<std::byte, 4> kPayload{
+    std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}};
+  const auto bytes = std::span<const std::byte>(kPayload.data(), kPayload.size());
+
+  auto writer = bagwiz::io::open_write(dir, options);
+  std::int64_t timestamp_ns = 1'000'000'000;
+  for (const auto & [name, type] : topics) {
+    writer->declare_topic(make_topic(name, type));
+    writer->write(name, timestamp_ns, bytes);
+    timestamp_ns += 1'000'000'000;
+  }
+  writer->close();
+  return dir;
+}
+
+// Rewrite an uncompressed sqlite3 directory bag in place as a rosbag2 FILE-mode
+// zstd envelope: compress the single `.db3` shard to `.db3.zstd`, drop the plain
+// shard, and flip metadata.yaml's compression fields + relative_file_paths.
+// Returns the bare `.db3.zstd` shard path (used for the single-file case).
+std::filesystem::path make_file_mode_zstd(const std::filesystem::path & dir)
+{
+  std::filesystem::path shard;
+  for (const auto & entry : std::filesystem::directory_iterator(dir)) {
+    if (entry.path().extension() == ".db3") {
+      shard = entry.path();
+      break;
+    }
+  }
+
+  std::ifstream in(shard, std::ios::binary | std::ios::ate);
+  const auto size = static_cast<std::size_t>(in.tellg());
+  in.seekg(0);
+  std::vector<char> raw(size);
+  in.read(raw.data(), static_cast<std::streamsize>(size));
+
+  std::vector<char> compressed(ZSTD_compressBound(size));
+  const std::size_t written =
+    ZSTD_compress(compressed.data(), compressed.size(), raw.data(), size, /*level=*/3);
+  compressed.resize(written);
+
+  const std::filesystem::path zstd_path(shard.string() + ".zstd");
+  {
+    std::ofstream out(zstd_path, std::ios::binary);
+    out.write(compressed.data(), static_cast<std::streamsize>(compressed.size()));
+  }
+  std::filesystem::remove(shard);
+
+  YAML::Node root = YAML::LoadFile((dir / "metadata.yaml").string());
+  YAML::Node info = root["rosbag2_bagfile_information"];
+  info["compression_mode"] = "FILE";
+  info["compression_format"] = "zstd";
+  info["relative_file_paths"] = std::vector<std::string>{zstd_path.filename().string()};
+  std::ofstream meta(dir / "metadata.yaml");
+  meta << root;
+
+  return zstd_path;
 }
 
 std::string run_completion(std::vector<std::string> args)
@@ -1833,4 +1905,48 @@ TEST_F(InstallScriptTest, UnknownShellFails)
   const auto target = tmp_dir_ / "bagwiz";
   EXPECT_FALSE(bagwiz::commands::install_completion_script("powershell", target, false));
   EXPECT_FALSE(std::filesystem::exists(target));
+}
+
+// A bare single-file `.db3.zstd` envelope has no metadata.yaml, so listing its
+// topics forces a full decompress of the whole database — seconds of hang per
+// TAB on a multi-GB bag. Topic completion must offer nothing instead. Without
+// the guard this same bag would decompress and list /foo and /bar.
+TEST_F(CompletionTest, WalkTopicCompletionSkipsBareSingleFileZstd)
+{
+  const auto bag = tmp_dir_ / "single";
+  write_sqlite3_dir_bag(bag, {{"/foo", "std_msgs/msg/String"}, {"/bar", "std_msgs/msg/Int32"}});
+  const auto zstd_path = make_file_mode_zstd(bag);
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "walk", zstd_path.string()}), "");
+}
+
+// A directory bag (even FILE-mode) serves its topic list from metadata.yaml
+// without decompressing the envelope, so topic completion stays fast and must
+// NOT be skipped. This uncompressed sqlite3 directory bag proves the fixture
+// builds a real, listable bag.
+TEST_F(CompletionTest, WalkTopicCompletionListsSqlite3DirectoryTopics)
+{
+  const auto bag = tmp_dir_ / "dir";
+  write_sqlite3_dir_bag(bag, {{"/foo", "std_msgs/msg/String"}, {"/bar", "std_msgs/msg/Int32"}});
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "walk", bag.string()}), "/bar\n/foo\n");
+}
+
+// frame-id discovery iterates TF messages; on a FILE-mode zstd bag the first read
+// decompresses the whole shard to a temp .db3. `traj dump --from` must offer
+// nothing instead of hanging, even though the bag declares a /tf topic.
+TEST_F(CompletionTest, TrajDumpFromFlagSkipsFileModeZstd)
+{
+  const auto bag = tmp_dir_ / "tf_file_mode";
+  write_sqlite3_dir_bag(
+    bag, {{"/tf", "tf2_msgs/msg/TFMessage"}, {"/points", "sensor_msgs/msg/PointCloud2"}});
+  make_file_mode_zstd(bag);
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", bag.string(), "/tf", "out.tum",
+       "--from"}),
+    "");
 }

@@ -433,8 +433,21 @@ std::vector<std::string> complete_topics(
   std::span<const std::string_view> allowed_types)
 {
   std::vector<std::string> result;
+  const auto expanded = expand_current_user_home(input_path);
+
+  // A bare single-file `.db3.zstd` envelope carries no metadata.yaml, so reading
+  // its topic list forces a full decompress of the whole database to a temp file
+  // — seconds of hang per TAB on a multi-GB bag. Offer nothing so the shell's
+  // default file completion takes over instead of blocking. Directory bags (FILE-
+  // or MESSAGE-mode) serve their topic list from metadata.yaml without touching
+  // the envelope, so they stay fast and are deliberately not skipped here.
+  std::error_code ec;
+  if (!std::filesystem::is_directory(expanded, ec) && io::is_file_compressed_bag(expanded)) {
+    return {};
+  }
+
   try {
-    const auto reader = io::open_read(expand_current_user_home(input_path));
+    const auto reader = io::open_read(expanded);
     for (const auto & topic : reader->topics()) {
       if (!starts_with(topic.name, prefix)) {
         continue;
@@ -486,8 +499,19 @@ std::vector<std::string> collect_tf_frame_ids(
   const std::filesystem::path & bag_path, bool static_only = false)
 {
   std::vector<std::string> frame_ids;
+  const auto expanded = expand_current_user_home(bag_path);
+
+  // Frame-id discovery iterates TF messages. For a FILE-mode zstd bag the first
+  // read decompresses the whole shard to a temp .db3 up front — seconds of hang
+  // per TAB on a multi-GB bag, regardless of the scan cap. Offer nothing instead.
+  // MESSAGE-mode bags decompress per message (bounded by kFrameIdScanMessageCap)
+  // and uncompressed bags are cheap, so both keep working.
+  if (io::is_file_compressed_bag(expanded)) {
+    return {};
+  }
+
   try {
-    auto reader = io::open_read(expand_current_user_home(bag_path));
+    auto reader = io::open_read(expanded);
 
     std::vector<std::string> tf_topic_names;
     for (const auto & t : reader->topics()) {

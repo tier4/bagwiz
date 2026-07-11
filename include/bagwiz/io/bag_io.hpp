@@ -220,6 +220,15 @@ Format detect_format(const std::filesystem::path & path) noexcept;
 // Format::Auto so callers can fall back to an explicit `--storage` flag.
 Format infer_format_from_extension(const std::filesystem::path & path) noexcept;
 
+// True when `path` is a rosbag2 FILE-mode (whole-database zstd envelope) bag:
+// a directory whose metadata.yaml declares `compression_mode: FILE`, or a bare
+// `.db3.zstd` single file. Reading such a bag's contents (even its topic list,
+// for a bare single file) requires decompressing the entire database first, so
+// latency-sensitive callers use this to skip work that would otherwise block.
+// MESSAGE-mode bags return false. Inspects only the extension / metadata.yaml —
+// never decompresses, never throws.
+bool is_file_compressed_bag(const std::filesystem::path & path) noexcept;
+
 // Compose CreateOptions for a directory-style output path that should
 // inherit the storage format of a reference bag when the user did not
 // pick a single-file format via the output extension. Intended for

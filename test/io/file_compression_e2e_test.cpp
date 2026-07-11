@@ -194,6 +194,30 @@ std::filesystem::path make_file_compressed_bag(
   return zstd_path;
 }
 
+// Emit a minimal but parseable metadata.yaml for a directory bag carrying the
+// given rosbag2-layer compression settings. load_metadata_yaml needs a
+// storage_identifier and at least one listed file path; nothing here is
+// decompressed. Used to exercise is_file_compressed_bag's directory branch for
+// non-FILE modes without materialising a real database.
+void write_dir_metadata(
+  const std::filesystem::path & dir, std::string_view compression_mode,
+  std::string_view compression_format)
+{
+  std::filesystem::create_directories(dir);
+  YAML::Emitter out;
+  out << YAML::BeginMap;
+  out << YAML::Key << "rosbag2_bagfile_information" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "storage_identifier" << YAML::Value << "sqlite3";
+  out << YAML::Key << "relative_file_paths" << YAML::Value << YAML::BeginSeq << "shard_0.db3"
+      << YAML::EndSeq;
+  out << YAML::Key << "compression_mode" << YAML::Value << std::string(compression_mode);
+  out << YAML::Key << "compression_format" << YAML::Value << std::string(compression_format);
+  out << YAML::EndMap;
+  out << YAML::EndMap;
+  std::ofstream f(dir / "metadata.yaml");
+  f << out.c_str();
+}
+
 void verify_payloads_match(
   bagwiz::io::BagReader & reader,
   const std::vector<std::pair<std::string, std::vector<std::byte>>> & expected)
@@ -293,4 +317,36 @@ TEST_F(FileCompressionE2ETest, RejectsNonZstdFileCompressionOnSqlite3)
   make_file_compressed_bag(bag, "lz4");
 
   EXPECT_THROW(bagwiz::io::open_read(bag), std::runtime_error);
+}
+
+// is_file_compressed_bag flags exactly the bags whose contents cannot be read
+// without a whole-database decompress: FILE-mode directory envelopes and bare
+// `.db3.zstd` single files. These are the cases latency-sensitive callers (shell
+// completion, in-place rewrite guards) must skip.
+TEST_F(FileCompressionE2ETest, IsFileCompressedBagDetectsFileModeEnvelopes)
+{
+  const auto bag = tmp_dir_ / "file_mode";
+  const auto zstd_path = make_file_compressed_bag(bag);
+
+  EXPECT_TRUE(bagwiz::io::is_file_compressed_bag(bag));
+  EXPECT_TRUE(bagwiz::io::is_file_compressed_bag(zstd_path));
+}
+
+// MESSAGE-mode (per-message zstd), uncompressed bags, and missing paths are all
+// cheap to read, so is_file_compressed_bag must leave them alone.
+TEST_F(FileCompressionE2ETest, IsFileCompressedBagRejectsMessageModeUncompressedAndMissing)
+{
+  const auto message_bag = tmp_dir_ / "message_mode";
+  write_dir_metadata(message_bag, "MESSAGE", "zstd");
+  EXPECT_FALSE(bagwiz::io::is_file_compressed_bag(message_bag));
+
+  const auto plain_dir = tmp_dir_ / "plain_dir";
+  write_dir_metadata(plain_dir, "", "");
+  EXPECT_FALSE(bagwiz::io::is_file_compressed_bag(plain_dir));
+
+  const auto plain_db3 = tmp_dir_ / "plain.db3";
+  write_plain_db3(plain_db3);
+  EXPECT_FALSE(bagwiz::io::is_file_compressed_bag(plain_db3));
+
+  EXPECT_FALSE(bagwiz::io::is_file_compressed_bag(tmp_dir_ / "does_not_exist"));
 }
