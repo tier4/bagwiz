@@ -67,7 +67,7 @@ struct GeoRoute
   bool target_has_covariance = false;
 };
 
-// The snake_case choices exposed on the CLI as `--from` / `--to`. Kept here
+// The snake_case choices exposed on the CLI as `--src` / `--dst`. Kept here
 // (next to the type mapping) so the command's CLI::IsMember list and the
 // resolver never drift apart.
 const std::vector<std::string> & from_snake_choices();
@@ -87,7 +87,7 @@ std::optional<std::string> ros_type_to_snake(std::string_view ros_type);
 // Look up the whitelisted route for a (source, target) ROS type pair.
 // std::nullopt when the pair is not permitted. The lookup keys on ROS type
 // names (not snake labels) so the `--topic` path — which reads the source
-// type from the bag rather than `--from` — shares the same whitelist.
+// type from the bag rather than `--src` — shares the same whitelist.
 std::optional<GeoRoute> resolve_route(std::string_view from_ros_type, std::string_view to_ros_type);
 
 // The fields lifted out of a decoded NavSatFix message. Only what the pose

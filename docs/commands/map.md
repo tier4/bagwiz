@@ -149,8 +149,9 @@ Written under `<output_root>`:
   written alongside `map.pcd`, the viewer's Trajectory toggle is available
   here too (off by default).
 - **Progress.** On an interactive terminal, a determinate progress bar tracks the
-  bag-read/feed phase on stderr, and an indeterminate spinner is shown during
-  global optimization. Both are auto-suppressed when stderr is not a terminal or
+  bag-read/feed phase on stderr, and an indeterminate "Finalizing map" spinner is
+  shown during finalization (global optimization, endpoint recovery, and map
+  export). Both are auto-suppressed when stderr is not a terminal or
   `NO_COLOR` is set.
 - **Backend.** The default `auto` backend uses CUDA when the binary was built with
   `-DBAGWIZ_WITH_SLAM_CUDA` and a device is visible, otherwise CPU. Force a

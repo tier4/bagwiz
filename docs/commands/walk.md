@@ -130,11 +130,11 @@ selection. The selected topics are remembered for the rest of the walk session.
 | --------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `p`       | Toggle the point-cloud overlay on/off. Points project onto the raw or rectified image to match the current undistort state. |
 | `t`       | Open the PointCloud2 topic picker again to change the selected topics.                                                      |
-| `f`       | Cycle the visualized property: `distance` → `x` → `y` → `z` → `intensity` (when the topic has intensity) → `distance`.      |
+| `f`       | Cycle the visualized property: `distance` → `intensity` (when the topic has intensity) → `x` → `y` → `z` → `distance`.      |
 | `c`       | Cycle the color scheme: `jet` → `viridis` → `turbo` → `plasma` → `inferno` → `magma` → `rainbow` → `jet`.                   |
 | `r`       | Toggle between automatic min/max range and a manual range prompt.                                                           |
 | `=` / `-` | Increase / decrease point size.                                                                                             |
-| `[` / `]` | Increase / decrease overlay alpha (transparency).                                                                           |
+| `]` / `[` | Increase / decrease overlay alpha (transparency).                                                                           |
 
 Defaults on first enable are: property `distance`, scheme `jet`, range `auto`,
 point size `2`, alpha `1.0`. The status line at the bottom of the preview shows
@@ -224,7 +224,7 @@ not been read into the cache yet (they get pulled in on demand).
 | `c`            | Cycle the point-cloud overlay color scheme.                                                                                                                                                       |
 | `r`            | Toggle auto/manual value range for the overlay.                                                                                                                                                   |
 | `=` / `-`      | Increase / decrease overlay point size.                                                                                                                                                           |
-| `[` / `]`      | Increase / decrease overlay alpha.                                                                                                                                                                |
+| `]` / `[`      | Increase / decrease overlay alpha.                                                                                                                                                                |
 | `q` / `Ctrl-C` | Quit.                                                                                                                                                                                             |
 
 When the body is taller than the visible window, a `lines X-Y of N`

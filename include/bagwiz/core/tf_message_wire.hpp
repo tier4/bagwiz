@@ -63,10 +63,11 @@ std::vector<std::byte> serialize_tf_message(
 
 // Stateful serializer for repeated tf2_msgs/msg/TFMessage payloads.
 //
-// This class caches the introspection typesupport and the RMW serialization
-// buffer, so callers that serialize many TF messages (e.g. `bagwiz traj join`)
-// avoid a per-message dlopen/dlsym and repeated buffer allocation. It is NOT
-// thread-safe; use one instance per thread.
+// This class serializes each TFMessage payload directly to CDR via
+// cdr_walker::CdrWriter, so callers that serialize many TF messages (e.g.
+// `bagwiz traj join`) avoid the introspection typesupport / rmw_serialize
+// path and its per-message dlopen/dlsym overhead. It is NOT thread-safe;
+// use one instance per thread.
 class TfMessageSerializer
 {
 public:

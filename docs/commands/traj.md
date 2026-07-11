@@ -200,8 +200,8 @@ bagwiz traj dump [OPTIONS] <input> <topic> <output>
 
 ### Pose and Odometry topics: how sampling works
 
-1. If any TF lookup is needed (`--from` is set, or Odometry has a `--to` that
-   differs from `child_frame_id`), the bag is scanned once and every
+1. If any TF lookup is needed (`--from` is set, or Odometry has `--to` set),
+   the bag is scanned once and every
    `tf2_msgs/msg/TFMessage` topic is loaded into a single TF buffer
    (`*tf_static` as static, the rest as dynamic). A pure raw dump (no flags)
    skips this and needs no TF in the bag.
@@ -261,7 +261,7 @@ bagwiz traj dump capture.mcap /localization/pose pose_map.tum --from map
 | Topic absent / unsupported type / static TF topic given as `<topic>` for TF path                           | Error.                                                           |
 | TF path: no path between `--from` and `--to`                                                               | Error.                                                           |
 | TF path: path exists but no chain edge on `<topic>`                                                        | Error.                                                           |
-| Pose / Odometry: a TF lookup is needed (`--from`, or Odometry `--to` ≠ child) but the bag has no TF topics | Error.                                                           |
+| Pose / Odometry: a TF lookup is needed (`--from` set, or Odometry `--to` set) but the bag has no TF topics | Error.                                                           |
 | Some lookups fail                                                                                          | Skipped and counted; remaining poses are written if any succeed. |
 
 ### Exit status

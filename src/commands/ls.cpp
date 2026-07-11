@@ -107,9 +107,10 @@ void print_long(const std::vector<Row> & rows, double duration_sec)
 //
 // Plain `ls` prints only topic names and types, sourced from the cheap
 // topics() path. `ls -l` adds per-topic message counts and average Hz, which
-// require compute_stats(); on a single-file SQLite bag (no metadata summary,
-// no topic_id index) that forces a full scan of the messages table, so it is
-// gated behind the explicit flag.
+// require compute_stats(); a single-file SQLite bag has no metadata summary.
+// bagwiz-written `.db3` files carry a `(topic_id, timestamp)` covering index
+// that keeps this fast, but `.db3` files from other tools lack it and force a
+// full scan of the messages table, so `-l` is gated behind the explicit flag.
 class LsCommand : public Command
 {
 public:

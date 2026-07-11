@@ -90,8 +90,9 @@ struct MapSlamArgs
   // the buffered IMU additionally seeds each initial guess and is the fallback.
   bool recover_end = true;
 
-  // Number of CPU threads for GLIM. 0 or a negative value falls back to the
-  // default (4).
+  // Number of CPU threads for GLIM and trajectory endpoint (warmup/cooldown)
+  // recovery. A non-positive value falls back to each stage's default (GLIM
+  // preprocessor 4; recovery 1).
   int num_threads = 4;
 
   // SLAM backend selection: "auto" (default), "cpu", or "cuda".

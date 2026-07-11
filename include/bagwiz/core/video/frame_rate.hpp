@@ -28,7 +28,9 @@ inline constexpr int kMinFps = 1;
 inline constexpr int kMaxFps = 240;
 
 // Derive a constant frame rate from a topic's first and last message
-// timestamps and message count, used when the user does not pass --fps.
+// timestamps and message count, used to choose the constant encode frame rate
+// for `generate video` (always derived from the recording; there is no user
+// override).
 //
 //   fps = (count - 1) / ((last_ns - first_ns) / 1e9)
 //

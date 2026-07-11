@@ -138,23 +138,25 @@ source ~/.config/fish/completions/bagwiz.fish
   `-<TAB>` also surfaces `--version`. The covered positions are:
   - `bagwiz -<TAB>` → `--help`, `--version`, `-h`
   - `bagwiz <cmd> -<TAB>` for every command (`cam-info`, `check`, `complete`,
-    `convert`, `generate`, `ls`, `map`, `tf`, `topic`, `traj`, `walk`);
+    `convert`, `generate`, `ls`, `map`, `pcd`, `tf`, `topic`, `traj`, `walk`);
     `walk -<TAB>` also surfaces `--cam-info`
   - `bagwiz <cmd> <subcommand> -<TAB>` for every nested subcommand
     (`cam-info replace`, `check broken`, `convert format`, `convert msg`,
     `convert msg geo`, `generate video`, `map slam`, `map viewer`,
-    `tf static calc`, `tf static cp`, `tf tree`, `tf walk`, `topic drop`,
-    `topic keep`, `topic rename`, `traj dump`, `traj join`);
+    `pcd concat`, `pcd undistort`, `tf static calc`, `tf static cp`,
+    `tf tree`, `tf walk`, `topic drop`, `topic keep`, `topic rename`,
+    `traj dump`, `traj join`);
     `cam-info replace -<TAB>` surfaces `--frame-id`, `--output`/`-o`, and
     `-w`/`--overwrite`; `check broken -<TAB>` surfaces `--rm` and `--deep`;
     `tf static calc -<TAB>` also surfaces `--json`, and `tf static cp -<TAB>`
     surfaces `--output`/`-o` and `-w`/`--overwrite`.
     `tf static` is itself a command group, so `tf static <TAB>` completes its
     actions (`calc`, `cp`) and `tf static -<TAB>` lists just the help flags.
-    `cam-info`, `check`, `generate`, `map`, and `topic` are likewise command
-    groups: `cam-info <TAB>` completes `replace`, `check <TAB>` completes
-    `broken`, `generate <TAB>` completes `video`, `map <TAB>` completes
-    `slam`, `viewer`, and `topic <TAB>` completes `drop`, `keep`, `rename`
+    `cam-info`, `check`, `generate`, `map`, `pcd`, and `topic` are likewise
+    command groups: `cam-info <TAB>` completes `replace`, `check <TAB>`
+    completes `broken`, `generate <TAB>` completes `video`, `map <TAB>`
+    completes `slam`, `viewer`, `pcd <TAB>` completes `concat`, `undistort`,
+    and `topic <TAB>` completes `drop`, `keep`, `rename`
 - Selected option values are completed where bagwiz has a closed set, such as
   `--storage <mcap|sqlite3>`.
 - Flag values that name a bag topic of a specific type are completed by opening
@@ -209,6 +211,7 @@ source ~/.config/fish/completions/bagwiz.fish
   `tf2_msgs/msg/TFMessage` topics. Coverage:
   - `bagwiz traj dump <input> ... --from <FRAME>` / `--to <FRAME>` (all TF topics)
   - `bagwiz traj join <input> ... --from <FRAME>` / `--to <FRAME>` (all TF topics)
+  - `bagwiz pcd undistort <input> ... --from <FRAME>` / `--to <FRAME>` (all TF topics)
   - `bagwiz tf walk <input> <FRAME> <FRAME>` (the `<from>` and `<to>`
     positional slots; all TF topics, static + dynamic, merged)
   - `bagwiz tf static calc <input> <FRAME> <FRAME>` (the `<from>` and `<to>`
