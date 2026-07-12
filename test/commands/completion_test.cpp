@@ -1230,7 +1230,7 @@ TEST(FlagCompletionTest, PcdUndistortDashListsUndistortFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "pcd", "undistort", "-"}),
-    "--from\n--help\n--output\n--overwrite\n--pcd\n--to\n-h\n-o\n-w\n");
+    "--from\n--help\n--output\n--overwrite\n--pcd\n--threads\n--to\n-h\n-o\n-t\n-w\n");
 }
 
 // `pcd undistort <bag> <pose_topic> --pcd <TAB>` completes PointCloud2 topics
