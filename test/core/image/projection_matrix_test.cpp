@@ -240,12 +240,12 @@ TEST(ProjectionMatrixTest, AcceptsRationalPolynomial)
 TEST(ProjectionMatrixTest, RejectsUnknownDistortionModel)
 {
   auto in = golden_input();
-  in.distortion_model = "kannala_brandt";
+  in.distortion_model = "double_sphere";
 
   const auto result = compute_projection_matrix(in, 0.0);
 
   EXPECT_FALSE(result.ok());
-  EXPECT_NE(result.error.find("kannala_brandt"), std::string::npos) << result.error;
+  EXPECT_NE(result.error.find("double_sphere"), std::string::npos) << result.error;
   // The message must name what IS supported, not just what is not.
   EXPECT_NE(result.error.find("plumb_bob"), std::string::npos) << result.error;
 }
@@ -256,7 +256,7 @@ TEST(ProjectionMatrixTest, RejectsUnknownDistortionModel)
 // accepting a camera whose p this function cannot compute.
 TEST(ProjectionMatrixTest, RejectsUnsupportedModelEvenWithZeroCoefficients)
 {
-  for (const char * model : {"equidistant", "fisheye", "kannala_brandt"}) {
+  for (const char * model : {"equidistant", "fisheye", "double_sphere"}) {
     auto in = golden_input();
     in.distortion_model = model;
     in.d = {0.0, 0.0, 0.0, 0.0, 0.0};

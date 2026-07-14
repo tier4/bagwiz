@@ -222,7 +222,7 @@ Tab completion offers the bag's CameraInfo topics — and only those — at ever
 | --------------------- | --------- | --------------------------------------------------------------------- |
 | `plumb_bob`           | ✅        | Brown–Conrady, 5 coefficients. The ROS default.                       |
 | `rational_polynomial` | ✅        | The same model with 8 coefficients.                                   |
-| ``(empty) /`none`     | ✅        | Declares no lens distortion, so `p` is `[k \| 0]` whatever `d` holds. |
+| `""` (empty) / `none` | ✅        | Declares no lens distortion, so `p` is `[k \| 0]` whatever `d` holds. |
 | `equidistant`         | ❌        | Fisheye — see below.                                                  |
 | `fisheye`             | ❌        | Fisheye — see below.                                                  |
 | anything else         | ❌        | Error.                                                                |
@@ -282,9 +282,9 @@ Recomputing `p` from `k` is **wrong**, not merely imprecise, in these cases, so
 the run stops before anything is written:
 
 | Condition                              | Why                                                                                                                                                                                                                        |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `r` is a genuine non-identity rotation | The camera is stereo-rectified: its `p` comes from `cv::stereoRectify` against the paired camera. Recomputing would break rectification. An all-zero (unset) `r` is treated as identity, matching the undistortion helper. |
-| `p[3]` or `p[7]` is non-zero           | `p` carries a stereo baseline (`p[3] = -fx · baseline`); `[newK                                                                                                                                                            | 0]` would zero it and lose the extrinsic. |
+| `p[3]` or `p[7]` is non-zero           | `p` carries a stereo baseline (`p[3] = -fx · baseline`); `[newK \| 0]` would zero it and lose the extrinsic.                                                                                                               |
 | `distortion_model` is unsupported      | Only `plumb_bob`, `rational_polynomial`, and an empty / `none` model can be recomputed — see [Supported `distortion_model` values](#supported-distortion_model-values).                                                    |
 | `width` or `height` is 0               | No image size means no valid new camera matrix.                                                                                                                                                                            |
 | `k` is degenerate or non-finite        | `fx`/`fy` must be positive and every entry finite.                                                                                                                                                                         |
