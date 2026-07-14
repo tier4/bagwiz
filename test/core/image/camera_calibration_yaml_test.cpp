@@ -17,6 +17,7 @@
 namespace
 {
 
+using bagwiz::core::image::emit_camera_calibration_yaml;
 using bagwiz::core::image::parse_camera_calibration_yaml;
 
 // A complete, well-formed camera_calibration YAML in the canonical form.
@@ -169,6 +170,95 @@ TEST_F(CameraCalibrationYamlTest, RejectsMissingFile)
   const auto result = parse_camera_calibration_yaml(tmp_dir_ / "does_not_exist.yaml");
   EXPECT_FALSE(result.ok());
   EXPECT_FALSE(result.error.empty());
+}
+
+// --- camera_name -----------------------------------------------------------
+
+TEST_F(CameraCalibrationYamlTest, ParsesCameraName)
+{
+  const auto result = parse_camera_calibration_yaml(write_yaml(kValidYaml));
+  ASSERT_TRUE(result.ok()) << result.error;
+  ASSERT_TRUE(result.calibration->camera_name.has_value());
+  EXPECT_EQ(*result.calibration->camera_name, "narrow_stereo");
+}
+
+TEST_F(CameraCalibrationYamlTest, LeavesCameraNameUnsetWhenFileOmitsIt)
+{
+  const std::string key = "camera_name: narrow_stereo\n";
+  std::string yaml = kValidYaml;
+  const auto at = yaml.find(key);
+  ASSERT_NE(at, std::string::npos);
+  yaml.erase(at, key.size());
+
+  const auto result = parse_camera_calibration_yaml(write_yaml(yaml));
+  ASSERT_TRUE(result.ok()) << result.error;
+  EXPECT_FALSE(result.calibration->camera_name.has_value());
+}
+
+// --- emit ------------------------------------------------------------------
+
+TEST_F(CameraCalibrationYamlTest, EmitIsAFixedPointOfParse)
+{
+  const auto original = parse_camera_calibration_yaml(write_yaml(kValidYaml));
+  ASSERT_TRUE(original.ok()) << original.error;
+
+  const std::string emitted = emit_camera_calibration_yaml(*original.calibration);
+  const auto reparsed = parse_camera_calibration_yaml(write_yaml(emitted));
+  ASSERT_TRUE(reparsed.ok()) << "emitted YAML did not parse back:\n"
+                             << emitted << "\nerror: " << reparsed.error;
+
+  const auto & a = *original.calibration;
+  const auto & b = *reparsed.calibration;
+  EXPECT_EQ(b.width, a.width);
+  EXPECT_EQ(b.height, a.height);
+  EXPECT_EQ(b.distortion_model, a.distortion_model);
+  EXPECT_EQ(b.camera_name, a.camera_name);
+  EXPECT_EQ(b.d, a.d);
+  EXPECT_EQ(b.k, a.k);
+  EXPECT_EQ(b.r, a.r);
+  EXPECT_EQ(b.p, a.p);
+}
+
+// The whole reason camera_name is stored at all: a recompute-p round-trip must
+// not silently delete a key the file's author set.
+TEST_F(CameraCalibrationYamlTest, EmitPreservesCameraName)
+{
+  const auto parsed = parse_camera_calibration_yaml(write_yaml(kValidYaml));
+  ASSERT_TRUE(parsed.ok()) << parsed.error;
+
+  const std::string emitted = emit_camera_calibration_yaml(*parsed.calibration);
+
+  EXPECT_NE(emitted.find("camera_name"), std::string::npos) << emitted;
+  EXPECT_NE(emitted.find("narrow_stereo"), std::string::npos) << emitted;
+}
+
+TEST_F(CameraCalibrationYamlTest, EmitOmitsCameraNameWhenUnset)
+{
+  auto parsed = parse_camera_calibration_yaml(write_yaml(kValidYaml));
+  ASSERT_TRUE(parsed.ok()) << parsed.error;
+  parsed.calibration->camera_name.reset();
+
+  const std::string emitted = emit_camera_calibration_yaml(*parsed.calibration);
+
+  EXPECT_EQ(emitted.find("camera_name"), std::string::npos) << emitted;
+  // Still a complete, parseable document without it.
+  EXPECT_TRUE(parse_camera_calibration_yaml(write_yaml(emitted)).ok());
+}
+
+// Values carrying ~12 significant digits (real distortion coefficients do) must
+// survive the emitter's precision setting intact.
+TEST_F(CameraCalibrationYamlTest, EmitRoundTripsHighPrecisionCoefficients)
+{
+  auto parsed = parse_camera_calibration_yaml(write_yaml(kValidYaml));
+  ASSERT_TRUE(parsed.ok()) << parsed.error;
+  parsed.calibration->d = {
+    -0.143768742681, 0.031336024404, -0.001296524890, -0.001500067534, -0.003719333094};
+
+  const std::string emitted = emit_camera_calibration_yaml(*parsed.calibration);
+  const auto reparsed = parse_camera_calibration_yaml(write_yaml(emitted));
+
+  ASSERT_TRUE(reparsed.ok()) << reparsed.error;
+  EXPECT_EQ(reparsed.calibration->d, parsed.calibration->d);
 }
 
 }  // namespace

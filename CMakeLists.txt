@@ -224,6 +224,7 @@ add_library(bagwiz_core
   src/core/image/camera_info.cpp
   src/core/image/camera_calibration_yaml.cpp
   src/core/image/packed_raster.cpp
+  src/core/image/projection_matrix.cpp
   src/core/image/undistort.cpp
   src/core/pointcloud/pointcloud2.cpp
   src/core/pointcloud/cloud_transform.cpp
@@ -339,6 +340,7 @@ add_executable(bagwiz
   src/main.cpp
   src/commands/help_formatter.cpp
   src/commands/cam_info.cpp
+  src/commands/cam_info_recompute_p.cpp
   src/commands/cam_info_replace.cpp
   src/commands/check.cpp
   src/commands/completion.cpp
@@ -361,8 +363,9 @@ add_executable(bagwiz
   src/commands/topic_keep.cpp
   src/commands/topic_rename.cpp
 )
-# sensor_msgs is needed only by src/commands/cam_info_replace.cpp, which builds
-# a typed sensor_msgs/msg/CameraInfo to round-trip through rmw_(de)serialize.
+# sensor_msgs is needed only by src/commands/cam_info_replace.cpp and
+# src/commands/cam_info_recompute_p.cpp, which build a typed
+# sensor_msgs/msg/CameraInfo to round-trip through rmw_(de)serialize.
 # It is not a bagwiz_core dependency, so link it on the executable directly.
 target_link_libraries(bagwiz PRIVATE bagwiz_core CLI11::CLI11 fmt::fmt rang ${OpenCV_LIBS} ${sensor_msgs_TARGETS})
 
@@ -839,6 +842,11 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_image_undistort_test test/core/image/undistort_test.cpp)
   target_link_libraries(bagwiz_image_undistort_test bagwiz_core ${OpenCV_LIBS})
 
+  ament_add_gtest(
+    bagwiz_projection_matrix_test
+    test/core/image/projection_matrix_test.cpp)
+  target_link_libraries(bagwiz_projection_matrix_test bagwiz_core ${OpenCV_LIBS})
+
   ament_add_gtest(bagwiz_compressed_image_test test/core/image/compressed_image_test.cpp)
   target_link_libraries(bagwiz_compressed_image_test bagwiz_core)
 
@@ -972,6 +980,12 @@ if(BUILD_TESTING)
   target_link_libraries(
     bagwiz_convert_msg_geo_test bagwiz_core fmt::fmt ${GeographicLib_LIBRARIES}
     ${sensor_msgs_TARGETS})
+
+  ament_add_gtest(bagwiz_cam_info_recompute_p_test
+    test/commands/cam_info_recompute_p_test.cpp
+    src/commands/cam_info_recompute_p.cpp)
+  target_link_libraries(
+    bagwiz_cam_info_recompute_p_test bagwiz_core fmt::fmt ${sensor_msgs_TARGETS})
 
   ament_add_gtest(bagwiz_cam_info_replace_test
     test/commands/cam_info_replace_test.cpp

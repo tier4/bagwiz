@@ -92,6 +92,25 @@ bool read_matrix_block(
   return true;
 }
 
+// Write one matrix block in the same shape read_matrix_block() reads: a mapping
+// of `rows`, `cols`, and a flat row-major `data` sequence. `data` goes out in
+// flow style ([a, b, c]) to match what the camera_calibration package writes.
+template <typename Container>
+void emit_matrix_block(
+  YAML::Emitter & out, const char * key, std::size_t rows, std::size_t cols,
+  const Container & values)
+{
+  out << YAML::Key << key << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "rows" << YAML::Value << rows;
+  out << YAML::Key << "cols" << YAML::Value << cols;
+  out << YAML::Key << "data" << YAML::Value << YAML::Flow << YAML::BeginSeq;
+  for (const double v : values) {
+    out << v;
+  }
+  out << YAML::EndSeq;
+  out << YAML::EndMap;
+}
+
 }  // namespace
 
 CameraCalibrationResult parse_camera_calibration_yaml(const std::filesystem::path & yaml_path)
@@ -171,8 +190,47 @@ CameraCalibrationResult parse_camera_calibration_yaml(const std::filesystem::pat
     calib.p[i] = p[i];
   }
 
+  // Optional, and not a CameraInfo field: kept only so a re-emit does not drop
+  // it. A present-but-unreadable camera_name is a malformed file rather than
+  // something to ignore silently.
+  if (root["camera_name"]) {
+    try {
+      calib.camera_name = root["camera_name"].as<std::string>();
+    } catch (const YAML::Exception & e) {
+      result.error = std::string("'camera_name' must be a string: ") + e.what();
+      return result;
+    }
+  }
+
   result.calibration = std::move(calib);
   return result;
+}
+
+std::string emit_camera_calibration_yaml(const CameraCalibration & calibration)
+{
+  YAML::Emitter out;
+  // 12 significant digits round-trips every value a real calibration file
+  // carries (the widest seen in the wild is ~12, e.g. -0.143768742681) while
+  // staying readable. Full 17-digit exactness would emit noise like
+  // 854.29815699999995 for no gain: those surplus digits are orders of
+  // magnitude below any physically meaningful camera precision.
+  out.SetDoublePrecision(12);
+
+  // Canonical camera_calibration key order.
+  out << YAML::BeginMap;
+  out << YAML::Key << "image_width" << YAML::Value << calibration.width;
+  out << YAML::Key << "image_height" << YAML::Value << calibration.height;
+  if (calibration.camera_name.has_value()) {
+    out << YAML::Key << "camera_name" << YAML::Value << *calibration.camera_name;
+  }
+  emit_matrix_block(out, "camera_matrix", 3, 3, calibration.k);
+  out << YAML::Key << "distortion_model" << YAML::Value << calibration.distortion_model;
+  emit_matrix_block(out, "distortion_coefficients", 1, calibration.d.size(), calibration.d);
+  emit_matrix_block(out, "rectification_matrix", 3, 3, calibration.r);
+  emit_matrix_block(out, "projection_matrix", 3, 4, calibration.p);
+  out << YAML::EndMap;
+
+  return std::string(out.c_str()) + "\n";
 }
 
 }  // namespace bagwiz::core::image

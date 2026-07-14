@@ -1558,6 +1558,92 @@ TEST_F(CompletionTest, WalkCameraInfoFlagRespectsPrefix)
     "/cam/camera_info\n");
 }
 
+// `cam-info recompute-p <input> --topics <TAB>` offers only the bag's CameraInfo
+// topics -- not the CompressedImage or PointCloud2 topics the same fixture
+// carries. recompute-p takes its topics via --topics rather than as positionals.
+TEST_F(CompletionTest, CamInfoRecomputePTopicsFlagListsOnlyCameraInfoTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "recompute-p", "~/cameras.mcap",
+       "--topics"}),
+    "/cam/camera_info\n");
+}
+
+// The short form completes identically.
+TEST_F(CompletionTest, CamInfoRecomputePShortTopicsFlagCompletes)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "recompute-p", "~/cameras.mcap", "-t"}),
+    "/cam/camera_info\n");
+}
+
+// --topics is variadic, so a second and later value slot completes too. This is
+// what a plain "previous word is the flag" check would miss.
+TEST_F(CompletionTest, CamInfoRecomputePTopicsFlagCompletesEveryValueSlot)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "recompute-p", "~/cameras.mcap",
+       "--topics", "/cam/camera_info"}),
+    "/cam/camera_info\n");
+}
+
+// A typed prefix narrows the candidates within the CameraInfo set.
+TEST_F(CompletionTest, CamInfoRecomputePTopicsFlagRespectsPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "recompute-p", "~/cameras.mcap",
+       "--topics", "/cam/c"}),
+    "/cam/camera_info\n");
+}
+
+// A different flag's value slot must not borrow --topics' candidates.
+TEST_F(CompletionTest, CamInfoRecomputePOtherFlagValueOffersNoTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "recompute-p", "~/cameras.mcap",
+       "--alpha"}),
+    "");
+}
+
+// recompute-p surfaces its own flags, not replace's (--frame-id is replace-only).
+TEST_F(CompletionTest, CamInfoRecomputePListsItsOwnFlags)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  const auto out = run_completion(
+    {"bagwiz", "__complete", "4", "bagwiz", "cam-info", "recompute-p", "~/cameras.mcap", "-"});
+  EXPECT_NE(out.find("--topics"), std::string::npos) << out;
+  EXPECT_NE(out.find("--alpha"), std::string::npos) << out;
+  EXPECT_EQ(out.find("--frame-id"), std::string::npos) << out;
+}
+
 // A bag with no CameraInfo topic yields no walk `--cam-info` candidates, so the
 // shell's default file completion takes over.
 TEST_F(CompletionTest, WalkCameraInfoFlagEmptyWhenNoCameraInfoTopics)
@@ -1572,10 +1658,12 @@ TEST_F(CompletionTest, WalkCameraInfoFlagEmptyWhenNoCameraInfoTopics)
     "");
 }
 
-// `bagwiz cam-info <TAB>` lists its single subcommand.
-TEST(FlagCompletionTest, CamInfoSubcommandListsReplace)
+// `bagwiz cam-info <TAB>` lists its subcommands. Candidates come back sorted.
+TEST(FlagCompletionTest, CamInfoSubcommandListsActions)
 {
-  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "cam-info", ""}), "replace\n");
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "cam-info", ""}),
+    "recompute-p\nreplace\n");
 }
 
 // `bagwiz cam-info -` lists just the implicit help flags (the group itself defines

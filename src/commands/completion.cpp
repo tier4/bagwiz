@@ -142,6 +142,9 @@ constexpr std::array<TopicArgBinding, 10> kTopicBindings{{
   // because the `replace` action verb shifts every positional one slot right; the
   // binding is variadic, so completion fires at word 4 and every later slot.
   {"cam-info", "replace", kSecondCommandArgWord, kFourthCommandArgWord, kCameraInfoType, true},
+  // `cam-info recompute-p` takes its topics via --topics rather than as
+  // positionals, so it has no binding here; complete_cam_info() completes the
+  // flag's values instead.
 }};
 
 enum class CompletionShell { Bash, Zsh, Fish };
@@ -1140,18 +1143,47 @@ std::vector<std::string> complete_check(const CompletionRequest & request)
   return {};
 }
 
+// True when the cursor sits in a value slot owned by `flag`. Unlike a plain
+// `words[cursor - 1] == flag` check this walks back over the flag's earlier
+// values, so a variadic flag completes at its second and later value slots too.
+// The walk stops at the <input> positional: nothing at or before it is a flag
+// value, and stopping there keeps a topic-shaped positional from being mistaken
+// for one.
+bool is_value_slot_of(const CompletionRequest & request, const std::string_view & flag)
+{
+  for (std::size_t i = request.cursor_word; i > kSecondCommandArgWord; --i) {
+    const auto & word = request.words[i - 1];
+    if (word == flag) {
+      return true;
+    }
+    if (word.starts_with("-")) {
+      return false;  // some other flag owns this slot
+    }
+  }
+  return false;
+}
+
 // `cam-info` is a command group for sensor_msgs/msg/CameraInfo operations. Its
-// sole subcommand is `replace`. At the subcommand slot (word 1) the only candidate
-// is `replace` (or the implicit help flags for a `-` word). The variadic <topic>...
-// positionals are completed earlier by try_topic_completion via kTopicBindings
-// (CameraInfo topics only, at word 4 and every later slot); <input> and
-// <calib_yaml> are paths that fall through to the shell's file completion. Here we
-// surface `replace`'s flags for any `-` word. The `--frame-id` value is a free-form
-// header override with nothing to suggest, and `-o`/`--output`'s value is an output
-// path, so neither gets value completion.
+// subcommands are `replace` and `recompute-p`. At the subcommand slot (word 1)
+// those are the candidates (or the implicit help flags for a `-` word).
 //
-//   replace: `cam-info`(0) `replace`(1) `<input>`(2) `<calib_yaml>`(3) `<topic>...`(4+)
-//            [--frame-id <id>] [-o <out>] [-w|--overwrite]
+// `replace` takes its topics as variadic positionals, completed earlier by
+// try_topic_completion via kTopicBindings. `recompute-p` takes them via
+// `-t/--topics` instead, so its values are completed here — from the bag named
+// at <input>, CameraInfo topics only, at every value slot since the flag is
+// variadic. When <input> is a calibration YAML rather than a bag, --topics does
+// not apply at all; the bag lookup then finds nothing and no candidates are
+// offered, which is the wanted behavior.
+//
+// <input> and <calib_yaml> are paths that fall through to the shell's file
+// completion. `--frame-id`'s value is a free-form header override with nothing
+// to suggest, `-o`/`--output`'s is an output path, and `-a`/`--alpha`'s is a
+// free number in [0, 1], so none of those get value completion.
+//
+//   replace:     `cam-info`(0) `replace`(1) `<input>`(2) `<calib_yaml>`(3) `<topic>...`(4+)
+//                [--frame-id <id>] [-o <out>] [-w|--overwrite]
+//   recompute-p: `cam-info`(0) `recompute-p`(1) `<input>`(2)
+//                [-t|--topics <topic>...] [-a|--alpha <a>] [-o <out>] [-w|--overwrite]
 std::vector<std::string> complete_cam_info(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -1159,14 +1191,39 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"replace"}, current);
+    return matching({"replace", "recompute-p"}, current);
   }
 
+  if (request.words.size() <= kFirstCommandArgWord) {
+    return {};
+  }
+  const auto & sub = request.words[kFirstCommandArgWord];
+
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
-    const auto & sub = request.words[kFirstCommandArgWord];
     if (sub == "replace") {
       return matching(with_help({"--frame-id", "--output", "--overwrite", "-o", "-w"}), current);
     }
+    if (sub == "recompute-p") {
+      return matching(
+        with_help({"--alpha", "--output", "--overwrite", "--topics", "-a", "-o", "-t", "-w"}),
+        current);
+    }
+    return {};
+  }
+
+  // recompute-p's -t/--topics values: the bag sits at <input>, one word after
+  // the `recompute-p` verb.
+  if (
+    sub == "recompute-p" &&
+    (is_value_slot_of(request, "--topics") || is_value_slot_of(request, "-t"))) {
+    if (request.words.size() <= kSecondCommandArgWord) {
+      return {};
+    }
+    const auto & bag_arg = request.words[kSecondCommandArgWord];
+    if (bag_arg.empty() || bag_arg.starts_with("-")) {
+      return {};
+    }
+    return complete_topics(expand_current_user_home(bag_arg), current, kCameraInfoType);
   }
   return {};
 }

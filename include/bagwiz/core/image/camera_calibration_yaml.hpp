@@ -21,8 +21,12 @@ namespace bagwiz::core::image
 
 // The calibration carried by a standard ROS camera_calibration /
 // camera_info_manager YAML file, reduced to the sensor_msgs/msg/CameraInfo
-// fields it sets. `camera_name` in the file is informational only (it is not a
-// CameraInfo field) and is intentionally not stored here.
+// fields it sets, plus `camera_name`.
+//
+// `camera_name` is not a CameraInfo field, so consumers that only populate a
+// CameraInfo (such as `cam-info replace`) ignore it. It is retained anyway so
+// emit_camera_calibration_yaml() can write a parsed file back out without
+// silently dropping a key the original author set.
 //
 // File-to-field mapping:
 //   image_width             -> width
@@ -32,15 +36,17 @@ namespace bagwiz::core::image
 //   camera_matrix           -> k   (3x3, 9 values)
 //   rectification_matrix    -> r   (3x3, 9 values)
 //   projection_matrix       -> p   (3x4, 12 values)
+//   camera_name             -> camera_name (absent when the file omits it)
 struct CameraCalibration
 {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
   std::string distortion_model;
-  std::vector<double> d;       // distortion coefficients (variable length)
-  std::array<double, 9> k{};   // intrinsic camera matrix
-  std::array<double, 9> r{};   // rectification matrix
-  std::array<double, 12> p{};  // projection / camera matrix
+  std::vector<double> d;                   // distortion coefficients (variable length)
+  std::array<double, 9> k{};               // intrinsic camera matrix
+  std::array<double, 9> r{};               // rectification matrix
+  std::array<double, 12> p{};              // projection / camera matrix
+  std::optional<std::string> camera_name;  // informational; not a CameraInfo field
 };
 
 // Outcome of parse_camera_calibration_yaml(). On success `calibration` is set
@@ -67,6 +73,20 @@ struct CameraCalibrationResult
 // are reported through `error` rather than thrown.
 [[nodiscard]] CameraCalibrationResult parse_camera_calibration_yaml(
   const std::filesystem::path & yaml_path);
+
+// Serialize a CameraCalibration back to the camera_calibration YAML text that
+// parse_camera_calibration_yaml() accepts, so that parse -> emit -> parse is a
+// fixed point. Returns the document; writing it is the caller's job (this stays
+// I/O-free so it can be tested without touching the filesystem).
+//
+// `camera_name` is written only when set. Keys are emitted in the canonical
+// order the `camera_calibration` package uses, and each matrix goes out as a
+// `rows`/`cols`/flat row-major `data` block.
+//
+// This is a re-emit, not an edit: the output is normalized YAML, so comments,
+// key order, and incidental formatting from a hand-written input file are NOT
+// preserved. Only the values survive.
+[[nodiscard]] std::string emit_camera_calibration_yaml(const CameraCalibration & calibration);
 
 }  // namespace bagwiz::core::image
 
