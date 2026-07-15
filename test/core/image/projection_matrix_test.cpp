@@ -46,7 +46,7 @@ constexpr std::array<double, 9> kIdentityR{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.
 // up to 0.77px), and kGoldenP was written by an OpenCV 4.5.x-era
 // camera_calibration. bagwiz builds against each distro's own OpenCV, so the
 // exact value is distro-dependent by design and pinning it would break
-// humble/jazzy/lyrical against each other.
+// humble/jazzy against each other.
 //
 // 2px therefore absorbs any version drift while still failing every way this
 // could actually be wrong -- the nearest incorrect answer is an order of
