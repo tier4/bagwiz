@@ -92,6 +92,9 @@ bagwiz topic drop drive_dir/ -t /tf_static '*/image_raw' -o trimmed_dir/
 Quote globs (e.g. `'/sensing/*'`) so the shell does not expand them as
 filename patterns before bagwiz sees them.
 
+Selectors used to be positional. See
+[Migration: topics moved behind `-t`](#migration-topics-moved-behind--t).
+
 ---
 
 ## `bagwiz topic keep`
