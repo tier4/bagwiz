@@ -20,22 +20,22 @@ conversion is performed.
 ### Usage
 
 ```text
-bagwiz topic drop [OPTIONS] <input> <topics>...
+bagwiz topic drop [OPTIONS] <input> -t <topics>...
 ```
 
 ### Positional arguments
 
-| Name     | Description                                                          |
-| -------- | -------------------------------------------------------------------- |
-| `input`  | Input ROS 2 rosbag (directory or single-file). Must exist.           |
-| `topics` | One or more topic selectors to remove (see Selectors). At least one. |
+| Name    | Description                                                |
+| ------- | ---------------------------------------------------------- |
+| `input` | Input ROS 2 rosbag (directory or single-file). Must exist. |
 
 ### Options
 
-| Flag                 | Description                                                                                           |
-| -------------------- | ----------------------------------------------------------------------------------------------------- |
-| `-o`, `--output <p>` | Write the result to a new bag instead of rewriting `<input>` in place.                                |
-| `-w`, `--overwrite`  | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place. |
+| Flag                    | Description                                                                                           |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| `-t`, `--topics <t>...` | **Required.** One or more topic selectors to remove (see Selectors). At least one.                    |
+| `-o`, `--output <p>`    | Write the result to a new bag instead of rewriting `<input>` in place.                                |
+| `-w`, `--overwrite`     | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place. |
 
 ### Selectors
 
@@ -80,13 +80,13 @@ Because `*` spans `/`, `/sensing/*` removes the entire `/sensing` subtree.
 
 ```bash
 # Drop a single topic, rewriting the bag in place.
-bagwiz topic drop drive.mcap /sensing/lidar
+bagwiz topic drop drive.mcap -t /sensing/lidar
 
 # Drop an entire subtree to a new bag, leaving the input untouched.
-bagwiz topic drop drive.mcap '/sensing/*' -o drive_trimmed.mcap
+bagwiz topic drop drive.mcap -t '/sensing/*' -o drive_trimmed.mcap
 
 # Drop several topics at once (mix literals and globs).
-bagwiz topic drop drive_dir/ /tf_static '*/image_raw' -o trimmed_dir/
+bagwiz topic drop drive_dir/ -t /tf_static '*/image_raw' -o trimmed_dir/
 ```
 
 Quote globs (e.g. `'/sensing/*'`) so the shell does not expand them as
@@ -108,22 +108,22 @@ selection is flipped: `drop` removes what matches; `keep` removes what does not.
 ### Usage
 
 ```text
-bagwiz topic keep [OPTIONS] <input> <topics>...
+bagwiz topic keep [OPTIONS] <input> -t <topics>...
 ```
 
 ### Positional arguments
 
-| Name     | Description                                                        |
-| -------- | ------------------------------------------------------------------ |
-| `input`  | Input ROS 2 rosbag (directory or single-file). Must exist.         |
-| `topics` | One or more topic selectors to keep (see Selectors). At least one. |
+| Name    | Description                                                |
+| ------- | ---------------------------------------------------------- |
+| `input` | Input ROS 2 rosbag (directory or single-file). Must exist. |
 
 ### Options
 
-| Flag                 | Description                                                                                           |
-| -------------------- | ----------------------------------------------------------------------------------------------------- |
-| `-o`, `--output <p>` | Write the result to a new bag instead of rewriting `<input>` in place.                                |
-| `-w`, `--overwrite`  | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place. |
+| Flag                    | Description                                                                                           |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| `-t`, `--topics <t>...` | **Required.** One or more topic selectors to keep (see Selectors). At least one.                      |
+| `-o`, `--output <p>`    | Write the result to a new bag instead of rewriting `<input>` in place.                                |
+| `-w`, `--overwrite`     | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place. |
 
 ### Selectors
 
@@ -146,17 +146,37 @@ the entire `/sensing` subtree and drops all other topics.
 
 ```bash
 # Keep a single topic, rewriting the bag in place (everything else is dropped).
-bagwiz topic keep drive.mcap /sensing/lidar
+bagwiz topic keep drive.mcap -t /sensing/lidar
 
 # Keep an entire subtree to a new bag, leaving the input untouched.
-bagwiz topic keep drive.mcap '/sensing/*' -o drive_sensing_only.mcap
+bagwiz topic keep drive.mcap -t '/sensing/*' -o drive_sensing_only.mcap
 
 # Keep several topics at once (mix literals and globs).
-bagwiz topic keep drive_dir/ /tf_static '*/image_raw' -o trimmed_dir/
+bagwiz topic keep drive_dir/ -t /tf_static '*/image_raw' -o trimmed_dir/
 ```
 
 Quote globs (e.g. `'/sensing/*'`) so the shell does not expand them as
 filename patterns before bagwiz sees them.
+
+### Migration: topics moved behind `-t`
+
+`<topics>` used to be a variadic positional on both `drop` and `keep`. It is now
+`-t` / `--topics`, matching the rest of bagwiz:
+
+```bash
+bagwiz topic drop drive.mcap /sensing/lidar      # before — now an error
+bagwiz topic drop drive.mcap -t /sensing/lidar   # after
+
+bagwiz topic keep drive.mcap /sensing/lidar      # before — now an error
+bagwiz topic keep drive.mcap -t /sensing/lidar   # after
+```
+
+The old form fails loudly (`--topics is required`, since `-t`/`--topics` is now a
+required option with nothing positional left to catch the selector), so nothing
+changes meaning silently.
+
+[`rename`](#bagwiz-topic-rename) is unaffected: its `<src_topic>` / `<dst_topic>`
+are single-value positionals, which this convention does not cover.
 
 ---
 

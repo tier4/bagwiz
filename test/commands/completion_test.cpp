@@ -1032,23 +1032,9 @@ TEST(FlagCompletionTest, TrajDumpDoubleDashOPrefixSelectsOverwrite)
     "--overwrite\n");
 }
 
-// `topic drop <bag> <TAB>` (the first <topics> slot) lists every topic in the
-// bag — drop can target any topic, so no type filter applies.
-TEST_F(CompletionTest, TopicDropTopicSlotListsAllTopics)
-{
-  const HomeEnvGuard home_guard(tmp_dir_);
-
-  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
-
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "topic", "drop", "~/fixture.mcap"}),
-    "/bar\n/foo\n");
-}
-
-// `topic drop` takes one-or-more selectors, so the SECOND slot (and beyond)
-// also completes topics — the variadic binding fires at every positional slot
-// from the first topic onward.
-TEST_F(CompletionTest, TopicDropSecondTopicSlotListsTopics)
+// `topic drop <input> -t <TAB>` offers every topic in the bag -- drop takes
+// selectors, so unlike cam-info's bindings it has no type filter.
+TEST_F(CompletionTest, TopicDropTopicsFlagListsAllTopics)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
@@ -1056,12 +1042,12 @@ TEST_F(CompletionTest, TopicDropSecondTopicSlotListsTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "topic", "drop", "~/fixture.mcap", "/foo"}),
+      {"bagwiz", "__complete", "5", "bagwiz", "topic", "drop", "~/fixture.mcap", "-t"}),
     "/bar\n/foo\n");
 }
 
-// A typed prefix narrows the selector candidates.
-TEST_F(CompletionTest, TopicDropTopicSlotRespectsPrefix)
+// The long form completes identically.
+TEST_F(CompletionTest, TopicDropLongTopicsFlagCompletes)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
@@ -1069,20 +1055,48 @@ TEST_F(CompletionTest, TopicDropTopicSlotRespectsPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "4", "bagwiz", "topic", "drop", "~/fixture.mcap", "/f"}),
+      {"bagwiz", "__complete", "5", "bagwiz", "topic", "drop", "~/fixture.mcap", "--topics"}),
+    "/bar\n/foo\n");
+}
+
+// --topics is variadic, so a second and later value slot completes too.
+TEST_F(CompletionTest, TopicDropTopicsFlagCompletesEveryValueSlot)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "topic", "drop", "~/fixture.mcap", "-t", "/foo"}),
+    "/bar\n/foo\n");
+}
+
+// A typed prefix narrows the candidates.
+TEST_F(CompletionTest, TopicDropTopicsFlagRespectsPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "topic", "drop", "~/fixture.mcap", "-t", "/f"}),
     "/foo\n");
 }
 
-// A flag in the input slot must not cause the topic binding to call the bag
-// reader on a flag-shaped path; the binding's earlier-slot guard bails out.
-TEST_F(CompletionTest, TopicDropTopicSlotSuppressedWhenInputSlotIsFlag)
+// THE DISCRIMINATOR. Under the old positional binding (topic_word=3, variadic)
+// this slot offered every topic; under the flag binding it must offer nothing.
+// Without this, every test above passes under BOTH bindings -- they only prove
+// "some binding exists", not that the positional slot is gone.
+TEST_F(CompletionTest, TopicDropBareSlotAfterInputOffersNoTopics)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
   write_mcap_fixture(tmp_dir_ / "fixture.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "topic", "drop", "--unknown-flag"}), "");
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "topic", "drop", "~/fixture.mcap"}), "");
 }
 
 // `bagwiz topic <TAB>` lists the command group's action verbs, sorted.
@@ -1283,32 +1297,17 @@ TEST(FlagCompletionTest, TopicParentDashListsHelpFlags)
   EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "topic", "-"}), "--help\n-h\n");
 }
 
-// `topic drop -` surfaces the action's flags (--output/-o, --overwrite) plus
-// the implicit help flags, sorted.
+// `topic drop -` surfaces the action's flags (--output/-o, --overwrite,
+// --topics/-t) plus the implicit help flags, sorted.
 TEST(FlagCompletionTest, TopicDropDashListsDropFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "topic", "drop", "-"}),
-    "--help\n--output\n--overwrite\n-h\n-o\n-w\n");
+    "--help\n--output\n--overwrite\n--topics\n-h\n-o\n-t\n-w\n");
 }
 
-// `topic keep <bag> <TAB>` (the first <topics> slot) lists every topic in the
-// bag — keep can target any topic, so no type filter applies.
-TEST_F(CompletionTest, TopicKeepTopicSlotListsAllTopics)
-{
-  const HomeEnvGuard home_guard(tmp_dir_);
-
-  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
-
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "topic", "keep", "~/fixture.mcap"}),
-    "/bar\n/foo\n");
-}
-
-// `topic keep` takes one-or-more selectors, so the SECOND slot (and beyond)
-// also completes topics — the variadic binding fires at every positional slot
-// from the first topic onward.
-TEST_F(CompletionTest, TopicKeepSecondTopicSlotListsTopics)
+// `keep` binds the same way as `drop`.
+TEST_F(CompletionTest, TopicKeepTopicsFlagListsAllTopics)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
@@ -1316,12 +1315,11 @@ TEST_F(CompletionTest, TopicKeepSecondTopicSlotListsTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "topic", "keep", "~/fixture.mcap", "/foo"}),
+      {"bagwiz", "__complete", "5", "bagwiz", "topic", "keep", "~/fixture.mcap", "-t"}),
     "/bar\n/foo\n");
 }
 
-// A typed prefix narrows the selector candidates.
-TEST_F(CompletionTest, TopicKeepTopicSlotRespectsPrefix)
+TEST_F(CompletionTest, TopicKeepTopicsFlagCompletesEveryValueSlot)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
@@ -1329,8 +1327,22 @@ TEST_F(CompletionTest, TopicKeepTopicSlotRespectsPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "4", "bagwiz", "topic", "keep", "~/fixture.mcap", "/f"}),
-    "/foo\n");
+      {"bagwiz", "__complete", "6", "bagwiz", "topic", "keep", "~/fixture.mcap", "-t", "/foo"}),
+    "/bar\n/foo\n");
+}
+
+// THE DISCRIMINATOR. Under the old positional binding (topic_word=3, variadic)
+// this slot offered every topic; under the flag binding it must offer nothing.
+// Without this, every test above passes under BOTH bindings -- they only prove
+// "some binding exists", not that the positional slot is gone.
+TEST_F(CompletionTest, TopicKeepBareSlotAfterInputOffersNoTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_mcap_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "topic", "keep", "~/fixture.mcap"}), "");
 }
 
 // `topic rename <bag> <TAB>` (the <src_topic> slot) lists every topic in the
@@ -1370,13 +1382,13 @@ TEST(FlagCompletionTest, TopicRenameDashListsRenameFlags)
     "--help\n--output\n--overwrite\n-h\n-o\n-w\n");
 }
 
-// `topic keep -` surfaces the action's flags (--output/-o, --overwrite) plus
-// the implicit help flags, sorted.
+// `topic keep -` surfaces the action's flags (--output/-o, --overwrite,
+// --topics/-t) plus the implicit help flags, sorted.
 TEST(FlagCompletionTest, TopicKeepDashListsKeepFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "topic", "keep", "-"}),
-    "--help\n--output\n--overwrite\n-h\n-o\n-w\n");
+    "--help\n--output\n--overwrite\n--topics\n-h\n-o\n-t\n-w\n");
 }
 
 // `bagwiz generate <TAB>` lists the command group's single subcommand.

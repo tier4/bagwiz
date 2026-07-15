@@ -80,7 +80,7 @@ private:
       ->check(CLI::ExistingPath);
     sub
       ->add_option(
-        "topics", drop_args_.topics,
+        "-t,--topics", drop_args_.topics,
         "Topic selector(s) to remove. A literal topic name or a '*' glob. Repeat for several.")
       ->required();
     sub->add_option(
@@ -111,7 +111,7 @@ private:
       ->check(CLI::ExistingPath);
     sub
       ->add_option(
-        "topics", keep_args_.topics,
+        "-t,--topics", keep_args_.topics,
         "Topic selector(s) to keep. A literal topic name or a '*' glob. Repeat for several.")
       ->required();
     sub->add_option(

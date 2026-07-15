@@ -125,8 +125,11 @@ constexpr std::array<TopicArgBinding, 12> kTopicBindings{{
   {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord, kTrajDumpSupportedTypes, false},
   {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord, {}, false},
   {"tf", "tree", kSecondCommandArgWord, kThirdCommandArgWord, kTfTreeSupportedTypes, true},
-  {"topic", "drop", kSecondCommandArgWord, kThirdCommandArgWord, {}, true},
-  {"topic", "keep", kSecondCommandArgWord, kThirdCommandArgWord, {}, true},
+  // `topic drop|keep <input> -t/--topics <selector>...`: flag mode — the bag
+  // sits at <input>, every topic (no type filter — these take selectors, which
+  // may be globs), at every value slot since the flag is variadic.
+  {"topic", "drop", kSecondCommandArgWord, 0, {}, false, kTopicsFlags},
+  {"topic", "keep", kSecondCommandArgWord, 0, {}, false, kTopicsFlags},
   // `rename` completes only its <src_topic> slot (an existing topic) from the
   // bag; <dst_topic> is a new name with nothing to suggest, so the binding is
   // non-variadic and fires at the single topic_word.
@@ -951,16 +954,17 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
 
 // `topic` is a command group with three action verbs, `drop`, `keep`, and
 // `rename`. At the action slot (word 1) the candidates are those verbs.
-// Topic-name completion for the positional slots is handled earlier by
-// try_topic_completion via kTopicBindings (drop/keep complete every <topics>...
-// slot; rename completes only its <src_topic> slot); here we surface each verb's
-// own flags for any `-` word.
+// Topic-name completion for `drop`/`keep` is handled earlier by
+// try_topic_completion via kTopicBindings in flag mode (every -t/--topics value
+// slot); `rename` completes only its <src_topic> positional slot the same way.
+// Here we surface each verb's own flags for any `-` word.
 //
-//   drop:   `topic`(0) `drop`(1)   `<input>`(2) `<topics>...`(3+)        [-o <out>]
-//   [-w|--overwrite] keep:   `topic`(0) `keep`(1)   `<input>`(2) `<topics>...`(3+)        [-o
-//   <out>] [-w|--overwrite] rename: `topic`(0) `rename`(1) `<input>`(2) `<src_topic>`(3)
-//   `<dst_topic>`(4) [-o <out>]
-//   [-w|--overwrite]
+//   drop:   `topic`(0) `drop`(1)   `<input>`(2) -t|--topics <selector>...
+//           [-o <out>] [-w|--overwrite]
+//   keep:   `topic`(0) `keep`(1)   `<input>`(2) -t|--topics <selector>...
+//           [-o <out>] [-w|--overwrite]
+//   rename: `topic`(0) `rename`(1) `<input>`(2) `<src_topic>`(3) `<dst_topic>`(4)
+//           [-o <out>] [-w|--overwrite]
 std::vector<std::string> complete_topic(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -973,7 +977,11 @@ std::vector<std::string> complete_topic(const CompletionRequest & request)
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & verb = request.words[kFirstCommandArgWord];
-    if (verb == "drop" || verb == "keep" || verb == "rename") {
+    if (verb == "drop" || verb == "keep") {
+      return matching(
+        with_help({"--output", "--overwrite", "--topics", "-o", "-t", "-w"}), current);
+    }
+    if (verb == "rename") {
       return matching(with_help({"--output", "--overwrite", "-o", "-w"}), current);
     }
   }
