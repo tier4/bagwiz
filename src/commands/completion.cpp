@@ -85,6 +85,10 @@ constexpr std::array<std::string_view, 1> kCameraInfoType{{
   "sensor_msgs/msg/CameraInfo",
 }};
 
+// Every command that takes topics spells the flag this way; see
+// docs/superpowers/specs/2026-07-15-topics-flag-convention-design.md.
+constexpr std::array<std::string_view, 2> kTopicsFlags{{"-t", "--topics"}};
+
 constexpr std::array<std::string_view, 1> kPointCloud2Type{{
   "sensor_msgs/msg/PointCloud2",
 }};
@@ -93,28 +97,30 @@ constexpr std::array<std::string_view, 1> kImuType{{
   "sensor_msgs/msg/Imu",
 }};
 
-// Declarative table of commands that take a positional <topic> argument.
-// `subcommand` is empty when the command has no subcommand level (e.g.
-// `bagwiz walk <input> <topic>`). `input_word` and `topic_word` are
-// indices into CompletionRequest::words AFTER the leading "bagwiz" has
-// been stripped, so position 0 is the top-level command. `allowed_types`
-// restricts the offered topics to those whose type is listed (e.g. `tf tree`
-// to TFMessage, `traj dump` to the message types it can process); an empty
-// span offers every topic in the bag. When `variadic` is set the command takes
-// one-or-more topics, so completion fires at `topic_word` AND every later
-// positional slot (`bagwiz tf tree <input> <topic>...`); otherwise it fires
-// only at the single `topic_word`.
+// Declarative table of commands that take a topic argument, either as a
+// positional or as the value(s) of a flag. `subcommand` is empty when the
+// command has no subcommand level (e.g. `bagwiz walk <input> <topic>`).
+// `input_word` is an index into CompletionRequest::words AFTER the leading
+// "bagwiz" has been stripped, so position 0 is the top-level command.
+// `allowed_types` restricts the offered topics to those whose type is listed
+// (e.g. `tf tree` to TFMessage, `traj dump` to the message types it can
+// process); an empty span offers every topic in the bag.
 struct TopicArgBinding
 {
   std::string_view command{};
   std::string_view subcommand{};
   std::size_t input_word{0};
+  // Positional mode: the slot the topic sits at, and whether later slots count
+  // too. Both ignored when `flags` is non-empty.
   std::size_t topic_word{0};
   std::span<const std::string_view> allowed_types{};
   bool variadic{false};
+  // Flag mode: complete the value slots of these flags instead of a positional
+  // slot. Empty selects positional mode; the two modes are mutually exclusive.
+  std::span<const std::string_view> flags{};
 };
 
-constexpr std::array<TopicArgBinding, 11> kTopicBindings{{
+constexpr std::array<TopicArgBinding, 12> kTopicBindings{{
   {"walk", "", kFirstCommandArgWord, kSecondCommandArgWord, {}, false},
   {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord, kTrajDumpSupportedTypes, false},
   {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord, {}, false},
@@ -149,9 +155,10 @@ constexpr std::array<TopicArgBinding, 11> kTopicBindings{{
   // camera_calibration YAML holds exactly one calibration. <input> and -o's
   // value are paths that fall through to the shell's file completion.
   {"cam-info", "dump", kSecondCommandArgWord, kThirdCommandArgWord, kCameraInfoType, false},
-  // `cam-info recompute-p` takes its topics via --topics rather than as
-  // positionals, so it has no binding here; complete_cam_info() completes the
-  // flag's values instead.
+  // `cam-info recompute-p <input> -t/--topics <topic>...`: flag mode — the
+  // bag sits at <input> and every value slot of the flag completes, since
+  // the flag is variadic.
+  {"cam-info", "recompute-p", kSecondCommandArgWord, 0, kCameraInfoType, false, kTopicsFlags},
 }};
 
 enum class CompletionShell { Bash, Zsh, Fish };
@@ -604,14 +611,36 @@ std::vector<std::string> complete_frame_id_value(
   return result;
 }
 
+// True when the cursor sits in a value slot owned by `flag`. Unlike a plain
+// `words[cursor - 1] == flag` check this walks back over the flag's earlier
+// values, so a variadic flag completes at its second and later value slots too.
+// The walk stops at the <input> positional: nothing at or before it is a flag
+// value, and stopping there keeps a topic-shaped positional from being mistaken
+// for one.
+bool is_value_slot_of(const CompletionRequest & request, const std::string_view & flag)
+{
+  for (std::size_t i = request.cursor_word; i > kSecondCommandArgWord; --i) {
+    const auto & word = request.words[i - 1];
+    if (word == flag) {
+      return true;
+    }
+    if (word.starts_with("-")) {
+      return false;  // some other flag owns this slot
+    }
+  }
+  return false;
+}
+
 // True when `binding` applies at the request's cursor position: command and
-// subcommand match, the cursor sits on a topic slot (the single `topic_word`,
-// or `topic_word`-and-later for a variadic binding), and no positional slot
-// before the first topic has been replaced by a flag. Callers must ensure
-// `request.words` is non-empty (so words[0] is valid). A matched slot implies
-// `topic_word <= words.size()` (parse_request clamps cursor_word to
-// words.size()), and the explicit `input_word` guard below means the caller can
-// dereference `words[input_word]` safely regardless of the binding's indices.
+// subcommand match, and then either mode's own condition holds. In flag mode
+// (`binding.flags` non-empty) the cursor must sit on a value slot of one of
+// those flags. In positional mode the cursor must sit on a topic slot (the
+// single `topic_word`, or `topic_word`-and-later for a variadic binding), and
+// no positional slot before the first topic may have been replaced by a flag.
+// Callers must ensure `request.words` is non-empty (so words[0] is valid). A
+// matched slot implies the explicit `input_word` guard (present in both modes)
+// has passed, so the caller can dereference `words[input_word]` safely
+// regardless of the binding's indices.
 bool binding_applies(const TopicArgBinding & binding, const CompletionRequest & request)
 {
   if (binding.command != request.words[kTopLevelCommandWord]) {
@@ -624,6 +653,17 @@ bool binding_applies(const TopicArgBinding & binding, const CompletionRequest & 
     if (request.words[kFirstCommandArgWord] != binding.subcommand) {
       return false;
     }
+  }
+  if (!binding.flags.empty()) {
+    const bool on_a_flag_value = std::any_of(
+      binding.flags.begin(), binding.flags.end(),
+      [&](const std::string_view & f) { return is_value_slot_of(request, f); });
+    if (!on_a_flag_value) {
+      return false;
+    }
+    // The caller dereferences words[input_word]; guard it as the positional
+    // path does.
+    return request.words.size() > binding.input_word;
   }
   const bool slot_matches = binding.variadic ? (request.cursor_word >= binding.topic_word)
                                              : (request.cursor_word == binding.topic_word);
@@ -1150,39 +1190,15 @@ std::vector<std::string> complete_check(const CompletionRequest & request)
   return {};
 }
 
-// True when the cursor sits in a value slot owned by `flag`. Unlike a plain
-// `words[cursor - 1] == flag` check this walks back over the flag's earlier
-// values, so a variadic flag completes at its second and later value slots too.
-// The walk stops at the <input> positional: nothing at or before it is a flag
-// value, and stopping there keeps a topic-shaped positional from being mistaken
-// for one.
-bool is_value_slot_of(const CompletionRequest & request, const std::string_view & flag)
-{
-  for (std::size_t i = request.cursor_word; i > kSecondCommandArgWord; --i) {
-    const auto & word = request.words[i - 1];
-    if (word == flag) {
-      return true;
-    }
-    if (word.starts_with("-")) {
-      return false;  // some other flag owns this slot
-    }
-  }
-  return false;
-}
-
 // `cam-info` is a command group for sensor_msgs/msg/CameraInfo operations. Its
 // subcommands are `replace`, `recompute-p`, and `dump`. At the subcommand slot
 // (word 1) those are the candidates (or the implicit help flags for a `-`
 // word).
 //
-// `replace` takes its topics as variadic positionals, completed earlier by
-// try_topic_completion via kTopicBindings. `recompute-p` takes them via
-// `-t/--topics` instead, so its values are completed here — from the bag named
-// at <input>, CameraInfo topics only, at every value slot since the flag is
-// variadic. When <input> is a calibration YAML rather than a bag, --topics does
-// not apply at all; the bag lookup then finds nothing and no candidates are
-// offered, which is the wanted behavior. `dump` takes its single <topic> as a
-// positional too, completed via kTopicBindings like `replace`'s.
+// All three subcommands' topic values are completed earlier by
+// try_topic_completion via kTopicBindings — `replace` and `dump` in positional
+// mode, `recompute-p`'s `-t/--topics` in flag mode — so nothing in this
+// function completes a topic value.
 //
 // <input> and <calib_yaml> are paths that fall through to the shell's file
 // completion. `--frame-id`'s value is a free-form header override with nothing
@@ -1225,20 +1241,6 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
     return {};
   }
 
-  // recompute-p's -t/--topics values: the bag sits at <input>, one word after
-  // the `recompute-p` verb.
-  if (
-    sub == "recompute-p" &&
-    (is_value_slot_of(request, "--topics") || is_value_slot_of(request, "-t"))) {
-    if (request.words.size() <= kSecondCommandArgWord) {
-      return {};
-    }
-    const auto & bag_arg = request.words[kSecondCommandArgWord];
-    if (bag_arg.empty() || bag_arg.starts_with("-")) {
-      return {};
-    }
-    return complete_topics(expand_current_user_home(bag_arg), current, kCameraInfoType);
-  }
   return {};
 }
 
