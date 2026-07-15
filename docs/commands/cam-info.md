@@ -171,17 +171,18 @@ applies:
 | a `.yaml` / `.yml` file | The file's own calibration.    | **Rejected** |
 | anything else (bag/dir) | The named CameraInfo topic(s). | **Required** |
 
-For a bag, `-o` then decides **what is produced** — a `.yaml` / `.yml` output
-means "give me the calibration", not "rewrite the bag":
+The result always has the same shape as `<input>` — a YAML in, a YAML out; a bag
+in, a bag out. `-o` only says **where** it goes, never what it is. To pull a
+bag's calibration out as a YAML instead, use
+[`cam-info dump`](#bagwiz-cam-info-dump).
 
-| `<input>` | `-o`     | Result                                                         |
-| --------- | -------- | -------------------------------------------------------------- |
-| YAML      | _(none)_ | The YAML is rewritten in place.                                |
-| YAML      | YAML     | A recomputed copy is written; the input is untouched.          |
-| YAML      | bag      | **Error** — a YAML has no messages to build a bag from.        |
-| bag       | _(none)_ | The bag is rewritten in place.                                 |
-| bag       | bag      | A rewritten copy is written; the input is untouched.           |
-| bag       | YAML     | The topic's calibration is **exported**; the bag is untouched. |
+For a bag, `-o`'s extension does pick the **storage format**:
+
+| `-o`          | Result                                                      |
+| ------------- | ----------------------------------------------------------- |
+| `out.mcap`    | A single-file MCAP bag, converting if `<input>` is SQLite3. |
+| `out.db3`     | A single-file SQLite3 bag, converting if `<input>` is MCAP. |
+| anything else | A directory bag in `<input>`'s own format.                  |
 
 Without `-o` the input is rewritten in place, mirroring `cam-info replace`.
 
@@ -320,26 +321,32 @@ Recompute `p` directly on a bag's CameraInfo topics:
 bagwiz cam-info recompute-p drive.mcap --topics /camera/camera_info -o drive_fixed.mcap
 ```
 
-Export a bag's calibration as a YAML instead of rewriting the bag — give `-o` a
-`.yaml` path:
+Pull a bag's calibration out as a YAML — that is `cam-info dump`, and
+`recompute-p` then fixes its `p` if you want:
 
 ```bash
-bagwiz cam-info recompute-p drive.mcap --topics /camera/camera_info -o camera_info.yaml
+bagwiz cam-info dump drive.mcap /camera/camera_info -o camera_info.yaml
+bagwiz cam-info recompute-p camera_info.yaml
 ```
+
+### Migration from the old `-o` behavior
+
+`-o`'s extension used to choose what `recompute-p` produced. It no longer does,
+so two command lines that used to work now mean something else — and neither
+errors:
+
+| Command                                        | Before                   | Now                                    |
+| ---------------------------------------------- | ------------------------ | -------------------------------------- |
+| `recompute-p drive.mcap -t /cam -o calib.yaml` | exported to `calib.yaml` | a directory bag **named** `calib.yaml` |
+| `recompute-p calib.yaml -o out.mcap`           | error                    | a YAML file **named** `out.mcap`       |
+
+Use [`cam-info dump`](#bagwiz-cam-info-dump) for the first.
 
 ### Notes
 
 - **YAML mode is a re-emit, not an edit.** Values are preserved (including
   `camera_name`), but comments, key order, and incidental formatting are
   normalized. Use `-o` to keep the original file untouched.
-- Giving `-o` a `.yaml` / `.yml` path with a **bag** `<input>` exports that
-  topic's calibration instead of rewriting the bag — the bag is opened read-only.
-  Exactly one `--topics` entry is required, since a calibration YAML holds one
-  calibration. The first message's calibration is used, and a topic whose
-  calibration changes mid-bag is reported with a warning naming which was taken.
-- An exported YAML has no `camera_name`: it is not a CameraInfo field, so the bag
-  cannot supply one. The key is optional, and inventing a name from the topic or
-  `frame_id` would be a guess.
 - `--topics` accepts several topics at once
   (`--topics /cam1/camera_info /cam2/camera_info`); each is recomputed from its
   own intrinsics, so unlike `replace` they need not share a calibration.

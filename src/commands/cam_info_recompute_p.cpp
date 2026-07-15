@@ -12,7 +12,6 @@
 #include "bagwiz/core/bag_inplace.hpp"
 #include "bagwiz/core/cdr_walker/cdr_writer.hpp"
 #include "bagwiz/core/image/camera_calibration_yaml.hpp"
-#include "bagwiz/core/image/camera_info.hpp"
 #include "bagwiz/core/image/projection_matrix.hpp"
 #include "bagwiz/core/introspection_loader.hpp"
 #include "bagwiz/core/logging.hpp"
@@ -189,178 +188,6 @@ int run_yaml_mode(const CamInfoRecomputePArgs & args)
   BAGWIZ_LOG_INFO(
     kLogger, "cam-info recompute-p: rewrote projection_matrix in '%s'.",
     destination.string().c_str());
-  return 0;
-}
-
-// --- bag -> YAML export ----------------------------------------------------
-
-// True when two calibrations would produce the same YAML. Used to notice a bag
-// whose CameraInfo stream is not constant, which a single YAML cannot represent.
-[[nodiscard]] bool same_calibration(const img::CameraInfo & a, const img::CameraInfo & b)
-{
-  return a.width == b.width && a.height == b.height && a.distortion_model == b.distortion_model &&
-         a.d == b.d && a.k == b.k && a.r == b.r && a.p == b.p;
-}
-
-// Export one CameraInfo topic's calibration from a bag as a camera_calibration
-// YAML, with p recomputed. Reached when <input> is a bag but -o names a
-// .yaml/.yml file: the request is "give me the calibration, not a rewritten
-// bag", so nothing bag-shaped is written.
-int run_bag_to_yaml_mode(const CamInfoRecomputePArgs & args)
-{
-  const std::filesystem::path & destination = *args.output_path;
-
-  if (args.topics.empty()) {
-    BAGWIZ_LOG_ERROR(
-      kLogger,
-      "'%s' is a bag, so --topics is required to say which CameraInfo topic's calibration to "
-      "write to '%s'.",
-      args.input_path.string().c_str(), destination.string().c_str());
-    return 1;
-  }
-  // A camera_calibration YAML holds exactly one calibration, so several topics
-  // have no single answer. Refuse rather than silently picking one.
-  if (args.topics.size() != 1) {
-    BAGWIZ_LOG_ERROR(
-      kLogger,
-      "-o '%s' is a calibration YAML, which holds a single calibration, but %zu topics were given. "
-      "Name exactly one topic, or run the command once per topic with a different -o.",
-      destination.string().c_str(), args.topics.size());
-    return 1;
-  }
-  const std::string & topic = args.topics.front();
-
-  if (const auto r = core::prepare_output_path(destination, args.overwrite); !r.ok) {
-    BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
-    return 1;
-  }
-
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(args.input_path);
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
-    return 1;
-  }
-  reader->populate_schemas();
-
-  const io::TopicInfo * info = nullptr;
-  std::string camera_info_topics;
-  for (const auto & t : reader->topics()) {
-    if (t.name == topic) {
-      info = &t;
-    }
-    if (t.type == kCameraInfoType) {
-      if (!camera_info_topics.empty()) {
-        camera_info_topics += ", ";
-      }
-      camera_info_topics += t.name;
-    }
-  }
-  if (info == nullptr) {
-    BAGWIZ_LOG_ERROR(
-      kLogger, "Topic '%s' is not present in %s. Available %s topic(s): %s", topic.c_str(),
-      args.input_path.c_str(), kCameraInfoType,
-      camera_info_topics.empty() ? "(none)" : camera_info_topics.c_str());
-    return 1;
-  }
-  if (info->type != kCameraInfoType) {
-    BAGWIZ_LOG_ERROR(
-      kLogger, "Topic '%s' has type '%s', expected '%s'.", topic.c_str(), info->type.c_str(),
-      kCameraInfoType);
-    return 1;
-  }
-
-  // Read the topic's messages. A CameraInfo stream is small and the filter is
-  // pushed into the storage layer, so this does not scan the whole bag.
-  io::ReadFilter filter;
-  filter.topics = {topic};
-  reader->set_filter(filter);
-
-  std::optional<img::CameraInfo> first;
-  std::uint64_t count = 0;
-  bool varies = false;
-  try {
-    io::RawMessage raw;
-    while (reader->next(raw)) {
-      if (raw.topic->name != topic) {
-        continue;
-      }
-      const auto parsed = img::extract_camera_info(raw.payload);
-      if (!parsed.ok()) {
-        BAGWIZ_LOG_ERROR(
-          kLogger, "Could not parse a message on '%s' as %s: %s", topic.c_str(), kCameraInfoType,
-          parsed.error.c_str());
-        return 1;
-      }
-      ++count;
-      if (!first.has_value()) {
-        first = *parsed.info;
-      } else if (!varies && !same_calibration(*first, *parsed.info)) {
-        varies = true;
-      }
-    }
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed reading '%s': %s", topic.c_str(), e.what());
-    return 1;
-  }
-
-  if (!first.has_value()) {
-    BAGWIZ_LOG_ERROR(
-      kLogger, "Topic '%s' carried no messages, so it has no calibration to write.", topic.c_str());
-    return 1;
-  }
-  // One YAML cannot represent a calibration that changes mid-bag; say which one
-  // was taken rather than let the others vanish silently.
-  if (varies) {
-    BAGWIZ_LOG_WARN(
-      kLogger,
-      "Topic '%s' does not carry a constant calibration across its %" PRIu64
-      " message(s); the first message's calibration was used.",
-      topic.c_str(), count);
-  }
-
-  img::ProjectionMatrixInput in;
-  in.k = first->k;
-  in.r = first->r;
-  in.p = first->p;
-  in.d = first->d;
-  in.distortion_model = first->distortion_model;
-  in.width = first->width;
-  in.height = first->height;
-
-  const auto computed = img::compute_projection_matrix(in, args.alpha);
-  if (!computed.ok()) {
-    BAGWIZ_LOG_ERROR(
-      kLogger, "Cannot recompute p for '%s': %s", topic.c_str(), computed.error.c_str());
-    return 1;
-  }
-
-  log_delta(max_abs_delta(first->p, *computed.p), args.alpha);
-
-  img::CameraCalibration out;
-  out.width = first->width;
-  out.height = first->height;
-  out.distortion_model = first->distortion_model;
-  out.d = first->d;
-  out.k = first->k;
-  out.r = first->r;
-  out.p = *computed.p;
-  // camera_name is not a CameraInfo field, so the bag cannot supply one. Leave
-  // it unset rather than invent a name from the topic or frame_id: the key is
-  // optional, and a wrong name is worse than an absent one.
-
-  std::string error;
-  if (!core::write_file_atomically(destination, img::emit_camera_calibration_yaml(out), error)) {
-    BAGWIZ_LOG_ERROR(kLogger, "Could not write '%s': %s", destination.c_str(), error.c_str());
-    return 1;
-  }
-
-  BAGWIZ_LOG_INFO(
-    kLogger,
-    "cam-info recompute-p: wrote '%s' from '%s' on %s (%" PRIu64
-    " message(s) read); the bag was not modified.",
-    destination.string().c_str(), topic.c_str(), args.input_path.string().c_str(), count);
   return 0;
 }
 
@@ -687,9 +514,7 @@ int run_bag_mode(const CamInfoRecomputePArgs & args)
       return 1;
     }
     auto make_writer = [&]() {
-      io::CreateOptions copts;
-      copts.format = io::Format::Auto;
-      copts.layout = io::Layout::Auto;
+      auto copts = io::create_options_inheriting_format(args.input_path, *args.output_path);
       copts.mcap_compression = "none";
       return io::open_write(*args.output_path, copts);
     };
@@ -736,32 +561,13 @@ int run_bag_mode(const CamInfoRecomputePArgs & args)
 
 int run_cam_info_recompute_p(const CamInfoRecomputePArgs & args)
 {
-  // Extensions pick the mode. <input> says where the calibration comes from: a
-  // .yaml/.yml file, or else a bag (a directory, or a .mcap/.db3 file). For a bag
-  // input, -o then says what to produce -- a .yaml/.yml output means "give me the
-  // calibration" rather than "rewrite the bag", so the bag is left alone.
-  //
-  //   <input>   -o            -> mode
-  //   YAML      (none)/YAML   -> rewrite the YAML
-  //   bag       (none)/bag    -> rewrite the bag
-  //   bag       YAML          -> export the calibration, bag untouched
-  //   YAML      bag           -> refused below: a YAML has no messages to build one from
-  const bool input_is_yaml = is_yaml_path(args.input_path);
-  const bool output_is_yaml = args.output_path.has_value() && is_yaml_path(*args.output_path);
-
-  if (input_is_yaml) {
-    if (args.output_path.has_value() && !output_is_yaml) {
-      BAGWIZ_LOG_ERROR(
-        kLogger,
-        "<input> '%s' is a calibration YAML but -o '%s' is not, and a YAML carries no messages to "
-        "build a bag from. Give -o a .yaml/.yml path, or pass a bag as <input>.",
-        args.input_path.string().c_str(), args.output_path->string().c_str());
-      return 1;
-    }
+  // <input> alone picks the mode: a .yaml/.yml file is a camera_calibration
+  // YAML, anything else is a bag (a directory, or a .mcap/.db3 file). -o only
+  // ever says where the result goes -- it is always the same shape as <input>,
+  // so its extension chooses nothing. `bagwiz cam-info dump` is the command for
+  // pulling a bag's calibration out as a YAML.
+  if (is_yaml_path(args.input_path)) {
     return run_yaml_mode(args);
-  }
-  if (output_is_yaml) {
-    return run_bag_to_yaml_mode(args);
   }
   return run_bag_mode(args);
 }

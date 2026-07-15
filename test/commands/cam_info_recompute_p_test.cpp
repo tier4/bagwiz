@@ -76,6 +76,14 @@ bagwiz::io::CreateOptions mcap_options()
   return options;
 }
 
+bagwiz::io::CreateOptions sqlite3_options()
+{
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Sqlite3;
+  options.layout = bagwiz::io::Layout::SingleFile;
+  return options;
+}
+
 bagwiz::io::TopicInfo camera_info_topic_info(const std::string & name)
 {
   bagwiz::io::TopicInfo t;
@@ -150,9 +158,10 @@ constexpr std::array<std::byte, 4> kOtherPayload{
 // Two CameraInfo topics, each with two messages, plus one unrelated /other
 // message. The second camera topic proves a non-listed CameraInfo topic is
 // copied verbatim rather than swept up.
-void write_input_bag(const std::filesystem::path & path)
+void write_input_bag_with(
+  const std::filesystem::path & path, const bagwiz::io::CreateOptions & options)
 {
-  auto writer = bagwiz::io::open_write(path, mcap_options());
+  auto writer = bagwiz::io::open_write(path, options);
   writer->declare_topic(camera_info_topic_info("/camera/camera_info"));
   writer->declare_topic(camera_info_topic_info("/camera2/camera_info"));
 
@@ -178,6 +187,11 @@ void write_input_bag(const std::filesystem::path & path)
     "/other", 1'500'000'000LL,
     std::span<const std::byte>(kOtherPayload.data(), kOtherPayload.size()));
   writer->close();
+}
+
+void write_input_bag(const std::filesystem::path & path)
+{
+  write_input_bag_with(path, mcap_options());
 }
 
 constexpr const char * kRealCalibYaml = R"(image_width: 1920
@@ -349,6 +363,22 @@ TEST_F(CamInfoRecomputePTest, YamlModeRefusesFisheyeWithoutWritingAnything)
   EXPECT_DOUBLE_EQ(after.calibration->p[0], 1.0);
 }
 
+// -o names where the result goes, not what it is: a YAML input writes a YAML,
+// whatever the output is called. (This used to be an error.)
+TEST_F(CamInfoRecomputePTest, YamlInputWritesYamlToAnyOutputPath)
+{
+  const auto out = tmp_dir_ / "out.mcap";
+  CamInfoRecomputePArgs args;
+  args.input_path = write_yaml(kRealCalibYaml, "calib.yaml");
+  args.output_path = out;
+  ASSERT_EQ(run_cam_info_recompute_p(args), 0);
+
+  // Named .mcap, but it is a calibration YAML.
+  const auto parsed = bagwiz::core::image::parse_camera_calibration_yaml(out);
+  ASSERT_TRUE(parsed.ok()) << parsed.error;
+  EXPECT_NEAR(parsed.calibration->p[0], expected_p(0.0)[0], 1e-6);
+}
+
 // --- bag mode --------------------------------------------------------------
 
 TEST_F(CamInfoRecomputePTest, BagModeRecomputesPOnTargetTopicOnly)
@@ -500,145 +530,42 @@ TEST_F(CamInfoRecomputePTest, BagModeRejectsWrongTypedTopic)
   EXPECT_NE(run_cam_info_recompute_p(args), 0);
 }
 
-// --- bag -> YAML export ----------------------------------------------------
-
-TEST_F(CamInfoRecomputePTest, BagWithYamlOutputWritesCalibrationYaml)
+// An extension-less -o inherits <input>'s storage format rather than defaulting
+// to MCAP, matching topic drop/keep/rename and pcd concat/undistort.
+TEST_F(CamInfoRecomputePTest, BagModeInheritsInputFormatForExtensionlessOutput)
 {
-  write_input_bag(input_);
-  const auto out = tmp_dir_ / "calib.yaml";
+  const auto db3_input = tmp_dir_ / "in.db3";
+  write_input_bag_with(db3_input, sqlite3_options());
+  const auto out = tmp_dir_ / "out_dir";
 
   CamInfoRecomputePArgs args;
-  args.input_path = input_;
+  args.input_path = db3_input;
   args.topics = {"/camera/camera_info"};
   args.output_path = out;
   ASSERT_EQ(run_cam_info_recompute_p(args), 0);
 
-  ASSERT_TRUE(std::filesystem::exists(out));
-  const auto parsed = bagwiz::core::image::parse_camera_calibration_yaml(out);
-  ASSERT_TRUE(parsed.ok()) << parsed.error;
-
-  // The calibration comes from the bag's messages, with p recomputed.
-  const auto want = expected_p(0.0);
-  for (std::size_t i = 0; i < 12; ++i) {
-    EXPECT_NEAR(parsed.calibration->p[i], want[i], 1e-6) << "p[" << i << "]";
-  }
-  EXPECT_EQ(parsed.calibration->width, kRealWidth);
-  EXPECT_EQ(parsed.calibration->height, kRealHeight);
-  EXPECT_EQ(parsed.calibration->distortion_model, "plumb_bob");
-  EXPECT_EQ(parsed.calibration->d, kRealD);
-  for (std::size_t i = 0; i < 9; ++i) {
-    EXPECT_DOUBLE_EQ(parsed.calibration->k[i], kRealK[i]) << "k[" << i << "]";
-  }
-}
-
-// Exporting is a read: the bag must come back untouched, even though a bare
-// bag input would otherwise be rewritten in place.
-TEST_F(CamInfoRecomputePTest, BagWithYamlOutputLeavesBagUnmodified)
-{
-  write_input_bag(input_);
-
-  CamInfoRecomputePArgs args;
-  args.input_path = input_;
-  args.topics = {"/camera/camera_info"};
-  args.output_path = tmp_dir_ / "calib.yaml";
-  ASSERT_EQ(run_cam_info_recompute_p(args), 0);
-
-  const auto msgs = read_topic(input_, "/camera/camera_info");
+  EXPECT_EQ(bagwiz::io::detect_format(out), bagwiz::io::Format::Sqlite3);
+  const auto msgs = read_topic(out, "/camera/camera_info");
   ASSERT_EQ(msgs.size(), 2U);
-  EXPECT_DOUBLE_EQ(msgs[0].p[0], 1.0);  // still the original identity p
+  EXPECT_NEAR(msgs[0].p[0], expected_p(0.0)[0], 1e-6);
 }
 
-TEST_F(CamInfoRecomputePTest, BagWithYmlOutputAlsoExports)
+// A .mcap -o still wins over a sqlite3 input: the extension picks the format.
+TEST_F(CamInfoRecomputePTest, BagModeConvertsWhenOutputExtensionNamesAFormat)
 {
-  write_input_bag(input_);
-  const auto out = tmp_dir_ / "calib.yml";
+  const auto db3_input = tmp_dir_ / "in.db3";
+  write_input_bag_with(db3_input, sqlite3_options());
+  const auto out = tmp_dir_ / "out.mcap";
 
   CamInfoRecomputePArgs args;
-  args.input_path = input_;
+  args.input_path = db3_input;
   args.topics = {"/camera/camera_info"};
   args.output_path = out;
   ASSERT_EQ(run_cam_info_recompute_p(args), 0);
 
-  EXPECT_TRUE(bagwiz::core::image::parse_camera_calibration_yaml(out).ok());
-}
-
-TEST_F(CamInfoRecomputePTest, BagWithYamlOutputAppliesAlpha)
-{
-  write_input_bag(input_);
-  const auto out = tmp_dir_ / "calib.yaml";
-
-  CamInfoRecomputePArgs args;
-  args.input_path = input_;
-  args.topics = {"/camera/camera_info"};
-  args.output_path = out;
-  args.alpha = 1.0;
-  ASSERT_EQ(run_cam_info_recompute_p(args), 0);
-
-  const auto parsed = bagwiz::core::image::parse_camera_calibration_yaml(out);
-  ASSERT_TRUE(parsed.ok()) << parsed.error;
-  EXPECT_NEAR(parsed.calibration->p[0], expected_p(1.0)[0], 1e-6);
-}
-
-// A camera_calibration YAML holds exactly one calibration, so several topics
-// have no single answer.
-TEST_F(CamInfoRecomputePTest, BagWithYamlOutputRejectsMultipleTopics)
-{
-  write_input_bag(input_);
-
-  CamInfoRecomputePArgs args;
-  args.input_path = input_;
-  args.topics = {"/camera/camera_info", "/camera2/camera_info"};
-  args.output_path = tmp_dir_ / "calib.yaml";
-  EXPECT_NE(run_cam_info_recompute_p(args), 0);
-  EXPECT_FALSE(std::filesystem::exists(tmp_dir_ / "calib.yaml"));
-}
-
-TEST_F(CamInfoRecomputePTest, BagWithYamlOutputStillRequiresATopic)
-{
-  write_input_bag(input_);
-
-  CamInfoRecomputePArgs args;
-  args.input_path = input_;
-  args.output_path = tmp_dir_ / "calib.yaml";
-  EXPECT_NE(run_cam_info_recompute_p(args), 0);
-}
-
-TEST_F(CamInfoRecomputePTest, BagWithYamlOutputRejectsWrongTypedTopic)
-{
-  write_input_bag(input_);
-
-  CamInfoRecomputePArgs args;
-  args.input_path = input_;
-  args.topics = {"/other"};
-  args.output_path = tmp_dir_ / "calib.yaml";
-  EXPECT_NE(run_cam_info_recompute_p(args), 0);
-}
-
-TEST_F(CamInfoRecomputePTest, BagWithYamlOutputHonoursOverwrite)
-{
-  write_input_bag(input_);
-  const auto out = write_yaml("pre-existing\n", "calib.yaml");
-
-  CamInfoRecomputePArgs args;
-  args.input_path = input_;
-  args.topics = {"/camera/camera_info"};
-  args.output_path = out;
-  EXPECT_NE(run_cam_info_recompute_p(args), 0);
-
-  args.overwrite = true;
-  EXPECT_EQ(run_cam_info_recompute_p(args), 0);
-  EXPECT_TRUE(bagwiz::core::image::parse_camera_calibration_yaml(out).ok());
-}
-
-// The inverse mistake: a YAML has no messages to build a bag from.
-TEST_F(CamInfoRecomputePTest, YamlInputRejectsNonYamlOutput)
-{
-  CamInfoRecomputePArgs args;
-  args.input_path = write_yaml(kRealCalibYaml, "calib.yaml");
-  args.output_path = tmp_dir_ / "out.mcap";
-
-  EXPECT_NE(run_cam_info_recompute_p(args), 0);
-  EXPECT_FALSE(std::filesystem::exists(tmp_dir_ / "out.mcap"));
+  EXPECT_EQ(bagwiz::io::detect_format(out), bagwiz::io::Format::Mcap);
+  const auto msgs = read_topic(out, "/camera/camera_info");
+  ASSERT_EQ(msgs.size(), 2U);
 }
 
 TEST_F(CamInfoRecomputePTest, BagModeLeavesInputIntactWhenValidationFails)

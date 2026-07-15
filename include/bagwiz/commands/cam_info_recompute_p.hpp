@@ -22,11 +22,18 @@ namespace bagwiz::commands
 //
 //   p = [ cv::getOptimalNewCameraMatrix(k, d, (width, height), alpha) | 0 ]
 //
-// `input_path` selects the mode. A `.yaml`/`.yml` file is a camera_calibration
-// YAML: its projection_matrix block is recomputed and the file re-emitted, and
-// `topics` must be empty (a YAML carries no topics). Anything else is a ROS 2
-// bag: every message on each listed CameraInfo topic has its p recomputed from
-// that same message's own k/d/width/height, and `topics` must name at least one.
+// `input_path` selects the mode, and the result always has the same shape as it:
+// a `.yaml`/`.yml` file is a camera_calibration YAML, so its projection_matrix
+// block is recomputed and the file re-emitted, and `topics` must be empty (a
+// YAML carries no topics). Anything else is a ROS 2 bag, so every message on
+// each listed CameraInfo topic has its p recomputed from that same message's own
+// k/d/width/height, and `topics` must name at least one.
+//
+// `output_path`'s extension chooses nothing; it only says where the result goes.
+// For a bag it does pick the storage format (.mcap/.db3 convert, anything else
+// inherits `input_path`'s) via io::create_options_inheriting_format(). To pull a
+// bag's calibration out as a YAML, use `bagwiz cam-info dump`
+// (commands/cam_info_dump.hpp) instead.
 //
 // `topics` is required-for-a-bag / rejected-for-a-YAML, which CLI11 cannot
 // express as a parse-time constraint, so run_cam_info_recompute_p() validates it
