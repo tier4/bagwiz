@@ -6,6 +6,7 @@ Operations on `sensor_msgs/msg/CameraInfo` topics. Subcommands:
 | --------------------------------------------- | -------------------------------------------------------------------------------------- |
 | [`replace`](#bagwiz-cam-info-replace)         | Overwrite one or more CameraInfo topics' calibration with the values from a YAML file. |
 | [`recompute-p`](#bagwiz-cam-info-recompute-p) | Recompute the projection matrix from the intrinsics, in a YAML file or in a bag.       |
+| [`dump`](#bagwiz-cam-info-dump)               | Write a CameraInfo topic's calibration out to a YAML file, verbatim.                   |
 
 ROS 1 `*.bag` inputs are not supported.
 
@@ -353,3 +354,89 @@ bagwiz cam-info recompute-p drive.mcap --topics /camera/camera_info -o camera_in
   `ros2 bag convert` if needed).
 - In-place mode replaces the input atomically: a bag via a sibling temporary bag,
   a YAML via a sibling temporary file.
+
+---
+
+## `bagwiz cam-info dump`
+
+Write the calibration carried by a `sensor_msgs/msg/CameraInfo` topic out as a
+standard ROS camera calibration YAML — the inverse of
+[`replace`](#bagwiz-cam-info-replace), and the format
+[`replace`](#bagwiz-cam-info-replace) consumes. Useful to inspect what a bag
+actually recorded, or to lift a calibration out and edit it before pushing a
+corrected copy back in.
+
+The dump is **verbatim**: `height`, `width`, `distortion_model`, `d`, `k`, `r`,
+and `p` are copied exactly as recorded. In particular `p` is **not** recomputed —
+[`recompute-p`](#bagwiz-cam-info-recompute-p) is the command for that, and the
+two compose.
+
+### Usage
+
+```text
+bagwiz cam-info dump [OPTIONS] <input> <topic>
+```
+
+The bag is only ever read. Without `-o` the YAML goes to stdout.
+
+### Positional arguments
+
+| Name    | Description                                                                                     |
+| ------- | ----------------------------------------------------------------------------------------------- |
+| `input` | Input ROS 2 rosbag (directory or single-file). Must exist.                                      |
+| `topic` | The CameraInfo topic whose calibration to write. Its type must be `sensor_msgs/msg/CameraInfo`. |
+
+Exactly one `<topic>` is taken, since a camera calibration YAML holds exactly one
+calibration. Tab completion offers the bag's CameraInfo topics — and only those.
+
+### Options
+
+| Flag                 | Description                                                                                               |
+| -------------------- | --------------------------------------------------------------------------------------------------------- |
+| `-o`, `--output <p>` | Write the YAML to this path instead of stdout.                                                            |
+| `-w`, `--overwrite`  | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect without `-o`. |
+
+### YAML format
+
+The output is the standard camera calibration YAML documented under
+[`replace`](#yaml-format-and-field-mapping), minus `camera_name` (see Notes).
+
+### Examples
+
+Look at what a bag recorded:
+
+```bash
+bagwiz cam-info dump drive.mcap /camera/camera_info
+```
+
+Save it to a file:
+
+```bash
+bagwiz cam-info dump drive.mcap /camera/camera_info -o camera_info.yaml
+```
+
+Compose with `recompute-p` to fix a stale `p`, then push it back with `replace`:
+
+```bash
+bagwiz cam-info dump drive.mcap /camera/camera_info -o camera_info.yaml
+bagwiz cam-info recompute-p camera_info.yaml
+bagwiz cam-info replace drive.mcap camera_info.yaml /camera/camera_info
+```
+
+### Notes
+
+- **`p` is copied, not recomputed.** A dump always agrees with the bag. Use
+  [`recompute-p`](#bagwiz-cam-info-recompute-p) on the dumped YAML to derive `p`
+  from the intrinsics.
+- The **first** message's calibration is used. A topic whose calibration is not
+  constant across the bag is reported with a warning saying so — one YAML cannot
+  represent a stream that changes mid-bag.
+- The output has **no `camera_name`**: it is not a CameraInfo field, so the bag
+  cannot supply one. The key is optional, and inventing a name from the topic or
+  `frame_id` would be a guess.
+- Without `-o` the YAML goes to **stdout** and every diagnostic goes to stderr, so
+  `bagwiz cam-info dump drive.mcap /camera/camera_info > camera_info.yaml` is
+  pipe-clean.
+- A topic that is missing, is not a CameraInfo topic, or carries no messages
+  stops the run; nothing is written.
+- The bag is opened read-only and is never modified.

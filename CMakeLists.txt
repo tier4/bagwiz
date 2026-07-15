@@ -341,6 +341,7 @@ add_executable(bagwiz
   src/main.cpp
   src/commands/help_formatter.cpp
   src/commands/cam_info.cpp
+  src/commands/cam_info_dump.cpp
   src/commands/cam_info_recompute_p.cpp
   src/commands/cam_info_replace.cpp
   src/commands/check.cpp
@@ -996,6 +997,12 @@ if(BUILD_TESTING)
     src/commands/cam_info_replace.cpp)
   target_link_libraries(
     bagwiz_cam_info_replace_test bagwiz_core fmt::fmt ${sensor_msgs_TARGETS})
+
+  ament_add_gtest(bagwiz_cam_info_dump_test
+    test/commands/cam_info_dump_test.cpp
+    src/commands/cam_info_dump.cpp)
+  target_link_libraries(
+    bagwiz_cam_info_dump_test bagwiz_core fmt::fmt ${sensor_msgs_TARGETS})
 endif()
 
 ament_package()

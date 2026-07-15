@@ -7,6 +7,7 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 
 #include "CLI/CLI.hpp"
+#include "bagwiz/commands/cam_info_dump.hpp"
 #include "bagwiz/commands/cam_info_recompute_p.hpp"
 #include "bagwiz/commands/cam_info_replace.hpp"
 #include "bagwiz/commands/command.hpp"
@@ -25,10 +26,10 @@ constexpr const char * kLogger = "bagwiz.cmd.cam-info";
 // `bagwiz cam-info` is a command group for sensor_msgs/msg/CameraInfo
 // operations. It ships `replace` (swap one or more CameraInfo topics'
 // calibration for the values in a single standard ROS camera_calibration YAML
-// file) and `recompute-p` (derive the projection matrix from the intrinsics it
-// belongs to). Modeling it as a group leaves room for further actions (e.g. a
-// future `dump` that exports a topic's calibration back out to YAML) without a
-// flat command accreting every option.
+// file), `recompute-p` (derive the projection matrix from the intrinsics it
+// belongs to), and `dump` (write a topic's calibration back out to YAML).
+// Modeling it as a group keeps each action's options on the action that owns
+// them, rather than a flat command accreting every one of them.
 class CamInfoCommand : public Command
 {
 public:
@@ -43,6 +44,7 @@ public:
     app.require_subcommand(1);
     configure_replace(app);
     configure_recompute_p(app);
+    configure_dump(app);
   }
 
   int run() override
@@ -52,6 +54,8 @@ public:
         return run_cam_info_replace(replace_args_);
       case Subcommand::kRecomputeP:
         return run_cam_info_recompute_p(recompute_p_args_);
+      case Subcommand::kDump:
+        return run_cam_info_dump(dump_args_);
       case Subcommand::kNone:
         BAGWIZ_LOG_ERROR(kLogger, "no subcommand selected");
         return 1;
@@ -60,11 +64,12 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kReplace, kRecomputeP };
+  enum class Subcommand { kNone, kReplace, kRecomputeP, kDump };
   Subcommand selected_ = Subcommand::kNone;
 
   CamInfoReplaceArgs replace_args_;
   CamInfoRecomputePArgs recompute_p_args_;
+  CamInfoDumpArgs dump_args_;
 
   void configure_replace(CLI::App & app)
   {
@@ -182,6 +187,48 @@ private:
       "Note a YAML rewrite is a re-emit: values are preserved but comments and formatting are "
       "normalized. Use -o to keep the original file untouched.");
     sub->callback([this]() { selected_ = Subcommand::kRecomputeP; });
+  }
+
+  void configure_dump(CLI::App & app)
+  {
+    auto * sub = app.add_subcommand(
+      "dump",
+      "Write a sensor_msgs/msg/CameraInfo topic's calibration out as a standard ROS "
+      "camera_calibration YAML file");
+    sub->add_option("input", dump_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+      ->required()
+      ->check(CLI::ExistingPath);
+    sub
+      ->add_option(
+        "topic", dump_args_.topic,
+        "The CameraInfo topic whose calibration to write (its type must be "
+        "sensor_msgs/msg/CameraInfo)")
+      ->required();
+    sub->add_option(
+      "-o,--output", dump_args_.output_path, "Write the YAML to this path instead of stdout.");
+    sub->add_flag(
+      "-w,--overwrite", dump_args_.overwrite,
+      "Replace an existing -o/--output path. Without it, an existing output path stops the run. "
+      "Has no effect without -o (there is nothing to overwrite when writing to stdout).");
+    sub->footer(
+      "The dump is verbatim: height, width, distortion_model, d, k, r, and p are copied from the "
+      "bag exactly as recorded. p is NOT recomputed -- run `bagwiz cam-info recompute-p` on the "
+      "dumped YAML for that, so the two compose:\n"
+      "\n"
+      "  bagwiz cam-info dump drive.mcap /camera/camera_info -o calib.yaml\n"
+      "  bagwiz cam-info recompute-p calib.yaml\n"
+      "\n"
+      "A camera_calibration YAML holds exactly one calibration, so exactly one <topic> is taken. "
+      "The first message's calibration is used, and a topic whose calibration is not constant "
+      "across the bag is reported. The bag is only ever read.\n"
+      "\n"
+      "The output carries no camera_name: it is not a CameraInfo field, so the bag cannot supply "
+      "one, and inventing a name from the topic or frame_id would be a guess. The key is "
+      "optional.\n"
+      "\n"
+      "Without -o the YAML goes to stdout while diagnostics go to stderr, so "
+      "`bagwiz cam-info dump drive.mcap /camera/camera_info > calib.yaml` works.");
+    sub->callback([this]() { selected_ = Subcommand::kDump; });
   }
 };
 

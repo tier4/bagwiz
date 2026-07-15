@@ -1663,7 +1663,7 @@ TEST(FlagCompletionTest, CamInfoSubcommandListsActions)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "2", "bagwiz", "cam-info", ""}),
-    "recompute-p\nreplace\n");
+    "dump\nrecompute-p\nreplace\n");
 }
 
 // `bagwiz cam-info -` lists just the implicit help flags (the group itself defines
@@ -1729,6 +1729,48 @@ TEST_F(CompletionTest, CamInfoReplaceTopicSlotIsVariadic)
       {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "replace", "~/cameras.mcap", "calib.yaml",
        "/cam/camera_info"}),
     "/cam/camera_info\n");
+}
+
+// `cam-info dump <input> <TAB>` offers only the bag's CameraInfo topics -- not
+// the CompressedImage or PointCloud2 topics the same fixture carries. <topic> is
+// at word 3, one left of replace's, because dump has no <calib_yaml>.
+TEST_F(CompletionTest, CamInfoDumpTopicSlotListsOnlyCameraInfoTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "cam-info", "dump", "~/cameras.mcap"}),
+    "/cam/camera_info\n");
+}
+
+// A typed prefix narrows the candidates within the CameraInfo set.
+TEST_F(CompletionTest, CamInfoDumpTopicSlotRespectsPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "4", "bagwiz", "cam-info", "dump", "~/cameras.mcap", "/cam/c"}),
+    "/cam/camera_info\n");
+}
+
+// Unlike replace's, dump's binding is non-variadic: a camera_calibration YAML
+// holds one calibration, so the slot after <topic> offers nothing.
+TEST_F(CompletionTest, CamInfoDumpTopicSlotIsNotVariadic)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "dump", "~/cameras.mcap",
+       "/cam/camera_info"}),
+    "");
 }
 
 // `bagwiz check <TAB>` lists its single subcommand.

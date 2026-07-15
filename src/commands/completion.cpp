@@ -114,7 +114,7 @@ struct TopicArgBinding
   bool variadic{false};
 };
 
-constexpr std::array<TopicArgBinding, 10> kTopicBindings{{
+constexpr std::array<TopicArgBinding, 11> kTopicBindings{{
   {"walk", "", kFirstCommandArgWord, kSecondCommandArgWord, {}, false},
   {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord, kTrajDumpSupportedTypes, false},
   {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord, {}, false},
@@ -142,6 +142,13 @@ constexpr std::array<TopicArgBinding, 10> kTopicBindings{{
   // because the `replace` action verb shifts every positional one slot right; the
   // binding is variadic, so completion fires at word 4 and every later slot.
   {"cam-info", "replace", kSecondCommandArgWord, kFourthCommandArgWord, kCameraInfoType, true},
+  // `cam-info dump <input> <topic>`: complete the single <topic> slot from the
+  // bag's CameraInfo topics (the only type it can dump). <topic> sits at word 3
+  // rather than `replace`'s word 4 because `dump` has no <calib_yaml> shifting
+  // the positionals right, and the binding is non-variadic because a
+  // camera_calibration YAML holds exactly one calibration. <input> and -o's
+  // value are paths that fall through to the shell's file completion.
+  {"cam-info", "dump", kSecondCommandArgWord, kThirdCommandArgWord, kCameraInfoType, false},
   // `cam-info recompute-p` takes its topics via --topics rather than as
   // positionals, so it has no binding here; complete_cam_info() completes the
   // flag's values instead.
@@ -1164,8 +1171,9 @@ bool is_value_slot_of(const CompletionRequest & request, const std::string_view 
 }
 
 // `cam-info` is a command group for sensor_msgs/msg/CameraInfo operations. Its
-// subcommands are `replace` and `recompute-p`. At the subcommand slot (word 1)
-// those are the candidates (or the implicit help flags for a `-` word).
+// subcommands are `replace`, `recompute-p`, and `dump`. At the subcommand slot
+// (word 1) those are the candidates (or the implicit help flags for a `-`
+// word).
 //
 // `replace` takes its topics as variadic positionals, completed earlier by
 // try_topic_completion via kTopicBindings. `recompute-p` takes them via
@@ -1173,7 +1181,8 @@ bool is_value_slot_of(const CompletionRequest & request, const std::string_view 
 // at <input>, CameraInfo topics only, at every value slot since the flag is
 // variadic. When <input> is a calibration YAML rather than a bag, --topics does
 // not apply at all; the bag lookup then finds nothing and no candidates are
-// offered, which is the wanted behavior.
+// offered, which is the wanted behavior. `dump` takes its single <topic> as a
+// positional too, completed via kTopicBindings like `replace`'s.
 //
 // <input> and <calib_yaml> are paths that fall through to the shell's file
 // completion. `--frame-id`'s value is a free-form header override with nothing
@@ -1184,6 +1193,8 @@ bool is_value_slot_of(const CompletionRequest & request, const std::string_view 
 //                [--frame-id <id>] [-o <out>] [-w|--overwrite]
 //   recompute-p: `cam-info`(0) `recompute-p`(1) `<input>`(2)
 //                [-t|--topics <topic>...] [-a|--alpha <a>] [-o <out>] [-w|--overwrite]
+//   dump:        `cam-info`(0) `dump`(1) `<input>`(2) `<topic>`(3)
+//                [-o <out>] [-w|--overwrite]
 std::vector<std::string> complete_cam_info(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -1191,7 +1202,7 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"replace", "recompute-p"}, current);
+    return matching({"replace", "recompute-p", "dump"}, current);
   }
 
   if (request.words.size() <= kFirstCommandArgWord) {
@@ -1207,6 +1218,9 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
       return matching(
         with_help({"--alpha", "--output", "--overwrite", "--topics", "-a", "-o", "-t", "-w"}),
         current);
+    }
+    if (sub == "dump") {
+      return matching(with_help({"--output", "--overwrite", "-o", "-w"}), current);
     }
     return {};
   }
