@@ -137,7 +137,7 @@ private:
       "-w,--overwrite", undistort_args_.overwrite, "Replace -o output if it already exists.");
     sub
       ->add_option(
-        "-t,--threads", undistort_args_.threads,
+        "-j,--threads", undistort_args_.threads,
         "Number of worker threads for deskew (0=default, 1=sync, default: hardware concurrency). "
         "Values above hardware concurrency are capped.")
       ->check(CLI::Range(0, 256));

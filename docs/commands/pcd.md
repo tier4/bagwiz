@@ -87,7 +87,7 @@ intact for the downstream merge.
 ```text
 bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
     [--from <frame>] [--to <frame>] [-o|--output <path>] [-w|--overwrite] \
-    [-t|--threads <N>]
+    [-j|--threads <N>]
 ```
 
 ### Positional arguments
@@ -106,7 +106,7 @@ bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
 | `--to <frame>`        | `base_link`  | Tracked body frame. The trajectory is obtained as `T_from_to` (e.g. `T_map_base_link`).                                                                                              |
 | `-o, --output <path>` | _(unset)_    | Output bag. When omitted, `<input>` is rewritten in place (atomic tmp swap).                                                                                                         |
 | `-w, --overwrite`     | `false`      | Replace `-o/--output` if it already exists. Has no effect in in-place mode.                                                                                                          |
-| `-t, --threads <N>`   | `0`          | Number of worker threads for Pass 2. `0` (or omitted) uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; larger values are capped at hardware concurrency. |
+| `-j, --threads <N>`   | `0`          | Number of worker threads for Pass 2. `0` (or omitted) uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; larger values are capped at hardware concurrency. |
 
 ### Behavior
 

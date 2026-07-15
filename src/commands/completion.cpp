@@ -1010,7 +1010,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //   slam:   `map`(0) `slam`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
 //           [--backend <cpu|cuda|auto>] [--frame <frame_id>] [--imu <topic>]
 //           [--gnss <topic>] [--input-res <m>] [--min-range <m>] [--max-range <m>]
-//           [-t|--threads <N>] [--viewer] [-w|--overwrite]
+//           [-j|--threads <N>] [--viewer] [-w|--overwrite]
 //           [--no-progress] [--no-warmup-recovery] [--no-cooldown-recovery]
 //           [--recovery-min-inliers <f>] [--submap-keyframes <N>]
 //   viewer: `map`(0) `viewer`(1) `<map>`(2)
@@ -1050,7 +1050,7 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
       with_help(
         {"--backend", "--frame", "--gnss", "--imu", "--input-res", "--max-range", "--min-range",
          "--no-cooldown-recovery", "--no-progress", "--no-warmup-recovery", "--overwrite",
-         "--recovery-min-inliers", "--submap-keyframes", "--threads", "--viewer", "-t", "-w"}),
+         "--recovery-min-inliers", "--submap-keyframes", "--threads", "--viewer", "-j", "-w"}),
       current);
   }
 
@@ -1252,11 +1252,11 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
 // to suggest. `--pcd` is variadic and completes PointCloud2 topics from the bag
 // named at word 2, mirroring concat's `--pcd`. `--from`/`--to` complete
 // the bag's TF frame ids, mirroring `traj dump`/`join`. `-o`/`--output` takes a
-// path and `-t`/`--threads` takes a count, so they get no value completion.
+// path and `-j`/`--threads` takes a count, so they get no value completion.
 //
 //   undistort: `pcd`(0) `undistort`(1) `<input>`(2) `<pose_topic>`(3)
 //              --pcd <t...> [--from <frame>] [--to <frame>] [-o <out>]
-//              [-t|--threads <N>] [-w|--overwrite]
+//              [-j|--threads <N>] [-w|--overwrite]
 std::vector<std::string> complete_pcd(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -1279,7 +1279,7 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
     if (sub == "undistort") {
       return matching(
         with_help(
-          {"--from", "--output", "--overwrite", "--pcd", "--threads", "--to", "-o", "-t", "-w"}),
+          {"--from", "--output", "--overwrite", "--pcd", "--threads", "--to", "-j", "-o", "-w"}),
         current);
     }
   }

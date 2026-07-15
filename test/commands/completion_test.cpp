@@ -1128,7 +1128,7 @@ TEST(FlagCompletionTest, MapSlamDashListsSlamFlags)
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "map", "slam", "-"}),
     "--backend\n--frame\n--gnss\n--help\n--imu\n--input-res\n--max-range\n--min-range\n"
     "--no-cooldown-recovery\n--no-progress\n--no-warmup-recovery\n--overwrite\n"
-    "--recovery-min-inliers\n--submap-keyframes\n--threads\n--viewer\n-h\n-t\n-w\n");
+    "--recovery-min-inliers\n--submap-keyframes\n--threads\n--viewer\n-h\n-j\n-w\n");
 }
 
 // `map slam --backend <TAB>` lists the three backend modes.
@@ -1230,7 +1230,7 @@ TEST(FlagCompletionTest, PcdUndistortDashListsUndistortFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "pcd", "undistort", "-"}),
-    "--from\n--help\n--output\n--overwrite\n--pcd\n--threads\n--to\n-h\n-o\n-t\n-w\n");
+    "--from\n--help\n--output\n--overwrite\n--pcd\n--threads\n--to\n-h\n-j\n-o\n-w\n");
 }
 
 // `pcd undistort <bag> <pose_topic> --pcd <TAB>` completes PointCloud2 topics
