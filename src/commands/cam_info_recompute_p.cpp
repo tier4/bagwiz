@@ -8,6 +8,7 @@
 
 #include "bagwiz/commands/cam_info_recompute_p.hpp"
 
+#include "bagwiz/core/atomic_write.hpp"
 #include "bagwiz/core/bag_inplace.hpp"
 #include "bagwiz/core/cdr_walker/cdr_writer.hpp"
 #include "bagwiz/core/image/camera_calibration_yaml.hpp"
@@ -37,14 +38,12 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
-#include <fstream>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
-#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -135,37 +134,6 @@ void log_delta(const double delta, const double alpha)
 
 // --- YAML mode -------------------------------------------------------------
 
-// Write `contents` to `path` via a sibling temporary + rename, so a failure
-// partway through cannot leave a half-written calibration behind. Mirrors the
-// atomicity core::write_bag_inplace() gives the bag paths.
-[[nodiscard]] bool write_file_atomically(
-  const std::filesystem::path & path, const std::string & contents, std::string & error)
-{
-  const std::filesystem::path tmp = path.parent_path() / (path.filename().string() + ".bagwiz.tmp");
-  try {
-    {
-      std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-      if (!out) {
-        error = "could not open '" + tmp.string() + "' for writing";
-        return false;
-      }
-      out << contents;
-      out.flush();
-      if (!out) {
-        error = "failed while writing '" + tmp.string() + "'";
-        return false;
-      }
-    }
-    std::filesystem::rename(tmp, path);
-  } catch (const std::exception & e) {
-    std::error_code ignored;
-    std::filesystem::remove(tmp, ignored);
-    error = e.what();
-    return false;
-  }
-  return true;
-}
-
 // Recompute the projection_matrix block of a camera_calibration file and
 // re-emit it. Every other value is carried across unchanged.
 int run_yaml_mode(const CamInfoRecomputePArgs & args)
@@ -212,7 +180,8 @@ int run_yaml_mode(const CamInfoRecomputePArgs & args)
   updated.p = *computed.p;
 
   std::string error;
-  if (!write_file_atomically(destination, img::emit_camera_calibration_yaml(updated), error)) {
+  if (!core::write_file_atomically(
+        destination, img::emit_camera_calibration_yaml(updated), error)) {
     BAGWIZ_LOG_ERROR(kLogger, "Could not write '%s': %s", destination.c_str(), error.c_str());
     return 1;
   }
@@ -382,7 +351,7 @@ int run_bag_to_yaml_mode(const CamInfoRecomputePArgs & args)
   // optional, and a wrong name is worse than an absent one.
 
   std::string error;
-  if (!write_file_atomically(destination, img::emit_camera_calibration_yaml(out), error)) {
+  if (!core::write_file_atomically(destination, img::emit_camera_calibration_yaml(out), error)) {
     BAGWIZ_LOG_ERROR(kLogger, "Could not write '%s': %s", destination.c_str(), error.c_str());
     return 1;
   }
