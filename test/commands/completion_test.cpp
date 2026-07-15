@@ -785,11 +785,13 @@ TEST(FlagCompletionTest, TfParentDashListsHelpFlags)
   EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "tf", "-"}), "--help\n-h\n");
 }
 
-// `tf tree` previously fell through to `return {}` — pin the new behavior.
+// `tf tree -` surfaces its own --topics/-t flag plus the implicit help flags,
+// sorted.
 TEST(FlagCompletionTest, TfTreeDashListsHelpFlags)
 {
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "tree", "-"}), "--help\n-h\n");
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "tree", "-"}),
+    "--help\n--topics\n-h\n-t\n");
 }
 
 // `bagwiz tf <TAB>` lists all subcommands, sorted.
@@ -922,60 +924,52 @@ TEST_F(CompletionTest, TfWalkToSlotListsFrameIds)
     "base_link\nlidar\nmap\nodom\n");
 }
 
-// `tf tree <bag> <TAB>` (the <topic> slot) lists only the bag's
-// tf2_msgs/msg/TFMessage topics — `/tf` and `/tf_static` here — excluding the
-// non-TF `/points` topic, sorted.
-TEST_F(CompletionTest, TfTreeTopicSlotListsOnlyTfMessageTopics)
+// `tf tree <input> -t <TAB>` offers only the bag's TFMessage topics -- not the
+// other topics the same fixture carries.
+TEST_F(CompletionTest, TfTreeTopicsFlagListsOnlyTfMessageTopics)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
   write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "tree", "~/mixed.mcap"}),
+    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "tree", "~/mixed.mcap", "-t"}),
     "/tf\n/tf_static\n");
 }
 
-// A typed prefix narrows the <topic> candidates to matching TF topics.
-TEST_F(CompletionTest, TfTreeTopicSlotRespectsPrefix)
+// A typed prefix narrows the candidates within the TF set. --topics is variadic,
+// so this also stands in for the second-value-slot case the old
+// TfTreeSecondTopicSlotRespectsPrefix covered.
+TEST_F(CompletionTest, TfTreeTopicsFlagRespectsPrefix)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
   write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "tree", "~/mixed.mcap", "/tf_"}),
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "tf", "tree", "~/mixed.mcap", "-t", "/tf_"}),
     "/tf_static\n");
 }
 
-// A bag with no tf2_msgs/msg/TFMessage topic yields no <topic> candidates, so
-// the shell's default file completion takes over (matches walk/traj behavior).
-TEST_F(CompletionTest, TfTreeTopicSlotEmptyWhenBagHasNoTf)
+// A bag with no tf2_msgs/msg/TFMessage topic yields no candidates, so the
+// shell's default file completion takes over (matches walk/traj behavior).
+TEST_F(CompletionTest, TfTreeTopicsFlagEmptyWhenBagHasNoTf)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
   write_mcap_fixture(tmp_dir_ / "no_tf.mcap");  // String + Int32, no TF
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "tree", "~/no_tf.mcap"}), "");
+    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "tree", "~/no_tf.mcap", "-t"}),
+    "");
 }
 
-// A flag in the input slot must not cause the tf-tree topic binding to call the
-// bag reader on a flag-shaped path; the binding's earlier-slot guard bails out
-// and produces no topic candidates.
-TEST_F(CompletionTest, TfTreeTopicSlotSuppressedWhenInputSlotIsFlag)
-{
-  const HomeEnvGuard home_guard(tmp_dir_);
-
-  write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
-
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "tree", "--unknown-flag"}), "");
-}
-
-// Completing the <input> slot itself (cursor on word 2, before the <topic> word)
-// must not trigger tf-tree topic completion; the cursor-position guard bails so
-// the shell's file completion handles the bag path.
+// Completing the <input> slot itself (cursor on word 2, before -t) must not
+// trigger tf-tree topic completion; the cursor-position guard bails so the
+// shell's file completion handles the bag path. This matters more now, not
+// less: with topics gone from the positionals, a bug that completed topics at
+// <input> would have nothing else to catch it.
 TEST_F(CompletionTest, TfTreeInputSlotDoesNotListTopics)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
@@ -986,33 +980,32 @@ TEST_F(CompletionTest, TfTreeInputSlotDoesNotListTopics)
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "tree", "~/mixed.mcap"}), "");
 }
 
-// A bag path that does not exist yields no <topic> candidates: the reader throws
-// and complete_tf_message_topics swallows it, so the shell's file completion
-// takes over instead of surfacing a misleading empty TF result.
-TEST_F(CompletionTest, TfTreeTopicSlotEmptyForMissingBag)
-{
-  const HomeEnvGuard home_guard(tmp_dir_);
-
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "tree", "~/missing.mcap"}), "");
-}
-
-// `tf tree` takes one-or-more topics, so the SECOND topic slot (and beyond) must
-// also complete TF topics — the variadic binding fires at every positional slot
-// from the first topic onward.
-TEST_F(CompletionTest, TfTreeSecondTopicSlotListsTfMessageTopics)
+// THE DISCRIMINATOR. Under the old positional binding (topic_word=3, variadic)
+// this slot offered the TF topics; under the flag binding it must offer nothing.
+TEST_F(CompletionTest, TfTreeBareSlotAfterInputOffersNoTopics)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
   write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "tree", "~/mixed.mcap", "/tf"}),
-    "/tf\n/tf_static\n");
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "tree", "~/mixed.mcap"}), "");
 }
 
-// A typed prefix narrows the candidates at a later topic slot too.
-TEST_F(CompletionTest, TfTreeSecondTopicSlotRespectsPrefix)
+// A bag path that does not exist yields no candidates: the reader throws and
+// complete_topics swallows it, so the shell's file completion takes over
+// instead of surfacing a misleading empty TF result.
+TEST_F(CompletionTest, TfTreeTopicsFlagEmptyForMissingBag)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "tree", "~/missing.mcap", "-t"}),
+    "");
+}
+
+// --topics is variadic, so a second and later value slot completes too.
+TEST_F(CompletionTest, TfTreeTopicsFlagCompletesEveryValueSlot)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
@@ -1020,8 +1013,8 @@ TEST_F(CompletionTest, TfTreeSecondTopicSlotRespectsPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "tf", "tree", "~/mixed.mcap", "/tf", "/tf_st"}),
-    "/tf_static\n");
+      {"bagwiz", "__complete", "6", "bagwiz", "tf", "tree", "~/mixed.mcap", "-t", "/tf"}),
+    "/tf\n/tf_static\n");
 }
 
 // Prefix narrowing still works once the flag candidate set is widened.

@@ -124,7 +124,10 @@ constexpr std::array<TopicArgBinding, 12> kTopicBindings{{
   {"walk", "", kFirstCommandArgWord, kSecondCommandArgWord, {}, false},
   {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord, kTrajDumpSupportedTypes, false},
   {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord, {}, false},
-  {"tf", "tree", kSecondCommandArgWord, kThirdCommandArgWord, kTfTreeSupportedTypes, true},
+  // `tf tree <input> [-t/--topics <topic>...]`: flag mode — the bag sits at
+  // <input>, TFMessage topics only, at every value slot since the flag is
+  // variadic. The flag is optional; omitting it merges every TF topic.
+  {"tf", "tree", kSecondCommandArgWord, 0, kTfTreeSupportedTypes, false, kTopicsFlags},
   // `topic drop|keep <input> -t/--topics <selector>...`: flag mode — the bag
   // sits at <input>, every topic (no type filter — these take selectors, which
   // may be globs), at every value slot since the flag is variadic.
@@ -916,6 +919,19 @@ std::vector<std::string> complete_tf_static(
   return {};
 }
 
+// `tf` has three subcommands: `tree`, `static` (itself a nested command group,
+// handled by complete_tf_static), and `walk`. At the subcommand slot (word 1)
+// the candidates are `static` / `tree` / `walk`.
+//
+//   tree: `tf`(0) `tree`(1) `<input>`(2) [-t|--topics <topic-or-selector>...]
+//   walk: `tf`(0) `walk`(1) `<input>`(2) `<from>`(3) `<to>`(4)
+//
+// `tree`'s -t/--topics value completion is handled earlier by
+// try_topic_completion via kTopicBindings (TFMessage topics only, at every
+// value slot since the flag is variadic and optional); here we surface only
+// `tree`'s own flags for any `-` word. `walk`'s <from>/<to> slots complete the
+// bag's TF frame ids merged from every TF topic (static + dynamic); <input> is
+// a path that falls through to the shell's file completion.
 std::vector<std::string> complete_tf(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -935,7 +951,10 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
   }
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
-    // `tree` and `walk` carry just the implicit help flags.
+    if (mode == "tree") {
+      return matching(with_help({"--topics", "-t"}), current);
+    }
+    // `walk` carries just the implicit help flags.
     return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
   }
 

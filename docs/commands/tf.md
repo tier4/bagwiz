@@ -13,24 +13,25 @@ ROS 1 `*.bag` inputs are not supported.
 
 ## `bagwiz tf tree`
 
-Merges one or more `tf2_msgs/msg/TFMessage` topics (`<topics>...`) into a single
-TF frame tree built from the union of their distinct parent→child edges. In the
-merged tree each edge is colored by whether it came from a **static**
-(`*tf_static`) or a **dynamic** topic. When the tree contains both kinds, a
-legend is printed and each child frame is colored and tagged `[S]` (static) or
-`[D]` (dynamic); when only one kind is present the tree is drawn plain and the
-header names the category, e.g. `═══ TF tree (static) ═══`.
+Merges one or more `tf2_msgs/msg/TFMessage` topics (`-t`/`--topics`) into a
+single TF frame tree built from the union of their distinct parent→child
+edges. In the merged tree each edge is colored by whether it came from a
+**static** (`*tf_static`) or a **dynamic** topic. When the tree contains both
+kinds, a legend is printed and each child frame is colored and tagged `[S]`
+(static) or `[D]` (dynamic); when only one kind is present the tree is drawn
+plain and the header names the category, e.g. `═══ TF tree (static) ═══`.
 
-`<topics>` accepts two reserved selectors in addition to literal topic names:
+`-t`/`--topics` accepts two reserved selectors in addition to literal topic
+names:
 
 - `static` — expands to **every** `*tf_static` topic in the bag.
 - `dynamic` — expands to every non-static TF topic in the bag.
 
 They compose with each other and with literal names. For example
-`tf tree bag dynamic /extra_tf` merges all dynamic TF topics plus `/extra_tf`,
-and `tf tree bag static` shows the merged static tree alone. (ROS topic names
-start with `/`, so the bare words `static` / `dynamic` never collide with a real
-topic.) When `<topics>` is omitted, bagwiz defaults to **every**
+`tf tree bag -t dynamic /extra_tf` merges all dynamic TF topics plus
+`/extra_tf`, and `tf tree bag -t static` shows the merged static tree alone.
+(ROS topic names start with `/`, so the bare words `static` / `dynamic` never
+collide with a real topic.) When `-t`/`--topics` is omitted, bagwiz defaults to **every**
 `tf2_msgs/msg/TFMessage` topic in the bag.
 
 Literal `<topic>` names support TAB completion: only `tf2_msgs/msg/TFMessage`
@@ -98,15 +99,20 @@ Colors are also omitted when stdout is not a TTY (same effect as `NO_COLOR` for 
 ### Usage
 
 ```text
-bagwiz tf tree <input> [<topic-or-selector>...]
+bagwiz tf tree <input> [-t <topic-or-selector>...]
 ```
 
 ### Positional arguments
 
-| Name     | Description                                                                                                                                                                                       |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `input`  | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).                                                                                                                           |
-| `topics` | Zero or more `tf2_msgs/msg/TFMessage` topics and/or the selectors `static` / `dynamic` (e.g. `/tf /tf_static`, `static`, `dynamic /extra_tf`). When omitted, all TF topics in the bag are merged. |
+| Name    | Description                                                             |
+| ------- | ----------------------------------------------------------------------- |
+| `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). |
+
+### Options
+
+| Flag                    | Description                                                                                                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-t`, `--topics <t>...` | Zero or more `tf2_msgs/msg/TFMessage` topics and/or the selectors `static` / `dynamic` (e.g. `/tf /tf_static`, `static`, `dynamic /extra_tf`). When omitted, all TF topics in the bag are merged. |
 
 ### Behavior
 
@@ -124,14 +130,32 @@ bagwiz tf tree <input> [<topic-or-selector>...]
 ### Examples
 
 ```bash
-bagwiz tf tree capture.mcap                  # merge every TF topic in the bag
-bagwiz tf tree capture.mcap static           # only the static (*tf_static) tree
-bagwiz tf tree capture.mcap dynamic          # only the dynamic tree
-bagwiz tf tree capture.mcap dynamic /extra_tf  # all dynamic topics + /extra_tf
-bagwiz tf tree capture.mcap /tf /tf_static   # explicit merge
+bagwiz tf tree capture.mcap                       # merge every TF topic in the bag
+bagwiz tf tree capture.mcap -t static             # only the static (*tf_static) tree
+bagwiz tf tree capture.mcap -t dynamic            # only the dynamic tree
+bagwiz tf tree capture.mcap -t dynamic /extra_tf  # all dynamic topics + /extra_tf
+bagwiz tf tree capture.mcap -t /tf /tf_static     # explicit merge
 ```
 
-Single-category output, e.g. `tf tree capture.mcap dynamic` (plain):
+### Migration: topics moved behind `-t`
+
+`<topics>` used to be a variadic positional. It is now `-t` / `--topics`,
+matching the rest of bagwiz, but it stays **optional** — omitting it still
+merges every TF topic, exactly as before:
+
+```bash
+bagwiz tf tree capture.mcap             # unchanged: still merges every TF topic
+bagwiz tf tree capture.mcap /tf         # before — now an error
+bagwiz tf tree capture.mcap -t /tf      # after
+```
+
+Unlike `topic drop`/`keep` (where `-t`/`--topics` is required), the old form
+here does **not** fail with a `--topics` message — CLI11 rejects the unexpected
+positional before `run()` sees anything: `The following argument was not
+expected: /tf`. It no longer silently falls back to merging every TF topic;
+the invocation is now rejected outright.
+
+Single-category output, e.g. `tf tree capture.mcap -t dynamic` (plain):
 
 ```text
 ═══ TF tree (dynamic) ═══
@@ -140,7 +164,7 @@ Single-category output, e.g. `tf tree capture.mcap dynamic` (plain):
     └── base_link
 ```
 
-Mixed output for `tf tree capture.mcap /tf /tf_static`, where `map → base_link`
+Mixed output for `tf tree capture.mcap -t /tf /tf_static`, where `map → base_link`
 is dynamic and the sensor mounts are static (on a TTY the names are also colored
 cyan/yellow):
 

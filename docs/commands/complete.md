@@ -151,8 +151,10 @@ source ~/.config/fish/completions/bagwiz.fish
     `--rm` and `--deep`; `topic drop -<TAB>` / `topic keep -<TAB>` surface
     `--output`/`-o`, `--overwrite`/`-w`, and `--topics`/`-t` (`topic rename
 -<TAB>` does not, since its `<src_topic>`/`<dst_topic>` are positional);
-    `tf static calc -<TAB>` also surfaces `--json`, and `tf static cp -<TAB>`
-    surfaces `--output`/`-o` and `-w`/`--overwrite`.
+    `tf tree -<TAB>` surfaces `--topics`/`-t` (the flag is optional there —
+    omitting it merges every TF topic); `tf static calc -<TAB>` also surfaces
+    `--json`, and `tf static cp -<TAB>` surfaces `--output`/`-o` and
+    `-w`/`--overwrite`.
     `tf static` is itself a command group, so `tf static <TAB>` completes its
     actions (`calc`, `cp`) and `tf static -<TAB>` lists just the help flags.
     `cam-info`, `check`, `generate`, `map`, `pcd`, and `topic` are likewise
@@ -182,6 +184,10 @@ source ~/.config/fish/completions/bagwiz.fish
 <input> -t/--topics <selector>...` — every topic in the bag (no type
     filter — these take selectors, which may be globs), offered at every value
     of the variadic run
+  - `bagwiz tf tree <input> [-t/--topics <topic>...]` — restricted to
+    `tf2_msgs/msg/TFMessage` topics (the only type `tf tree` can render),
+    offered at every value of the variadic run. The flag is optional; omitting
+    it merges every TF topic in the bag
 - Commands that take a `<topic>` positional argument complete it by opening
   `<input>` as a ROS 2 rosbag and listing topics with names that start with
   the current prefix. The currently-covered positions are:
@@ -192,9 +198,6 @@ source ~/.config/fish/completions/bagwiz.fish
     `geometry_msgs/msg/PoseWithCovarianceStamped`, `nav_msgs/msg/Odometry`);
     topics of any other type are omitted
   - `bagwiz traj join <input> <traj_file> <topic>`
-  - `bagwiz tf tree <input> <topic>...` — restricted to `tf2_msgs/msg/TFMessage`
-    topics (the only type `tf tree` can render) and offered at every topic slot,
-    since `tf tree` accepts one or more topics
   - `bagwiz topic rename <input> <src_topic> <dst_topic>` — every topic in the bag
     at the `<src_topic>` slot only; `<dst_topic>` is a new name with nothing to suggest
   - `bagwiz generate video <input> <image_topic> <output>` — restricted to the image
