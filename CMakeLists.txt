@@ -414,8 +414,8 @@ if(BAGWIZ_WITH_SLAM)
 
   target_sources(bagwiz PRIVATE
     src/core/slam/cloud_mapper.cpp
-    src/core/slam/warmup_recovery.cpp
-    src/core/slam/scan_match_recovery.cpp
+    src/core/slam/warmup_fill.cpp
+    src/core/slam/scan_match_fill.cpp
     src/core/slam/cuda_device.cpp
     src/core/slam/progress_bar.cpp
     src/commands/map.cpp
@@ -638,16 +638,16 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_slam_imu_sample_test test/core/slam/imu_sample_test.cpp)
   target_link_libraries(bagwiz_slam_imu_sample_test bagwiz_core)
 
-  # Backward-IMU-propagation math for the SLAM warmup-window recovery. Eigen-based
+  # Backward-IMU-propagation math for the SLAM warmup-window fill. Eigen-based
   # but GLIM-free, so it compiles the TU directly and pulls only Eigen (header-only)
   # — it needs no SLAM build and runs in the core test suite. The same TU is linked
   # into the `bagwiz` SLAM target above for production use.
   find_package(Eigen3 QUIET)
   if(Eigen3_FOUND)
-    ament_add_gtest(bagwiz_slam_warmup_recovery_test
-      test/core/slam/warmup_recovery_test.cpp
-      src/core/slam/warmup_recovery.cpp)
-    target_link_libraries(bagwiz_slam_warmup_recovery_test bagwiz_core Eigen3::Eigen)
+    ament_add_gtest(bagwiz_slam_warmup_fill_test
+      test/core/slam/warmup_fill_test.cpp
+      src/core/slam/warmup_fill.cpp)
+    target_link_libraries(bagwiz_slam_warmup_fill_test bagwiz_core Eigen3::Eigen)
   endif()
 
   ament_add_gtest(bagwiz_slam_gnss_sample_test test/core/slam/gnss_sample_test.cpp)
@@ -683,18 +683,18 @@ if(BUILD_TESTING)
     ament_add_gtest(bagwiz_slam_cloud_mapper_test
       test/core/slam/cloud_mapper_test.cpp
       src/core/slam/cloud_mapper.cpp
-      src/core/slam/warmup_recovery.cpp
-      src/core/slam/scan_match_recovery.cpp
+      src/core/slam/warmup_fill.cpp
+      src/core/slam/scan_match_fill.cpp
       src/core/slam/cuda_device.cpp)
     target_link_libraries(bagwiz_slam_cloud_mapper_test
       bagwiz_core glim::glim gtsam_points::gtsam_points gtsam)
 
     # gtsam_points-linked (GLIM-free) registration core for the scan-matching
-    # warmup/cooldown recovery. Compiles the same TU the bagwiz target links.
-    ament_add_gtest(bagwiz_slam_scan_match_recovery_test
-      test/core/slam/scan_match_recovery_test.cpp
-      src/core/slam/scan_match_recovery.cpp)
-    target_link_libraries(bagwiz_slam_scan_match_recovery_test
+    # warmup/cooldown fill. Compiles the same TU the bagwiz target links.
+    ament_add_gtest(bagwiz_slam_scan_match_fill_test
+      test/core/slam/scan_match_fill_test.cpp
+      src/core/slam/scan_match_fill.cpp)
+    target_link_libraries(bagwiz_slam_scan_match_fill_test
       bagwiz_core gtsam_points::gtsam_points gtsam)
 
     # GPU variant: only when CUDA SLAM is on. CI never sets BAGWIZ_WITH_SLAM_CUDA,
@@ -704,8 +704,8 @@ if(BUILD_TESTING)
       ament_add_gtest(bagwiz_slam_cloud_mapper_gpu_test
         test/core/slam/cloud_mapper_gpu_test.cpp
         src/core/slam/cloud_mapper.cpp
-        src/core/slam/warmup_recovery.cpp
-        src/core/slam/scan_match_recovery.cpp
+        src/core/slam/warmup_fill.cpp
+        src/core/slam/scan_match_fill.cpp
         src/core/slam/cuda_device.cpp
         src/core/slam/cloud_voxelize_gpu.cu)
       set_source_files_properties(src/core/slam/cloud_voxelize_gpu.cu PROPERTIES LANGUAGE CUDA)

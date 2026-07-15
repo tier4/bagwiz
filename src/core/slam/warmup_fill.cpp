@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/core/slam/warmup_recovery.hpp"
+#include "bagwiz/core/slam/warmup_fill.hpp"
 
 #include <algorithm>
 #include <cmath>

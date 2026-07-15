@@ -53,11 +53,11 @@ struct MapSlamArgs
   // Defaults match GLIM's stock 1.0 / 100.0. Require 0 < range_min < range_max.
   double range_min = 1.0;
   double range_max = 100.0;
-  // Inlier-fraction acceptance gate (0..1) for warmup/cooldown pose-recovery
-  // scan-matching. Higher = stricter (endpoints may stay unrecovered); lower =
-  // looser (a bad fit can degrade recovery). No effect when both recoveries are
-  // off. Default 0.7 matches the recovery scan-matcher's loose-init gate.
-  double recovery_min_inlier_fraction = 0.7;
+  // Inlier-fraction acceptance gate (0..1) for warmup/cooldown pose-fill
+  // scan-matching. Higher = stricter (endpoints may stay unfilled); lower =
+  // looser (a bad fit can degrade the fill). No effect when both fills are off.
+  // Default 0.7 matches the fill scan-matcher's loose-init gate.
+  double fill_min_inlier_fraction = 0.7;
   // Keyframes accumulated before GLIM finalizes a submap (GLIM max_num_keyframes).
   // Smaller = more, smaller submaps (finer loop-closure granularity, more
   // GNSS-covered submaps) at super-linearly more sub-mapping cost; larger = fewer,
@@ -74,25 +74,25 @@ struct MapSlamArgs
   // on an interactive terminal.
   bool no_progress = false;
 
-  // Recover poses for the initialization ("start") window. GLIM's odometry emits
+  // Fill in poses for the initialization ("start") window. GLIM's odometry emits
   // no frame over its opening window (the LiDAR-IMU init, ~1 s), leaving traj.tum
   // without samples there. When enabled, the pre-init scans are buffered and
-  // recovered by scan-matching each against the optimized map (works in LiDAR-only
+  // filled in by scan-matching each against the optimized map (works in LiDAR-only
   // mode too); with --imu the buffered IMU additionally seeds each registration's
   // initial guess and is the fallback when a registration fails its gate.
-  bool recover_start = true;
+  bool fill_start = true;
 
-  // Recover poses for the cooldown ("end") window — the symmetric counterpart of
-  // recover_start. The newest scans stay inside the odometry smoother window at
+  // Fill in poses for the cooldown ("end") window — the symmetric counterpart of
+  // fill_start. The newest scans stay inside the odometry smoother window at
   // end-of-sequence, so traj.tum otherwise stops one window short of the last
-  // input scan. When enabled, the trailing scans are buffered and recovered by
+  // input scan. When enabled, the trailing scans are buffered and filled in by
   // scan-matching each against the optimized map (LiDAR-only included); with --imu
   // the buffered IMU additionally seeds each initial guess and is the fallback.
-  bool recover_end = true;
+  bool fill_end = true;
 
   // Number of CPU threads for GLIM and trajectory endpoint (warmup/cooldown)
-  // recovery. A non-positive value falls back to each stage's default (GLIM
-  // preprocessor 4; recovery 1).
+  // fill. A non-positive value falls back to each stage's default (GLIM
+  // preprocessor 4; fill 1).
   int num_threads = 4;
 
   // SLAM backend selection: "auto" (default), "cpu", or "cuda".

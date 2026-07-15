@@ -1011,8 +1011,8 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //           [--backend <cpu|cuda|auto>] [--frame <frame_id>] [--imu <topic>]
 //           [--gnss <topic>] [--input-res <m>] [--min-range <m>] [--max-range <m>]
 //           [-t|--threads <N>] [--viewer] [-w|--overwrite]
-//           [--no-progress] [--no-warmup-recovery] [--no-cooldown-recovery]
-//           [--recovery-min-inliers <f>] [--submap-keyframes <N>]
+//           [--no-progress] [--no-warmup-fill] [--no-cooldown-fill]
+//           [--fill-min-inliers <f>] [--submap-keyframes <N>]
 //   viewer: `map`(0) `viewer`(1) `<map>`(2)
 //
 // At the action slot (word 1) the candidates are `slam` and `viewer` (or the
@@ -1048,9 +1048,9 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
   if (current.starts_with("-")) {
     return matching(
       with_help(
-        {"--backend", "--frame", "--gnss", "--imu", "--input-res", "--max-range", "--min-range",
-         "--no-cooldown-recovery", "--no-progress", "--no-warmup-recovery", "--overwrite",
-         "--recovery-min-inliers", "--submap-keyframes", "--threads", "--viewer", "-t", "-w"}),
+        {"--backend", "--fill-min-inliers", "--frame", "--gnss", "--imu", "--input-res",
+         "--max-range", "--min-range", "--no-cooldown-fill", "--no-progress", "--no-warmup-fill",
+         "--overwrite", "--submap-keyframes", "--threads", "--viewer", "-t", "-w"}),
       current);
   }
 

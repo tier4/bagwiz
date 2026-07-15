@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/core/slam/warmup_recovery.hpp"
+#include "bagwiz/core/slam/warmup_fill.hpp"
 
 #include <gtest/gtest.h>
 
@@ -66,7 +66,7 @@ std::vector<BackpropImu> make_forward_window(
   return window;
 }
 
-TEST(WarmupRecovery, StaticBoundaryStaysPut)
+TEST(WarmupFill, StaticBoundaryStaysPut)
 {
   BackpropBoundary boundary;
   boundary.stamp = 10.0;  // T_world_imu = I, v = 0
@@ -87,7 +87,7 @@ TEST(WarmupRecovery, StaticBoundaryStaysPut)
   EXPECT_LT(knots.front().stamp, knots.back().stamp);
 }
 
-TEST(WarmupRecovery, ConstantVelocityTranslatesBack)
+TEST(WarmupFill, ConstantVelocityTranslatesBack)
 {
   BackpropBoundary boundary;
   boundary.stamp = 5.0;
@@ -109,7 +109,7 @@ TEST(WarmupRecovery, ConstantVelocityTranslatesBack)
   EXPECT_LT(aa.angle(), 1e-9);
 }
 
-TEST(WarmupRecovery, ConstantYawRateRotatesBack)
+TEST(WarmupFill, ConstantYawRateRotatesBack)
 {
   const double wz = 0.5;  // rad/s about +z
   BackpropBoundary boundary;
@@ -132,7 +132,7 @@ TEST(WarmupRecovery, ConstantYawRateRotatesBack)
   EXPECT_LT(first.T_world_imu.translation().norm(), 1e-6);
 }
 
-TEST(WarmupRecovery, EmptyWindowReturnsBoundaryOnly)
+TEST(WarmupFill, EmptyWindowReturnsBoundaryOnly)
 {
   BackpropBoundary boundary;
   boundary.stamp = 1.0;
@@ -145,7 +145,7 @@ TEST(WarmupRecovery, EmptyWindowReturnsBoundaryOnly)
     (knots.front().T_world_imu.translation() - Eigen::Vector3d(1, 2, 3)).norm(), 0.0, 1e-12);
 }
 
-TEST(WarmupRecovery, SamplesAtOrAfterBoundaryAreIgnored)
+TEST(WarmupFill, SamplesAtOrAfterBoundaryAreIgnored)
 {
   BackpropBoundary boundary;
   boundary.stamp = 2.0;
@@ -163,7 +163,7 @@ TEST(WarmupRecovery, SamplesAtOrAfterBoundaryAreIgnored)
   EXPECT_DOUBLE_EQ(knots.back().stamp, 2.0);
 }
 
-TEST(WarmupRecovery, ForwardStaticBoundaryStaysPut)
+TEST(WarmupFill, ForwardStaticBoundaryStaysPut)
 {
   BackpropBoundary boundary;
   boundary.stamp = 10.0;  // T_world_imu = I, v = 0
@@ -185,7 +185,7 @@ TEST(WarmupRecovery, ForwardStaticBoundaryStaysPut)
   EXPECT_GT(knots.back().stamp, knots.front().stamp);
 }
 
-TEST(WarmupRecovery, ForwardConstantVelocityTranslatesForward)
+TEST(WarmupFill, ForwardConstantVelocityTranslatesForward)
 {
   BackpropBoundary boundary;
   boundary.stamp = 5.0;
@@ -208,7 +208,7 @@ TEST(WarmupRecovery, ForwardConstantVelocityTranslatesForward)
   EXPECT_LT(aa.angle(), 1e-9);
 }
 
-TEST(WarmupRecovery, ForwardConstantYawRateRotatesForward)
+TEST(WarmupFill, ForwardConstantYawRateRotatesForward)
 {
   const double wz = 0.5;  // rad/s about +z
   BackpropBoundary boundary;
@@ -231,7 +231,7 @@ TEST(WarmupRecovery, ForwardConstantYawRateRotatesForward)
   EXPECT_LT(last.T_world_imu.translation().norm(), 1e-6);
 }
 
-TEST(WarmupRecovery, ForwardEmptyWindowReturnsBoundaryOnly)
+TEST(WarmupFill, ForwardEmptyWindowReturnsBoundaryOnly)
 {
   BackpropBoundary boundary;
   boundary.stamp = 1.0;
@@ -244,7 +244,7 @@ TEST(WarmupRecovery, ForwardEmptyWindowReturnsBoundaryOnly)
     (knots.front().T_world_imu.translation() - Eigen::Vector3d(1, 2, 3)).norm(), 0.0, 1e-12);
 }
 
-TEST(WarmupRecovery, ForwardSamplesAtOrBeforeBoundaryAreIgnored)
+TEST(WarmupFill, ForwardSamplesAtOrBeforeBoundaryAreIgnored)
 {
   BackpropBoundary boundary;
   boundary.stamp = 2.0;
@@ -262,7 +262,7 @@ TEST(WarmupRecovery, ForwardSamplesAtOrBeforeBoundaryAreIgnored)
   EXPECT_DOUBLE_EQ(knots.front().stamp, 2.0);
 }
 
-TEST(WarmupRecovery, InterpolatePoseWithinSpan)
+TEST(WarmupFill, InterpolatePoseWithinSpan)
 {
   std::vector<TimedPose> knots(3);
   knots[0].stamp = 0.0;
@@ -284,7 +284,7 @@ TEST(WarmupRecovery, InterpolatePoseWithinSpan)
   EXPECT_NEAR(at_front->translation().x(), 0.0, 1e-9);
 }
 
-TEST(WarmupRecovery, InterpolatePoseOutsideSpanIsNullopt)
+TEST(WarmupFill, InterpolatePoseOutsideSpanIsNullopt)
 {
   std::vector<TimedPose> knots(2);
   knots[0].stamp = 0.0;

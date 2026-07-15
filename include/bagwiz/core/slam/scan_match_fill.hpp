@@ -6,8 +6,8 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#ifndef BAGWIZ__CORE__SLAM__SCAN_MATCH_RECOVERY_HPP_
-#define BAGWIZ__CORE__SLAM__SCAN_MATCH_RECOVERY_HPP_
+#ifndef BAGWIZ__CORE__SLAM__SCAN_MATCH_FILL_HPP_
+#define BAGWIZ__CORE__SLAM__SCAN_MATCH_FILL_HPP_
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -20,10 +20,10 @@
 // GLIM leaves two windows unestimated: the LiDAR-IMU initialization window at
 // the START (odometry stays silent until IMU init converges) and the smoother
 // window at the END (the newest scans never marginalize into a finalized
-// submap). warmup_recovery.hpp reconstructs those poses by integrating the IMU
+// submap). warmup_fill.hpp reconstructs those poses by integrating the IMU
 // away from the boundary frame, but that path (a) needs an IMU and (b) cannot
 // cover a scan that falls outside the integrated IMU span (e.g. the very first
-// scan, whose stamp precedes the first IMU sample). This module recovers the
+// scan, whose stamp precedes the first IMU sample). This module fills in the
 // same poses geometrically instead: it registers each unestimated scan against
 // a target built from the already-optimized neighboring frames, so it needs no
 // IMU and leaves no gap.
@@ -70,16 +70,16 @@ struct ScanMatchResult
 // points grown via insert_target(); register_scan() aligns a LiDAR-frame source
 // scan to it without mutating the target (the caller decides, from the result's
 // gate, whether to then insert_target the accepted scan and chain onward).
-class ScanMatchRecoverer
+class ScanMatchFiller
 {
 public:
-  explicit ScanMatchRecoverer(ScanMatchParams params = {});
-  ~ScanMatchRecoverer();
+  explicit ScanMatchFiller(ScanMatchParams params = {});
+  ~ScanMatchFiller();
 
-  ScanMatchRecoverer(const ScanMatchRecoverer &) = delete;
-  ScanMatchRecoverer & operator=(const ScanMatchRecoverer &) = delete;
-  ScanMatchRecoverer(ScanMatchRecoverer &&) noexcept;
-  ScanMatchRecoverer & operator=(ScanMatchRecoverer &&) noexcept;
+  ScanMatchFiller(const ScanMatchFiller &) = delete;
+  ScanMatchFiller & operator=(const ScanMatchFiller &) = delete;
+  ScanMatchFiller(ScanMatchFiller &&) noexcept;
+  ScanMatchFiller & operator=(ScanMatchFiller &&) noexcept;
 
   // Add already-optimized world-frame points to the registration target.
   // Points carry per-point covariances estimated from their own neighborhood
@@ -105,4 +105,4 @@ private:
 
 }  // namespace bagwiz::core::slam
 
-#endif  // BAGWIZ__CORE__SLAM__SCAN_MATCH_RECOVERY_HPP_
+#endif  // BAGWIZ__CORE__SLAM__SCAN_MATCH_FILL_HPP_
