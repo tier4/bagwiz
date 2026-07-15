@@ -114,10 +114,10 @@ echo "  median wall: ${A}s"
 DROP_OUT="$OUTDIR/drop.mcap"
 echo
 echo "===== [B] FULL REWRITE  (topic drop $TOPIC -o) ====="
-B=$(median_wall "$BIN topic drop '$BAG' '$TOPIC' -o '$DROP_OUT' --overwrite")
+B=$(median_wall "$BIN topic drop '$BAG' -t '$TOPIC' -o '$DROP_OUT' --overwrite")
 echo "  median wall: ${B}s"
-profile_run "$BIN topic drop '$BAG' '$TOPIC' -o '$DROP_OUT' --overwrite"
-resource_run "$BIN topic drop '$BAG' '$TOPIC' -o '$DROP_OUT' --overwrite"
+profile_run "$BIN topic drop '$BAG' -t '$TOPIC' -o '$DROP_OUT' --overwrite"
+resource_run "$BIN topic drop '$BAG' -t '$TOPIC' -o '$DROP_OUT' --overwrite"
 outbytes=$(stat -c %s "$DROP_OUT" 2>/dev/null || echo 0)
 echo "  output: $(du -h "$DROP_OUT" 2>/dev/null | cut -f1) ($outbytes bytes, uncompressed)  expansion=$(awk -v i="$inbytes" -v o="$outbytes" 'BEGIN{if(i>0)printf "%.2fx",o/i; else print "n/a"}')"
 
@@ -129,11 +129,11 @@ echo "===== [B'] BACKEND COMPARISON  (full rewrite per BAGWIZ_BACKEND) ====="
 declare -A BK_WALL BK_MD5
 for bk in sequential pipelined; do
     BK_OUT="$OUTDIR/drop.$bk.mcap"
-    BK_WALL[$bk]=$(median_wall "env BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' '$TOPIC' -o '$BK_OUT' --overwrite")
+    BK_WALL[$bk]=$(median_wall "env BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' -t '$TOPIC' -o '$BK_OUT' --overwrite")
     BK_MD5[$bk]=$(md5sum "$BK_OUT" 2>/dev/null | awk '{print $1}')
     echo "  --- $bk: median wall ${BK_WALL[$bk]}s   md5 ${BK_MD5[$bk]}"
-    profile_run "env BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' '$TOPIC' -o '$BK_OUT' --overwrite"
-    resource_run "env BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' '$TOPIC' -o '$BK_OUT' --overwrite"
+    profile_run "env BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' -t '$TOPIC' -o '$BK_OUT' --overwrite"
+    resource_run "env BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' -t '$TOPIC' -o '$BK_OUT' --overwrite"
 done
 if [ -n "${BK_MD5[sequential]}" ] && [ "${BK_MD5[sequential]}" = "${BK_MD5[pipelined]}" ]; then
     echo "  byte-identical output across backends (md5 match): OK"
@@ -148,9 +148,9 @@ rm -f "$OUTDIR/drop.sequential.mcap" "$OUTDIR/drop.pipelined.mcap"
 KEEP_OUT="$OUTDIR/keep.mcap"
 echo
 echo "===== [C] SPARSE EXTRACT  (topic keep $TOPIC -o) ====="
-C=$(median_wall "$BIN topic keep '$BAG' '$TOPIC' -o '$KEEP_OUT' --overwrite")
+C=$(median_wall "$BIN topic keep '$BAG' -t '$TOPIC' -o '$KEEP_OUT' --overwrite")
 echo "  median wall: ${C}s"
-profile_run "$BIN topic keep '$BAG' '$TOPIC' -o '$KEEP_OUT' --overwrite"
+profile_run "$BIN topic keep '$BAG' -t '$TOPIC' -o '$KEEP_OUT' --overwrite"
 
 echo
 echo "===== DECOMPOSITION (wall-clock cross-check) ====="
