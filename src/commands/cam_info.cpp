@@ -90,7 +90,7 @@ private:
       ->check(CLI::ExistingFile);
     sub
       ->add_option(
-        "topics", replace_args_.topics,
+        "-t,--topics", replace_args_.topics,
         "One or more CameraInfo topics to rewrite (each type must be "
         "sensor_msgs/msg/CameraInfo). The same calibration YAML is applied to every listed topic.")
       ->required();

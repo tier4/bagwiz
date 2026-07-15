@@ -146,8 +146,9 @@ source ~/.config/fish/completions/bagwiz.fish
     `pcd concat`, `pcd undistort`, `tf static calc`, `tf static cp`,
     `tf tree`, `tf walk`, `topic drop`, `topic keep`, `topic rename`,
     `traj dump`, `traj join`);
-    `cam-info replace -<TAB>` surfaces `--frame-id`, `--output`/`-o`, and
-    `-w`/`--overwrite`; `check broken -<TAB>` surfaces `--rm` and `--deep`;
+    `cam-info replace -<TAB>` surfaces `--frame-id`, `--output`/`-o`,
+    `--topics`/`-t`, and `-w`/`--overwrite`; `check broken -<TAB>` surfaces
+    `--rm` and `--deep`;
     `tf static calc -<TAB>` also surfaces `--json`, and `tf static cp -<TAB>`
     surfaces `--output`/`-o` and `-w`/`--overwrite`.
     `tf static` is itself a command group, so `tf static <TAB>` completes its
@@ -172,6 +173,9 @@ source ~/.config/fish/completions/bagwiz.fish
     half is completed to the same `sensor_msgs/msg/PointCloud2` topics (as
     `<topic>=`) until the value word contains `=`; the `<val>` duration has
     nothing to suggest
+  - `bagwiz cam-info replace <input> <calib_yaml> -t/--topics <topic>...` —
+    `sensor_msgs/msg/CameraInfo` topics (the only type `cam-info replace`
+    rewrites), offered at every value of the variadic run
 - Commands that take a `<topic>` positional argument complete it by opening
   `<input>` as a ROS 2 rosbag and listing topics with names that start with
   the current prefix. The currently-covered positions are:
@@ -195,11 +199,6 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz map slam <input> <pcd_topic> <output_root>` — restricted to
     `sensor_msgs/msg/PointCloud2` topics (the only type `map slam` ingests);
     topics of any other type are omitted
-  - `bagwiz cam-info replace <input> <calib_yaml> <topic>...` — restricted to
-    `sensor_msgs/msg/CameraInfo` topics (the only type `cam-info replace`
-    rewrites); topics of any other type are omitted. The `<topic>...` operand is
-    variadic, so every topic slot (the first and each subsequent one) is
-    completed
 
   Paths beginning with `~/` are expanded against the current user's home
   directory before opening the bag. Topic completion is suppressed when the

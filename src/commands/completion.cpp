@@ -140,14 +140,10 @@ constexpr std::array<TopicArgBinding, 12> kTopicBindings{{
   // slot from the bag's PointCloud2 topics. <input> and <output_root> are paths
   // that fall through to the shell's file completion.
   {"map", "slam", kSecondCommandArgWord, kThirdCommandArgWord, kPointCloud2Type, false},
-  // `cam-info replace <input> <calib_yaml> <topic>...`: complete each <topic>
-  // slot from the bag's CameraInfo topics (the only type `cam-info replace`
-  // rewrites). <input> falls through to file completion, and <calib_yaml> — the
-  // word before the first <topic> — is a YAML path that also falls through; the
-  // binding's earlier-slot flag guard skips both. The first topic sits at word 4
-  // because the `replace` action verb shifts every positional one slot right; the
-  // binding is variadic, so completion fires at word 4 and every later slot.
-  {"cam-info", "replace", kSecondCommandArgWord, kFourthCommandArgWord, kCameraInfoType, true},
+  // `cam-info replace <input> <calib_yaml> -t/--topics <topic>...`: flag mode —
+  // the bag sits at <input>, CameraInfo topics only, at every value slot since
+  // the flag is variadic.
+  {"cam-info", "replace", kSecondCommandArgWord, 0, kCameraInfoType, false, kTopicsFlags},
   // `cam-info dump <input> <topic>`: complete the single <topic> slot from the
   // bag's CameraInfo topics (the only type it can dump). <topic> sits at word 3
   // rather than `replace`'s word 4 because `dump` has no <calib_yaml> shifting
@@ -1196,17 +1192,17 @@ std::vector<std::string> complete_check(const CompletionRequest & request)
 // word).
 //
 // All three subcommands' topic values are completed earlier by
-// try_topic_completion via kTopicBindings — `replace` and `dump` in positional
-// mode, `recompute-p`'s `-t/--topics` in flag mode — so nothing in this
-// function completes a topic value.
+// try_topic_completion via kTopicBindings — `dump` in positional mode,
+// `replace`'s and `recompute-p`'s `-t/--topics` in flag mode — so nothing in
+// this function completes a topic value.
 //
 // <input> and <calib_yaml> are paths that fall through to the shell's file
 // completion. `--frame-id`'s value is a free-form header override with nothing
 // to suggest, `-o`/`--output`'s is an output path, and `-a`/`--alpha`'s is a
 // free number in [0, 1], so none of those get value completion.
 //
-//   replace:     `cam-info`(0) `replace`(1) `<input>`(2) `<calib_yaml>`(3) `<topic>...`(4+)
-//                [--frame-id <id>] [-o <out>] [-w|--overwrite]
+//   replace:     `cam-info`(0) `replace`(1) `<input>`(2) `<calib_yaml>`(3)
+//                -t|--topics <topic>... [--frame-id <id>] [-o <out>] [-w|--overwrite]
 //   recompute-p: `cam-info`(0) `recompute-p`(1) `<input>`(2)
 //                [-t|--topics <topic>...] [-a|--alpha <a>] [-o <out>] [-w|--overwrite]
 //   dump:        `cam-info`(0) `dump`(1) `<input>`(2) `<topic>`(3)
@@ -1228,7 +1224,9 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     if (sub == "replace") {
-      return matching(with_help({"--frame-id", "--output", "--overwrite", "-o", "-w"}), current);
+      return matching(
+        with_help({"--frame-id", "--output", "--overwrite", "--topics", "-o", "-t", "-w"}),
+        current);
     }
     if (sub == "recompute-p") {
       return matching(

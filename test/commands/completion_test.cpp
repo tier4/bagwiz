@@ -1679,14 +1679,72 @@ TEST(FlagCompletionTest, CamInfoReplaceDashListsReplaceFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "cam-info", "replace", "-"}),
-    "--frame-id\n--help\n--output\n--overwrite\n-h\n-o\n-w\n");
+    "--frame-id\n--help\n--output\n--overwrite\n--topics\n-h\n-o\n-t\n-w\n");
 }
 
-// `cam-info replace <input> <calib_yaml> <TAB>` (the <topic> slot) lists only the
-// bag's sensor_msgs/msg/CameraInfo topics, excluding the image and PointCloud2
-// topics. The <calib_yaml> word is a placeholder path; only topic metadata drives
-// completion.
-TEST_F(CompletionTest, CamInfoReplaceTopicSlotListsOnlyCameraInfoTopics)
+// `cam-info replace <input> <calib_yaml> -t <TAB>` offers only the bag's
+// CameraInfo topics -- not the CompressedImage or PointCloud2 topics the same
+// fixture carries.
+TEST_F(CompletionTest, CamInfoReplaceTopicsFlagListsOnlyCameraInfoTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "replace", "~/cameras.mcap", "calib.yaml",
+       "-t"}),
+    "/cam/camera_info\n");
+}
+
+// The long form completes identically.
+TEST_F(CompletionTest, CamInfoReplaceLongTopicsFlagCompletes)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "replace", "~/cameras.mcap", "calib.yaml",
+       "--topics"}),
+    "/cam/camera_info\n");
+}
+
+// --topics is variadic, so a second and later value slot completes too.
+TEST_F(CompletionTest, CamInfoReplaceTopicsFlagCompletesEveryValueSlot)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "7", "bagwiz", "cam-info", "replace", "~/cameras.mcap", "calib.yaml",
+       "-t", "/cam/camera_info"}),
+    "/cam/camera_info\n");
+}
+
+// The <calib_yaml> slot is a path, not a topic list: it must not offer topics
+// now that they are no longer positional there.
+TEST_F(CompletionTest, CamInfoReplaceCalibYamlSlotOffersNoTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "4", "bagwiz", "cam-info", "replace", "~/cameras.mcap"}),
+    "");
+}
+
+// THE DISCRIMINATOR. Under the old positional binding (topic_word=4, variadic)
+// this slot offered the CameraInfo topics; under the flag binding it must offer
+// nothing. Without it, the -t tests above pass under BOTH bindings -- they only
+// prove "some binding exists", not that the positional slot is gone.
+TEST_F(CompletionTest, CamInfoReplaceBareSlotAfterCalibYamlOffersNoTopics)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
@@ -1696,39 +1754,7 @@ TEST_F(CompletionTest, CamInfoReplaceTopicSlotListsOnlyCameraInfoTopics)
     run_completion(
       {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "replace", "~/cameras.mcap",
        "calib.yaml"}),
-    "/cam/camera_info\n");
-}
-
-// A flag in the input slot must not cause the topic binding to call the bag
-// reader on a flag-shaped path; the binding's earlier-slot guard bails out.
-TEST_F(CompletionTest, CamInfoReplaceTopicSlotSuppressedWhenInputSlotIsFlag)
-{
-  const HomeEnvGuard home_guard(tmp_dir_);
-
-  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
-
-  EXPECT_EQ(
-    run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "replace", "--unknown-flag",
-       "calib.yaml"}),
     "");
-}
-
-// `cam-info replace` takes one-or-more <topic>... operands, so completion fires
-// not only at the first <topic> slot but at every later positional slot too. With
-// a first topic already typed (word 6), the next slot still offers the bag's
-// CameraInfo topics.
-TEST_F(CompletionTest, CamInfoReplaceTopicSlotIsVariadic)
-{
-  const HomeEnvGuard home_guard(tmp_dir_);
-
-  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
-
-  EXPECT_EQ(
-    run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "replace", "~/cameras.mcap", "calib.yaml",
-       "/cam/camera_info"}),
-    "/cam/camera_info\n");
 }
 
 // `cam-info dump <input> <TAB>` offers only the bag's CameraInfo topics -- not
