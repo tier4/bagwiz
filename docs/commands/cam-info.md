@@ -342,6 +342,15 @@ errors:
 
 Use [`cam-info dump`](#bagwiz-cam-info-dump) for the first.
 
+The bare form above is safe: `calib.yaml` didn't exist as a directory bag before,
+so it errors rather than writing anything. A scripted re-run typically adds
+`-w`/`--overwrite`, though — and under `-w`, `prepare_output_path()` removes the
+existing entry at `-o` before writing (`std::filesystem::remove_all`, regardless
+of whether it's a file or a directory). So `recompute-p drive.mcap -t /cam -o
+calib.yaml -w` **deletes the existing `calib.yaml` calibration** and replaces it
+with a directory bag. Re-check any script that re-runs `recompute-p` with `-w`
+against a `.yaml` path.
+
 ### Notes
 
 - **YAML mode is a re-emit, not an edit.** Values are preserved (including

@@ -87,6 +87,23 @@ std::vector<std::byte> serialize_camera_info(const sensor_msgs::msg::CameraInfo 
   return out;
 }
 
+sensor_msgs::msg::CameraInfo deserialize_camera_info(std::span<const std::byte> bytes)
+{
+  auto intro = bagwiz::core::load_introspection(kCameraInfoType);
+  EXPECT_TRUE(intro.ok()) << intro.error;
+
+  rmw_serialized_message_t view = rmw_get_zero_initialized_serialized_message();
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)
+  view.buffer = const_cast<std::uint8_t *>(reinterpret_cast<const std::uint8_t *>(bytes.data()));
+  view.buffer_length = bytes.size();
+  view.buffer_capacity = bytes.size();
+  view.allocator = rcutils_get_default_allocator();
+
+  sensor_msgs::msg::CameraInfo msg;
+  EXPECT_EQ(rmw_deserialize(&view, intro.typesupport, &msg), RMW_RET_OK);
+  return msg;
+}
+
 sensor_msgs::msg::CameraInfo make_original(std::int32_t sec, const std::string & frame_id)
 {
   sensor_msgs::msg::CameraInfo msg;
@@ -176,6 +193,26 @@ protected:
   {
     std::ifstream in(path, std::ios::binary);
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  }
+
+  std::vector<sensor_msgs::msg::CameraInfo> read_topic(
+    const std::filesystem::path & bag, const std::string & topic)
+  {
+    auto reader = bagwiz::io::open_read(bag);
+    reader->populate_schemas();
+    bagwiz::io::ReadFilter filter;
+    filter.topics = {topic};
+    reader->set_filter(filter);
+
+    std::vector<sensor_msgs::msg::CameraInfo> out;
+    bagwiz::io::RawMessage raw;
+    while (reader->next(raw)) {
+      if (raw.topic->name != topic) {
+        continue;
+      }
+      out.push_back(deserialize_camera_info(raw.payload));
+    }
+    return out;
   }
 
   std::filesystem::path tmp_dir_;
@@ -276,6 +313,16 @@ TEST_F(CamInfoDumpTest, LeavesTheBagUnmodified)
   ASSERT_EQ(run_cam_info_dump(args), 0);
 
   EXPECT_EQ(std::filesystem::file_size(input_), before);
+
+  // File size alone is a coarse proxy -- a rewrite that happened to preserve
+  // size would still pass it. Read the calibration back too and confirm p is
+  // still the bag's original identity, not recomputed (that's recompute-p's
+  // job, not dump's).
+  const auto msgs = read_topic(input_, "/camera/camera_info");
+  ASSERT_EQ(msgs.size(), 2U);
+  for (std::size_t i = 0; i < 12; ++i) {
+    EXPECT_DOUBLE_EQ(msgs[0].p[i], kBagP[i]) << "p[" << i << "]";
+  }
 }
 
 TEST_F(CamInfoDumpTest, RejectsMissingTopic)

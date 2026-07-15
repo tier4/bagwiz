@@ -156,7 +156,7 @@ int run_cam_info_dump(const CamInfoDumpArgs & args)
     // <topic> > calib.yaml` is pipe-clean. See core/logging.hpp.
     fmt::print(stdout, "{}", yaml);
     BAGWIZ_LOG_INFO(
-      kLogger, "cam-info dump: wrote '%s' from %s to stdout (%" PRIu64 " message(s) read).",
+      kLogger, "cam-info dump: wrote '%s' from '%s' to stdout (%" PRIu64 " message(s) read).",
       args.topic.c_str(), args.input_path.string().c_str(), count);
     return 0;
   }

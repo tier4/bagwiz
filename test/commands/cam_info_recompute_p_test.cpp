@@ -568,6 +568,33 @@ TEST_F(CamInfoRecomputePTest, BagModeConvertsWhenOutputExtensionNamesAFormat)
   ASSERT_EQ(msgs.size(), 2U);
 }
 
+// -o names where the result goes, not what it is: a bag input still gets a bag
+// output even when -o is named "calib.yaml" -- this is the documented breaking
+// change from the old export-by-extension behavior. See "Migration from the
+// old -o behavior" in docs/commands/cam-info.md; use `cam-info dump` to
+// actually export a calibration YAML from a bag.
+TEST_F(CamInfoRecomputePTest, BagModeWritesABagEvenWhenOutputIsNamedYaml)
+{
+  write_input_bag(input_);
+  const auto out = tmp_dir_ / "calib.yaml";
+
+  CamInfoRecomputePArgs args;
+  args.input_path = input_;
+  args.topics = {"/camera/camera_info"};
+  args.output_path = out;
+  ASSERT_EQ(run_cam_info_recompute_p(args), 0);
+
+  // A directory bag named "calib.yaml", not a calibration YAML.
+  ASSERT_TRUE(std::filesystem::is_directory(out));
+  EXPECT_EQ(bagwiz::io::detect_format(out), bagwiz::io::Format::Mcap);
+  const auto want = expected_p(0.0);
+  const auto msgs = read_topic(out, "/camera/camera_info");
+  ASSERT_EQ(msgs.size(), 2U);
+  for (std::size_t i = 0; i < 12; ++i) {
+    EXPECT_NEAR(msgs[0].p[i], want[i], 1e-9) << "p[" << i << "]";
+  }
+}
+
 TEST_F(CamInfoRecomputePTest, BagModeLeavesInputIntactWhenValidationFails)
 {
   write_input_bag(input_);
