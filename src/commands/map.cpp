@@ -89,7 +89,7 @@ private:
       "and curb drift. The antenna lever-arm is resolved from the bag's static TF (cloud "
       "<- NavSatFix frame_id) and removed (a missing TF only warns). Each prior is "
       "weighted by the fix's reported position covariance (falling back to a fixed "
-      "precision when unknown). Requires global mapping.");
+      "precision when unknown).");
     sub->add_option(
       "--frame", slam_args_.output_frame,
       "Output trajectory frame. Defaults to the PointCloud2 topic's frame_id; a "
