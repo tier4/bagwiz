@@ -75,8 +75,8 @@ slam::LidarScan make_room_scan_with_intensity(std::int64_t stamp_ns, float inten
 }
 
 // finish() reports its wall-clock breakdown (global optimization / endpoint
-// recovery / export fill) so the command layer can log where finalization time
-// went — on LiDAR-only runs the scan-matching endpoint recovery, not the iSAM2
+// window fill / export fill) so the command layer can log where finalization time
+// went — on LiDAR-only runs the scan-matching endpoint fill, not the iSAM2
 // update, dominates. Fields must be populated: non-negative everywhere, and a
 // run that exports points spends measurable time in the export fill.
 TEST(CloudMapper, FinishReportsTimingBreakdown)
@@ -93,7 +93,7 @@ TEST(CloudMapper, FinishReportsTimingBreakdown)
 
   ASSERT_FALSE(map.points.empty());
   EXPECT_GE(map.optimize_seconds, 0.0);
-  EXPECT_GE(map.recovery_seconds, 0.0);
+  EXPECT_GE(map.window_fill_seconds, 0.0);
   EXPECT_GT(map.export_seconds, 0.0);
 }
 

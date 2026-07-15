@@ -89,7 +89,7 @@ private:
       "and curb drift. The antenna lever-arm is resolved from the bag's static TF (cloud "
       "<- NavSatFix frame_id) and removed (a missing TF only warns). Each prior is "
       "weighted by the fix's reported position covariance (falling back to a fixed "
-      "precision when unknown). Requires global mapping.");
+      "precision when unknown).");
     sub->add_option(
       "--frame", slam_args_.output_frame,
       "Output trajectory frame. Defaults to the PointCloud2 topic's frame_id; a "
@@ -118,10 +118,10 @@ private:
       ->check(CLI::PositiveNumber);
     sub
       ->add_option(
-        "--recovery-min-inliers", slam_args_.recovery_min_inlier_fraction,
-        "Inlier-fraction acceptance gate (0..1, default 0.7) for warmup/cooldown pose-recovery "
-        "scan-matching. Higher = stricter (endpoints may stay unrecovered); lower = looser (a bad "
-        "fit can degrade recovery). No effect when both recoveries are disabled.")
+        "--fill-min-inliers", slam_args_.fill_min_inlier_fraction,
+        "Inlier-fraction acceptance gate (0..1, default 0.7) for warmup/cooldown pose-fill "
+        "scan-matching. Higher = stricter (endpoints may stay unfilled); lower = looser (a bad "
+        "fit can degrade the fill). No effect when both fills are disabled.")
       ->check(CLI::Range(0.0, 1.0));
     sub
       ->add_option(
@@ -144,28 +144,28 @@ private:
       "terminal or NO_COLOR is set, so this is only needed to silence them interactively.");
 
     sub->add_flag(
-      "!--no-warmup-recovery", slam_args_.recover_start,
-      "Disable initialization-window ('start') pose recovery (default on). GLIM's odometry emits "
+      "!--no-warmup-fill", slam_args_.fill_start,
+      "Disable initialization-window ('start') pose fill (default on). GLIM's odometry emits "
       "no "
       "pose over its opening window (the LiDAR-IMU init, ~1 s), so traj.tum otherwise has no "
-      "samples there. By default those pre-init scans are buffered and recovered by scan-matching "
+      "samples there. By default those pre-init scans are buffered and filled in by scan-matching "
       "each against the optimized map (so it works in LiDAR-only mode too); with --imu the "
       "buffered "
       "IMU additionally seeds each registration's initial guess and is the fallback if a "
       "registration fails. Affects traj.tum's opening window only.");
     sub->add_flag(
-      "!--no-cooldown-recovery", slam_args_.recover_end,
-      "Disable cooldown-window ('end') pose recovery (default on) — the symmetric counterpart of "
-      "--no-warmup-recovery. The newest scans stay inside the odometry smoother window at "
+      "!--no-cooldown-fill", slam_args_.fill_end,
+      "Disable cooldown-window ('end') pose fill (default on) — the symmetric counterpart of "
+      "--no-warmup-fill. The newest scans stay inside the odometry smoother window at "
       "end-of-sequence, so traj.tum otherwise stops one window short of the last input scan. By "
-      "default those trailing scans are buffered and recovered by scan-matching each against the "
+      "default those trailing scans are buffered and filled in by scan-matching each against the "
       "optimized map (LiDAR-only included); with --imu the buffered IMU additionally seeds each "
       "initial guess and is the fallback. Affects traj.tum's closing window only.");
     const int max_threads = static_cast<int>(std::thread::hardware_concurrency());
     sub
       ->add_option(
         "-j,--threads", slam_args_.num_threads,
-        "Number of CPU threads for GLIM and trajectory endpoint recovery (default: 4). The "
+        "Number of CPU threads for GLIM and trajectory endpoint fill (default: 4). The "
         "host's hardware concurrency is the effective maximum.")
       ->check(CLI::Range(0, max_threads > 0 ? max_threads : 256));
     sub

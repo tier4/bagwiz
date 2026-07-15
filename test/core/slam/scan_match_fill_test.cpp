@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/core/slam/scan_match_recovery.hpp"
+#include "bagwiz/core/slam/scan_match_fill.hpp"
 
 #include <Eigen/Geometry>
 
@@ -69,21 +69,21 @@ double rotation_error(const Eigen::Isometry3d & a, const Eigen::Isometry3d & b)
 constexpr double kTransTol = 0.03;  // m
 constexpr double kRotTol = 0.02;    // rad
 
-TEST(ScanMatchRecovery, RecoversKnownTransformFromPerturbedGuess)
+TEST(ScanMatchFill, RecoversKnownTransformFromPerturbedGuess)
 {
   const auto world = make_corner_cloud();
   const Eigen::Isometry3d true_T_world_lidar = make_pose({0.7, -0.4, 0.25}, 0.12, {0.3, 0.2, 0.93});
   const auto source_lidar = to_lidar_frame(world, true_T_world_lidar);
 
-  ScanMatchRecoverer recoverer;
-  recoverer.insert_target(world);
-  ASSERT_FALSE(recoverer.target_empty());
+  ScanMatchFiller filler;
+  filler.insert_target(world);
+  ASSERT_FALSE(filler.target_empty());
 
   // Start well off the true pose (0.2 m + ~0.06 rad) but inside the GICP basin.
   const Eigen::Isometry3d init =
     true_T_world_lidar * make_pose({0.2, -0.15, 0.1}, 0.06, {0.1, 0.9, 0.2});
 
-  const ScanMatchResult result = recoverer.register_scan(source_lidar, init);
+  const ScanMatchResult result = filler.register_scan(source_lidar, init);
 
   EXPECT_TRUE(result.converged);
   EXPECT_GT(result.inlier_fraction, 0.9);
@@ -95,9 +95,9 @@ TEST(ScanMatchRecovery, RecoversKnownTransformFromPerturbedGuess)
 // Threading each registration (ScanMatchParams.num_threads > 1 — wired from the
 // run's --threads by the mapper) must not change convergence: same transform
 // within the same tolerances as the single-threaded default. Guards the
-// endpoint-recovery acceleration on LiDAR-only runs, where the end window alone
+// endpoint-fill acceleration on LiDAR-only runs, where the end window alone
 // can hold a full odometry smoother window of scans.
-TEST(ScanMatchRecovery, MultithreadedRegistrationMatchesSingleThreaded)
+TEST(ScanMatchFill, MultithreadedRegistrationMatchesSingleThreaded)
 {
   const auto world = make_corner_cloud();
   const Eigen::Isometry3d true_T_world_lidar = make_pose({0.7, -0.4, 0.25}, 0.12, {0.3, 0.2, 0.93});
@@ -107,11 +107,11 @@ TEST(ScanMatchRecovery, MultithreadedRegistrationMatchesSingleThreaded)
 
   ScanMatchParams params;
   params.num_threads = 4;
-  ScanMatchRecoverer recoverer{params};
-  recoverer.insert_target(world);
-  ASSERT_FALSE(recoverer.target_empty());
+  ScanMatchFiller filler{params};
+  filler.insert_target(world);
+  ASSERT_FALSE(filler.target_empty());
 
-  const ScanMatchResult result = recoverer.register_scan(source_lidar, init);
+  const ScanMatchResult result = filler.register_scan(source_lidar, init);
 
   EXPECT_TRUE(result.converged);
   EXPECT_GT(result.inlier_fraction, 0.9);
@@ -120,15 +120,15 @@ TEST(ScanMatchRecovery, MultithreadedRegistrationMatchesSingleThreaded)
   EXPECT_LT(rotation_error(result.T_world_lidar, true_T_world_lidar), kRotTol);
 }
 
-TEST(ScanMatchRecovery, EmptyTargetReturnsInitGuessUnconverged)
+TEST(ScanMatchFill, EmptyTargetReturnsInitGuessUnconverged)
 {
-  ScanMatchRecoverer recoverer;
-  ASSERT_TRUE(recoverer.target_empty());
+  ScanMatchFiller filler;
+  ASSERT_TRUE(filler.target_empty());
 
   const auto source = make_corner_cloud();
   const Eigen::Isometry3d init = make_pose({1.0, 2.0, 3.0}, 0.1, {0.0, 0.0, 1.0});
 
-  const ScanMatchResult result = recoverer.register_scan(source, init);
+  const ScanMatchResult result = filler.register_scan(source, init);
 
   EXPECT_FALSE(result.converged);
   // The pose is left exactly at the init guess when nothing was registered.
@@ -136,29 +136,29 @@ TEST(ScanMatchRecovery, EmptyTargetReturnsInitGuessUnconverged)
   EXPECT_LT(rotation_error(result.T_world_lidar, init), 1e-12);
 }
 
-TEST(ScanMatchRecovery, TooFewSourcePointsRejected)
+TEST(ScanMatchFill, TooFewSourcePointsRejected)
 {
   const auto world = make_corner_cloud();
-  ScanMatchRecoverer recoverer;
-  recoverer.insert_target(world);
+  ScanMatchFiller filler;
+  filler.insert_target(world);
 
   // A 3-point source is far below the 50-point floor: reject without a fit.
   const std::vector<Eigen::Vector3d> tiny_source = {
     {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}};
   const Eigen::Isometry3d init = Eigen::Isometry3d::Identity();
 
-  const ScanMatchResult result = recoverer.register_scan(tiny_source, init);
+  const ScanMatchResult result = filler.register_scan(tiny_source, init);
 
   EXPECT_FALSE(result.converged);
 }
 
 // A batch below min_points must not seed the target.
-TEST(ScanMatchRecovery, SparseTargetBatchIgnored)
+TEST(ScanMatchFill, SparseTargetBatchIgnored)
 {
-  ScanMatchRecoverer recoverer;
+  ScanMatchFiller filler;
   const std::vector<Eigen::Vector3d> tiny = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
-  recoverer.insert_target(tiny);
-  EXPECT_TRUE(recoverer.target_empty());
+  filler.insert_target(tiny);
+  EXPECT_TRUE(filler.target_empty());
 }
 
 }  // namespace

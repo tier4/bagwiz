@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/core/slam/scan_match_recovery.hpp"
+#include "bagwiz/core/slam/scan_match_fill.hpp"
 
 #include <gtsam_points/ann/ivox.hpp>
 #include <gtsam_points/factors/integrated_gicp_factor.hpp>
@@ -27,7 +27,7 @@ namespace bagwiz::core::slam
 namespace
 {
 
-// iVox LRU horizon set effectively unbounded: recovery inserts at most a few
+// iVox LRU horizon set effectively unbounded: the fill inserts at most a few
 // hundred frames/scans per run (far below this), so no voxel is ever evicted and
 // the whole boundary neighborhood stays resident as the registration target.
 constexpr std::size_t kLruHorizonUnbounded = 1'000'000;
@@ -46,7 +46,7 @@ std::vector<Eigen::Vector4d> to_homogeneous(const std::vector<Eigen::Vector3d> &
 
 }  // namespace
 
-struct ScanMatchRecoverer::Impl
+struct ScanMatchFiller::Impl
 {
   const ScanMatchParams params;                      // Con.4: set once, never mutated
   const std::shared_ptr<gtsam_points::iVox> target;  // pointer const; pointee grows
@@ -55,7 +55,7 @@ struct ScanMatchRecoverer::Impl
   explicit Impl(const ScanMatchParams & p)
   : params(p), target(std::make_shared<gtsam_points::iVox>(p.voxel_resolution))
   {
-    // The recovery windows insert only a few dozen frames, so keep every voxel
+    // The fill windows insert only a few dozen frames, so keep every voxel
     // resident (defeat the LRU eviction) — the whole boundary neighborhood must
     // stay available as a registration target across the chain.
     target->set_lru_horizon(kLruHorizonUnbounded);
@@ -74,15 +74,14 @@ struct ScanMatchRecoverer::Impl
   }
 };
 
-ScanMatchRecoverer::ScanMatchRecoverer(ScanMatchParams params)
-: impl_(std::make_unique<Impl>(params))
+ScanMatchFiller::ScanMatchFiller(ScanMatchParams params) : impl_(std::make_unique<Impl>(params))
 {
 }
-ScanMatchRecoverer::~ScanMatchRecoverer() = default;
-ScanMatchRecoverer::ScanMatchRecoverer(ScanMatchRecoverer &&) noexcept = default;
-ScanMatchRecoverer & ScanMatchRecoverer::operator=(ScanMatchRecoverer &&) noexcept = default;
+ScanMatchFiller::~ScanMatchFiller() = default;
+ScanMatchFiller::ScanMatchFiller(ScanMatchFiller &&) noexcept = default;
+ScanMatchFiller & ScanMatchFiller::operator=(ScanMatchFiller &&) noexcept = default;
 
-void ScanMatchRecoverer::insert_target(const std::vector<Eigen::Vector3d> & world_points)
+void ScanMatchFiller::insert_target(const std::vector<Eigen::Vector3d> & world_points)
 {
   if (static_cast<int>(world_points.size()) < impl_->params.min_points) {
     return;  // too sparse for a stable covariance estimate
@@ -92,12 +91,12 @@ void ScanMatchRecoverer::insert_target(const std::vector<Eigen::Vector3d> & worl
   impl_->has_target = true;
 }
 
-bool ScanMatchRecoverer::target_empty() const noexcept
+bool ScanMatchFiller::target_empty() const noexcept
 {
   return !impl_->has_target;
 }
 
-ScanMatchResult ScanMatchRecoverer::register_scan(
+ScanMatchResult ScanMatchFiller::register_scan(
   const std::vector<Eigen::Vector3d> & source_lidar_points,
   const Eigen::Isometry3d & init_T_world_lidar) const
 {

@@ -68,33 +68,33 @@ struct CloudMapperConfig
   // Convention is GLIM's T_lidar_imu (p_lidar = T_lidar_imu * p_imu).
   std::optional<SensorTransform> t_lidar_imu;
 
-  // Recover poses for the SLAM initialization ("start") window. GLIM's odometry
+  // Fill in poses for the SLAM initialization ("start") window. GLIM's odometry
   // emits no frame over its opening window (the LiDAR-IMU init, ~1 s), leaving the
   // trajectory's opening window empty. When true, the pre-init scans are buffered
-  // and recovered by scan-matching each against the globally-optimized map (works
+  // and filled in by scan-matching each against the globally-optimized map (works
   // in LiDAR-only mode); with t_lidar_imu set the buffered IMU additionally seeds
   // each registration's initial guess and is the fallback on a failed fit. See
-  // core/slam/scan_match_recovery.hpp (and warmup_recovery.hpp for the IMU path).
-  bool recover_start = false;
+  // core/slam/scan_match_fill.hpp (and warmup_fill.hpp for the IMU path).
+  bool fill_start = false;
 
-  // Recover poses for the SLAM cooldown ("end") window — the symmetric
-  // counterpart of recover_start. The newest scans stay inside the odometry
+  // Fill in poses for the SLAM cooldown ("end") window — the symmetric
+  // counterpart of fill_start. The newest scans stay inside the odometry
   // smoother window at end-of-sequence and never reach a finalized submap, so the
   // trajectory stops one window short of the last input scan. When true, the
-  // trailing scans are buffered and recovered by scan-matching each against the
+  // trailing scans are buffered and filled in by scan-matching each against the
   // optimized map (LiDAR-only included); with t_lidar_imu set the buffered IMU
   // additionally seeds each initial guess and is the fallback. See
-  // core/slam/scan_match_recovery.hpp.
-  bool recover_end = false;
+  // core/slam/scan_match_fill.hpp.
+  bool fill_end = false;
 
-  // Inlier-fraction acceptance gate [0..1] for the warmup/cooldown recovery
+  // Inlier-fraction acceptance gate [0..1] for the warmup/cooldown fill
   // scan-matching: a scan-to-map fit is accepted only when at least this fraction
   // of its source points find an inlier correspondence. Higher = stricter (an
-  // endpoint may stay unrecovered); lower = looser (risking a bad fit that
-  // poisons the growing scan-match target). Applies to both recovery windows and
-  // has no effect when recover_start and recover_end are both false. Default 0.7
+  // endpoint may stay unfilled); lower = looser (risking a bad fit that
+  // poisons the growing scan-match target). Applies to both fill windows and
+  // has no effect when fill_start and fill_end are both false. Default 0.7
   // matches ScanMatchParams' loose-init gate. Require 0 < x <= 1.
-  double recovery_min_inlier_fraction = 0.7;
+  double fill_min_inlier_fraction = 0.7;
 
   // Keyframes accumulated before GLIM finalizes a submap (GLIM SubMappingParams
   // max_num_keyframes). Smaller = more, smaller submaps: finer loop-closure
@@ -163,7 +163,7 @@ struct CloudMapperConfig
   std::array<double, 3> gnss_antenna_offset{0.0, 0.0, 0.0};
 
   // Number of CPU threads passed to GLIM and to the scan-matching endpoint
-  // recovery's per-registration work (covariance estimation + GICP
+  // the fill's per-registration work (covariance estimation + GICP
   // correspondences). 0 or a negative value falls back to the default (4),
   // which matches GLIM's odometry default and avoids the preprocessor's
   // conservative default of 2. 1 is the deterministic path.
@@ -222,30 +222,30 @@ struct CloudMap
   // overlapping the submap timespan, or baseline below gnss_min_baseline).
   std::size_t gnss_factor_count = 0;
 
-  // Number of start-window poses recovered by scan-matching and prepended to
-  // `trajectory` (config.recover_start). 0 when recovery was off or there were no
-  // pre-init scans to recover.
-  std::size_t recovered_start_pose_count = 0;
+  // Number of start-window poses filled in by scan-matching and prepended to
+  // `trajectory` (config.fill_start). 0 when the fill was off or there were no
+  // pre-init scans to fill.
+  std::size_t filled_start_pose_count = 0;
 
-  // Number of end-window poses recovered by scan-matching and appended to
-  // `trajectory` (config.recover_end). 0 when recovery was off or there were no
+  // Number of end-window poses filled in by scan-matching and appended to
+  // `trajectory` (config.fill_end). 0 when the fill was off or there were no
   // trailing scans past the last estimated frame.
-  std::size_t recovered_end_pose_count = 0;
+  std::size_t filled_end_pose_count = 0;
 
-  // True when start-window recovery was abandoned because the pre-init scan buffer
+  // True when the start-window fill was abandoned because the pre-init scan buffer
   // overflowed before odometry converged (a very long static/slow start) — lets
-  // the caller distinguish "nothing to recover" from "gave up", which have the
-  // same recovered_start_pose_count of 0.
+  // the caller distinguish "nothing to fill" from "gave up", which have the
+  // same filled_start_pose_count of 0.
   bool warmup_overflowed = false;
 
   // Wall-clock breakdown of finish(), for the command layer's log line: the
-  // global iSAM2 optimization, the scan-matching endpoint recovery (start + end
+  // global iSAM2 optimization, the scan-matching endpoint fill (start + end
   // windows together), and the export map fill. Diagnostic only — without the
-  // split, a long endpoint recovery (the end window alone can hold a full
+  // split, a long endpoint fill (the end window alone can hold a full
   // odometry smoother window of scans) is indistinguishable from a slow
   // optimizer in the finalization total.
   double optimize_seconds = 0.0;
-  double recovery_seconds = 0.0;
+  double window_fill_seconds = 0.0;
   double export_seconds = 0.0;
 };
 

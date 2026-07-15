@@ -120,7 +120,7 @@ public:
   {
     // Cross-field numeric validation the per-option CLI checks can't express, run
     // before any bag work. Each of --input-res / --min-range / --max-range is
-    // already CLI-checked > 0 and --recovery-min-inliers is range-checked to
+    // already CLI-checked > 0 and --fill-min-inliers is range-checked to
     // [0, 1]; here we enforce the relations between them.
     if (!(args_.range_min < args_.range_max)) {
       BAGWIZ_LOG_ERROR(
@@ -128,12 +128,12 @@ public:
         args_.range_max);
       return 1;
     }
-    if (!(args_.recovery_min_inlier_fraction > 0.0)) {
+    if (!(args_.fill_min_inlier_fraction > 0.0)) {
       BAGWIZ_LOG_ERROR(
         kLogger,
-        "--recovery-min-inliers must be > 0 (got %g); 0 would disable the recovery acceptance gate "
+        "--fill-min-inliers must be > 0 (got %g); 0 would disable the fill acceptance gate "
         "entirely.",
-        args_.recovery_min_inlier_fraction);
+        args_.fill_min_inlier_fraction);
       return 1;
     }
 
@@ -835,17 +835,17 @@ private:
     config.input_resolution = args_.input_resolution;
     config.range_min = args_.range_min;
     config.range_max = args_.range_max;
-    config.recovery_min_inlier_fraction = args_.recovery_min_inlier_fraction;
+    config.fill_min_inlier_fraction = args_.fill_min_inlier_fraction;
     config.submap_max_keyframes = args_.submap_max_keyframes;
     config.t_lidar_imu = t_lidar_imu;
     config.num_threads = cap_threads_at_hardware_limit(args_.num_threads);
     config.enable_gnss = !args_.gnss_topic.empty();
     config.use_gpu = use_gpu_;
-    // Recovery scan-matches the window scans against the optimized map, so it runs
+    // The fill scan-matches the window scans against the optimized map, so it runs
     // in LiDAR-only mode too; --imu only adds the IMU init/fallback path inside the
-    // mapper. Gated solely on the recover toggles, not on the IMU topic.
-    config.recover_start = args_.recover_start;
-    config.recover_end = args_.recover_end;
+    // mapper. Gated solely on the fill toggles, not on the IMU topic.
+    config.fill_start = args_.fill_start;
+    config.fill_end = args_.fill_end;
     // Resolve the antenna lever-arm (T_cloud_gnss) from static TF so the GNSS prior
     // constrains the sensor origin, not the antenna. Non-fatal: a missing TF leaves
     // the offset zero (raw-antenna behavior) with a warning.
@@ -919,7 +919,7 @@ private:
     progress.done();
 
     // finish() runs the blocking finalization (global optimization + endpoint
-    // recovery + map export) with no per-step progress; animate an indeterminate
+    // window fill + map export) with no per-step progress; animate an indeterminate
     // spinner on a worker thread until it returns.
     core::slam::CloudMap map;
     const auto finalize_start = std::chrono::steady_clock::now();
@@ -929,15 +929,15 @@ private:
     }
     const double finalize_seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - finalize_start).count();
-    // Log the breakdown, not just the total: endpoint recovery (up to a full
+    // Log the breakdown, not just the total: the endpoint fill (up to a full
     // odometry smoother window of scan registrations), not the iSAM2 update,
     // dominates finalization on LiDAR-only runs, and a bare total reads as
     // "the optimizer is slow".
     BAGWIZ_LOG_INFO(
       kLogger,
-      "Finalization took %.1fs (global optimization %.1fs, endpoint recovery %.1fs, "
+      "Finalization took %.1fs (global optimization %.1fs, endpoint fill %.1fs, "
       "map export %.1fs)",
-      finalize_seconds, map.optimize_seconds, map.recovery_seconds, map.export_seconds);
+      finalize_seconds, map.optimize_seconds, map.window_fill_seconds, map.export_seconds);
 
     if (map.trajectory.empty()) {
       BAGWIZ_LOG_ERROR(
@@ -984,33 +984,33 @@ private:
       map.trajectory.size(), map.points.size(), scans, imu_suffix(imu_count).c_str(), skipped,
       output_path_.string().c_str(), map_path_.string().c_str());
 
-    if (args_.recover_start) {
-      if (map.recovered_start_pose_count > 0) {
+    if (args_.fill_start) {
+      if (map.filled_start_pose_count > 0) {
         BAGWIZ_LOG_INFO(
-          kLogger, "Recovered %zu initialization-window pose(s) by scan-matching",
-          map.recovered_start_pose_count);
+          kLogger, "Filled %zu initialization-window pose(s) by scan-matching",
+          map.filled_start_pose_count);
       } else if (map.warmup_overflowed) {
         BAGWIZ_LOG_INFO(
           kLogger,
-          "Initialization-window recovery abandoned: the pre-init scan buffer overflowed before "
+          "Initialization-window fill abandoned: the pre-init scan buffer overflowed before "
           "odometry converged (a very long static/slow start)");
       } else {
         BAGWIZ_LOG_INFO(
           kLogger,
-          "No initialization-window poses recovered (odometry started immediately, or no "
+          "No initialization-window poses filled (odometry started immediately, or no "
           "pre-init scans)");
       }
     }
 
-    if (args_.recover_end) {
-      if (map.recovered_end_pose_count > 0) {
+    if (args_.fill_end) {
+      if (map.filled_end_pose_count > 0) {
         BAGWIZ_LOG_INFO(
-          kLogger, "Recovered %zu cooldown-window pose(s) by scan-matching",
-          map.recovered_end_pose_count);
+          kLogger, "Filled %zu cooldown-window pose(s) by scan-matching",
+          map.filled_end_pose_count);
       } else {
         BAGWIZ_LOG_INFO(
           kLogger,
-          "No cooldown-window poses recovered (no trailing scans past the last estimated "
+          "No cooldown-window poses filled (no trailing scans past the last estimated "
           "frame)");
       }
     }

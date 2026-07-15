@@ -6,8 +6,8 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#ifndef BAGWIZ__CORE__SLAM__WARMUP_RECOVERY_HPP_
-#define BAGWIZ__CORE__SLAM__WARMUP_RECOVERY_HPP_
+#ifndef BAGWIZ__CORE__SLAM__WARMUP_FILL_HPP_
+#define BAGWIZ__CORE__SLAM__WARMUP_FILL_HPP_
 
 #include <Eigen/Geometry>
 
@@ -24,17 +24,17 @@
 // frame arrives, however, its converged state (world pose, world velocity, and
 // IMU biases) is a fully-observed boundary condition. Integrating the buffered
 // IMU stream *backward* from that boundary — with the biases now known and over
-// a short (~1 s) window — recovers accurate poses for the warmup scans.
+// a short (~1 s) window — fills in accurate poses for the warmup scans.
 //
 // The symmetric problem exists at the END of a run: the newest scans are still
 // inside the odometry smoother window at end-of-sequence and never get
 // marginalized into a finalized submap, so the trajectory stops one window short
 // of the last input scan. There the boundary is the LAST estimated frame and the
-// buffered IMU is integrated *forward* from it (forwardpropagate_imu) to recover
+// buffered IMU is integrated *forward* from it (forwardpropagate_imu) to fill in
 // the trailing "cooldown" scans. Forward and backward share the same strapdown
 // kinematics, differing only in integration direction.
 //
-// This module is the GLIM-free, Eigen-only kinematic core of both recoveries: it
+// This module is the GLIM-free, Eigen-only kinematic core of both fills: it
 // knows nothing about GLIM, the bag, or the map. The SLAM wrapper
 // (cloud_mapper.cpp) buffers the raw IMU + scan stamps, captures the boundary off
 // a GLIM EstimationFrame, calls backpropagate_imu() / forwardpropagate_imu(), and
@@ -135,4 +135,4 @@ std::optional<Eigen::Isometry3d> interpolate_pose(std::span<const TimedPose> kno
 
 }  // namespace bagwiz::core::slam
 
-#endif  // BAGWIZ__CORE__SLAM__WARMUP_RECOVERY_HPP_
+#endif  // BAGWIZ__CORE__SLAM__WARMUP_FILL_HPP_
