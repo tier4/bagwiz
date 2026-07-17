@@ -244,6 +244,7 @@ add_library(bagwiz_core
   src/core/slam/gnss_sample.cpp
   src/core/slam/gnss_projector.cpp
   src/core/slam/gnss_alignment.cpp
+  src/core/slam/map_colorizer.cpp
   src/core/slam/point_cloud_io.cpp
   src/core/slam/cloud_filters.cpp
   src/core/slam/map_viewer_open.cpp
@@ -634,6 +635,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_slam_point_cloud_io_test test/core/slam/point_cloud_io_test.cpp)
   target_link_libraries(bagwiz_slam_point_cloud_io_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_slam_map_colorizer_test test/core/slam/map_colorizer_test.cpp)
+  target_link_libraries(bagwiz_slam_map_colorizer_test bagwiz_core)
 
   ament_add_gtest(bagwiz_slam_cloud_filters_test test/core/slam/cloud_filters_test.cpp)
   target_link_libraries(bagwiz_slam_cloud_filters_test bagwiz_core)
