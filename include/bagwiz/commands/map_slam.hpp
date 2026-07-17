@@ -37,6 +37,19 @@ struct MapSlamArgs
   // not the antenna; if that TF is absent the run still proceeds (warned) using
   // the raw antenna position.
   std::string gnss_topic;
+  // Optional camera image topic (sensor_msgs/msg/Image or CompressedImage).
+  // Empty: no colorization. Set: after the global optimization, the map points
+  // are colorized by projecting them into each camera image and map.pcd gains
+  // an rgb field (points no image observed keep a neutral gray). Intrinsics
+  // come from the CameraInfo topic (camera_info_topic, or auto-resolved from
+  // this topic's name); the camera extrinsic is resolved from the bag's static
+  // TF (cloud frame <- CameraInfo frame_id) and its absence is an error.
+  // Images are assumed RAW (unrectified): the CameraInfo distortion model is
+  // applied during projection.
+  std::string image_topic;
+  // Explicit CameraInfo topic for image_topic. Empty: auto-resolve from the
+  // image topic name using the standard suffix rules.
+  std::string camera_info_topic;
   // Output root directory; receives traj.tum and map.pcd.
   std::filesystem::path output_root;
   // Frame the output trajectory is expressed in. Empty (the default) keeps the

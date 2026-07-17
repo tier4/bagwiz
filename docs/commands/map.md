@@ -72,6 +72,8 @@ bagwiz map slam [OPTIONS] <input> <pcd_topic> <output_root>
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--imu <topic>`          | `sensor_msgs/msg/Imu` topic. Switches odometry to LiDAR-IMU (GLIM's `OdometryEstimationCPU`, or `OdometryEstimationGPU` when combined with `--backend cuda`). The LiDAR←IMU extrinsic is resolved from the bag's static TF using the cloud and IMU header `frame_id`s.                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `--gnss <topic>`         | `sensor_msgs/msg/NavSatFix` topic. Adds GNSS global constraints during global mapping to pin the world frame to GNSS and curb drift. The antenna lever-arm is resolved from the bag's static TF and removed (a missing TF only warns).                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `--cam <topic>`          | Camera image topic (`sensor_msgs/msg/Image` or `sensor_msgs/msg/CompressedImage`). After the global optimization, the map points are colorized by projecting them into each camera image, and `map.pcd` gains an `rgb` field (points no image observed keep a neutral gray). Intrinsics come from the matching `CameraInfo` topic (auto-resolved from the image topic name; see `--cam-info`); the camera extrinsic is resolved from the bag's static TF (cloud ← camera optical frame), erroring if that chain is absent. Images are assumed raw (unrectified): the `CameraInfo` distortion model is applied during projection.                                              |
+| `--cam-info <topic>`     | Explicit `sensor_msgs/msg/CameraInfo` topic for `--cam` (requires `--cam`). Defaults to auto-resolving from the image topic name using the standard suffix rules; pass it when auto-resolution fails.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `--input-res <m>`        | Voxel size in meters (default `0.15`; must be positive) used for **both** the GLIM LiDAR input downsample and the exported-map merge — the single map-resolution knob. Smaller = denser map and finer SLAM detail, at the cost of more points and runtime. Unlike a pure export voxel it feeds the optimizer, so changing it also changes the trajectory (not just the map's appearance). The range crop (`--min-range`/`--max-range`) still bounds which returns enter the pipeline. Default `0.15` matches GLIM's stock downsample, so the default trajectory is unchanged from earlier releases.                                                                           |
 | `--min-range <m>`        | Discard LiDAR returns closer than this many meters before SLAM (default `1.0`; must be positive and `< --max-range`). Points dropped here never enter the trajectory or the map.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `--max-range <m>`        | Discard LiDAR returns farther than this many meters before SLAM (default `100.0`; must be `> --min-range`). Points dropped here never enter the trajectory or the map.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -93,10 +95,10 @@ bagwiz map slam [OPTIONS] <input> <pcd_topic> <output_root>
 
 Written under `<output_root>`:
 
-| File       | When    | Format                                                                  |
-| ---------- | ------- | ----------------------------------------------------------------------- |
-| `traj.tum` | Always. | TUM trajectory — one `timestamp tx ty tz qx qy qz qw` line per pose.    |
-| `map.pcd`  | Always. | Binary PCD world-frame point cloud, voxel-downsampled to `--input-res`. |
+| File       | When    | Format                                                                                                                                                     |
+| ---------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `traj.tum` | Always. | TUM trajectory — one `timestamp tx ty tz qx qy qz qw` line per pose.                                                                                       |
+| `map.pcd`  | Always. | Binary PCD world-frame point cloud, voxel-downsampled to `--input-res`. With `--cam` it additionally carries an `rgb` field (PCL packed-float convention). |
 
 ### Behavior
 
@@ -139,6 +141,19 @@ Written under `<output_root>`:
   horizontal). Each prior is weighted by the fix's reported position covariance,
   falling back to a fixed precision when the covariance is unknown. The antenna
   lever-arm is resolved from the bag's static TF and removed.
+- **Camera colorization (`--cam`).** Runs after the global optimization: for
+  each camera image whose stamp falls inside the trajectory's time span, the
+  camera pose is interpolated from the optimized trajectory and composed with
+  the static cloud ← camera extrinsic, the map points are projected through the
+  `CameraInfo` intrinsics and distortion model, a coarse z-buffer rejects
+  occluded points, and each surviving point accumulates the sampled pixel
+  color. The final color is the per-point average over all observations;
+  points no image ever observed keep a neutral gray. The image topic,
+  `CameraInfo`, and extrinsic are validated before SLAM starts (fail fast),
+  but a colorization problem found after SLAM (e.g. no decodable image) only
+  warns and writes `map.pcd` without colors rather than discarding the run.
+  The viewer shows the colors through its `rgb` color field, selected by
+  default when present.
 - **Deskewing.** Clouds with a per-point time field are deskewed by GLIM; clouds
   without one are treated as already motion-undistorted.
 - **Output directory.** A file at `<output_root>` is an error; an existing
@@ -183,16 +198,21 @@ bagwiz map slam drive.mcap /points out/ --input-res 0.1 --overwrite
 # Restrict the LiDAR range fed to SLAM to 2–60 m (drops near/far returns).
 bagwiz map slam drive.mcap /points out/ --min-range 2.0 --max-range 60.0 --overwrite
 
+# Colorize the map from a camera: map.pcd gains an rgb field (CameraInfo
+# auto-resolved from the image topic name, extrinsic from the bag's static TF).
+bagwiz map slam drive.mcap /sensing/lidar/concatenated/pointcloud out/ \
+  --cam /sensing/camera/camera0/image_raw/compressed
+
 # Build the map, then open it in the browser (blocks until Ctrl-C).
 bagwiz map slam drive.mcap /points out/ --viewer
 ```
 
 ### Exit status
 
-| Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | SLAM completed and the output(s) were written.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `1`  | The input could not be opened; `<pcd_topic>` (or `--imu`/`--gnss`) was absent or had the wrong type; `<output_root>` was a file or could not be created; an output file collided without `-w`/`--overwrite`; in IMU mode the LiDAR←IMU static-TF chain (or a frame) was absent; `--frame` was requested but the static-TF chain from the cloud frame to the requested frame (or a frame) was absent; `--backend cuda` was requested on a non-CUDA build or with no visible CUDA device; no PointCloud2 message decoded; SLAM produced no poses; or a read/write error occurred. |
+| Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | SLAM completed and the output(s) were written.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `1`  | The input could not be opened; `<pcd_topic>` (or `--imu`/`--gnss`/`--cam`/`--cam-info`) was absent or had the wrong type; `--cam` was given but its `CameraInfo` could not be resolved/read or the cloud←camera static-TF chain (or a frame) was absent; `<output_root>` was a file or could not be created; an output file collided without `-w`/`--overwrite`; in IMU mode the LiDAR←IMU static-TF chain (or a frame) was absent; `--frame` was requested but the static-TF chain from the cloud frame to the requested frame (or a frame) was absent; `--backend cuda` was requested on a non-CUDA build or with no visible CUDA device; no PointCloud2 message decoded; SLAM produced no poses; or a read/write error occurred. |
 
 ---
 
@@ -233,6 +253,11 @@ bagwiz map viewer <map>
   their size and density. The vehicle's forward axis is X, and a teal ring / blue
   node mark the first and last pose, so direction of travel and both ends of the
   path read at a glance. No `traj.tum` next to the map means no panel is shown.
+- **Color fields.** The inspector's Field selector offers `x`/`y`/`z` (plus
+  `intensity` when the PCD carries it) rendered through the selected colormap.
+  A map with an `rgb` field (written by `map slam --cam`) additionally offers
+  `rgb` — the true camera colors, selected by default — with the colormap and
+  range controls disabled while active.
 - **Requires the map-viewer build.** Available only when bagwiz is built with the
   map viewer.
 

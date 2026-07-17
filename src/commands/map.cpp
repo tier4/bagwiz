@@ -90,6 +90,21 @@ private:
       "<- NavSatFix frame_id) and removed (a missing TF only warns). Each prior is "
       "weighted by the fix's reported position covariance (falling back to a fixed "
       "precision when unknown).");
+    auto * cam_opt = sub->add_option(
+      "--cam", slam_args_.image_topic,
+      "Optional camera image topic (sensor_msgs/msg/Image or CompressedImage). After the "
+      "global optimization, map points are colorized by projecting them into each camera "
+      "image and map.pcd gains an rgb field (points no image observed keep a neutral "
+      "gray). Intrinsics come from the matching CameraInfo topic (see --cam-info); the "
+      "camera extrinsic is resolved from the bag's static TF (cloud <- camera frame), "
+      "erroring if that chain is absent. Images are assumed raw (unrectified): the "
+      "CameraInfo distortion model is applied during projection.");
+    sub
+      ->add_option(
+        "--cam-info", slam_args_.camera_info_topic,
+        "Explicit CameraInfo topic for --cam. Defaults to auto-resolving from the image "
+        "topic name using the standard suffix rules; pass it when auto-resolution fails.")
+      ->needs(cam_opt);
     sub->add_option(
       "--frame", slam_args_.output_frame,
       "Output trajectory frame. Defaults to the PointCloud2 topic's frame_id; a "

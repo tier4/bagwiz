@@ -69,11 +69,13 @@ constexpr std::array<std::string_view, 4> kTrajDumpSupportedTypes{{
 // `tf tree` renders only tf2_msgs/msg/TFMessage topics.
 constexpr std::array<std::string_view, 1> kTfTreeSupportedTypes{{kTfMessageType}};
 
-// Image topic types `generate video` operates on. This MUST mirror
-// is_supported_type() in src/commands/generate_video.cpp; keep the two in sync.
-// As with `traj dump` / `tf tree`, a topic typed as anything outside this set is
-// rejected by the command, so completion never offers it.
-constexpr std::array<std::string_view, 2> kGenerateVideoSupportedTypes{{
+// Image topic types `generate video` renders and `map slam --cam` colorizes
+// from (both decode via to_packed_raster). This MUST mirror is_supported_type()
+// in src/commands/generate_video.cpp and the image type constants in
+// src/commands/map_slam.cpp; keep them in sync. As with `traj dump` /
+// `tf tree`, a topic typed as anything outside this set is rejected by the
+// command, so completion never offers it.
+constexpr std::array<std::string_view, 2> kImageTopicTypes{{
   "sensor_msgs/msg/Image",
   "sensor_msgs/msg/CompressedImage",
 }};
@@ -137,10 +139,9 @@ constexpr std::array<TopicArgBinding, 12> kTopicBindings{{
   // non-variadic and fires at the single topic_word.
   {"topic", "rename", kSecondCommandArgWord, kThirdCommandArgWord, {}, false},
   // `generate video <input> <image_topic> <output>`: complete the single <image_topic> slot
-  // from the bag's image topics (kGenerateVideoSupportedTypes). <input> and
+  // from the bag's image topics (kImageTopicTypes). <input> and
   // <output> are paths that fall through to the shell's file completion.
-  {"generate", "video", kSecondCommandArgWord, kThirdCommandArgWord, kGenerateVideoSupportedTypes,
-   false},
+  {"generate", "video", kSecondCommandArgWord, kThirdCommandArgWord, kImageTopicTypes, false},
   // `map slam <input> <pcd_topic> <output_root>`: complete the single <pcd_topic>
   // slot from the bag's PointCloud2 topics. <input> and <output_root> are paths
   // that fall through to the shell's file completion.
@@ -1083,7 +1084,8 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //
 //   slam:   `map`(0) `slam`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
 //           [--backend <cpu|cuda|auto>] [--frame <frame_id>] [--imu <topic>]
-//           [--gnss <topic>] [--input-res <m>] [--min-range <m>] [--max-range <m>]
+//           [--gnss <topic>] [--cam <topic>] [--cam-info <topic>]
+//           [--input-res <m>] [--min-range <m>] [--max-range <m>]
 //           [-j|--threads <N>] [--viewer] [-w|--overwrite]
 //           [--no-progress] [--no-warmup-fill] [--no-cooldown-fill]
 //           [--fill-min-inliers <f>] [--submap-keyframes <N>]
@@ -1093,7 +1095,8 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 // help flags for a `-` word). Past it, the positional <pcd_topic> slot for
 // `map slam` is completed earlier by try_topic_completion via kTopicBindings
 // (PointCloud2 topics only); here we surface `slam`'s flags for any `-` word and
-// complete the value of `--imu` from the bag's sensor_msgs/msg/Imu topics.
+// complete the values of `--imu` (Imu topics), `--cam` (image topics), and
+// `--cam-info` (CameraInfo topics) from the bag.
 // `viewer` has no value-bearing flags and its single <map> positional is a path.
 
 std::vector<std::string> complete_map(const CompletionRequest & request)
@@ -1122,9 +1125,10 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
   if (current.starts_with("-")) {
     return matching(
       with_help(
-        {"--backend", "--fill-min-inliers", "--frame", "--gnss", "--imu", "--input-res",
-         "--max-range", "--min-range", "--no-cooldown-fill", "--no-progress", "--no-warmup-fill",
-         "--overwrite", "--submap-keyframes", "--threads", "--viewer", "-j", "-w"}),
+        {"--backend", "--cam", "--cam-info", "--fill-min-inliers", "--frame", "--gnss", "--imu",
+         "--input-res", "--max-range", "--min-range", "--no-cooldown-fill", "--no-progress",
+         "--no-warmup-fill", "--overwrite", "--submap-keyframes", "--threads", "--viewer", "-j",
+         "-w"}),
       current);
   }
 
@@ -1132,17 +1136,28 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
     return matching({"auto", "cpu", "cuda"}, current);
   }
 
-  if (request.cursor_word == 0 || request.words[request.cursor_word - 1] != "--imu") {
+  // Topic-bearing flags: complete the value from the bag's topics of the
+  // type(s) the flag accepts (--imu Imu, --cam image types, --cam-info
+  // CameraInfo).
+  if (request.cursor_word == 0 || request.words.size() <= kSecondCommandArgWord) {
     return {};
   }
-  if (request.words.size() <= kSecondCommandArgWord) {
+  const auto & prev = request.words[request.cursor_word - 1];
+  std::span<const std::string_view> flag_topic_types;
+  if (prev == "--imu") {
+    flag_topic_types = kImuType;
+  } else if (prev == "--cam") {
+    flag_topic_types = kImageTopicTypes;
+  } else if (prev == "--cam-info") {
+    flag_topic_types = kCameraInfoType;
+  } else {
     return {};
   }
   const auto & bag_arg = request.words[kSecondCommandArgWord];
   if (bag_arg.empty() || bag_arg.starts_with("-")) {
     return {};
   }
-  return complete_topics(expand_current_user_home(bag_arg), current, kImuType);
+  return complete_topics(expand_current_user_home(bag_arg), current, flag_topic_types);
 }
 
 // `ls <input>` lists topics. Its only flag is `-l/--long` (per-topic COUNT and
