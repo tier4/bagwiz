@@ -145,9 +145,10 @@ interface ViewerState {
   positions: ArrayLike<number> | null; // length count*3
   intensity: ArrayLike<number> | null; // length count, or null when absent
   colors: Float32Array | null; // length count*3 (the 'color' attribute data)
+  rgb: Float32Array | null; // length count*3, the PCD rgb field (0..1), null when absent
   count: number;
   boundingSphere: THREE.Sphere | null;
-  scalar: string; // x | y | z | intensity
+  scalar: string; // x | y | z | intensity | rgb
   colormap: string;
   autoRange: boolean;
   rangeMin: number;
@@ -169,6 +170,7 @@ const state: ViewerState = {
   positions: null,
   intensity: null,
   colors: null,
+  rgb: null,
   count: 0,
   boundingSphere: null,
   scalar: "z",
@@ -230,6 +232,16 @@ function scalarExtent(): [number, number] {
 // ---------------------------------------------------------------------------
 function recolor(): void {
   if (!state.colors || !state.colorAttr) {
+    return;
+  }
+  if (state.scalar === "rgb" && state.rgb) {
+    // True camera colors from the PCD's rgb field: copied verbatim, no
+    // colormap/range mapping involved.
+    state.colors.set(state.rgb);
+    state.colorAttr.needsUpdate = true;
+    drawColorbar();
+    updateStatus();
+    requestFrame();
     return;
   }
   const lo = state.rangeMin;
@@ -551,6 +563,13 @@ function drawColorbar(): void {
   }
   const w = canvas.width;
   const h = canvas.height;
+  if (state.scalar === "rgb") {
+    // True-color mode has no scalar-to-color mapping to legend.
+    ctx.clearRect(0, 0, w, h);
+    el<HTMLElement>("cbMin").textContent = "";
+    el<HTMLElement>("cbMax").textContent = "";
+    return;
+  }
   const rgb = new Float32Array(3);
   for (let x = 0; x < w; x += 1) {
     sampleColormap(state.colormap, x / (w - 1), rgb, 0);
@@ -566,7 +585,8 @@ function drawColorbar(): void {
 // ---------------------------------------------------------------------------
 function updateStatus(): void {
   el<HTMLElement>("ptCount").textContent = `${state.count.toLocaleString()} pts`;
-  setStatus(`${state.count.toLocaleString()} pts · ${state.scalar} · ${state.colormap}`);
+  const coloring = state.scalar === "rgb" ? "rgb" : `${state.scalar} · ${state.colormap}`;
+  setStatus(`${state.count.toLocaleString()} pts · ${coloring}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -610,6 +630,15 @@ function setSliderFill(slider: HTMLInputElement): void {
   slider.style.setProperty("--fill", `${pct}%`);
 }
 
+// Colormap and range controls only apply to scalar coloring; in rgb
+// (true-color) mode they are inert, so gray them out.
+function updateScalarControls(): void {
+  const isRgb = state.scalar === "rgb";
+  el<HTMLSelectElement>("colormap").disabled = isRgb;
+  el<HTMLInputElement>("autoRange").disabled = isRgb;
+  setManualRangeEnabled(isRgb || state.autoRange);
+}
+
 function buildUI(): void {
   const scalarSel = el<HTMLSelectElement>("scalar");
   if (state.intensity) {
@@ -618,12 +647,20 @@ function buildUI(): void {
     opt.textContent = "intensity";
     scalarSel.appendChild(opt);
   }
+  if (state.rgb) {
+    const opt = document.createElement("option");
+    opt.value = "rgb";
+    opt.textContent = "rgb";
+    scalarSel.appendChild(opt);
+  }
   scalarSel.value = state.scalar;
+  updateScalarControls();
   scalarSel.addEventListener("change", () => {
     state.scalar = scalarSel.value;
-    if (state.autoRange) {
+    if (state.autoRange && state.scalar !== "rgb") {
       syncAutoRange();
     }
+    updateScalarControls();
     recolor();
   });
 
@@ -1033,6 +1070,15 @@ function onLoad(points: THREE.Points): void {
   state.count = position.count;
   const intensityAttr = geometry.getAttribute("intensity");
   state.intensity = intensityAttr ? intensityAttr.array : null;
+
+  // PCDLoader exposes an rgb field (map slam --cam) as a normalized 'color'
+  // attribute; keep a copy before installing our own colormap buffer under the
+  // same attribute name, and default to showing the true colors.
+  const rgbAttr = geometry.getAttribute("color");
+  state.rgb = rgbAttr ? Float32Array.from(rgbAttr.array) : null;
+  if (state.rgb) {
+    state.scalar = "rgb";
+  }
 
   state.colors = new Float32Array(state.count * 3);
   state.colorAttr = new THREE.BufferAttribute(state.colors, 3);
