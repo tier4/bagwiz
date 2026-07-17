@@ -37,22 +37,30 @@ struct MapSlamArgs
   // not the antenna; if that TF is absent the run still proceeds (warned) using
   // the raw antenna position.
   std::string gnss_topic;
-  // Optional camera image topics (sensor_msgs/msg/Image or CompressedImage),
-  // in priority order. Empty: no colorization. Set: after the global
-  // optimization, the map points are colorized by projecting them into each
-  // camera's images and map.pcd gains an rgb field (points no image observed
-  // keep a neutral gray). A point observed by several cameras takes the color
-  // from the EARLIEST listed topic that saw it. Intrinsics come from each
-  // camera's CameraInfo topic (camera_info_topics, or auto-resolved from the
-  // image topic name); each camera extrinsic is resolved from the bag's
-  // static TF (cloud frame <- CameraInfo frame_id) and its absence is an
-  // error. Images are assumed RAW (unrectified): the CameraInfo distortion
-  // model is applied during projection.
+  // Optional camera image topics (sensor_msgs/msg/Image or CompressedImage).
+  // Empty: no colorization. Set: after the global optimization, the map points
+  // are colorized by splatting them into each camera's images and map.pcd
+  // gains an rgb field. Each point's color is a robust weighted average over
+  // its observations; a point observed by several cameras gets a weighted
+  // blend of them after per-camera gain alignment against the FIRST listed
+  // topic. Points no image observed inherit the color of the nearest observed
+  // neighbor (see color_propagate). Intrinsics come from each camera's
+  // CameraInfo topic (camera_info_topics, or auto-resolved from the image
+  // topic name); each camera extrinsic is resolved from the bag's static TF
+  // (cloud frame <- CameraInfo frame_id) and its absence is an error. Images
+  // are assumed RAW (unrectified): the CameraInfo distortion model is applied
+  // during projection.
   std::vector<std::string> image_topics;
   // Explicit CameraInfo topics for image_topics. Either empty (auto-resolve
   // every camera from its image topic name using the standard suffix rules)
   // or exactly one entry per image topic, in the same order.
   std::vector<std::string> camera_info_topics;
+  // Fill map points no camera observed with the color of the nearest observed
+  // neighbor within an automatic radius (4x the median local point spacing,
+  // clamped to [0.05, 5] m), so map.pcd comes out fully colored. Disabled by
+  // --no-color-propagate, in which case unobserved points keep a neutral
+  // gray. Has no effect without image_topics.
+  bool color_propagate = true;
   // Output root directory; receives traj.tum and map.pcd.
   std::filesystem::path output_root;
   // Frame the output trajectory is expressed in. Empty (the default) keeps the

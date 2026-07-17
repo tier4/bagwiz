@@ -67,6 +67,15 @@ struct PackedRasterResult
 // to gate image-only UI (e.g. walk's preview hint) without attempting a decode.
 [[nodiscard]] bool is_supported_image_type(std::string_view type) noexcept;
 
+// The message's capture stamp (header.stamp as sec * 1e9 + nanosec) WITHOUT
+// decoding its pixels, parsed from the CDR header through the zero-copy
+// views. Falls back to `record_stamp_ns` (the bag record time) when the type
+// is unsupported, the payload is malformed, or the publisher left
+// header.stamp unset. For callers that time-align an image against other
+// topics before committing to an expensive decode.
+[[nodiscard]] std::int64_t image_capture_stamp_ns(
+  std::string_view type, std::span<const std::byte> payload, std::int64_t record_stamp_ns);
+
 }  // namespace bagwiz::core::image
 
 #endif  // BAGWIZ__CORE__IMAGE__PACKED_RASTER_HPP_

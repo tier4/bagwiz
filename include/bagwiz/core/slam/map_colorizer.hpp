@@ -10,24 +10,65 @@
 #define BAGWIZ__CORE__SLAM__MAP_COLORIZER_HPP_
 
 #include "bagwiz/core/image/camera_info.hpp"
+#include "bagwiz/core/pointcloud/kdtree.hpp"
+#include "bagwiz/core/slam/colorize_rasterizer.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
 #include "bagwiz/core/trajectory.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
 
 // Colorize a world-frame SLAM map from a stream of camera images (`map slam
 // --cam`). For each image the camera pose is interpolated from the optimized
-// trajectory, the map points are projected onto the raw image with the
-// camera's lens-distortion model, a per-pixel z-buffer rejects occluded
-// points, and each surviving point accumulates the sampled pixel color; the
-// final color is the per-point average over all observations. GLIM-free plain
-// data throughout, like point_cloud_io.
+// trajectory and a ColorizeRasterizer projects the map points onto the raw
+// image with the camera's lens-distortion model, splatting a per-pixel depth
+// buffer to reject occluded points. Each surviving observation is weighted
+// (depth distance, surface incidence, image sharpness, image border),
+// corrected by a per-image gain estimate that tracks auto-exposure / white
+// balance drift (the gain only lifts underexposed frames toward the
+// established reference, and only appearance-stable points vote, so genuine
+// brightening cannot ratchet the stored colors toward black), and stored in a
+// bounded per-point reservoir; finish() reduces each reservoir by trimming
+// around the 75th-luminance-percentile observation and averaging the
+// survivors — shadows are illumination, not surface color, so the lit-mode
+// cluster wins, while moving-object and occlusion-leak outliers are trimmed
+// away. A geometry pre-pass (kd-tree, surface normals, local point spacings)
+// feeds the incidence weight and the splat footprint. When the caller also
+// supplies the raw LiDAR scan nearest an image (add_image's dynamic_points),
+// map points sitting well behind a scan return are skipped for that image,
+// so vehicles and pedestrians that left no geometry in the accumulated map
+// do not stain the colors either.
+// GLIM-free plain data throughout, like point_cloud_io.
 namespace bagwiz::core::slam
 {
+
+// Capacity of each point's observation reservoir: at most this many
+// weighted observations are kept per map point; once full, a deterministic
+// reservoir-sampling rule (see MapColorizer) decides which observations to
+// replace, so the reduction in finish() stays bounded no matter how many
+// images observed the point.
+inline constexpr std::size_t kMaxObservations = 16;
+
+// Geometry pre-pass over the map points, shared by every camera's
+// MapColorizer (building the kd-tree is the expensive part and is camera
+// independent). The kd-tree references the point array, which must outlive
+// the geometry and must not be modified while it is in use.
+struct ColorizeGeometry
+{
+  pointcloud::KdTree tree;
+  std::vector<std::array<float, 3>> normals;  // unit normals; {0,0,0} = no normal
+  std::vector<float> spacings;                // local point spacing per point [m]
+};
+
+// Builds the geometry over `points`: the kd-tree plus per-point normals and
+// spacings from `k_neighbors`-neighbor PCA. Work is split over `num_threads`
+// std::threads; the result is identical for any thread count.
+[[nodiscard]] ColorizeGeometry build_colorize_geometry(
+  std::span<const std::array<float, 3>> points, int k_neighbors, int num_threads);
 
 struct MapColorizerConfig
 {
@@ -44,28 +85,51 @@ struct MapColorizerConfig
   // the cloud origin looking along +z (the optical convention).
   SensorTransform t_cloud_cam;
 
-  // Cull points farther than this from the camera position [m] before
-  // projection. Bounds the per-image work and avoids coloring geometry the
-  // camera cannot meaningfully resolve. <= 0 disables the cull.
-  double max_range = 100.0;
+  // Weight each observation by how trustworthy it is (depth distance,
+  // surface incidence, image sharpness, image border) and drop observations
+  // below weight_min. When false every surviving observation has weight 1.
+  bool use_weights = true;
 
-  // Worker threads for the per-image projection sweep. <= 1 runs serially.
-  // The result is identical for any thread count (each point accumulates at
-  // most one observation per image).
-  int num_threads = 4;
+  // Depth [m] at which the distance weight saturates to 1:
+  // w_dist = clamp((weight_distance_ref / z)^2, 0, 1).
+  double weight_distance_ref = 15.0;
 
-  // Side length [px] of one z-buffer cell. The map is sparser than the pixel
-  // grid, so per-pixel occlusion would leave holes a distant occluded point
-  // could slip through; coarser cells close those holes at the cost of
-  // over-culling near depth edges.
-  int zbuffer_cell_px = 2;
+  // Half-saturation of the sharpness weight: w_sharp = g / (g + g0) where g
+  // is the bilinear Sobel gradient magnitude (|gx| + |gy|) at the projected
+  // pixel. <= 0 disables the sharpness factor (treated as 1).
+  double weight_sharpness_g0 = 10.0;
 
-  // A point survives occlusion when its depth is within
-  // cell_min_depth * (1 + depth_rel_tolerance) + depth_abs_tolerance. The
-  // slack keeps same-surface neighbors (which spread in depth at grazing
-  // angles) from speckling, while still rejecting genuinely occluded points.
-  double depth_rel_tolerance = 0.02;
-  double depth_abs_tolerance = 0.2;  // [m]
+  // Width [px] of the linear border falloff: the weight ramps from 0 at the
+  // image edge to 1 this many pixels inside. <= 0 disables the falloff.
+  double weight_border_margin_px = 16.0;
+
+  // Observations with a total weight below this are dropped before they can
+  // pollute a point's reservoir.
+  double weight_min = 1e-3;
+
+  // Estimate a per-image RGB gain from the points this image re-observes and
+  // apply it before accumulation, tracking auto-exposure / white-balance
+  // drift between frames. Only appearance-stable points vote (their ratio
+  // carries the exposure change); mixed-lighting reservoirs abstain. The
+  // gain only ever lifts an underexposed frame toward the established
+  // reference (>= 1), never pulls a brighter frame down, so genuine
+  // brightening cannot ratchet the stored colors toward black.
+  bool gain_compensation = true;
+
+  // Minimum number of re-observed points required to trust a gain estimate;
+  // below this the image is accumulated with gain (1, 1, 1).
+  std::size_t gain_min_samples = 256;
+
+  // Minimum observations a point's reservoir must already hold for that
+  // point to vote on the current image's gain.
+  std::size_t gain_min_prior_obs = 4;
+
+  // Neighbor count for the geometry pre-pass (normals + spacings).
+  int geometry_neighbors = 12;
+
+  // Occlusion backend configuration (range cull, depth tolerance, splat,
+  // threads). The rasterizer owns per-image projection and visibility.
+  ColorizeRasterizerConfig rasterizer;
 };
 
 // Result of MapColorizer::finish().
@@ -76,20 +140,30 @@ struct MapColorizeResult
   // reading as colored data.
   std::vector<std::array<std::uint8_t, 3>> colors;
 
-  // Per-point observation flag, parallel to `colors`: 1 when at least one
-  // accepted image colored the point, else 0. Distinguishes a genuinely
-  // gray-averaged point from the unobserved-gray default, which the
-  // multi-camera merge below needs.
+  // Per-point observation flag, parallel to `colors`: 0 = unobserved,
+  // 1 = observed by at least one accepted image. The value 2 is reserved for
+  // colors propagated from neighbors and is only set downstream of the
+  // colorizer (see pointcloud/color_propagation.hpp).
   std::vector<std::uint8_t> observed;
+
+  // Per-point confidence, parallel to `colors`: the sum of the weights of
+  // the observations that survived trimming. 0 for unobserved points.
+  std::vector<float> weights;
 
   std::size_t colored_points = 0;  // points with at least one observation
   std::size_t images_used = 0;     // images accumulated
   std::size_t images_skipped = 0;  // images rejected (span/raster mismatch)
 };
 
-// Merge per-camera colorize results by priority (`map slam --cam` given more
-// than once): for each point, the FIRST result in span order that observed it
-// provides the color; points no result observed keep the neutral gray.
+// Merge per-camera colorize results (`map slam --cam` given more than once).
+// Cameras are first aligned in gain: for each result after the first, the
+// per-channel median color ratio over the points observed by both that
+// camera and the FIRST result (span order — alignment is always against the
+// first result, never chained) scales its colors toward the first camera;
+// fewer than 64 shared well-exposed samples leaves the camera unscaled.
+// Then each point blends the cameras that observed it by their weights:
+// color = sum(w_c * color_c) / sum(w_c). A point no camera observed keeps
+// the neutral gray with observed = 0 and weight 0.
 // `results` must be parallel (same point count; the first result's size is
 // authoritative). images_used/images_skipped are summed across results. An
 // empty span yields an empty result.
@@ -98,12 +172,25 @@ struct MapColorizeResult
 class MapColorizer
 {
 public:
-  // `points` are world-frame map points and `trajectory` the optimized body
-  // (cloud-frame) poses sorted ascending by timestamp — exactly CloudMap's
-  // points/trajectory. Both spans must outlive this object; neither is copied.
+  // Single-camera convenience: builds the geometry pre-pass itself (using
+  // config.geometry_neighbors and config.rasterizer.num_threads) and always
+  // rasterizes on the CPU. `points` are world-frame map points and
+  // `trajectory` the optimized body (cloud-frame) poses sorted ascending by
+  // timestamp — exactly CloudMap's points/trajectory. Both spans must
+  // outlive this object; neither is copied.
   MapColorizer(
     MapColorizerConfig config, std::span<const std::array<float, 3>> points,
     std::span<const core::TrajectoryPose> trajectory);
+
+  // Multi-camera form: `geometry` is the shared pre-pass over the same
+  // `points` (see ColorizeGeometry for the lifetime rule). A nullptr
+  // `rasterizer` selects the CPU backend. The rasterizer parameter is the
+  // injection seam: it exists so a future CUDA rasterizer can be injected
+  // from the command layer without touching this class.
+  MapColorizer(
+    MapColorizerConfig config, std::shared_ptr<const ColorizeGeometry> geometry,
+    std::span<const std::array<float, 3>> points, std::span<const core::TrajectoryPose> trajectory,
+    std::unique_ptr<ColorizeRasterizer> rasterizer = nullptr);
 
   MapColorizer(const MapColorizer &) = delete;
   MapColorizer & operator=(const MapColorizer &) = delete;
@@ -118,22 +205,70 @@ public:
     std::int64_t stamp_ns, std::span<const std::byte> bgr, std::uint32_t width,
     std::uint32_t height);
 
-  // Average the accumulated observations into the final per-point colors.
+  // Same as above, with the occluder geometry of the scene at the image's
+  // own time: `dynamic_points` is the raw LiDAR scan nearest to the image,
+  // in the same world frame as the map points. A map point well behind a
+  // scan return — a vehicle that drove through the view but left nothing in
+  // the accumulated map — is rejected for this image instead of sampling
+  // the vehicle's pixels. Pass an empty span for the static-only behavior
+  // of the four-argument form.
+  bool add_image(
+    std::int64_t stamp_ns, std::span<const std::byte> bgr, std::uint32_t width,
+    std::uint32_t height, std::span<const std::array<float, 3>> dynamic_points);
+
+  // Reduce every point's reservoir into the final colors: trim the
+  // observations deviating too far from the 75th-luminance-percentile
+  // observation (the lit-mode anchor; shadows are illumination, not surface
+  // color), then a weighted mean over the survivors. See MapColorizeResult
+  // for the output semantics.
   [[nodiscard]] MapColorizeResult finish() const;
 
 private:
-  struct Accumulator
+  // One reservoir page covering kPageSize consecutive points. Pages are
+  // allocated lazily on a point's first observation: the observed set is
+  // typically sparse, so a flat per-point array of reservoirs would cost
+  // ~300 MB on multi-million-point maps that mostly never see a camera.
+  static constexpr std::size_t kPageSize = 1024;
+  struct ObservationPage
   {
-    std::uint32_t r = 0;
-    std::uint32_t g = 0;
-    std::uint32_t b = 0;
-    std::uint32_t count = 0;
+    // Packed observations per point, most-significant byte first:
+    // bits 31..24 = weight quantized to 8 bits linear (w * 255 rounded),
+    // bits 23..16 = r, 15..8 = g, 7..0 = b.
+    std::array<std::array<std::uint32_t, kMaxObservations>, kPageSize> slots{};
+    // Total observations offered per point (grows past kMaxObservations;
+    // the reservoir-sampling rule needs the full count).
+    std::array<std::uint32_t, kPageSize> seen{};
   };
+
+  // Adds one packed observation to a point's reservoir: stored directly
+  // while fewer than kMaxObservations were seen, otherwise the (seen + 1)-th
+  // observation replaces slot j when j = mix64(point_index, seen) %
+  // (seen + 1) falls below kMaxObservations (Vitter-style reservoir
+  // sampling). Each image contributes at most one observation per point and
+  // images are processed serially, so a point's observation sequence — and
+  // therefore the reservoir contents — is fixed regardless of thread count.
+  void reservoir_add(std::uint32_t point_index, std::uint32_t packed);
 
   MapColorizerConfig config_;
   std::span<const std::array<float, 3>> points_;
   std::span<const core::TrajectoryPose> trajectory_;
-  std::vector<Accumulator> accumulators_;  // parallel to points_
+  std::shared_ptr<const ColorizeGeometry> geometry_;
+  std::unique_ptr<ColorizeRasterizer> rasterizer_;
+  std::vector<std::unique_ptr<ObservationPage>> pages_;  // pages_[index / kPageSize]
+
+  // Per-image scratch, kept between add_image calls to avoid reallocation.
+  std::vector<VisiblePoint> visible_scratch_;
+  struct PendingObservation
+  {
+    std::uint32_t index = 0;
+    double r = 0.0;
+    double g = 0.0;
+    double b = 0.0;
+    double weight = 0.0;
+  };
+  std::vector<PendingObservation> pending_scratch_;
+  std::array<std::vector<double>, 3> gain_ratio_scratch_;
+
   std::size_t images_used_ = 0;
   std::size_t images_skipped_ = 0;
 };

@@ -94,13 +94,20 @@ private:
       "--cam", slam_args_.image_topics,
       "Camera image topic(s) (sensor_msgs/msg/Image or CompressedImage); list several "
       "after one flag and/or repeat the flag. After the global optimization, map points "
-      "are colorized by projecting them into each camera's images and map.pcd gains an "
-      "rgb field (points no image observed keep a neutral gray). A point observed by "
-      "several cameras takes the color from the EARLIEST listed topic that saw it. "
-      "Intrinsics come from each camera's CameraInfo topic (see --cam-info); each camera "
-      "extrinsic is resolved from the bag's static TF (cloud <- camera frame), erroring "
-      "if that chain is absent. Images are assumed raw (unrectified): the CameraInfo "
-      "distortion model is applied during projection.");
+      "are colorized by splatting them into each camera's images against a per-pixel "
+      "depth buffer, and map.pcd gains an rgb field. Each point's color is a robust "
+      "weighted average over its observations (the weights favor close, frontal, sharp, "
+      "non-border views, and the lit-mode cluster wins over shadows) with per-image "
+      "exposure/gain compensation; map points sitting behind a vehicle or pedestrian "
+      "caught by the LiDAR scan nearest an image are skipped for that image, so moving "
+      "traffic does not stain the map. A point seen by several cameras gets a weighted "
+      "blend of them, gain-aligned to the first listed "
+      "topic. Points no image observed inherit the nearest observed neighbor's color "
+      "(see --no-color-propagate) or keep a neutral gray. Intrinsics come from each "
+      "camera's CameraInfo topic (see --cam-info); each camera extrinsic is resolved "
+      "from the bag's static TF (cloud <- camera frame), erroring if that chain is "
+      "absent. Images are assumed raw (unrectified): the CameraInfo distortion model "
+      "is applied during projection.");
     sub
       ->add_option(
         "--cam-info", slam_args_.camera_info_topics,
@@ -108,6 +115,12 @@ private:
         "camera from its image topic name using the standard suffix rules) or pass exactly "
         "one per --cam topic, in the same order (several after one flag and/or repeated).")
       ->needs(cam_opt);
+    sub->add_flag(
+      "!--no-color-propagate", slam_args_.color_propagate,
+      "Do not propagate colors to map points no camera observed. By default, unobserved "
+      "points inherit the color of the nearest observed neighbor within an automatic "
+      "radius (4x the median point spacing, clamped to [0.05, 5] m), so map.pcd is "
+      "fully colored; with this flag they keep a neutral gray instead.");
     sub->add_option(
       "--frame", slam_args_.output_frame,
       "Output trajectory frame. Defaults to the PointCloud2 topic's frame_id; a "

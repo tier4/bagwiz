@@ -138,4 +138,25 @@ bool is_supported_image_type(std::string_view type) noexcept
   return type == kImageType || type == kCompressedImageType;
 }
 
+std::int64_t image_capture_stamp_ns(
+  // cppcheck-suppress passedByValue  // string_view is the canonical by-value idiom
+  std::string_view type, std::span<const std::byte> payload, std::int64_t record_stamp_ns)
+{
+  if (type == kCompressedImageType) {
+    const auto view = extract_compressed_image(payload);
+    if (view.ok() && view.image->header_stamp_ns != 0) {
+      return view.image->header_stamp_ns;
+    }
+    return record_stamp_ns;
+  }
+  if (type == kImageType) {
+    const auto view = extract_raw_image(payload);
+    if (view.ok() && view.image->header_stamp_ns != 0) {
+      return view.image->header_stamp_ns;
+    }
+    return record_stamp_ns;
+  }
+  return record_stamp_ns;
+}
+
 }  // namespace bagwiz::core::image

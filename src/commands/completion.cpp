@@ -1089,7 +1089,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //           [--input-res <m>] [--min-range <m>] [--max-range <m>]
 //           [-j|--threads <N>] [--viewer] [-w|--overwrite]
 //           [--no-progress] [--no-warmup-fill] [--no-cooldown-fill]
-//           [--fill-min-inliers <f>] [--submap-keyframes <N>]
+//           [--no-color-propagate] [--fill-min-inliers <f>] [--submap-keyframes <N>]
 //   viewer: `map`(0) `viewer`(1) `<map>`(2)
 //
 // At the action slot (word 1) the candidates are `slam` and `viewer` (or the
@@ -1126,9 +1126,25 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
   if (current.starts_with("-")) {
     return matching(
       with_help(
-        {"--backend", "--cam", "--cam-info", "--fill-min-inliers", "--frame", "--gnss", "--imu",
-         "--input-res", "--max-range", "--min-range", "--no-cooldown-fill", "--no-progress",
-         "--no-warmup-fill", "--overwrite", "--submap-keyframes", "--threads", "--viewer", "-j",
+        {"--backend",
+         "--cam",
+         "--cam-info",
+         "--fill-min-inliers",
+         "--frame",
+         "--gnss",
+         "--imu",
+         "--input-res",
+         "--max-range",
+         "--min-range",
+         "--no-color-propagate",
+         "--no-cooldown-fill",
+         "--no-progress",
+         "--no-warmup-fill",
+         "--overwrite",
+         "--submap-keyframes",
+         "--threads",
+         "--viewer",
+         "-j",
          "-w"}),
       current);
   }

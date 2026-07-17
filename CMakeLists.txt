@@ -228,6 +228,8 @@ add_library(bagwiz_core
   src/core/image/packed_raster.cpp
   src/core/image/projection_matrix.cpp
   src/core/image/undistort.cpp
+  src/core/image/gradient.cpp
+  src/core/image/sampling.cpp
   src/core/pointcloud/pointcloud2.cpp
   src/core/pointcloud/cloud_transform.cpp
   src/core/pointcloud/cloud_concat.cpp
@@ -239,11 +241,15 @@ add_library(bagwiz_core
   src/core/pointcloud/fetcher.cpp
   src/core/pointcloud/overlay.cpp
   src/core/pointcloud/projector_helpers.cpp
+  src/core/pointcloud/color_propagation.cpp
+  src/core/pointcloud/kdtree.cpp
+  src/core/pointcloud/normals.cpp
   src/core/slam/lidar_scan.cpp
   src/core/slam/imu_sample.cpp
   src/core/slam/gnss_sample.cpp
   src/core/slam/gnss_projector.cpp
   src/core/slam/gnss_alignment.cpp
+  src/core/slam/colorize_rasterizer_cpu.cpp
   src/core/slam/map_colorizer.cpp
   src/core/slam/point_cloud_io.cpp
   src/core/slam/cloud_filters.cpp
@@ -857,6 +863,12 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_compressed_image_test test/core/image/compressed_image_test.cpp)
   target_link_libraries(bagwiz_compressed_image_test bagwiz_core)
 
+  ament_add_gtest(bagwiz_image_sampling_test test/core/image/sampling_test.cpp)
+  target_link_libraries(bagwiz_image_sampling_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_image_gradient_test test/core/image/gradient_test.cpp)
+  target_link_libraries(bagwiz_image_gradient_test bagwiz_core)
+
   ament_add_gtest(bagwiz_pointcloud2_test test/core/pointcloud/pointcloud2_test.cpp)
   target_link_libraries(bagwiz_pointcloud2_test bagwiz_core)
 
@@ -893,6 +905,15 @@ if(BUILD_TESTING)
   ament_add_gtest(
     bagwiz_pointcloud_property_ranges_test test/core/pointcloud/property_ranges_test.cpp)
   target_link_libraries(bagwiz_pointcloud_property_ranges_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_pointcloud_kdtree_test test/core/pointcloud/kdtree_test.cpp)
+  target_link_libraries(bagwiz_pointcloud_kdtree_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_pointcloud_normals_test test/core/pointcloud/normals_test.cpp)
+  target_link_libraries(bagwiz_pointcloud_normals_test bagwiz_core)
+
+  ament_add_gtest(bagwiz_pointcloud_color_propagation_test test/core/pointcloud/color_propagation_test.cpp)
+  target_link_libraries(bagwiz_pointcloud_color_propagation_test bagwiz_core)
 
   # image_decoder lives in bagwiz_core; libav is linked explicitly so the test
   # can both drive the decoder and synthesize JPEG/PNG fixtures with libav

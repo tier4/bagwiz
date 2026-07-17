@@ -8,17 +8,19 @@
 
 #include "bagwiz/core/slam/map_colorizer.hpp"
 
-#include "bagwiz/core/image/camera_distortion.hpp"
+#include "bagwiz/core/image/gradient.hpp"
+#include "bagwiz/core/image/sampling.hpp"
+#include "bagwiz/core/pointcloud/normals.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
-#include <limits>
+#include <cstdio>
+#include <cstdlib>
+#include <memory>
 #include <span>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -31,6 +33,37 @@ namespace
 // Neutral gray for points no accepted image ever observed: visible in a
 // viewer without reading as real color data.
 constexpr std::array<std::uint8_t, 3> kUncoloredGray{128, 128, 128};
+
+// Maximum per-channel deviation from the reservoir's anchor observation an
+// observation may have and still survive trimming in finish() [gray levels].
+// Dynamic objects and occlusion leaks land far from the anchor; honest
+// observations of one surface cluster well inside this band.
+constexpr double kTrimDeviation = 48.0;
+
+// merge_colorize_results clamps its per-camera alignment to this range: wider
+// swings mean the estimate locked onto something other than exposure drift.
+constexpr double kGainMin = 0.5;
+constexpr double kGainMax = 2.0;
+
+// The per-image gain is clamped to [1, kGainImageMax] rather than
+// [kGainMin, kGainMax]: it may only LIFT an underexposed frame toward the
+// established reference, never pull a brighter frame down. A scene that
+// genuinely brightens (driving out of shade) would otherwise drag the
+// reservoir's running mean below the true surface color, the below-1 gain
+// would then chase that falling mean, and the estimate would ratchet itself
+// down to the clamp floor. Lifting underexposed frames keeps the reservoir at
+// the scene's best-lit exposure, which the lit-mode anchor in finish()
+// prefers anyway.
+constexpr double kGainImageMin = 1.0;
+constexpr double kGainImageMax = 2.0;
+
+// Maximum per-channel spread (max - min over the stored observations, gray
+// levels) for a point's reservoir to vote on an image's gain. A reservoir
+// that mixes lighting modes (sunlit and shadowed, or an occluder's color)
+// has a dark-tilted mean; letting it vote would align every later bright
+// observation toward that dark mode. Only appearance-stable points carry a
+// trustworthy exposure ratio, so only they vote.
+constexpr double kGainVoteStableRange = 32.0;
 
 // A rigid transform with a row-major 3x3 rotation, p' = R * p + t. Mirrors
 // pcd_concat's quaternion-to-matrix conversion; kept local so the header
@@ -78,26 +111,137 @@ Rigid invert(const Rigid & a)
   return out;
 }
 
-// One point that projected inside the image: where it landed and how deep.
-struct Candidate
+// splitmix64-style bit mixer over (point_index, seen). Drives the reservoir
+// replacement slot; the only requirement is determinism — identical inputs
+// must give identical outputs on every platform and thread count.
+std::uint64_t mix64(std::uint64_t point_index, std::uint64_t seen)
 {
-  std::uint32_t index = 0;  // into the map points span
-  std::int32_t u = 0;
-  std::int32_t v = 0;
-  float depth = 0.0F;
-};
+  std::uint64_t z = point_index * 0x9E3779B97F4A7C15ULL + seen * 0xC2B2AE3D27D4EB4FULL;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+  return z ^ (z >> 31);
+}
+
+// Median of `values` (average of the two middle values for an even count).
+// Sorts the caller's scratch buffer in place.
+double median_of(std::vector<double> & values)
+{
+  if (values.empty()) {
+    return 0.0;
+  }
+  std::sort(values.begin(), values.end());
+  const std::size_t mid = values.size() / 2;
+  if (values.size() % 2 == 1) {
+    return values[mid];
+  }
+  return 0.5 * (values[mid - 1] + values[mid]);
+}
+
+// Round-to-nearest into [0, 255], for colors, gains, and weight quantization.
+std::uint32_t quantize8(double value)
+{
+  return static_cast<std::uint32_t>(std::clamp(value, 0.0, 255.0) + 0.5);
+}
+
+// Bilinear sample of a float map (one value per pixel) at (u, v), with the
+// same coordinate convention as image::bilinear_sample_bgr: integer
+// coordinates land on pixel centers and the footprint clamps at the border.
+// Returns 0 for a map that does not hold exactly width * height values.
+double bilinear_sample_float(
+  std::span<const float> map, std::uint32_t width, std::uint32_t height, double u, double v)
+{
+  if (map.size() != static_cast<std::size_t>(width) * height) {
+    return 0.0;
+  }
+  const double cu = std::clamp(u, 0.0, static_cast<double>(width - 1));
+  const double cv = std::clamp(v, 0.0, static_cast<double>(height - 1));
+  const std::uint32_t u0 = static_cast<std::uint32_t>(cu);
+  const std::uint32_t v0 = static_cast<std::uint32_t>(cv);
+  const std::uint32_t u1 = std::min(u0 + 1, width - 1);
+  const std::uint32_t v1 = std::min(v0 + 1, height - 1);
+  const double fu = cu - static_cast<double>(u0);
+  const double fv = cv - static_cast<double>(v0);
+  const double m00 = map[static_cast<std::size_t>(v0) * width + u0];
+  const double m01 = map[static_cast<std::size_t>(v0) * width + u1];
+  const double m10 = map[static_cast<std::size_t>(v1) * width + u0];
+  const double m11 = map[static_cast<std::size_t>(v1) * width + u1];
+  return (1.0 - fu) * (1.0 - fv) * m00 + fu * (1.0 - fv) * m01 + (1.0 - fu) * fv * m10 +
+         fu * fv * m11;
+}
+
+std::shared_ptr<const ColorizeGeometry> make_owned_geometry(
+  std::span<const std::array<float, 3>> points, const MapColorizerConfig & config)
+{
+  return std::make_shared<const ColorizeGeometry>(
+    build_colorize_geometry(points, config.geometry_neighbors, config.rasterizer.num_threads));
+}
 
 }  // namespace
+
+ColorizeGeometry build_colorize_geometry(
+  std::span<const std::array<float, 3>> points, int k_neighbors, int num_threads)
+{
+  ColorizeGeometry geometry;
+  geometry.tree = pointcloud::KdTree(points);
+  auto local = pointcloud::estimate_local_geometry(points, geometry.tree, k_neighbors, num_threads);
+  geometry.normals = std::move(local.normals);
+  geometry.spacings = std::move(local.spacings);
+  return geometry;
+}
 
 MapColorizer::MapColorizer(
   MapColorizerConfig config, std::span<const std::array<float, 3>> points,
   std::span<const core::TrajectoryPose> trajectory)
-: config_(std::move(config)), points_(points), trajectory_(trajectory), accumulators_(points.size())
+: MapColorizer(config, make_owned_geometry(points, config), points, trajectory, nullptr)
 {
+}
+
+MapColorizer::MapColorizer(
+  MapColorizerConfig config, std::shared_ptr<const ColorizeGeometry> geometry,
+  std::span<const std::array<float, 3>> points, std::span<const core::TrajectoryPose> trajectory,
+  std::unique_ptr<ColorizeRasterizer> rasterizer)
+: config_(std::move(config)),
+  points_(points),
+  trajectory_(trajectory),
+  geometry_(std::move(geometry)),
+  rasterizer_(std::move(rasterizer)),
+  pages_((points.size() + kPageSize - 1) / kPageSize)
+{
+  if (!rasterizer_) {
+    rasterizer_ = make_cpu_colorize_rasterizer(
+      points, geometry_ ? std::span<const float>(geometry_->spacings) : std::span<const float>{},
+      config_.rasterizer);
+  }
+}
+
+void MapColorizer::reservoir_add(std::uint32_t point_index, std::uint32_t packed)
+{
+  auto & page = pages_[point_index / kPageSize];
+  if (!page) {
+    page = std::make_unique<ObservationPage>();
+  }
+  const std::size_t offset = point_index % kPageSize;
+  const std::uint32_t seen = page->seen[offset];
+  if (seen < kMaxObservations) {
+    page->slots[offset][seen] = packed;
+  } else {
+    const std::uint64_t j = mix64(point_index, seen) % (static_cast<std::uint64_t>(seen) + 1ULL);
+    if (j < kMaxObservations) {
+      page->slots[offset][static_cast<std::size_t>(j)] = packed;
+    }
+  }
+  page->seen[offset] = seen + 1;
 }
 
 bool MapColorizer::add_image(
   std::int64_t stamp_ns, std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height)
+{
+  return add_image(stamp_ns, bgr, width, height, {});
+}
+
+bool MapColorizer::add_image(
+  std::int64_t stamp_ns, std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height,
+  std::span<const std::array<float, 3>> dynamic_points)
 {
   if (points_.empty() || trajectory_.empty()) {
     ++images_skipped_;
@@ -131,140 +275,142 @@ bool MapColorizer::add_image(
     config_.t_cloud_cam.rotation_xyzw[2], config_.t_cloud_cam.rotation_xyzw[3]);
   t_cloud_cam.t = config_.t_cloud_cam.translation;
   const Rigid t_cam_world = invert(compose(t_world_cloud, t_cloud_cam));
+  // Camera center in the world, -R^T t of the world->camera transform, for
+  // the incidence view directions.
+  const std::array<double, 3> cam_center = {
+    -(t_cam_world.r[0] * t_cam_world.t[0] + t_cam_world.r[3] * t_cam_world.t[1] +
+      t_cam_world.r[6] * t_cam_world.t[2]),
+    -(t_cam_world.r[1] * t_cam_world.t[0] + t_cam_world.r[4] * t_cam_world.t[1] +
+      t_cam_world.r[7] * t_cam_world.t[2]),
+    -(t_cam_world.r[2] * t_cam_world.t[0] + t_cam_world.r[5] * t_cam_world.t[1] +
+      t_cam_world.r[8] * t_cam_world.t[2])};
 
   // Rescale the intrinsics when the delivered image differs from the
   // calibrated resolution (e.g. a downscaled republished stream).
-  image::CameraInfo cam = config_.camera;
-  if (cam.width != 0 && cam.height != 0 && (cam.width != width || cam.height != height)) {
-    cam = image::scale_camera_info(
-      cam, static_cast<double>(width) / cam.width, static_cast<double>(height) / cam.height);
+  ColorizeView view;
+  view.camera = config_.camera;
+  if (
+    view.camera.width != 0 && view.camera.height != 0 &&
+    (view.camera.width != width || view.camera.height != height)) {
+    view.camera = image::scale_camera_info(
+      view.camera, static_cast<double>(width) / view.camera.width,
+      static_cast<double>(height) / view.camera.height);
   }
-  const double fx = cam.k[0];
-  const double fy = cam.k[4];
-  const double cx = cam.k[2];
-  const double cy = cam.k[5];
-  const bool apply_distortion = !cam.d.empty();
-  const image::DistortionModel distortion_model =
-    apply_distortion ? image::select_distortion_model(cam.distortion_model)
-                     : image::DistortionModel::kNone;
-  const double max_range_sq = config_.max_range > 0.0 ? config_.max_range * config_.max_range
-                                                      : std::numeric_limits<double>::infinity();
+  view.r_cam_world = t_cam_world.r;
+  view.t_cam_world = t_cam_world.t;
+  view.width = width;
+  view.height = height;
+  rasterizer_->visible_points(view, dynamic_points, visible_scratch_);
 
-  // Pass 1 (parallel over point chunks): project every map point into the
-  // image, collecting the in-bounds hits per chunk.
-  const int num_threads =
-    std::clamp(config_.num_threads, 1, static_cast<int>(std::max<std::size_t>(1, points_.size())));
-  std::vector<std::vector<Candidate>> chunk_candidates(static_cast<std::size_t>(num_threads));
-  auto project_chunk = [&](std::size_t begin, std::size_t end, std::vector<Candidate> & out) {
-    out.reserve((end - begin) / 4);  // rough estimate, mirrors project_pointcloud
-    for (std::size_t i = begin; i < end; ++i) {
-      const auto & p = points_[i];
-      const double x = t_cam_world.r[0] * p[0] + t_cam_world.r[1] * p[1] + t_cam_world.r[2] * p[2] +
-                       t_cam_world.t[0];
-      const double y = t_cam_world.r[3] * p[0] + t_cam_world.r[4] * p[1] + t_cam_world.r[5] * p[2] +
-                       t_cam_world.t[1];
-      const double z = t_cam_world.r[6] * p[0] + t_cam_world.r[7] * p[1] + t_cam_world.r[8] * p[2] +
-                       t_cam_world.t[2];
-      if (z <= 0.0) {
-        continue;
-      }
-      if (x * x + y * y + z * z > max_range_sq) {
-        continue;
-      }
-      double nx = x / z;
-      double ny = y / z;
-      if (apply_distortion) {
-        // Fold-back artifacts (points beyond the lens model's domain) must
-        // not sample a color; see camera_distortion.hpp.
-        const auto distorted =
-          image::distort_for_raw_image(nx, ny, distortion_model, cam.d, fx, fy);
-        if (!distorted) {
-          continue;
+  // Sharpness map: one Sobel pass per image, bilinear-sampled per point.
+  std::vector<float> gradient;
+  if (config_.use_weights) {
+    gradient = image::sobel_gradient_magnitude(bgr, width, height);
+  }
+
+  // Weight and sample every visible point into the pending list.
+  pending_scratch_.clear();
+  for (const auto & vp : visible_scratch_) {
+    double weight = 1.0;
+    if (config_.use_weights) {
+      const double z = static_cast<double>(vp.depth);
+      const double ref_over_z = config_.weight_distance_ref / z;
+      const double w_dist = std::clamp(ref_over_z * ref_over_z, 0.0, 1.0);
+      double w_inc = 1.0;
+      if (geometry_ && vp.index < geometry_->normals.size()) {
+        const auto & n = geometry_->normals[vp.index];
+        const double nn = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
+        if (nn > 0.0) {
+          const auto & p = points_[vp.index];
+          const double dx = static_cast<double>(p[0]) - cam_center[0];
+          const double dy = static_cast<double>(p[1]) - cam_center[1];
+          const double dz = static_cast<double>(p[2]) - cam_center[2];
+          const double len = std::sqrt(dx * dx + dy * dy + dz * dz);
+          if (len > 0.0) {
+            w_inc = std::abs(n[0] * dx + n[1] * dy + n[2] * dz) / (std::sqrt(nn) * len);
+          }
         }
-        nx = distorted->x;
-        ny = distorted->y;
       }
-      const double u = fx * nx + cx;
-      const double v = fy * ny + cy;
-      if (u < 0.0 || u >= width || v < 0.0 || v >= height) {
+      const double g = bilinear_sample_float(gradient, width, height, vp.u, vp.v);
+      const double w_sharp =
+        config_.weight_sharpness_g0 > 0.0 ? g / (g + config_.weight_sharpness_g0) : 1.0;
+      const double edge = std::min(
+        std::min(vp.u, vp.v),
+        std::min(static_cast<double>(width - 1) - vp.u, static_cast<double>(height - 1) - vp.v));
+      const double w_border = config_.weight_border_margin_px > 0.0
+                                ? std::clamp(edge / config_.weight_border_margin_px, 0.0, 1.0)
+                                : 1.0;
+      weight = w_dist * w_inc * w_sharp * w_border;
+      if (weight < config_.weight_min) {
         continue;
       }
-      Candidate c;
-      c.index = static_cast<std::uint32_t>(i);
-      c.u = static_cast<std::int32_t>(u);
-      c.v = static_cast<std::int32_t>(v);
-      c.depth = static_cast<float>(z);
-      out.push_back(c);
     }
-  };
-  if (num_threads == 1) {
-    project_chunk(0, points_.size(), chunk_candidates[0]);
-  } else {
-    std::vector<std::thread> workers;
-    workers.reserve(static_cast<std::size_t>(num_threads));
-    const std::size_t chunk = (points_.size() + static_cast<std::size_t>(num_threads) - 1) /
-                              static_cast<std::size_t>(num_threads);
-    for (int t = 0; t < num_threads; ++t) {
-      const std::size_t begin = std::min(points_.size(), static_cast<std::size_t>(t) * chunk);
-      const std::size_t end = std::min(points_.size(), begin + chunk);
-      workers.emplace_back(
-        project_chunk, begin, end, std::ref(chunk_candidates[static_cast<std::size_t>(t)]));
+    const auto sample = image::bilinear_sample_bgr(bgr, width, height, vp.u, vp.v);
+    pending_scratch_.push_back(
+      PendingObservation{vp.index, sample[2], sample[1], sample[0], weight});
+  }
+
+  // Gain compensation, pass A: estimate this image's RGB gain from the ratio
+  // of each re-observed point's reservoir mean to its new observation.
+  std::array<double, 3> gain{1.0, 1.0, 1.0};
+  if (config_.gain_compensation) {
+    for (auto & ratios : gain_ratio_scratch_) {
+      ratios.clear();
     }
-    for (auto & w : workers) {
-      w.join();
+    for (const auto & obs : pending_scratch_) {
+      const auto & page = pages_[obs.index / kPageSize];
+      if (!page) {
+        continue;
+      }
+      const std::size_t offset = obs.index % kPageSize;
+      const std::size_t stored = std::min<std::size_t>(page->seen[offset], kMaxObservations);
+      if (stored < config_.gain_min_prior_obs) {
+        continue;
+      }
+      std::array<double, 3> mean{0.0, 0.0, 0.0};
+      std::array<double, 3> cmin{255.0, 255.0, 255.0};
+      std::array<double, 3> cmax{0.0, 0.0, 0.0};
+      for (std::size_t s = 0; s < stored; ++s) {
+        const std::uint32_t packed = page->slots[offset][s];
+        const std::array<double, 3> value{
+          static_cast<double>((packed >> 16) & 0xFFU), static_cast<double>((packed >> 8) & 0xFFU),
+          static_cast<double>(packed & 0xFFU)};
+        for (std::size_t c = 0; c < 3; ++c) {
+          mean[c] += value[c];
+          cmin[c] = std::min(cmin[c], value[c]);
+          cmax[c] = std::max(cmax[c], value[c]);
+        }
+      }
+      const std::array<double, 3> current{obs.r, obs.g, obs.b};
+      bool usable = true;
+      for (std::size_t c = 0; c < 3; ++c) {
+        mean[c] /= static_cast<double>(stored);
+        // Appearance-unstable reservoirs abstain (see kGainVoteStableRange);
+        // near-black channels make the ratio numerically meaningless.
+        usable = usable && cmax[c] - cmin[c] <= kGainVoteStableRange && mean[c] >= 8.0 &&
+                 current[c] >= 8.0;
+      }
+      if (!usable) {
+        continue;
+      }
+      for (std::size_t c = 0; c < 3; ++c) {
+        gain_ratio_scratch_[c].push_back(mean[c] / current[c]);
+      }
+    }
+    if (gain_ratio_scratch_[0].size() >= config_.gain_min_samples) {
+      for (std::size_t c = 0; c < 3; ++c) {
+        gain[c] = std::clamp(median_of(gain_ratio_scratch_[c]), kGainImageMin, kGainImageMax);
+      }
     }
   }
 
-  // Z-buffer over coarse pixel cells: keep the nearest depth per cell. Serial
-  // — the merge is a fraction of the projection work.
-  const std::uint32_t cell = static_cast<std::uint32_t>(std::max(1, config_.zbuffer_cell_px));
-  const std::uint32_t cells_w = (width + cell - 1) / cell;
-  const std::uint32_t cells_h = (height + cell - 1) / cell;
-  std::vector<float> zbuffer(
-    static_cast<std::size_t>(cells_w) * cells_h, std::numeric_limits<float>::infinity());
-  for (const auto & candidates : chunk_candidates) {
-    for (const auto & c : candidates) {
-      const std::size_t cell_index =
-        static_cast<std::size_t>(static_cast<std::uint32_t>(c.v) / cell) * cells_w +
-        static_cast<std::uint32_t>(c.u) / cell;
-      zbuffer[cell_index] = std::min(zbuffer[cell_index], c.depth);
-    }
-  }
-
-  // Pass 2 (parallel over the same chunks): points near their cell's nearest
-  // depth sample the pixel color. Point indices are unique within an image,
-  // so the per-point accumulators need no synchronization.
-  auto accumulate_chunk = [&](const std::vector<Candidate> & candidates) {
-    for (const auto & c : candidates) {
-      const std::size_t cell_index =
-        static_cast<std::size_t>(static_cast<std::uint32_t>(c.v) / cell) * cells_w +
-        static_cast<std::uint32_t>(c.u) / cell;
-      const double limit =
-        static_cast<double>(zbuffer[cell_index]) * (1.0 + config_.depth_rel_tolerance) +
-        config_.depth_abs_tolerance;
-      if (static_cast<double>(c.depth) > limit) {
-        continue;
-      }
-      const std::size_t pixel =
-        (static_cast<std::size_t>(c.v) * width + static_cast<std::size_t>(c.u)) * 3U;
-      auto & acc = accumulators_[c.index];
-      acc.b += static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(bgr[pixel + 0]));
-      acc.g += static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(bgr[pixel + 1]));
-      acc.r += static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(bgr[pixel + 2]));
-      ++acc.count;
-    }
-  };
-  if (num_threads == 1) {
-    accumulate_chunk(chunk_candidates[0]);
-  } else {
-    std::vector<std::thread> workers;
-    workers.reserve(chunk_candidates.size());
-    for (const auto & candidates : chunk_candidates) {
-      workers.emplace_back(accumulate_chunk, std::cref(candidates));
-    }
-    for (auto & w : workers) {
-      w.join();
-    }
+  // Pass B: apply the gain, quantize the weight, and reservoir-add.
+  for (const auto & obs : pending_scratch_) {
+    const std::uint32_t r = quantize8(obs.r * gain[0]);
+    const std::uint32_t g = quantize8(obs.g * gain[1]);
+    const std::uint32_t b = quantize8(obs.b * gain[2]);
+    const std::uint32_t w_q = quantize8(obs.weight * 255.0);
+    reservoir_add(obs.index, (w_q << 24) | (r << 16) | (g << 8) | b);
   }
 
   ++images_used_;
@@ -276,17 +422,97 @@ MapColorizeResult MapColorizer::finish() const
   MapColorizeResult result;
   result.colors.assign(points_.size(), kUncoloredGray);
   result.observed.assign(points_.size(), 0);
-  for (std::size_t i = 0; i < accumulators_.size(); ++i) {
-    const auto & acc = accumulators_[i];
-    if (acc.count == 0) {
+  result.weights.assign(points_.size(), 0.0F);
+  for (std::size_t i = 0; i < points_.size(); ++i) {
+    const auto & page = pages_[i / kPageSize];
+    if (!page) {
       continue;
     }
-    // Round-to-nearest average per channel.
+    const std::size_t offset = i % kPageSize;
+    const std::size_t stored = std::min<std::size_t>(page->seen[offset], kMaxObservations);
+    if (stored == 0) {
+      continue;
+    }
+    // Decode the kept slots.
+    std::array<double, kMaxObservations> ws;
+    std::array<std::array<double, kMaxObservations>, 3> channels;
+    for (std::size_t s = 0; s < stored; ++s) {
+      const std::uint32_t packed = page->slots[offset][s];
+      ws[s] = static_cast<double>(packed >> 24) / 255.0;
+      channels[0][s] = static_cast<double>((packed >> 16) & 0xFFU);
+      channels[1][s] = static_cast<double>((packed >> 8) & 0xFFU);
+      channels[2][s] = static_cast<double>(packed & 0xFFU);
+    }
+    // Per-observation luminance and the index order sorting by it.
+    std::array<double, kMaxObservations> lum;
+    std::array<std::size_t, kMaxObservations> order;
+    for (std::size_t s = 0; s < stored; ++s) {
+      lum[s] = 0.299 * channels[0][s] + 0.587 * channels[1][s] + 0.114 * channels[2][s];
+      order[s] = s;
+    }
+    std::sort(
+      order.begin(), order.begin() + static_cast<std::ptrdiff_t>(stored),
+      [&](std::size_t a, std::size_t b) { return lum[a] < lum[b]; });
+    // Anchor the trim at the 75th luminance percentile, not the median:
+    // shadows are illumination, not surface color, and occluders never reach
+    // a point's reservoir (the depth test rejects them while they occlude),
+    // so the lit-mode cluster is the honest estimate of the surface's
+    // appearance. One whole observation anchors all three channels, which
+    // keeps tinted light (e.g. blue shadow) from mixing channels across
+    // lighting modes.
+    const std::size_t anchor = order[(3 * stored + 3) / 4 - 1];
+    const std::array<double, 3> anchor_color{
+      channels[0][anchor], channels[1][anchor], channels[2][anchor]};
+    // Trim observations too far from the anchor (dynamic objects, occlusion
+    // leaks). If every observation trims — e.g. two complementary colors
+    // straddling the anchor — fall back to the untrimmed set: the data is
+    // genuinely multimodal and any mean is as defensible as another.
+    std::uint32_t kept_mask = 0;
+    for (std::size_t s = 0; s < stored; ++s) {
+      const double dev = std::max(
+        std::abs(channels[0][s] - anchor_color[0]),
+        std::max(
+          std::abs(channels[1][s] - anchor_color[1]), std::abs(channels[2][s] - anchor_color[2])));
+      if (dev <= kTrimDeviation) {
+        kept_mask |= 1U << s;
+      }
+    }
+    if (kept_mask == 0) {
+      kept_mask = (1U << stored) - 1U;
+    }
+    std::array<double, 3> sum{0.0, 0.0, 0.0};
+    std::array<double, 3> plain_sum{0.0, 0.0, 0.0};
+    double weight_sum = 0.0;
+    std::size_t kept = 0;
+    for (std::size_t s = 0; s < stored; ++s) {
+      if ((kept_mask & (1U << s)) == 0) {
+        continue;
+      }
+      for (std::size_t c = 0; c < 3; ++c) {
+        sum[c] += ws[s] * channels[c][s];
+        plain_sum[c] += channels[c][s];
+      }
+      weight_sum += ws[s];
+      ++kept;
+    }
+    std::array<double, 3> color;
+    if (weight_sum > 0.0) {
+      for (std::size_t c = 0; c < 3; ++c) {
+        color[c] = sum[c] / weight_sum;
+      }
+    } else {
+      // Every kept observation quantized to zero weight; fall back to a
+      // plain mean rather than divide by zero.
+      for (std::size_t c = 0; c < 3; ++c) {
+        color[c] = plain_sum[c] / static_cast<double>(kept);
+      }
+    }
     result.colors[i] = {
-      static_cast<std::uint8_t>((acc.r + acc.count / 2) / acc.count),
-      static_cast<std::uint8_t>((acc.g + acc.count / 2) / acc.count),
-      static_cast<std::uint8_t>((acc.b + acc.count / 2) / acc.count)};
+      static_cast<std::uint8_t>(quantize8(color[0])),
+      static_cast<std::uint8_t>(quantize8(color[1])),
+      static_cast<std::uint8_t>(quantize8(color[2]))};
     result.observed[i] = 1;
+    result.weights[i] = static_cast<float>(weight_sum);
     ++result.colored_points;
   }
   result.images_used = images_used_;
@@ -303,19 +529,98 @@ MapColorizeResult merge_colorize_results(std::span<const MapColorizeResult> resu
   const std::size_t count = results.front().colors.size();
   merged.colors.assign(count, kUncoloredGray);
   merged.observed.assign(count, 0);
+  merged.weights.assign(count, 0.0F);
   for (const auto & result : results) {
     merged.images_used += result.images_used;
     merged.images_skipped += result.images_skipped;
   }
-  for (std::size_t i = 0; i < count; ++i) {
-    for (const auto & result : results) {
-      if (i < result.observed.size() && result.observed[i] != 0) {
-        merged.colors[i] = result.colors[i];
-        merged.observed[i] = 1;
-        ++merged.colored_points;
-        break;
+
+  // Shared well-exposed samples below which a camera's gain alignment is not
+  // trusted (the median ratio needs a real sample base to be meaningful).
+  constexpr std::size_t kMinAlignmentSamples = 64;
+
+  // Per-camera gain alignment against the first result, so a camera that ran
+  // a different exposure or white balance does not drag the blend. Camera 0
+  // is the reference by definition; aligned[cam] views the original colors
+  // when no scaling applies, avoiding copies.
+  std::vector<std::span<const std::array<std::uint8_t, 3>>> aligned(results.size());
+  std::vector<std::vector<std::array<std::uint8_t, 3>>> aligned_storage(results.size());
+  for (std::size_t cam = 0; cam < results.size(); ++cam) {
+    aligned[cam] = results[cam].colors;
+    if (cam == 0) {
+      continue;
+    }
+    const auto & reference = results[0];
+    const auto & current = results[cam];
+    const std::size_t shared = std::min(
+      {reference.colors.size(), current.colors.size(), reference.observed.size(),
+       current.observed.size(), reference.weights.size(), current.weights.size()});
+    std::array<std::vector<double>, 3> ratios;
+    for (std::size_t i = 0; i < shared; ++i) {
+      if (reference.observed[i] != 1 || current.observed[i] != 1) {
+        continue;
+      }
+      if (reference.weights[i] <= 0.0F || current.weights[i] <= 0.0F) {
+        continue;
+      }
+      bool usable = true;
+      for (std::size_t c = 0; c < 3; ++c) {
+        usable = usable && reference.colors[i][c] >= 8 && current.colors[i][c] >= 8;
+      }
+      if (!usable) {
+        continue;
+      }
+      for (std::size_t c = 0; c < 3; ++c) {
+        ratios[c].push_back(static_cast<double>(reference.colors[i][c]) / current.colors[i][c]);
       }
     }
+    if (ratios[0].size() < kMinAlignmentSamples) {
+      continue;
+    }
+    std::array<double, 3> gain;
+    for (std::size_t c = 0; c < 3; ++c) {
+      gain[c] = std::clamp(median_of(ratios[c]), kGainMin, kGainMax);
+    }
+    auto & copy = aligned_storage[cam];
+    copy = current.colors;
+    for (auto & color : copy) {
+      for (std::size_t c = 0; c < 3; ++c) {
+        color[c] = static_cast<std::uint8_t>(quantize8(static_cast<double>(color[c]) * gain[c]));
+      }
+    }
+    aligned[cam] = copy;
+  }
+
+  // Weighted blend across cameras per point.
+  for (std::size_t i = 0; i < count; ++i) {
+    std::array<double, 3> sum{0.0, 0.0, 0.0};
+    double weight_sum = 0.0;
+    for (std::size_t cam = 0; cam < results.size(); ++cam) {
+      if (i >= results[cam].observed.size() || results[cam].observed[i] != 1) {
+        continue;
+      }
+      if (i >= results[cam].weights.size() || i >= aligned[cam].size()) {
+        continue;
+      }
+      const double w = results[cam].weights[i];
+      if (w <= 0.0) {
+        continue;
+      }
+      for (std::size_t c = 0; c < 3; ++c) {
+        sum[c] += w * static_cast<double>(aligned[cam][i][c]);
+      }
+      weight_sum += w;
+    }
+    if (weight_sum <= 0.0) {
+      continue;
+    }
+    merged.colors[i] = {
+      static_cast<std::uint8_t>(quantize8(sum[0] / weight_sum)),
+      static_cast<std::uint8_t>(quantize8(sum[1] / weight_sum)),
+      static_cast<std::uint8_t>(quantize8(sum[2] / weight_sum))};
+    merged.observed[i] = 1;
+    merged.weights[i] = static_cast<float>(weight_sum);
+    ++merged.colored_points;
   }
   return merged;
 }
