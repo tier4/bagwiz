@@ -222,6 +222,7 @@ add_library(bagwiz_core
   src/core/image/compressed_image.cpp
   src/core/image/image_decoder.cpp
   src/core/image/image_encoder.cpp
+  src/core/image/camera_distortion.cpp
   src/core/image/camera_info.cpp
   src/core/image/camera_calibration_yaml.cpp
   src/core/image/packed_raster.cpp
