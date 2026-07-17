@@ -76,10 +76,24 @@ struct MapColorizeResult
   // reading as colored data.
   std::vector<std::array<std::uint8_t, 3>> colors;
 
+  // Per-point observation flag, parallel to `colors`: 1 when at least one
+  // accepted image colored the point, else 0. Distinguishes a genuinely
+  // gray-averaged point from the unobserved-gray default, which the
+  // multi-camera merge below needs.
+  std::vector<std::uint8_t> observed;
+
   std::size_t colored_points = 0;  // points with at least one observation
   std::size_t images_used = 0;     // images accumulated
   std::size_t images_skipped = 0;  // images rejected (span/raster mismatch)
 };
+
+// Merge per-camera colorize results by priority (`map slam --cam` given more
+// than once): for each point, the FIRST result in span order that observed it
+// provides the color; points no result observed keep the neutral gray.
+// `results` must be parallel (same point count; the first result's size is
+// authoritative). images_used/images_skipped are summed across results. An
+// empty span yields an empty result.
+[[nodiscard]] MapColorizeResult merge_colorize_results(std::span<const MapColorizeResult> results);
 
 class MapColorizer
 {

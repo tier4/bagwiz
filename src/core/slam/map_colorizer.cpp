@@ -275,6 +275,7 @@ MapColorizeResult MapColorizer::finish() const
 {
   MapColorizeResult result;
   result.colors.assign(points_.size(), kUncoloredGray);
+  result.observed.assign(points_.size(), 0);
   for (std::size_t i = 0; i < accumulators_.size(); ++i) {
     const auto & acc = accumulators_[i];
     if (acc.count == 0) {
@@ -285,11 +286,38 @@ MapColorizeResult MapColorizer::finish() const
       static_cast<std::uint8_t>((acc.r + acc.count / 2) / acc.count),
       static_cast<std::uint8_t>((acc.g + acc.count / 2) / acc.count),
       static_cast<std::uint8_t>((acc.b + acc.count / 2) / acc.count)};
+    result.observed[i] = 1;
     ++result.colored_points;
   }
   result.images_used = images_used_;
   result.images_skipped = images_skipped_;
   return result;
+}
+
+MapColorizeResult merge_colorize_results(std::span<const MapColorizeResult> results)
+{
+  MapColorizeResult merged;
+  if (results.empty()) {
+    return merged;
+  }
+  const std::size_t count = results.front().colors.size();
+  merged.colors.assign(count, kUncoloredGray);
+  merged.observed.assign(count, 0);
+  for (const auto & result : results) {
+    merged.images_used += result.images_used;
+    merged.images_skipped += result.images_skipped;
+  }
+  for (std::size_t i = 0; i < count; ++i) {
+    for (const auto & result : results) {
+      if (i < result.observed.size() && result.observed[i] != 0) {
+        merged.colors[i] = result.colors[i];
+        merged.observed[i] = 1;
+        ++merged.colored_points;
+        break;
+      }
+    }
+  }
+  return merged;
 }
 
 }  // namespace bagwiz::core::slam

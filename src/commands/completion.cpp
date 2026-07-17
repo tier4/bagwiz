@@ -1084,7 +1084,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //
 //   slam:   `map`(0) `slam`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
 //           [--backend <cpu|cuda|auto>] [--frame <frame_id>] [--imu <topic>]
-//           [--gnss <topic>] [--cam <topic>] [--cam-info <topic>]
+//           [--gnss <topic>] [--cam <topic>...] [--cam-info <topic>...]
 //           [--input-res <m>] [--min-range <m>] [--max-range <m>]
 //           [-j|--threads <N>] [--viewer] [-w|--overwrite]
 //           [--no-progress] [--no-warmup-fill] [--no-cooldown-fill]
@@ -1136,22 +1136,35 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
     return matching({"auto", "cpu", "cuda"}, current);
   }
 
-  // Topic-bearing flags: complete the value from the bag's topics of the
-  // type(s) the flag accepts (--imu Imu, --cam image types, --cam-info
-  // CameraInfo).
+  // Topic-bearing flags: complete the value(s) from the bag's topics of the
+  // type(s) the flag accepts. --imu takes exactly one value, so it completes
+  // only immediately after the flag. --cam and --cam-info accept several
+  // values per occurrence (CLI11 consumes every following non-flag word), so
+  // the governing flag is found by walking left past the values already
+  // typed; any other intervening flag ends that value run.
   if (request.cursor_word == 0 || request.words.size() <= kSecondCommandArgWord) {
     return {};
   }
-  const auto & prev = request.words[request.cursor_word - 1];
   std::span<const std::string_view> flag_topic_types;
-  if (prev == "--imu") {
+  if (request.words[request.cursor_word - 1] == "--imu") {
     flag_topic_types = kImuType;
-  } else if (prev == "--cam") {
-    flag_topic_types = kImageTopicTypes;
-  } else if (prev == "--cam-info") {
-    flag_topic_types = kCameraInfoType;
   } else {
-    return {};
+    std::string_view governing;
+    for (std::size_t w = request.cursor_word; w > kSecondCommandArgWord;) {
+      --w;
+      const auto & word = request.words[w];
+      if (!word.empty() && word.front() == '-') {
+        governing = word;
+        break;
+      }
+    }
+    if (governing == "--cam") {
+      flag_topic_types = kImageTopicTypes;
+    } else if (governing == "--cam-info") {
+      flag_topic_types = kCameraInfoType;
+    } else {
+      return {};
+    }
   }
   const auto & bag_arg = request.words[kSecondCommandArgWord];
   if (bag_arg.empty() || bag_arg.starts_with("-")) {

@@ -249,6 +249,64 @@ TEST(MapColorizer, RejectsARasterSizeMismatch)
   EXPECT_EQ(result.images_used, 0U);
 }
 
+TEST(MapColorizer, FinishReportsObservedFlags)
+{
+  const std::vector<std::array<float, 3>> points = {{0.0F, 0.0F, 5.0F}, {0.0F, 0.0F, -5.0F}};
+  const std::vector<TrajectoryPose> trajectory = {make_pose(0)};
+  slam::MapColorizer colorizer(make_config(), points, trajectory);
+
+  EXPECT_TRUE(colorizer.add_image(0, make_raster(100, 100, kRed), 100, 100));
+
+  const auto result = colorizer.finish();
+  ASSERT_EQ(result.observed.size(), 2U);
+  EXPECT_EQ(result.observed[0], 1);  // in front of the camera: colored
+  EXPECT_EQ(result.observed[1], 0);  // behind the camera: never observed
+}
+
+// Build a result by hand — merge_colorize_results consumes plain data, so the
+// merge semantics are testable without running any projection.
+slam::MapColorizeResult make_result(
+  const std::vector<std::array<std::uint8_t, 3>> & colors,
+  const std::vector<std::uint8_t> & observed, std::size_t images_used, std::size_t images_skipped)
+{
+  slam::MapColorizeResult result;
+  result.colors = colors;
+  result.observed = observed;
+  for (const auto flag : observed) {
+    result.colored_points += flag != 0 ? 1U : 0U;
+  }
+  result.images_used = images_used;
+  result.images_skipped = images_skipped;
+  return result;
+}
+
+TEST(MapColorizerMerge, EarlierResultWinsPerPoint)
+{
+  // Point 0: both observed -> first result's color. Point 1: only the second
+  // observed -> second's color. Point 2: nobody -> gray, unobserved.
+  const auto first = make_result({{10, 11, 12}, kGray, kGray}, {1, 0, 0}, 3, 1);
+  const auto second = make_result({{20, 21, 22}, {30, 31, 32}, kGray}, {1, 1, 0}, 4, 0);
+  const std::array<slam::MapColorizeResult, 2> results{first, second};
+
+  const auto merged = slam::merge_colorize_results(results);
+  ASSERT_EQ(merged.colors.size(), 3U);
+  EXPECT_EQ(merged.colors[0], (std::array<std::uint8_t, 3>{10, 11, 12}));
+  EXPECT_EQ(merged.colors[1], (std::array<std::uint8_t, 3>{30, 31, 32}));
+  EXPECT_EQ(merged.colors[2], kGray);
+  EXPECT_EQ(merged.observed, (std::vector<std::uint8_t>{1, 1, 0}));
+  EXPECT_EQ(merged.colored_points, 2U);
+  EXPECT_EQ(merged.images_used, 7U);
+  EXPECT_EQ(merged.images_skipped, 1U);
+}
+
+TEST(MapColorizerMerge, EmptyInputYieldsEmptyResult)
+{
+  const auto merged = slam::merge_colorize_results({});
+  EXPECT_TRUE(merged.colors.empty());
+  EXPECT_TRUE(merged.observed.empty());
+  EXPECT_EQ(merged.colored_points, 0U);
+}
+
 TEST(MapColorizer, MultithreadedRunMatchesSingleThread)
 {
   // A deterministic spread of points in front of the camera, colored from a

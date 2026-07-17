@@ -174,7 +174,7 @@ public:
         return 1;
       }
     }
-    if (!args_.image_topic.empty() && !validate_camera_inputs(*reader)) {
+    if (!args_.image_topics.empty() && !validate_camera_inputs(*reader)) {
       return 1;
     }
 
@@ -226,15 +226,11 @@ public:
       t_lidar_imu = extrinsic;
     }
 
-    // Resolve the cloud<-camera extrinsic before feeding GLIM so an absent TF
-    // chain aborts before hours of SLAM, not after. The colorization itself
-    // runs after the global optimization.
-    if (!args_.image_topic.empty()) {
-      core::slam::SensorTransform extrinsic;
-      if (!resolve_camera_extrinsic(extrinsic)) {
-        return 1;
-      }
-      t_cloud_cam_ = extrinsic;
+    // Resolve every cloud<-camera extrinsic before feeding GLIM so an absent
+    // TF chain aborts before hours of SLAM, not after. The colorization
+    // itself runs after the global optimization.
+    if (!args_.image_topics.empty() && !resolve_camera_extrinsics()) {
+      return 1;
     }
 
     return run_mapping(*reader, t_lidar_imu);
@@ -301,123 +297,155 @@ private:
     return true;
   }
 
-  // Validate the --cam image topic and resolve + load its CameraInfo (into
-  // camera_info_topic_ / camera_info_). Errors are logged; false aborts before
-  // any heavy work.
+  // Validate every --cam image topic and resolve + load its CameraInfo (into
+  // camera_info_topics_ / camera_infos_, parallel to args_.image_topics).
+  // Errors are logged; false aborts before any heavy work.
   bool validate_camera_inputs(io::BagReader & reader)
   {
-    const io::TopicInfo * info = nullptr;
-    for (const auto & t : reader.topics()) {
-      if (t.name == args_.image_topic) {
-        info = &t;
-        break;
-      }
-    }
-    if (info == nullptr) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Topic '%s' is not present in %s", args_.image_topic.c_str(),
-        args_.input_path.c_str());
-      return false;
-    }
-    if (info->type != kImageType && info->type != kCompressedImageType) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Topic '%s' is %s, expected %s or %s", args_.image_topic.c_str(),
-        info->type.c_str(), kImageType, kCompressedImageType);
-      return false;
-    }
-
-    if (!args_.camera_info_topic.empty()) {
-      const auto error =
-        core::camera_info::validate_camera_info_topic(args_.input_path, args_.camera_info_topic);
-      if (error.has_value()) {
-        BAGWIZ_LOG_ERROR(kLogger, "%s", error->c_str());
-        return false;
-      }
-      camera_info_topic_ = args_.camera_info_topic;
-    } else {
-      const auto resolved =
-        core::camera_info::resolve_camera_info_topic(args_.image_topic, reader.topics());
-      if (!resolved.topic.has_value()) {
-        BAGWIZ_LOG_ERROR(
-          kLogger,
-          "Could not auto-resolve a CameraInfo topic for '%s'%s%s. Pass it explicitly "
-          "with --cam-info.",
-          args_.image_topic.c_str(), resolved.error.has_value() ? ": " : "",
-          resolved.error.has_value() ? resolved.error->c_str() : "");
-        return false;
-      }
-      camera_info_topic_ = *resolved.topic;
-    }
-
-    const auto loaded = core::camera_info::load_camera_info(args_.input_path, camera_info_topic_);
-    if (!loaded.ok()) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Could not read CameraInfo from '%s': %s", camera_info_topic_.c_str(),
-        loaded.error.c_str());
-      return false;
-    }
-    camera_info_ = *loaded.info;
-    if (!(camera_info_.k[0] > 0.0) || !(camera_info_.k[4] > 0.0)) {
+    if (
+      !args_.camera_info_topics.empty() &&
+      args_.camera_info_topics.size() != args_.image_topics.size()) {
       BAGWIZ_LOG_ERROR(
         kLogger,
-        "CameraInfo on '%s' has a degenerate intrinsic matrix (fx=%g, fy=%g); cannot project "
-        "the map for colorization.",
-        camera_info_topic_.c_str(), camera_info_.k[0], camera_info_.k[4]);
+        "--cam-info was given %zu time(s) for %zu --cam topic(s); pass exactly one --cam-info "
+        "per --cam (in the same order), or none to auto-resolve all of them.",
+        args_.camera_info_topics.size(), args_.image_topics.size());
       return false;
+    }
+
+    for (std::size_t cam = 0; cam < args_.image_topics.size(); ++cam) {
+      const std::string & image_topic = args_.image_topics[cam];
+      for (std::size_t prev = 0; prev < cam; ++prev) {
+        if (args_.image_topics[prev] == image_topic) {
+          BAGWIZ_LOG_ERROR(
+            kLogger, "--cam topic '%s' was given more than once.", image_topic.c_str());
+          return false;
+        }
+      }
+
+      const io::TopicInfo * info = nullptr;
+      for (const auto & t : reader.topics()) {
+        if (t.name == image_topic) {
+          info = &t;
+          break;
+        }
+      }
+      if (info == nullptr) {
+        BAGWIZ_LOG_ERROR(
+          kLogger, "Topic '%s' is not present in %s", image_topic.c_str(),
+          args_.input_path.c_str());
+        return false;
+      }
+      if (info->type != kImageType && info->type != kCompressedImageType) {
+        BAGWIZ_LOG_ERROR(
+          kLogger, "Topic '%s' is %s, expected %s or %s", image_topic.c_str(), info->type.c_str(),
+          kImageType, kCompressedImageType);
+        return false;
+      }
+
+      std::string camera_info_topic;
+      if (!args_.camera_info_topics.empty()) {
+        camera_info_topic = args_.camera_info_topics[cam];
+        const auto error =
+          core::camera_info::validate_camera_info_topic(args_.input_path, camera_info_topic);
+        if (error.has_value()) {
+          BAGWIZ_LOG_ERROR(kLogger, "%s", error->c_str());
+          return false;
+        }
+      } else {
+        const auto resolved =
+          core::camera_info::resolve_camera_info_topic(image_topic, reader.topics());
+        if (!resolved.topic.has_value()) {
+          BAGWIZ_LOG_ERROR(
+            kLogger,
+            "Could not auto-resolve a CameraInfo topic for '%s'%s%s. Pass it explicitly "
+            "with --cam-info.",
+            image_topic.c_str(), resolved.error.has_value() ? ": " : "",
+            resolved.error.has_value() ? resolved.error->c_str() : "");
+          return false;
+        }
+        camera_info_topic = *resolved.topic;
+      }
+
+      const auto loaded = core::camera_info::load_camera_info(args_.input_path, camera_info_topic);
+      if (!loaded.ok()) {
+        BAGWIZ_LOG_ERROR(
+          kLogger, "Could not read CameraInfo from '%s': %s", camera_info_topic.c_str(),
+          loaded.error.c_str());
+        return false;
+      }
+      if (!(loaded.info->k[0] > 0.0) || !(loaded.info->k[4] > 0.0)) {
+        BAGWIZ_LOG_ERROR(
+          kLogger,
+          "CameraInfo on '%s' has a degenerate intrinsic matrix (fx=%g, fy=%g); cannot project "
+          "the map for colorization.",
+          camera_info_topic.c_str(), loaded.info->k[0], loaded.info->k[4]);
+        return false;
+      }
+      camera_info_topics_.push_back(camera_info_topic);
+      camera_infos_.push_back(*loaded.info);
     }
     return true;
   }
 
-  // Resolve T_cloud_cam (cloud frame <- camera optical frame) from the bag's
-  // static TF. Mirrors resolve_extrinsic: --cam is an explicit request, so any
-  // failure is fatal rather than silently writing an uncolored map.
-  bool resolve_camera_extrinsic(core::slam::SensorTransform & out)
+  // Resolve T_cloud_cam (cloud frame <- camera optical frame) for every --cam
+  // from the bag's static TF, into t_cloud_cams_ (parallel to image_topics).
+  // Mirrors resolve_extrinsic: --cam is an explicit request, so any failure is
+  // fatal rather than silently writing an uncolored map. The cloud frame and
+  // the static TF buffer are resolved once and shared across cameras.
+  bool resolve_camera_extrinsics()
   {
-    const std::string & cam_frame = camera_info_.frame_id;
-    if (cam_frame.empty()) {
-      BAGWIZ_LOG_ERROR(
-        kLogger,
-        "CameraInfo on '%s' has an empty header.frame_id; cannot resolve the camera extrinsic "
-        "from the bag's static TF.",
-        camera_info_topic_.c_str());
-      return false;
-    }
-
     std::string cloud_frame;
     if (!peek_cloud_frame(cloud_frame)) {
       return false;
     }
-    if (cloud_frame == cam_frame) {
-      out = core::slam::SensorTransform{};
-      return true;
-    }
 
-    tf2::BufferCore buffer{kTfBufferCacheTime};
-    if (!build_static_tf_buffer(buffer, "the camera extrinsic")) {
-      return false;
-    }
-
-    const auto missing = core::missing_frames(buffer, cloud_frame, cam_frame);
-    if (!missing.empty()) {
-      std::string names;
-      for (std::size_t i = 0; i < missing.size(); ++i) {
-        names += (i ? ", " : "") + missing[i];
+    // Build the static TF buffer lazily: an all-identity setup (every camera
+    // sharing the cloud frame) needs no TF topic at all.
+    std::optional<tf2::BufferCore> buffer;
+    for (std::size_t cam = 0; cam < camera_infos_.size(); ++cam) {
+      const std::string & cam_frame = camera_infos_[cam].frame_id;
+      if (cam_frame.empty()) {
+        BAGWIZ_LOG_ERROR(
+          kLogger,
+          "CameraInfo on '%s' has an empty header.frame_id; cannot resolve the camera "
+          "extrinsic from the bag's static TF.",
+          camera_info_topics_[cam].c_str());
+        return false;
       }
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Frame(s) not present in the bag's static TF tree: %s", names.c_str());
-      return false;
-    }
+      if (cloud_frame == cam_frame) {
+        t_cloud_cams_.push_back(core::slam::SensorTransform{});
+        continue;
+      }
 
-    try {
-      const auto ts = buffer.lookupTransform(cloud_frame, cam_frame, tf2::TimePointZero);
-      out = to_sensor_transform(ts);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "No static TF chain from '%s' to '%s': %s", cloud_frame.c_str(), cam_frame.c_str(),
-        e.what());
-      return false;
-    }
+      if (!buffer.has_value()) {
+        buffer.emplace(kTfBufferCacheTime);
+        if (!build_static_tf_buffer(*buffer, "the camera extrinsic")) {
+          return false;
+        }
+      }
 
+      const auto missing = core::missing_frames(*buffer, cloud_frame, cam_frame);
+      if (!missing.empty()) {
+        std::string names;
+        for (std::size_t i = 0; i < missing.size(); ++i) {
+          names += (i ? ", " : "") + missing[i];
+        }
+        BAGWIZ_LOG_ERROR(
+          kLogger, "Frame(s) not present in the bag's static TF tree: %s", names.c_str());
+        return false;
+      }
+
+      try {
+        const auto ts = buffer->lookupTransform(cloud_frame, cam_frame, tf2::TimePointZero);
+        t_cloud_cams_.push_back(to_sensor_transform(ts));
+      } catch (const std::exception & e) {
+        BAGWIZ_LOG_ERROR(
+          kLogger, "No static TF chain from '%s' to '%s': %s", cloud_frame.c_str(),
+          cam_frame.c_str(), e.what());
+        return false;
+      }
+    }
     return true;
   }
 
@@ -1089,7 +1117,7 @@ private:
     // which at this point still expresses the cloud frame the camera
     // extrinsic was resolved against.
     std::vector<std::array<std::uint8_t, 3>> map_colors;
-    if (!args_.image_topic.empty()) {
+    if (!args_.image_topics.empty()) {
       core::slam::FinalizeSpinner spinner("Colorizing map", progress_on);
       colorize_map(map, map_colors);
     }
@@ -1195,23 +1223,31 @@ private:
     return 0;
   }
 
-  // Colorize the optimized map from the --cam image topic: stream the images
-  // through MapColorizer and fill `colors` (parallel to map.points). NON-FATAL
-  // by design — the map geometry is valid without colors, so every failure
-  // path warns and leaves `colors` empty (map.pcd is then written without an
-  // rgb field) rather than discarding a finished SLAM run.
+  // Colorize the optimized map from the --cam image topics: stream every
+  // camera's images through its own MapColorizer in a single bag pass, merge
+  // the per-camera results by --cam order (the earliest topic that observed a
+  // point wins), and fill `colors` (parallel to map.points). NON-FATAL by
+  // design — the map geometry is valid without colors, so every failure path
+  // warns and leaves `colors` empty (map.pcd is then written without an rgb
+  // field) rather than discarding a finished SLAM run.
   void colorize_map(
     const core::slam::CloudMap & map, std::vector<std::array<std::uint8_t, 3>> & colors)
   {
-    core::slam::MapColorizerConfig config;
-    config.camera = camera_info_;
-    config.t_cloud_cam = t_cloud_cam_.value_or(core::slam::SensorTransform{});
-    // Reuse the SLAM range crop: geometry farther than --max-range from any
-    // single viewpoint was never captured in one scan either.
-    config.max_range = args_.range_max;
-    const int capped = cap_threads_at_hardware_limit(args_.num_threads);
-    config.num_threads = capped > 0 ? capped : 4;
-    core::slam::MapColorizer colorizer(config, map.points, map.trajectory);
+    const std::size_t cam_count = args_.image_topics.size();
+    std::vector<std::unique_ptr<core::slam::MapColorizer>> colorizers;
+    colorizers.reserve(cam_count);
+    for (std::size_t cam = 0; cam < cam_count; ++cam) {
+      core::slam::MapColorizerConfig config;
+      config.camera = camera_infos_[cam];
+      config.t_cloud_cam = t_cloud_cams_[cam];
+      // Reuse the SLAM range crop: geometry farther than --max-range from any
+      // single viewpoint was never captured in one scan either.
+      config.max_range = args_.range_max;
+      const int capped = cap_threads_at_hardware_limit(args_.num_threads);
+      config.num_threads = capped > 0 ? capped : 4;
+      colorizers.push_back(
+        std::make_unique<core::slam::MapColorizer>(config, map.points, map.trajectory));
+    }
 
     std::unique_ptr<io::BagReader> reader;
     try {
@@ -1223,17 +1259,29 @@ private:
       return;
     }
     io::ReadFilter filter;
-    filter.topics.push_back(args_.image_topic);
+    filter.topics = args_.image_topics;
     reader->set_filter(filter);
 
     const auto colorize_start = std::chrono::steady_clock::now();
-    std::int64_t decode_failures = 0;
+    std::vector<std::int64_t> decode_failures(cam_count, 0);
     io::RawMessage raw;
     try {
       while (reader->next(raw)) {
+        // One filtered pass over the bag; each message belongs to exactly one
+        // camera, dispatched by topic name.
+        std::size_t cam = cam_count;
+        for (std::size_t i = 0; i < cam_count; ++i) {
+          if (raw.topic->name == args_.image_topics[i]) {
+            cam = i;
+            break;
+          }
+        }
+        if (cam == cam_count) {
+          continue;
+        }
         const auto decoded = core::image::to_packed_raster(raw.topic->type, raw.payload);
         if (!decoded.ok()) {
-          ++decode_failures;
+          ++decode_failures[cam];
           continue;
         }
         const auto & raster = *decoded.raster;
@@ -1241,34 +1289,45 @@ private:
         // publisher left header.stamp unset.
         const std::int64_t stamp =
           raster.header_stamp_ns != 0 ? raster.header_stamp_ns : raw.timestamp_ns;
-        colorizer.add_image(stamp, raster.bgr, raster.width, raster.height);
+        colorizers[cam]->add_image(stamp, raster.bgr, raster.width, raster.height);
       }
     } catch (const std::exception & e) {
       BAGWIZ_LOG_WARN(
         kLogger,
-        "Error reading '%s' for colorization (%s); continuing with the images read "
-        "so far.",
-        args_.image_topic.c_str(), e.what());
+        "Error reading the --cam topic(s) for colorization (%s); continuing with the images "
+        "read so far.",
+        e.what());
     }
 
-    auto result = colorizer.finish();
+    std::vector<core::slam::MapColorizeResult> results;
+    results.reserve(cam_count);
+    for (std::size_t cam = 0; cam < cam_count; ++cam) {
+      results.push_back(colorizers[cam]->finish());
+      const auto & result = results.back();
+      BAGWIZ_LOG_INFO(
+        kLogger,
+        "Colorize: %zu of %zu map points observed via '%s' (%zu image(s) used, %zu outside "
+        "the trajectory span, %" PRId64 " failed to decode)",
+        result.colored_points, map.points.size(), args_.image_topics[cam].c_str(),
+        result.images_used, result.images_skipped, decode_failures[cam]);
+    }
+
+    auto merged = core::slam::merge_colorize_results(results);
     const double colorize_seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - colorize_start).count();
-    if (result.images_used == 0) {
+    if (merged.images_used == 0) {
       BAGWIZ_LOG_WARN(
         kLogger,
-        "No usable image on '%s' for colorization (%zu outside the trajectory span, %" PRId64
-        " failed to decode); map.pcd is written without colors.",
-        args_.image_topic.c_str(), result.images_skipped, decode_failures);
+        "No usable image on any --cam topic for colorization; map.pcd is written without "
+        "colors.");
       return;
     }
-    colors = std::move(result.colors);
+    colors = std::move(merged.colors);
     BAGWIZ_LOG_INFO(
       kLogger,
-      "Colorized %zu of %zu map points from %zu image(s) on '%s' in %.1fs (%zu image(s) "
-      "outside the trajectory span, %" PRId64 " failed to decode)",
-      result.colored_points, map.points.size(), result.images_used, args_.image_topic.c_str(),
-      colorize_seconds, result.images_skipped, decode_failures);
+      "Colorized %zu of %zu map points from %zu camera topic(s) in %.1fs (earlier --cam "
+      "topics take priority where cameras overlap)",
+      merged.colored_points, map.points.size(), cam_count, colorize_seconds);
   }
 
   // " + N IMU samples" when IMU mode ran, otherwise empty.
@@ -1285,10 +1344,11 @@ private:
   std::filesystem::path map_path_;     // <output_root>/map.pcd (mapping mode only)
   // Effective backend resolved by resolve_backend() from --backend.
   bool use_gpu_ = false;
-  // --cam state, filled by validate_camera_inputs / resolve_camera_extrinsic.
-  std::string camera_info_topic_;                           // resolved CameraInfo topic
-  core::image::CameraInfo camera_info_;                     // first CameraInfo message on it
-  std::optional<core::slam::SensorTransform> t_cloud_cam_;  // cloud <- camera optical frame
+  // --cam state, parallel to args_.image_topics (priority order), filled by
+  // validate_camera_inputs / resolve_camera_extrinsics.
+  std::vector<std::string> camera_info_topics_;            // resolved CameraInfo topics
+  std::vector<core::image::CameraInfo> camera_infos_;      // first CameraInfo message on each
+  std::vector<core::slam::SensorTransform> t_cloud_cams_;  // cloud <- camera optical frames
 };
 
 }  // namespace
