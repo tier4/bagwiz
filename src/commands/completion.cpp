@@ -69,10 +69,11 @@ constexpr std::array<std::string_view, 4> kTrajDumpSupportedTypes{{
 // `tf tree` renders only tf2_msgs/msg/TFMessage topics.
 constexpr std::array<std::string_view, 1> kTfTreeSupportedTypes{{kTfMessageType}};
 
-// Image topic types `generate video` renders and `map slam --cam` colorizes
-// from (both decode via to_packed_raster). This MUST mirror is_supported_type()
-// in src/commands/generate_video.cpp and the image type constants in
-// src/commands/map_slam.cpp; keep them in sync. As with `traj dump` /
+// Image topic types the shared to_packed_raster() decoder accepts —
+// `generate video` rendering, `walk`'s image preview, and `map slam --cam`
+// colorization all gate on it. This MUST mirror is_supported_image_type() in
+// src/core/image/packed_raster.cpp (and is_supported_type() in
+// src/commands/generate_video.cpp); keep them in sync. As with `traj dump` /
 // `tf tree`, a topic typed as anything outside this set is rejected by the
 // command, so completion never offers it.
 constexpr std::array<std::string_view, 2> kImageTopicTypes{{

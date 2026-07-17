@@ -67,8 +67,6 @@ constexpr const char * kLogger = "bagwiz.cmd.map";
 constexpr const char * kPointCloud2Type = "sensor_msgs/msg/PointCloud2";
 constexpr const char * kImuType = "sensor_msgs/msg/Imu";
 constexpr const char * kNavSatFixType = "sensor_msgs/msg/NavSatFix";
-constexpr const char * kImageType = "sensor_msgs/msg/Image";
-constexpr const char * kCompressedImageType = "sensor_msgs/msg/CompressedImage";
 constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
 constexpr std::string_view kTfStaticSuffix = "tf_static";
 // Static transforms are timeless; a year-long cache dwarfs any bag and matches
@@ -336,10 +334,15 @@ private:
           args_.input_path.c_str());
         return false;
       }
-      if (info->type != kImageType && info->type != kCompressedImageType) {
+      // Gate on the shared to_packed_raster() decoder's type set — the same
+      // check `walk`'s image preview uses — so --cam and the preview can never
+      // drift apart in what they accept.
+      if (!core::image::is_supported_image_type(info->type)) {
         BAGWIZ_LOG_ERROR(
-          kLogger, "Topic '%s' is %s, expected %s or %s", image_topic.c_str(), info->type.c_str(),
-          kImageType, kCompressedImageType);
+          kLogger,
+          "Topic '%s' is %s, which map slam --cam cannot decode; supported types are "
+          "sensor_msgs/msg/Image and sensor_msgs/msg/CompressedImage.",
+          image_topic.c_str(), info->type.c_str());
         return false;
       }
 
