@@ -12,6 +12,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <sstream>
 #include <string>
@@ -101,6 +102,99 @@ TEST(PointCloudIo, EmptyCloudWritesZeroPoints)
   EXPECT_NE(header.find("WIDTH 0\n"), std::string::npos);
   EXPECT_NE(header.find("POINTS 0\n"), std::string::npos);
   EXPECT_TRUE(body.empty());
+}
+
+// Unpack the PCL packed-float rgb convention: the float's bits are the uint32
+// 0x00RRGGBB.
+std::array<std::uint8_t, 3> unpack_rgb(float value)
+{
+  std::uint32_t packed = 0;
+  std::memcpy(&packed, &value, sizeof(packed));
+  return {
+    static_cast<std::uint8_t>((packed >> 16) & 0xFFU),
+    static_cast<std::uint8_t>((packed >> 8) & 0xFFU), static_cast<std::uint8_t>(packed & 0xFFU)};
+}
+
+TEST(PointCloudIo, IncludesRgbWhenSizesMatch)
+{
+  const std::vector<std::array<float, 3>> points = {{0.0F, 0.0F, 0.0F}, {1.0F, 1.0F, 1.0F}};
+  const std::vector<std::array<std::uint8_t, 3>> colors = {{255, 0, 128}, {1, 2, 3}};
+  std::ostringstream os;
+  slam::write_pcd(os, points, {}, colors);
+  const auto [header, body] = split_pcd(os.str());
+
+  EXPECT_NE(header.find("FIELDS x y z rgb\n"), std::string::npos);
+  EXPECT_NE(header.find("SIZE 4 4 4 4\n"), std::string::npos);
+  EXPECT_NE(header.find("TYPE F F F F\n"), std::string::npos);
+  EXPECT_NE(header.find("COUNT 1 1 1 1\n"), std::string::npos);
+  EXPECT_EQ(header.find("intensity"), std::string::npos);
+
+  ASSERT_EQ(body.size(), 2U * 4U * sizeof(float));
+  EXPECT_EQ(unpack_rgb(read_float(body, 3)), (std::array<std::uint8_t, 3>{255, 0, 128}));
+  EXPECT_EQ(unpack_rgb(read_float(body, 7)), (std::array<std::uint8_t, 3>{1, 2, 3}));
+}
+
+TEST(PointCloudIo, IncludesIntensityAndRgbTogether)
+{
+  const std::vector<std::array<float, 3>> points = {{0.0F, 0.0F, 0.0F}, {1.0F, 1.0F, 1.0F}};
+  const std::vector<float> intensities = {10.0F, 20.0F};
+  const std::vector<std::array<std::uint8_t, 3>> colors = {{9, 8, 7}, {6, 5, 4}};
+  std::ostringstream os;
+  slam::write_pcd(os, points, intensities, colors);
+  const auto [header, body] = split_pcd(os.str());
+
+  EXPECT_NE(header.find("FIELDS x y z intensity rgb\n"), std::string::npos);
+  EXPECT_NE(header.find("SIZE 4 4 4 4 4\n"), std::string::npos);
+  EXPECT_NE(header.find("TYPE F F F F F\n"), std::string::npos);
+
+  ASSERT_EQ(body.size(), 2U * 5U * sizeof(float));
+  EXPECT_FLOAT_EQ(read_float(body, 3), 10.0F);
+  EXPECT_EQ(unpack_rgb(read_float(body, 4)), (std::array<std::uint8_t, 3>{9, 8, 7}));
+  EXPECT_FLOAT_EQ(read_float(body, 8), 20.0F);
+  EXPECT_EQ(unpack_rgb(read_float(body, 9)), (std::array<std::uint8_t, 3>{6, 5, 4}));
+}
+
+TEST(PointCloudIo, OmitsRgbOnSizeMismatch)
+{
+  const std::vector<std::array<float, 3>> points = {{0.0F, 0.0F, 0.0F}, {1.0F, 1.0F, 1.0F}};
+  const std::vector<std::array<std::uint8_t, 3>> colors = {{9, 8, 7}};  // wrong length
+  std::ostringstream os;
+  slam::write_pcd(os, points, {}, colors);
+  const auto [header, body] = split_pcd(os.str());
+
+  EXPECT_EQ(header.find("rgb"), std::string::npos);
+  EXPECT_EQ(body.size(), 2U * 3U * sizeof(float));
+}
+
+TEST(PointCloudIo, RoundTripsRgbThroughReadPcd)
+{
+  const std::vector<std::array<float, 3>> points = {{1.0F, 2.0F, 3.0F}, {4.0F, 5.0F, 6.0F}};
+  const std::vector<float> intensities = {10.0F, 20.0F};
+  const std::vector<std::array<std::uint8_t, 3>> colors = {{255, 128, 0}, {0, 64, 255}};
+  std::ostringstream os;
+  slam::write_pcd(os, points, intensities, colors);
+
+  std::istringstream is(os.str());
+  const auto result = slam::read_pcd(is);
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.cloud.points, points);
+  EXPECT_EQ(result.cloud.intensities, intensities);
+  EXPECT_EQ(result.cloud.colors, colors);
+}
+
+TEST(PointCloudIo, RoundTripsRgbWithoutIntensity)
+{
+  const std::vector<std::array<float, 3>> points = {{1.0F, 2.0F, 3.0F}};
+  const std::vector<std::array<std::uint8_t, 3>> colors = {{12, 34, 56}};
+  std::ostringstream os;
+  slam::write_pcd(os, points, {}, colors);
+
+  std::istringstream is(os.str());
+  const auto result = slam::read_pcd(is);
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.cloud.points, points);
+  EXPECT_TRUE(result.cloud.intensities.empty());
+  EXPECT_EQ(result.cloud.colors, colors);
 }
 
 }  // namespace
