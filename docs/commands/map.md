@@ -157,8 +157,8 @@ Written under `<output_root>`:
   underexposed frame toward the established reference (never drags a
   brighter frame down, and only appearance-stable points vote), so genuine
   brightening — driving out of shade — cannot ratchet the stored colors
-  toward black,
-  and stored in a bounded per-point reservoir of up to 16 observations. A map
+  toward black. Each accepted observation is stored in a bounded per-point
+  reservoir of up to 16 entries. A map
   point that sits well behind the return of the LiDAR scan nearest an image —
   a vehicle or pedestrian that left no geometry in the accumulated map — is
   skipped for that image, so moving traffic does not stain the colors. The
