@@ -61,14 +61,7 @@ namespace bagwiz::commands
 namespace
 {
 constexpr const char * kLogger = "bagwiz.cmd.generate";
-constexpr const char * kImageType = "sensor_msgs/msg/Image";
-constexpr const char * kCompressedImageType = "sensor_msgs/msg/CompressedImage";
 constexpr const char * kPointCloudType = "sensor_msgs/msg/PointCloud2";
-
-bool is_supported_type(const std::string & type)
-{
-  return type == kImageType || type == kCompressedImageType;
-}
 
 // Returns true for extensions that the encoder maps to H.264. Used only for
 // user-facing playback guidance.
@@ -219,45 +212,6 @@ ProjectionWorkResult run_projection_work(
 }
 
 }  // namespace
-
-VideoSourceCheck check_video_source(const std::filesystem::path & input, const std::string & topic)
-{
-  VideoSourceCheck check;
-
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(input);
-  } catch (const std::exception & e) {
-    check.status = VideoSourceStatus::kInputUnopenable;
-    check.message = "failed to open '" + input.string() + "': " + e.what();
-    return check;
-  }
-
-  const io::TopicInfo * found = nullptr;
-  for (const auto & t : reader->topics()) {
-    if (t.name == topic) {
-      found = &t;
-      break;
-    }
-  }
-  if (found == nullptr) {
-    check.status = VideoSourceStatus::kTopicNotFound;
-    check.message = "topic '" + topic + "' not found in " + input.string();
-    return check;
-  }
-
-  check.topic_type = found->type;
-  if (!is_supported_type(found->type)) {
-    check.status = VideoSourceStatus::kUnsupportedType;
-    check.message = "topic '" + topic + "' has type '" + found->type +
-                    "', which generate video cannot render; supported types are " + kImageType +
-                    " and " + kCompressedImageType;
-    return check;
-  }
-
-  check.status = VideoSourceStatus::kOk;
-  return check;
-}
 
 int run_generate_video(const GenerateVideoArgs & args)
 {

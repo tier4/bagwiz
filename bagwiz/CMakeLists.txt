@@ -188,6 +188,7 @@ add_executable(bagwiz
   src/commands/convert_msg_geo.cpp
   src/commands/generate.cpp
   src/commands/generate_video.cpp
+  src/commands/generate_video_common.cpp
   src/commands/joke.cpp
   src/commands/ls.cpp
   src/commands/pcd.cpp
@@ -440,11 +441,23 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_generate_video_test
     test/commands/generate_video_test.cpp
-    src/commands/generate_video.cpp)
+    src/commands/generate_video.cpp
+    src/commands/generate_video_common.cpp)
   target_include_directories(bagwiz_generate_video_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(
     bagwiz_generate_video_test ${bagwiz_test_libs} fmt::fmt
     bagwiz_image::bagwiz_image_test_fixture PkgConfig::LIBAV ${OpenCV_LIBS})
+
+  # generate_video_common.hpp lives in src/commands (CLI-internal, not
+  # installed), so this test adds src/commands to its include path
+  # (pcd_concat_common idiom).
+  ament_add_gtest(bagwiz_generate_video_common_test
+    test/commands/generate_video_common_test.cpp
+    src/commands/generate_video_common.cpp)
+  target_include_directories(bagwiz_generate_video_common_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
+  target_link_libraries(
+    bagwiz_generate_video_common_test ${bagwiz_test_libs} fmt::fmt ${OpenCV_LIBS})
 endif()
 
 ament_package()
