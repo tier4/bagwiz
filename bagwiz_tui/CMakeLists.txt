@@ -35,11 +35,12 @@ find_package(yaml-cpp REQUIRED)
 find_library(SIXEL_LIBRARY NAMES sixel REQUIRED)
 find_path(SIXEL_INCLUDE_DIR NAMES sixel.h REQUIRED)
 
-# terminal_image_renderer.cpp scales frames with libavutil only (imgutils /
-# mem / pixfmt), so unlike the video/image packages this checks for the single
-# component. Consumed PRIVATE behind the renderer .cpp, matching libsixel.
+# terminal_image_renderer.cpp uses libavutil (imgutils / mem / pixfmt) for frame
+# buffers and libswscale (sws_getContext / sws_scale / sws_freeContext) to scale
+# frames, so unlike the video/image packages this checks for just those two
+# components. Consumed PRIVATE behind the renderer .cpp, matching libsixel.
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET libavutil)
+pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET libavutil libswscale)
 
 # ---------------------------------------------------------------------------
 # Embedded joke data: read the single source-of-truth JSON at configure time
@@ -77,12 +78,13 @@ target_include_directories(bagwiz_tui
     "${BAGWIZ_GENERATED_INCLUDE_DIR}"
 )
 target_link_libraries(bagwiz_tui PUBLIC bagwiz_base::bagwiz_base bagwiz_image::bagwiz_image)
-# yaml-cpp (jokes.cpp), libsixel, and libavutil (terminal_image_renderer.cpp)
-# are implementation details behind .cpp files, so they are linked PRIVATE and
-# stay out of bagwiz_tui's export set. libavutil is linked by absolute path
-# (LIBAV_LINK_LIBRARIES) so no PkgConfig::LIBAV target reference leaks into the
-# static archive's export set; libsixel and yaml-cpp leak only as plain `-l`
-# items, which the conda toolchain resolves without targets.
+# yaml-cpp (jokes.cpp), libsixel, and libavutil/libswscale
+# (terminal_image_renderer.cpp) are implementation details behind .cpp files, so
+# they are linked PRIVATE and stay out of bagwiz_tui's export set. The libav
+# components are linked by absolute path (LIBAV_LINK_LIBRARIES) so no
+# PkgConfig::LIBAV target reference leaks into the static archive's export set;
+# libsixel and yaml-cpp leak only as plain `-l` items, which the conda toolchain
+# resolves without targets.
 target_include_directories(bagwiz_tui PRIVATE ${LIBAV_INCLUDE_DIRS})
 target_link_libraries(bagwiz_tui PRIVATE yaml-cpp ${LIBAV_LINK_LIBRARIES} ${SIXEL_LIBRARY})
 target_include_directories(bagwiz_tui PRIVATE ${SIXEL_INCLUDE_DIR})
