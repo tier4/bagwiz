@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>bagwiz_tf</name>
+  <version>0.1.0</version>
+  <description>bagwiz TF tools: buffer loading, chain/merge checks, TFMessage wiring, transform formatting, and trajectories.</description>
+  <maintainer email="mineto.tsukada@tier4.jp">Mineto Tsukada</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>bagwiz_io</depend>
+  <depend>bagwiz_msg</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>nlohmann-json-dev</depend>
+  <depend>rmw</depend>
+  <depend>rmw_implementation</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_msgs</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>builtin_interfaces</test_depend>
+  <test_depend>diagnostic_msgs</test_depend>
+  <test_depend>sensor_msgs</test_depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

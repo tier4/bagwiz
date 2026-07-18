@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>bagwiz_slam</name>
+  <version>0.1.0</version>
+  <description>bagwiz SLAM support: lidar/IMU/GNSS samples, GNSS projection and alignment, map colorization, and point-cloud IO/filters.</description>
+  <maintainer email="mineto.tsukada@tier4.jp">Mineto Tsukada</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>bagwiz_base</depend>
+  <depend>bagwiz_image</depend>
+  <depend>bagwiz_io</depend>
+  <depend>bagwiz_msg</depend>
+  <depend>bagwiz_pointcloud</depend>
+  <depend>bagwiz_tf</depend>
+  <depend>geographiclib</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>builtin_interfaces</test_depend>
+  <test_depend>diagnostic_msgs</test_depend>
+  <test_depend>sensor_msgs</test_depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

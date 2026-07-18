@@ -1,7 +1,8 @@
 # pixi manifest for bagwiz.
 #
-# bagwiz is a single-package ament_cmake / colcon C++ workspace (package.xml is
-# at the repo root). This manifest lets anyone build, test, and run bagwiz with
+# bagwiz is a multi-package ament_cmake / colcon C++ workspace: each bagwiz_*
+# library and the bagwiz CLI has its own package.xml in its directory at the
+# repo root. This manifest lets anyone build, test, and run bagwiz with
 # NO system ROS 2 install: the ROS toolchain and message packages come from
 # RoboStack conda channels (one per ROS 2 distro), and the C/C++ toolchain comes
 # from conda-forge. Pick a distro per invocation, e.g.:
@@ -119,13 +120,13 @@ cmd = 'bash scripts/bagwiz-build.sh {{ build_type }}'
 # Test the core build (build-core).
 [tasks.test-core]
 depends-on = ["build-core"]
-cmd = 'colcon test --packages-select bagwiz --build-base "build/$PIXI_ENVIRONMENT_NAME" --install-base "install/$PIXI_ENVIRONMENT_NAME" --event-handlers console_direct+ && colcon test-result --test-result-base "build/$PIXI_ENVIRONMENT_NAME" --verbose'
+cmd = 'colcon test --build-base "build/$PIXI_ENVIRONMENT_NAME" --install-base "install/$PIXI_ENVIRONMENT_NAME" --event-handlers console_direct+ && colcon test-result --test-result-base "build/$PIXI_ENVIRONMENT_NAME" --verbose'
 
 # Test the full build (build-full). In a *-cuda env this also exercises the
 # GPU-gated cloud_mapper_gpu_test, which self-skips when no CUDA device is present.
 [tasks.test-full]
 depends-on = ["build-full"]
-cmd = 'colcon test --packages-select bagwiz --build-base "build/$PIXI_ENVIRONMENT_NAME" --install-base "install/$PIXI_ENVIRONMENT_NAME" --event-handlers console_direct+ && colcon test-result --test-result-base "build/$PIXI_ENVIRONMENT_NAME" --verbose'
+cmd = 'colcon test --build-base "build/$PIXI_ENVIRONMENT_NAME" --install-base "install/$PIXI_ENVIRONMENT_NAME" --event-handlers console_direct+ && colcon test-result --test-result-base "build/$PIXI_ENVIRONMENT_NAME" --verbose'
 
 # Run the freshly built binary by explicit (per-distro) path: RoboStack activation
 # already put $CONDA_PREFIX/lib on the loader path and $CONDA_PREFIX on

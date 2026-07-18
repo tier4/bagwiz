@@ -1,0 +1,332 @@
+cmake_minimum_required(VERSION 3.16)
+project(bagwiz CXX)
+
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 20)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+  set(CMAKE_CXX_EXTENSIONS OFF)
+endif()
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  # Scope to C++ only. When BAGWIZ_WITH_SLAM_CUDA enables the CUDA language,
+  # these flags would otherwise reach nvcc, which forwards -Wpedantic to the
+  # host compiler on its generated intermediate (.cudafe1.stub.c). That file is
+  # full of GCC-style linemarkers, so -Wpedantic floods the build with
+  # "style of line directive is a GCC extension" — one per line of the .cu.
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic;-Wshadow>")
+endif()
+
+find_package(ament_cmake REQUIRED)
+find_package(bagwiz_base REQUIRED)
+find_package(bagwiz_io REQUIRED)
+find_package(bagwiz_msg REQUIRED)
+find_package(bagwiz_image REQUIRED)
+find_package(bagwiz_video REQUIRED)
+find_package(bagwiz_tf REQUIRED)
+find_package(bagwiz_pointcloud REQUIRED)
+find_package(bagwiz_tui REQUIRED)
+find_package(bagwiz_bag REQUIRED)
+find_package(bagwiz_slam REQUIRED)
+find_package(rcutils REQUIRED)
+find_package(rmw REQUIRED)
+# cam_info_recompute_p/cam_info_replace round-trip typed messages through
+# rmw_(de)serialize, which is declared in <rmw/rmw.h> but DEFINED in
+# librmw_implementation.so, so both packages are needed at link time.
+find_package(rmw_implementation REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(OpenCV REQUIRED)
+# yaml_cpp_vendor sets yaml-cpp_DIR so the real yaml-cpp package is found.
+# yaml-cpp and zstd are exercised directly by the completion test's bag
+# fixtures (compressed MCAP writers), not by any command source.
+find_package(yaml_cpp_vendor REQUIRED)
+find_package(yaml-cpp REQUIRED)
+# zstd provider split upstream: Humble and Jazzy ship zstd_vendor; newer
+# (rolling) ROS distros replaced it with zstd_cmake_module (a thin module over
+# the system libzstd). Both expose the same zstd::zstd target, so try
+# zstd_vendor first and fall back.
+find_package(zstd_vendor QUIET)
+if(NOT zstd_vendor_FOUND)
+  find_package(zstd_cmake_module REQUIRED)
+endif()
+find_package(zstd REQUIRED)
+
+# GeographicLib is exercised directly by the `convert msg geo` command test
+# (the command drives the projection, so the test re-links the library, same
+# as the geo_pose_convert test in bagwiz_msg). Two packagings exist and both
+# are supported:
+#   - a CMake CONFIG package (e.g. conda-forge `geographiclib-cpp`, used by the
+#     pixi/RoboStack build) that exports the GeographicLib::GeographicLib target;
+#   - the classic Debian/Ubuntu find-module that ships no imported target, only
+#     sets GeographicLib_LIBRARIES / _INCLUDE_DIRS, and lives under
+#     /usr/share/cmake/geographiclib.
+# Try CONFIG mode first; fall back to MODULE mode, appending the Debian module
+# directory to CMAKE_MODULE_PATH only when it exists so the path is harmless
+# inside a conda prefix (which has no /usr/share/cmake/geographiclib).
+find_package(GeographicLib CONFIG QUIET)
+if(NOT GeographicLib_FOUND)
+  if(EXISTS "/usr/share/cmake/geographiclib")
+    list(APPEND CMAKE_MODULE_PATH "/usr/share/cmake/geographiclib")
+  endif()
+  find_package(GeographicLib MODULE REQUIRED)
+endif()
+# Normalise both packagings onto the variables the consumers below use: when the
+# CONFIG package exported only the imported target, point GeographicLib_LIBRARIES
+# at it (a target is a valid link item, and linking it propagates its include
+# dirs — same approach as the PRIVATE nlohmann_json::nlohmann_json link). The
+# classic find-module already populates these variables itself.
+if(TARGET GeographicLib::GeographicLib AND NOT GeographicLib_LIBRARIES)
+  set(GeographicLib_LIBRARIES GeographicLib::GeographicLib)
+endif()
+
+# FFmpeg/libav is exercised directly by the `generate video` command test,
+# which synthesizes image fixtures and inspects the encoded output. No
+# ament/CMake package exists for it, so locate the libraries via pkg-config.
+# pkg_check_modules creates the imported target PkgConfig::LIBAV spanning all
+# four component libraries.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
+  libavcodec libavformat libavutil libswscale)
+
+# CLI11 and fmt are not available as rosdep keys on all supported distros, so
+# fetch them at configure time. Both are small, header-light libraries.
+include(FetchContent)
+
+FetchContent_Declare(
+  cli11
+  GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+  GIT_TAG v2.4.2
+  GIT_SHALLOW TRUE
+)
+set(CLI11_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(CLI11_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+  fmt
+  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+  GIT_TAG 11.0.2
+  GIT_SHALLOW TRUE
+)
+set(FMT_TEST OFF CACHE BOOL "" FORCE)
+set(FMT_DOC OFF CACHE BOOL "" FORCE)
+set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+  rang
+  GIT_REPOSITORY https://github.com/agauniyal/rang.git
+  GIT_TAG v3.2
+  GIT_SHALLOW TRUE
+)
+# rang (and older CLI11) declare cmake_minimum_required below the floor CMake
+# 4.0 still accepts, which is a hard error on newer toolchains. Give the fetched
+# subprojects a compatibility floor. Older CMake (Humble/Jazzy) does not know
+# this variable and simply ignores it.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+FetchContent_MakeAvailable(cli11 fmt rang)
+unset(CMAKE_POLICY_VERSION_MINIMUM)
+
+# ---------------------------------------------------------------------------
+# bagwiz: CLI executable. Installs to bin/ so users run it directly after
+# sourcing the ROS setup. Command implementations live in the executable
+# target so their static registrars pull into the final binary. The `map`
+# command group sources (map.cpp, map_slam.cpp, map_viewer.cpp) stay on disk
+# but unwired until the SLAM/viewer follow-up task adds the option blocks.
+# ---------------------------------------------------------------------------
+add_executable(bagwiz
+  src/main.cpp
+  src/commands/registry.cpp
+  src/commands/help_formatter.cpp
+  src/commands/cam_info.cpp
+  src/commands/cam_info_dump.cpp
+  src/commands/cam_info_recompute_p.cpp
+  src/commands/cam_info_replace.cpp
+  src/commands/check.cpp
+  src/commands/completion.cpp
+  src/commands/convert.cpp
+  src/commands/convert_msg_geo.cpp
+  src/commands/generate.cpp
+  src/commands/generate_video.cpp
+  src/commands/joke.cpp
+  src/commands/ls.cpp
+  src/commands/pcd.cpp
+  src/commands/pcd_concat.cpp
+  src/commands/pcd_undistort.cpp
+  src/commands/walk.cpp
+  src/commands/traj.cpp
+  src/commands/tf.cpp
+  src/commands/tf_walk.cpp
+  src/commands/tf_static_cp.cpp
+  src/commands/topic.cpp
+  src/commands/topic_drop.cpp
+  src/commands/topic_keep.cpp
+  src/commands/topic_rename.cpp
+)
+target_include_directories(bagwiz PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# sensor_msgs is needed only by src/commands/cam_info_replace.cpp and
+# src/commands/cam_info_recompute_p.cpp, which build a typed
+# sensor_msgs/msg/CameraInfo to round-trip through rmw_(de)serialize.
+# It is not a dependency of any bagwiz library, so link it on the
+# executable directly. rmw, tf2, and geometry_msgs headers are likewise used
+# by command sources directly.
+target_link_libraries(bagwiz
+  PRIVATE
+    bagwiz_base::bagwiz_base
+    bagwiz_io::bagwiz_io
+    bagwiz_msg::bagwiz_msg
+    bagwiz_image::bagwiz_image
+    bagwiz_video::bagwiz_video
+    bagwiz_tf::bagwiz_tf
+    bagwiz_pointcloud::bagwiz_pointcloud
+    bagwiz_tui::bagwiz_tui
+    bagwiz_bag::bagwiz_bag
+    bagwiz_slam::bagwiz_slam
+    CLI11::CLI11
+    fmt::fmt
+    rang
+    ${OpenCV_LIBS}
+    ${sensor_msgs_TARGETS}
+    ${rmw_TARGETS}
+    ${rmw_implementation_TARGETS}
+    ${tf2_TARGETS}
+    ${geometry_msgs_TARGETS}
+)
+
+install(TARGETS bagwiz RUNTIME DESTINATION bin)
+install(DIRECTORY include/ DESTINATION include)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+
+  # Standard message packages exercised by the command tests (the tests
+  # round-trip typed messages through rmw_(de)serialize and the introspection
+  # backend, which dlopens the matching `.so` files at runtime), so they only
+  # need to be on AMENT_PREFIX_PATH at test time.
+  find_package(std_msgs REQUIRED)
+  find_package(nav_msgs REQUIRED)
+  find_package(diagnostic_msgs REQUIRED)
+  find_package(builtin_interfaces REQUIRED)
+
+  # Every command test links the full sibling stack (the same libraries the
+  # executable links) so command sources compiled directly into a test behave
+  # exactly as in the production binary.
+  set(bagwiz_test_libs
+    bagwiz_base::bagwiz_base
+    bagwiz_io::bagwiz_io
+    bagwiz_msg::bagwiz_msg
+    bagwiz_image::bagwiz_image
+    bagwiz_video::bagwiz_video
+    bagwiz_tf::bagwiz_tf
+    bagwiz_pointcloud::bagwiz_pointcloud
+    bagwiz_tui::bagwiz_tui
+    bagwiz_bag::bagwiz_bag
+    bagwiz_slam::bagwiz_slam
+  )
+
+  # completion.cpp carries a BAGWIZ_REGISTER_COMMAND registrar, so the test
+  # also compiles registry.cpp (which otherwise lives only in the `bagwiz`
+  # executable — the registrars must not sit in a library, or the linker
+  # strips them).
+  ament_add_gtest(bagwiz_completion_test
+    test/commands/completion_test.cpp
+    src/commands/completion.cpp
+    src/commands/registry.cpp)
+  target_include_directories(bagwiz_completion_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  # The test builds compressed MCAP fixtures itself, so it uses yaml-cpp and
+  # zstd directly in addition to the CLI libraries.
+  target_link_libraries(
+    bagwiz_completion_test ${bagwiz_test_libs} CLI11::CLI11 fmt::fmt yaml-cpp zstd::zstd)
+
+  ament_add_gtest(bagwiz_help_formatter_test
+    test/commands/help_formatter_test.cpp
+    src/commands/help_formatter.cpp)
+  target_include_directories(bagwiz_help_formatter_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(bagwiz_help_formatter_test ${bagwiz_test_libs} CLI11::CLI11)
+
+  ament_add_gtest(bagwiz_tf_static_cp_test
+    test/commands/tf_static_cp_test.cpp
+    src/commands/tf_static_cp.cpp)
+  target_include_directories(bagwiz_tf_static_cp_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(bagwiz_tf_static_cp_test ${bagwiz_test_libs} fmt::fmt)
+
+  ament_add_gtest(bagwiz_pcd_concat_command_test
+    test/commands/pcd_concat_test.cpp
+    src/commands/pcd_concat.cpp)
+  target_include_directories(bagwiz_pcd_concat_command_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(bagwiz_pcd_concat_command_test ${bagwiz_test_libs} fmt::fmt)
+
+  ament_add_gtest(bagwiz_pcd_undistort_command_test
+    test/commands/pcd_undistort_test.cpp
+    src/commands/pcd_undistort.cpp)
+  target_include_directories(bagwiz_pcd_undistort_command_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(bagwiz_pcd_undistort_command_test ${bagwiz_test_libs} fmt::fmt)
+
+  # smoke_test touches Registry::instance() directly, so it compiles
+  # registry.cpp (which otherwise lives only in the `bagwiz` executable).
+  ament_add_gtest(bagwiz_smoke_test test/smoke_test.cpp src/commands/registry.cpp)
+  target_include_directories(bagwiz_smoke_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(bagwiz_smoke_test ${bagwiz_test_libs})
+
+  ament_add_gtest(bagwiz_topic_drop_test
+    test/commands/topic_drop_test.cpp
+    src/commands/topic_drop.cpp)
+  target_include_directories(bagwiz_topic_drop_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(bagwiz_topic_drop_test ${bagwiz_test_libs} fmt::fmt)
+
+  ament_add_gtest(bagwiz_topic_keep_test
+    test/commands/topic_keep_test.cpp
+    src/commands/topic_keep.cpp)
+  target_include_directories(bagwiz_topic_keep_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(bagwiz_topic_keep_test ${bagwiz_test_libs} fmt::fmt)
+
+  ament_add_gtest(bagwiz_topic_rename_test
+    test/commands/topic_rename_test.cpp
+    src/commands/topic_rename.cpp)
+  target_include_directories(bagwiz_topic_rename_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(bagwiz_topic_rename_test ${bagwiz_test_libs} fmt::fmt)
+
+  # The command test drives the WGS84 projection end to end, so it re-links
+  # GeographicLib (a private dep of bagwiz_msg), plus rmw/sensor_msgs for the
+  # typed round-trip through rmw_(de)serialize.
+  ament_add_gtest(bagwiz_convert_msg_geo_test
+    test/commands/convert_msg_geo_test.cpp
+    src/commands/convert_msg_geo.cpp)
+  target_include_directories(bagwiz_convert_msg_geo_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(
+    bagwiz_convert_msg_geo_test ${bagwiz_test_libs} fmt::fmt ${GeographicLib_LIBRARIES}
+    ${sensor_msgs_TARGETS} ${rmw_TARGETS} ${rmw_implementation_TARGETS})
+
+  ament_add_gtest(bagwiz_cam_info_recompute_p_test
+    test/commands/cam_info_recompute_p_test.cpp
+    src/commands/cam_info_recompute_p.cpp)
+  target_include_directories(bagwiz_cam_info_recompute_p_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(
+    bagwiz_cam_info_recompute_p_test ${bagwiz_test_libs} fmt::fmt
+    ${sensor_msgs_TARGETS} ${rmw_TARGETS} ${rmw_implementation_TARGETS})
+
+  ament_add_gtest(bagwiz_cam_info_replace_test
+    test/commands/cam_info_replace_test.cpp
+    src/commands/cam_info_replace.cpp)
+  target_include_directories(bagwiz_cam_info_replace_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(
+    bagwiz_cam_info_replace_test ${bagwiz_test_libs} fmt::fmt
+    ${sensor_msgs_TARGETS} ${rmw_TARGETS} ${rmw_implementation_TARGETS})
+
+  ament_add_gtest(bagwiz_cam_info_dump_test
+    test/commands/cam_info_dump_test.cpp
+    src/commands/cam_info_dump.cpp)
+  target_include_directories(bagwiz_cam_info_dump_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(
+    bagwiz_cam_info_dump_test ${bagwiz_test_libs} fmt::fmt
+    ${sensor_msgs_TARGETS} ${rmw_TARGETS} ${rmw_implementation_TARGETS})
+
+  ament_add_gtest(bagwiz_generate_video_test
+    test/commands/generate_video_test.cpp
+    src/commands/generate_video.cpp)
+  target_include_directories(bagwiz_generate_video_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(
+    bagwiz_generate_video_test ${bagwiz_test_libs} fmt::fmt
+    bagwiz_image::bagwiz_image_test_fixture PkgConfig::LIBAV ${OpenCV_LIBS})
+endif()
+
+ament_package()

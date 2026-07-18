@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>bagwiz_image</name>
+  <version>0.1.0</version>
+  <description>bagwiz image tools: raw/compressed image conversion, camera info, calibration, undistortion, and codecs.</description>
+  <maintainer email="mineto.tsukada@tier4.jp">Mineto Tsukada</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>bagwiz_io</depend>
+  <depend>bagwiz_msg</depend>
+  <depend>ffmpeg</depend>
+  <depend>yaml_cpp_vendor</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>builtin_interfaces</test_depend>
+  <test_depend>diagnostic_msgs</test_depend>
+  <test_depend>sensor_msgs</test_depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

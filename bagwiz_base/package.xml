@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>bagwiz_base</name>
+  <version>0.1.0</version>
+  <description>bagwiz base utilities: logging, duration parsing, output paths, atomic writes, terminal input, and topic matching.</description>
+  <maintainer email="mineto.tsukada@tier4.jp">Mineto Tsukada</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rcutils</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
