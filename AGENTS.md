@@ -104,8 +104,9 @@ to keep this file itself consistent over time.
   must go through a pull request. Do not push directly to `main` or
   any other shared branch — open a PR first, even for small fixes
   such as typo corrections, formatting, or one-line changes.
-  メインブランチへの直接のコミットは禁止とし、どんなに小さな変更でも必ずブランチを作成し、
-  PRを作成した上でメインブランチにマージするよう心がけてください。
+  Direct commits to the main branch are forbidden: no matter how
+  small the change, always create a branch and merge it into the
+  main branch through a pull request.
 - Never merge a pull request unless every required CI check has
   completed successfully. If any CI job is failing, pending, or
   skipped in a way that bypasses required checks, investigate and fix
@@ -219,7 +220,7 @@ part of the CLI itself.
   `from`/`to` is banned because it has two legitimate, opposite
   readings: the mapping reading ("convert A-frame data into B",
   `T_B_A`, as in `convert from meters to feet`) and the pose reading
-  ("A から見た B" / "traverse A to B", `T_A_B`). Both readings were
+  ("B as seen from A" / "traverse A to B", `T_A_B`). Both readings were
   simultaneously present in this codebase — `tf static calc` used the
   first and `traj dump` the second — so identical words produced
   inverse transforms. A convention that depends on readers consulting
