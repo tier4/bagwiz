@@ -9,20 +9,18 @@
 #include "bagwiz/commands/topic_keep.hpp"
 
 #include "bagwiz/core/bag/bag_copy.hpp"
-#include "bagwiz/core/bag/bag_inplace.hpp"
+#include "bagwiz/core/bag/rewrite.hpp"
 #include "bagwiz/core/base/logging.hpp"
-#include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/base/topic_match.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/bag_open.hpp"
+#include "bagwiz/io/topics.hpp"
 
 #include <cinttypes>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
-#include <filesystem>
-#include <functional>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -37,28 +35,22 @@ constexpr const char * kLogger = "bagwiz.cmd.topic";
 
 // Declare only the topics in `keep`, then stream-copy the bag with every other
 // topic suppressed (dropped messages). Shared by the in-place and -o modes; the
-// writer factory is injected so write_bag_inplace can supply a tmp path. Returns
-// a process exit code.
+// writer factory is injected so the rewrite dispatch (core::run_bag_rewrite)
+// can supply a tmp path. Returns a process exit code.
 int execute_keep_pass(
   const TopicKeepArgs & args, const std::unordered_set<std::string> & keep,
-  const std::function<std::unique_ptr<io::BagWriter>()> & open_writer)
+  const io::WriterFactory & open_writer)
 {
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(args.input_path);
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+  auto reader = io::open_read_or_log(args.input_path, kLogger);
+  if (!reader) {
     return 1;
   }
   // Backfill embedded schemas so MCAP outputs keep self-description for the
   // surviving topics (no-op for single-file readers and SQLite3 inputs).
   reader->populate_schemas();
 
-  std::unique_ptr<io::BagWriter> writer;
-  try {
-    writer = open_writer();
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to open output writer: %s", e.what());
+  auto writer = io::open_write_or_log(open_writer, kLogger);
+  if (!writer) {
     return 1;
   }
 
@@ -90,10 +82,7 @@ int execute_keep_pass(
     return 1;
   }
 
-  try {
-    writer->close();
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Writer close() failed: %s", e.what());
+  if (!io::close_writer_or_log(*writer, kLogger)) {
     return 1;
   }
 
@@ -124,16 +113,11 @@ int run_topic_keep(const TopicKeepArgs & args)
   //    reader's span is invalidated once the reader is destroyed below.
   std::vector<std::string> topic_names;
   {
-    std::unique_ptr<io::BagReader> reader;
-    try {
-      reader = io::open_read(args.input_path);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+    auto reader = io::open_read_or_log(args.input_path, kLogger);
+    if (!reader) {
       return 1;
     }
-    for (const auto & t : reader->topics()) {
-      topic_names.push_back(t.name);
-    }
+    topic_names = io::snapshot_topic_names(*reader);
   }
 
   const auto resolution = core::resolve_topic_patterns(args.topics, topic_names);
@@ -154,61 +138,21 @@ int run_topic_keep(const TopicKeepArgs & args)
       topic_names.size());
   }
 
-  // 2a. -o mode: write a new bag whose storage follows the output path (its
-  //     extension picks a single-file backend; a directory inherits the input's
-  //     backend) and leave <input> untouched.
-  if (args.output_path.has_value()) {
-    if (const auto r = core::prepare_output_path(*args.output_path, args.overwrite); !r.ok) {
-      BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
-      return 1;
-    }
-    const auto input = args.input_path;
-    const auto output = *args.output_path;
-    auto make_writer = [input, output]() {
-      auto copts = io::create_options_inheriting_format(input, output);
-      copts.mcap_compression = "none";
-      return io::open_write(output, copts);
-    };
-    return execute_keep_pass(args, keep, make_writer);
-  }
-
-  // 2b. In-place mode: rewrite <input> atomically via a sibling tmp, preserving
-  //     its storage format and layout. The tmp path carries a synthetic suffix
-  //     that Format::Auto cannot interpret, so pin both explicitly.
-  const auto inplace_copts = io::create_options_preserving_storage(args.input_path);
-  if (inplace_copts.format == io::Format::Auto) {
-    BAGWIZ_LOG_ERROR(
-      kLogger, "topic keep: could not detect storage format of input bag '%s'.",
-      args.input_path.string().c_str());
-    return 1;
-  }
-  auto make_inplace_writer = [inplace_copts](const std::filesystem::path & tmp) {
-    auto copts = inplace_copts;
-    copts.mcap_compression = "none";
-    return io::open_write(tmp, copts);
-  };
-
-  // execute_keep_pass reports command-level failures via its return value
-  // rather than throwing, so capture the status and translate a non-zero exit
-  // into a runtime_error to make write_bag_inplace abort the swap (leaving
-  // <input> untouched).
-  int pass_status = 0;
-  try {
-    core::write_bag_inplace(args.input_path, [&](const std::filesystem::path & tmp) {
-      pass_status = execute_keep_pass(args, keep, [&]() { return make_inplace_writer(tmp); });
-      if (pass_status != 0) {
-        throw std::runtime_error("topic keep: pass failed; aborting in-place swap");
-      }
+  // 2. -o vs in-place dispatch, shared with the other rewrite-style commands:
+  //    -o writes a new bag and leaves <input> untouched; otherwise <input> is
+  //    rewritten atomically via a sibling tmp, preserving its storage format
+  //    and layout.
+  core::BagRewriteOptions rewrite_opts;
+  rewrite_opts.logger = kLogger;
+  rewrite_opts.format_unknown_error =
+    "topic keep: could not detect storage format of input bag '%s'.";
+  rewrite_opts.pass_failed_error = "topic keep: pass failed; aborting in-place swap";
+  rewrite_opts.inherit_output_format = true;
+  return core::run_bag_rewrite(
+    args.input_path, args.output_path, args.overwrite, rewrite_opts,
+    [&](const io::WriterFactory & open_writer) {
+      return execute_keep_pass(args, keep, open_writer);
     });
-  } catch (const std::exception & e) {
-    // cppcheck-suppress knownConditionTrueFalse  // assigned inside the lambda above
-    if (pass_status != 0) {
-      return pass_status;  // the pass already logged the specific error
-    }
-    BAGWIZ_LOG_ERROR(kLogger, "In-place swap failed: %s", e.what());
-    return 1;
-  }
-  return 0;
 }
 
 }  // namespace bagwiz::commands

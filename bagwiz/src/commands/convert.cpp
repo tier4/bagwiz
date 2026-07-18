@@ -15,6 +15,7 @@
 #include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
 #include "bagwiz/core/msg_yaml/msg_definition_resolver.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/bag_open.hpp"
 
 #include <cinttypes>
 #include <cstddef>
@@ -224,11 +225,8 @@ private:
       return 1;
     }
 
-    std::unique_ptr<io::BagReader> reader;
-    try {
-      reader = io::open_read(args.input_path);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+    auto reader = io::open_read_or_log(args.input_path, kLogger);
+    if (!reader) {
       return 1;
     }
 

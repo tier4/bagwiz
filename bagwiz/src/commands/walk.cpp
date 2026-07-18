@@ -31,6 +31,8 @@
 #include "bagwiz/core/tui/renderer.hpp"
 #include "bagwiz/core/tui/width.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/bag_open.hpp"
+#include "bagwiz/io/topics.hpp"
 
 #include <tf2/buffer_core.hpp>
 
@@ -305,24 +307,13 @@ public:
       return 1;
     }
 
-    std::unique_ptr<io::BagReader> reader;
-    try {
-      reader = io::open_read(input_path_);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", input_path_.c_str(), e.what());
+    auto reader = io::open_read_or_log(input_path_, kLogger);
+    if (!reader) {
       return 1;
     }
 
-    const io::TopicInfo * topic_info = nullptr;
-    for (const auto & t : reader->topics()) {
-      if (t.name == topic_) {
-        topic_info = &t;
-        break;
-      }
-    }
+    const io::TopicInfo * topic_info = io::find_topic_or_log(*reader, topic_, input_path_, kLogger);
     if (topic_info == nullptr) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Topic '%s' is not present in %s", topic_.c_str(), input_path_.c_str());
       return 1;
     }
 

@@ -14,6 +14,7 @@
 #include "bagwiz/core/image/camera_calibration_yaml.hpp"
 #include "bagwiz/core/image/camera_info.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/bag_open.hpp"
 
 #include <fmt/core.h>
 
@@ -47,11 +48,8 @@ constexpr const char * kCameraInfoType = "sensor_msgs/msg/CameraInfo";
 
 int run_cam_info_dump(const CamInfoDumpArgs & args)
 {
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(args.input_path);
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+  auto reader = io::open_read_or_log(args.input_path, kLogger);
+  if (!reader) {
     return 1;
   }
   reader->populate_schemas();

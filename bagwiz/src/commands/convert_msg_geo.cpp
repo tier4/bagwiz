@@ -8,15 +8,15 @@
 
 #include "bagwiz/commands/convert_msg_geo.hpp"
 
-#include "bagwiz/core/bag/bag_inplace.hpp"
+#include "bagwiz/core/bag/rewrite.hpp"
 #include "bagwiz/core/base/logging.hpp"
-#include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
 #include "bagwiz/core/msg_yaml/msg_definition_resolver.hpp"
 #include "bagwiz/core/pipeline/backend_select.hpp"
 #include "bagwiz/core/pipeline/rewrite_backend.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/bag_open.hpp"
 
 #include <array>
 #include <cinttypes>
@@ -321,14 +321,10 @@ private:
 int execute_pass(
   const std::filesystem::path & input_path, const std::unordered_set<std::string> & selected,
   const std::string & target_type, const core::ResolvedMessageDefinition & target_def,
-  const mtc::GeoPoseConverter & converter,
-  const std::function<std::unique_ptr<io::BagWriter>()> & open_writer)
+  const mtc::GeoPoseConverter & converter, const io::WriterFactory & open_writer)
 {
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(input_path);
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", input_path.c_str(), e.what());
+  auto reader = io::open_read_or_log(input_path, kLogger);
+  if (!reader) {
     return 1;
   }
   reader->populate_schemas();
@@ -353,11 +349,8 @@ int execute_pass(
     decoders.emplace(t.name, std::move(open.decoder));
   }
 
-  std::unique_ptr<io::BagWriter> writer;
-  try {
-    writer = open_writer();
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to open output writer: %s", e.what());
+  std::unique_ptr<io::BagWriter> writer = io::open_write_or_log(open_writer, kLogger);
+  if (!writer) {
     return 1;
   }
 
@@ -439,11 +432,8 @@ int run_convert_msg_geo(const ConvertMsgGeoArgs & args)
   }
 
   // 2. Inspect the bag's topics to drive selection.
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(args.input_path);
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+  auto reader = io::open_read_or_log(args.input_path, kLogger);
+  if (!reader) {
     return 1;
   }
   reader->populate_schemas();
@@ -526,57 +516,20 @@ int run_convert_msg_geo(const ConvertMsgGeoArgs & args)
 
   const std::unordered_set<std::string> selected_set(selected.begin(), selected.end());
 
-  // 7a. Explicit -o: write a fresh bag, leaving <input> untouched.
-  if (args.output_path.has_value()) {
-    if (const auto r = core::prepare_output_path(*args.output_path, args.overwrite); !r.ok) {
-      BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
-      return 1;
-    }
-    auto make_writer = [&]() {
-      io::CreateOptions copts;
-      copts.format = io::Format::Auto;
-      copts.layout = io::Layout::Auto;
-      copts.mcap_compression = "none";
-      return io::open_write(*args.output_path, copts);
-    };
-    return execute_pass(
-      args.input_path, selected_set, *to_ros, target_def, *converter, make_writer);
-  }
-
-  // 7b. In-place: pin format/layout to <input>'s identity (the tmp suffix that
-  //     write_bag_inplace uses cannot be interpreted by Auto resolution).
-  const auto inplace_copts = io::create_options_preserving_storage(args.input_path);
-  if (inplace_copts.format == io::Format::Auto) {
-    BAGWIZ_LOG_ERROR(
-      kLogger, "Could not detect storage format of input bag '%s'.",
-      args.input_path.string().c_str());
-    return 1;
-  }
-  auto make_inplace_writer = [inplace_copts](const std::filesystem::path & tmp) {
-    auto copts = inplace_copts;
-    copts.mcap_compression = "none";
-    return io::open_write(tmp, copts);
-  };
-
-  int pass_status = 0;
-  try {
-    core::write_bag_inplace(args.input_path, [&](const std::filesystem::path & tmp) {
-      pass_status = execute_pass(
-        args.input_path, selected_set, *to_ros, target_def, *converter,
-        [&]() { return make_inplace_writer(tmp); });
-      if (pass_status != 0) {
-        throw std::runtime_error("convert msg geo: pass failed; aborting in-place swap");
-      }
+  // 7. -o vs in-place dispatch, shared with the other rewrite-style commands:
+  //    -o writes a fresh bag (format/layout resolved from the output path's
+  //    extension) and leaves <input> untouched; otherwise <input> is rewritten
+  //    atomically via a sibling tmp, preserving its storage identity.
+  core::BagRewriteOptions rewrite_opts;
+  rewrite_opts.logger = kLogger;
+  rewrite_opts.format_unknown_error = "Could not detect storage format of input bag '%s'.";
+  rewrite_opts.pass_failed_error = "convert msg geo: pass failed; aborting in-place swap";
+  return core::run_bag_rewrite(
+    args.input_path, args.output_path, args.overwrite, rewrite_opts,
+    [&](const io::WriterFactory & open_writer) {
+      return execute_pass(
+        args.input_path, selected_set, *to_ros, target_def, *converter, open_writer);
     });
-  } catch (const std::exception & e) {
-    // cppcheck-suppress knownConditionTrueFalse  // assigned inside the lambda above
-    if (pass_status != 0) {
-      return pass_status;
-    }
-    BAGWIZ_LOG_ERROR(kLogger, "In-place swap failed: %s", e.what());
-    return 1;
-  }
-  return 0;
 }
 
 }  // namespace bagwiz::commands

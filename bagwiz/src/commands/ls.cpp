@@ -10,6 +10,7 @@
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/bag_open.hpp"
 
 #include <fmt/core.h>
 
@@ -130,11 +131,8 @@ public:
 
   int run() override
   {
-    std::unique_ptr<io::BagReader> reader;
-    try {
-      reader = io::open_read(input_path_);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", input_path_.c_str(), e.what());
+    auto reader = io::open_read_or_log(input_path_, kLogger);
+    if (!reader) {
       return 1;
     }
 

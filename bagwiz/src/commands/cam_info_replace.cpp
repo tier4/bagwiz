@@ -8,15 +8,15 @@
 
 #include "bagwiz/commands/cam_info_replace.hpp"
 
-#include "bagwiz/core/bag/bag_inplace.hpp"
+#include "bagwiz/core/bag/rewrite.hpp"
 #include "bagwiz/core/base/logging.hpp"
-#include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/cdr_walker/cdr_writer.hpp"
 #include "bagwiz/core/image/camera_calibration_yaml.hpp"
 #include "bagwiz/core/introspection/introspection_loader.hpp"
 #include "bagwiz/core/pipeline/backend_select.hpp"
 #include "bagwiz/core/pipeline/rewrite_backend.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/bag_open.hpp"
 
 #include <sensor_msgs/msg/camera_info.hpp>
 
@@ -203,25 +203,18 @@ private:
 int execute_pass(
   const std::filesystem::path & input_path, const std::vector<std::string> & target_topics,
   const rosidl_message_type_support_t * typesupport, const img::CameraCalibration & calibration,
-  const std::optional<std::string> & frame_id,
-  const std::function<std::unique_ptr<io::BagWriter>()> & open_writer)
+  const std::optional<std::string> & frame_id, const io::WriterFactory & open_writer)
 {
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(input_path);
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", input_path.c_str(), e.what());
+  auto reader = io::open_read_or_log(input_path, kLogger);
+  if (!reader) {
     return 1;
   }
   reader->populate_schemas();
 
   const std::vector<io::TopicInfo> topics(reader->topics().begin(), reader->topics().end());
 
-  std::unique_ptr<io::BagWriter> writer;
-  try {
-    writer = open_writer();
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to open output writer: %s", e.what());
+  auto writer = io::open_write_or_log(open_writer, kLogger);
+  if (!writer) {
     return 1;
   }
 
@@ -283,11 +276,8 @@ int run_cam_info_replace(const CamInfoReplaceArgs & args)
 {
   // 1. Inspect the bag and confirm every requested <topic> exists and is a
   //    CameraInfo topic. The CLI guarantees args.topics is non-empty (->required).
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(args.input_path);
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+  auto reader = io::open_read_or_log(args.input_path, kLogger);
+  if (!reader) {
     return 1;
   }
 
@@ -362,57 +352,20 @@ int run_cam_info_replace(const CamInfoReplaceArgs & args)
     return 1;
   }
 
-  // 4a. Explicit -o: write a fresh bag, leaving <input> untouched.
-  if (args.output_path.has_value()) {
-    if (const auto r = core::prepare_output_path(*args.output_path, args.overwrite); !r.ok) {
-      BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
-      return 1;
-    }
-    auto make_writer = [&]() {
-      io::CreateOptions copts;
-      copts.format = io::Format::Auto;
-      copts.layout = io::Layout::Auto;
-      copts.mcap_compression = "none";
-      return io::open_write(*args.output_path, copts);
-    };
-    return execute_pass(
-      args.input_path, target_topics, intro.typesupport, calibration, args.frame_id, make_writer);
-  }
-
-  // 4b. In-place: pin format/layout to <input>'s identity (the tmp suffix that
-  //     write_bag_inplace uses cannot be interpreted by Auto resolution).
-  const auto inplace_copts = io::create_options_preserving_storage(args.input_path);
-  if (inplace_copts.format == io::Format::Auto) {
-    BAGWIZ_LOG_ERROR(
-      kLogger, "Could not detect storage format of input bag '%s'.",
-      args.input_path.string().c_str());
-    return 1;
-  }
-  auto make_inplace_writer = [inplace_copts](const std::filesystem::path & tmp) {
-    auto copts = inplace_copts;
-    copts.mcap_compression = "none";
-    return io::open_write(tmp, copts);
-  };
-
-  int pass_status = 0;
-  try {
-    core::write_bag_inplace(args.input_path, [&](const std::filesystem::path & tmp) {
-      pass_status = execute_pass(
-        args.input_path, target_topics, intro.typesupport, calibration, args.frame_id,
-        [&]() { return make_inplace_writer(tmp); });
-      if (pass_status != 0) {
-        throw std::runtime_error("cam-info replace: pass failed; aborting in-place swap");
-      }
+  // 4. -o vs in-place dispatch, shared with the other rewrite-style commands:
+  //    -o writes a fresh bag (format/layout resolved from the output path's
+  //    extension) and leaves <input> untouched; otherwise <input> is rewritten
+  //    atomically via a sibling tmp, preserving its storage identity.
+  core::BagRewriteOptions rewrite_opts;
+  rewrite_opts.logger = kLogger;
+  rewrite_opts.format_unknown_error = "Could not detect storage format of input bag '%s'.";
+  rewrite_opts.pass_failed_error = "cam-info replace: pass failed; aborting in-place swap";
+  return core::run_bag_rewrite(
+    args.input_path, args.output_path, args.overwrite, rewrite_opts,
+    [&](const io::WriterFactory & open_writer) {
+      return execute_pass(
+        args.input_path, target_topics, intro.typesupport, calibration, args.frame_id, open_writer);
     });
-  } catch (const std::exception & e) {
-    // cppcheck-suppress knownConditionTrueFalse  // assigned inside the lambda above
-    if (pass_status != 0) {
-      return pass_status;
-    }
-    BAGWIZ_LOG_ERROR(kLogger, "In-place swap failed: %s", e.what());
-    return 1;
-  }
-  return 0;
 }
 
 }  // namespace bagwiz::commands

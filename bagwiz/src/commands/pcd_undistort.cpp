@@ -8,9 +8,8 @@
 
 #include "bagwiz/commands/pcd_undistort.hpp"
 
-#include "bagwiz/core/bag/bag_inplace.hpp"
+#include "bagwiz/core/bag/rewrite.hpp"
 #include "bagwiz/core/base/logging.hpp"
-#include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/cdr_walker/value.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/pointcloud/deskew.hpp"
@@ -21,6 +20,8 @@
 #include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/core/tf/trajectory.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/bag_open.hpp"
+#include "bagwiz/io/topics.hpp"
 
 #include <tf2/buffer_core.hpp>
 #include <tf2/exceptions.hpp>
@@ -586,10 +587,7 @@ int run_parallel_undistort_pass(
         writer.write(item.topic, item.timestamp_ns, item.payload);
       }
 
-      try {
-        writer.close();
-      } catch (const std::exception & e) {
-        BAGWIZ_LOG_ERROR(kLogger, "Writer close() failed: %s", e.what());
+      if (!io::close_writer_or_log(writer, kLogger)) {
         collector_status = 1;
       }
     } catch (const std::exception & e) {
@@ -697,29 +695,15 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
   const std::string ref = args.ref_frame.value_or(kDefaultRefFrame);
   const std::string of = args.of_frame.value_or(kDefaultOfFrame);
 
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(args.input_path);
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+  auto reader = io::open_read_or_log(args.input_path, kLogger);
+  if (!reader) {
     return 1;
   }
   reader->populate_schemas();
 
-  const io::TopicInfo * pose_ti = nullptr;
-  std::unordered_map<std::string, const io::TopicInfo *> pcd_info;
-  for (const auto & t : reader->topics()) {
-    if (t.name == args.pose_topic) {
-      pose_ti = &t;
-    }
-    if (
-      std::find(args.pcd_topics.begin(), args.pcd_topics.end(), t.name) != args.pcd_topics.end()) {
-      pcd_info.emplace(t.name, &t);
-    }
-  }
+  const io::TopicInfo * pose_ti =
+    io::find_topic_or_log(*reader, args.pose_topic, args.input_path, kLogger);
   if (pose_ti == nullptr) {
-    BAGWIZ_LOG_ERROR(
-      kLogger, "Topic '%s' is not present in %s", args.pose_topic.c_str(), args.input_path.c_str());
     return 1;
   }
   if (!is_supported_pose_topic_type(pose_ti->type)) {
@@ -730,15 +714,13 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
     return 1;
   }
   for (const auto & topic : args.pcd_topics) {
-    const auto it = pcd_info.find(topic);
-    if (it == pcd_info.end()) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Topic '%s' is not present in %s", topic.c_str(), args.input_path.c_str());
+    const io::TopicInfo * info = io::find_topic_or_log(*reader, topic, args.input_path, kLogger);
+    if (info == nullptr) {
       return 1;
     }
-    if (it->second->type != kPointCloud2Type) {
+    if (info->type != kPointCloud2Type) {
       BAGWIZ_LOG_ERROR(
-        kLogger, "Topic '%s' is %s, expected %s", topic.c_str(), it->second->type.c_str(),
+        kLogger, "Topic '%s' is %s, expected %s", topic.c_str(), info->type.c_str(),
         kPointCloud2Type);
       return 1;
     }
@@ -927,68 +909,36 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
       ++total_clouds;
     }
 
-    try {
-      writer.close();
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Writer close() failed: %s", e.what());
+    if (!io::close_writer_or_log(writer, kLogger)) {
       return 1;
     }
     return 0;
   };
 
   // ---- dispatch: -o (new bag) vs in-place ----------------------------------
-  int status = 0;
-  if (args.output_path.has_value()) {
-    if (const auto r = core::prepare_output_path(*args.output_path, args.overwrite); !r.ok) {
-      BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
-      return 1;
-    }
-    std::unique_ptr<io::BagWriter> writer;
-    try {
-      const auto copts = io::create_options_inheriting_format(args.input_path, *args.output_path);
-      writer = io::open_write(*args.output_path, copts);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open output writer: %s", e.what());
-      return 1;
-    }
-    if (num_threads <= 1) {
-      status = execute_pass(*writer);
-    } else {
-      status = run_parallel_undistort_pass(
+  // Unlike the other rewrite commands, pcd undistort keeps the storage
+  // default (zstd) for MCAP compression rather than forcing "none".
+  core::BagRewriteOptions rewrite_opts;
+  rewrite_opts.logger = kLogger;
+  rewrite_opts.format_unknown_error =
+    "pcd undistort: could not detect storage format of input bag '%s'.";
+  rewrite_opts.pass_failed_error = "pcd undistort: pass failed; aborting in-place swap";
+  rewrite_opts.inherit_output_format = true;
+  rewrite_opts.disable_mcap_compression = false;
+  const int status = core::run_bag_rewrite(
+    args.input_path, args.output_path, args.overwrite, rewrite_opts,
+    [&](const io::WriterFactory & factory) {
+      auto writer = io::open_write_or_log(factory, kLogger);
+      if (!writer) {
+        return 1;
+      }
+      if (num_threads <= 1) {
+        return execute_pass(*writer);
+      }
+      return run_parallel_undistort_pass(
         *writer, *reader, args.input_path, pcd_set, extrinsics, trajectory, num_threads,
         total_clouds);
-    }
-  } else {
-    const auto inplace_copts = io::create_options_preserving_storage(args.input_path);
-    if (inplace_copts.format == io::Format::Auto) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "pcd undistort: could not detect storage format of input bag '%s'.",
-        args.input_path.c_str());
-      return 1;
-    }
-    try {
-      core::write_bag_inplace(args.input_path, [&](const std::filesystem::path & tmp) {
-        auto writer = io::open_write(tmp, inplace_copts);
-        if (num_threads <= 1) {
-          status = execute_pass(*writer);
-        } else {
-          status = run_parallel_undistort_pass(
-            *writer, *reader, args.input_path, pcd_set, extrinsics, trajectory, num_threads,
-            total_clouds);
-        }
-        if (status != 0) {
-          throw std::runtime_error("pcd undistort: pass failed; aborting in-place swap");
-        }
-      });
-    } catch (const std::exception & e) {
-      // cppcheck-suppress knownConditionTrueFalse  // status is assigned inside the lambda above
-      if (status != 0) {
-        return status;
-      }
-      BAGWIZ_LOG_ERROR(kLogger, "In-place swap failed: %s", e.what());
-      return 1;
-    }
-  }
+    });
   if (status != 0) {
     return status;
   }

@@ -9,8 +9,8 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/core/bag/bag_copy.hpp"
-#include "bagwiz/core/bag/bag_inplace.hpp"
 #include "bagwiz/core/bag/bag_topic_plan.hpp"
+#include "bagwiz/core/bag/rewrite.hpp"
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/cdr_walker/value.hpp"
@@ -21,6 +21,7 @@
 #include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/core/tf/trajectory.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/bag_open.hpp"
 
 #include <tf2/LinearMath/Quaternion.hpp>
 #include <tf2/LinearMath/Transform.hpp>
@@ -418,11 +419,8 @@ private:
       return 1;
     }
 
-    std::unique_ptr<io::BagReader> reader;
-    try {
-      reader = io::open_read(args.input_path);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+    auto reader = io::open_read_or_log(args.input_path, kLogger);
+    if (!reader) {
       return 1;
     }
 
@@ -559,11 +557,8 @@ private:
     if (!need_tree) {
       return true;
     }
-    std::unique_ptr<io::BagReader> reader;
-    try {
-      reader = io::open_read(args.input_path);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+    auto reader = io::open_read_or_log(args.input_path, kLogger);
+    if (!reader) {
       return false;
     }
     const auto tf_topics = collect_tf_topics(*reader);
@@ -625,11 +620,8 @@ private:
       return 1;
     }
 
-    std::unique_ptr<io::BagReader> reader;
-    try {
-      reader = io::open_read(args.input_path);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+    auto reader = io::open_read_or_log(args.input_path, kLogger);
+    if (!reader) {
       return 1;
     }
     io::ReadFilter filter;
@@ -770,11 +762,8 @@ private:
 
     const auto & args = dump_args_;
 
-    std::unique_ptr<io::BagReader> reader;
-    try {
-      reader = io::open_read(args.input_path);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+    auto reader = io::open_read_or_log(args.input_path, kLogger);
+    if (!reader) {
       return 1;
     }
 
@@ -957,20 +946,16 @@ private:
   // Execute one full pass: open reader, plan the topic conflict,
   // declare topics on the writer, stream-copy with suppression, append
   // the injected payloads. Used for both in-place and explicit-output
-  // modes; the writer factory is parameterised so write_bag_inplace can
-  // hand in a tmp path.
+  // modes; the writer factory is parameterised so the rewrite dispatch
+  // (core::run_bag_rewrite) can hand in a tmp path.
   static int execute_join_pass(
     const JoinArgs & args, std::span<const geometry_msgs::msg::TransformStamped> transforms,
-    std::span<const std::int64_t> stamps_ns,
-    const std::function<std::unique_ptr<io::BagWriter>()> & open_writer)
+    std::span<const std::int64_t> stamps_ns, const io::WriterFactory & open_writer)
   {
     constexpr const char * kExpectedType = "tf2_msgs/msg/TFMessage";
 
-    std::unique_ptr<io::BagReader> reader;
-    try {
-      reader = io::open_read(args.input_path);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+    auto reader = io::open_read_or_log(args.input_path, kLogger);
+    if (!reader) {
       return 1;
     }
 
@@ -1008,11 +993,8 @@ private:
         break;
     }
 
-    std::unique_ptr<io::BagWriter> writer;
-    try {
-      writer = open_writer();
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open output writer: %s", e.what());
+    auto writer = io::open_write_or_log(open_writer, kLogger);
+    if (!writer) {
       return 1;
     }
 
@@ -1084,10 +1066,7 @@ private:
       ++injected;
     }
 
-    try {
-      writer->close();
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Writer close() failed: %s", e.what());
+    if (!io::close_writer_or_log(*writer, kLogger)) {
       return 1;
     }
 
@@ -1136,68 +1115,22 @@ private:
       return 1;
     }
 
-    // 4. Pick the writer factory based on -o presence.
-    if (args.output_path.has_value()) {
-      // Explicit -o: let the factory pick from the user-provided path's
-      // extension (e.g. .mcap / .db3 / directory).
-      auto make_writer = [](const std::filesystem::path & out_path) {
-        io::CreateOptions copts;
-        copts.format = io::Format::Auto;
-        copts.layout = io::Layout::Auto;
-        copts.mcap_compression = "none";
-        return io::open_write(out_path, copts);
-      };
-      if (const auto r = core::prepare_output_path(*args.output_path, args.overwrite); !r.ok) {
-        BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
-        return 1;
-      }
-      return execute_join_pass(
-        args, transforms, stamps_ns, [&]() { return make_writer(*args.output_path); });
-    }
-
-    // In-place mode: pin format and layout to the input's identity. The
-    // tmp path used by write_bag_inplace carries a synthetic suffix
-    // (".bagwiz-inplace-tmp-..."), so Format::Auto / Layout::Auto would
-    // misread it as a directory MCAP target and silently convert db3
-    // inputs to mcap on swap.
-    const auto inplace_copts = io::create_options_preserving_storage(args.input_path);
-    if (inplace_copts.format == io::Format::Auto) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "traj join: could not detect storage format of input bag '%s'.",
-        args.input_path.string().c_str());
-      return 1;
-    }
-    auto make_inplace_writer = [inplace_copts](const std::filesystem::path & out_path) {
-      auto copts = inplace_copts;
-      copts.mcap_compression = "none";
-      return io::open_write(out_path, copts);
-    };
-
-    // Hand off to write_bag_inplace, which produces the tmp path. The
-    // closure runs execute_join_pass against the tmp; because
-    // execute_join_pass returns int rather than throwing on command-level
-    // errors, we surface non-zero exits via a captured status and
-    // translate them into a runtime_error so the in-place helper aborts
-    // the swap.
-    int pass_status = 0;
-    try {
-      core::write_bag_inplace(args.input_path, [&](const std::filesystem::path & tmp) {
-        pass_status = execute_join_pass(
-          args, transforms, stamps_ns, [&]() { return make_inplace_writer(tmp); });
-        if (pass_status != 0) {
-          throw std::runtime_error("traj join: pass failed; aborting in-place swap");
-        }
+    // 4. -o vs in-place dispatch, shared with the other rewrite-style
+    //    commands: -o writes a fresh bag (format/layout resolved from the
+    //    output path's extension) and leaves <input> untouched; otherwise
+    //    <input> is rewritten atomically via a sibling tmp, preserving its
+    //    storage identity (Format::Auto would misread the tmp's synthetic
+    //    suffix and silently convert db3 inputs to mcap on swap).
+    core::BagRewriteOptions rewrite_opts;
+    rewrite_opts.logger = kLogger;
+    rewrite_opts.format_unknown_error =
+      "traj join: could not detect storage format of input bag '%s'.";
+    rewrite_opts.pass_failed_error = "traj join: pass failed; aborting in-place swap";
+    return core::run_bag_rewrite(
+      args.input_path, args.output_path, args.overwrite, rewrite_opts,
+      [&](const io::WriterFactory & open_writer) {
+        return execute_join_pass(args, transforms, stamps_ns, open_writer);
       });
-    } catch (const std::exception & e) {
-      // cppcheck-suppress knownConditionTrueFalse  // assigned inside the lambda above
-      if (pass_status != 0) {
-        // The pass already logged the specific error.
-        return pass_status;
-      }
-      BAGWIZ_LOG_ERROR(kLogger, "In-place swap failed: %s", e.what());
-      return 1;
-    }
-    return 0;
   }
 };
 

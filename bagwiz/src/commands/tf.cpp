@@ -17,6 +17,7 @@
 #include "bagwiz/core/tf/tf_transform_format.hpp"
 #include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/bag_open.hpp"
 
 #include <rang.hpp>
 #include <tf2/buffer_core.hpp>
@@ -688,11 +689,8 @@ private:
       }
     }
 
-    std::unique_ptr<io::BagReader> reader;
-    try {
-      reader = io::open_read(args.input_path);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+    auto reader = io::open_read_or_log(args.input_path, kLogger);
+    if (!reader) {
       return 1;
     }
 
@@ -869,11 +867,8 @@ private:
       return 1;
     }
 
-    std::unique_ptr<io::BagReader> reader;
-    try {
-      reader = io::open_read(args.input_path);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+    auto reader = io::open_read_or_log(args.input_path, kLogger);
+    if (!reader) {
       return 1;
     }
 

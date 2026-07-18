@@ -25,6 +25,7 @@
 #include "bagwiz/core/video/frame_rate.hpp"
 #include "bagwiz/core/video/video_encoder.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/topics.hpp"
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
@@ -329,22 +330,16 @@ int run_generate_video(const GenerateVideoArgs & args)
         kLogger, "failed to open '%s': %s", args.input_path.string().c_str(), e.what());
       return 1;
     }
-    bool found = false;
-    for (const auto & t : reader->topics()) {
-      if (t.name == topic) {
-        found = true;
-        if (t.type != kPointCloudType) {
-          BAGWIZ_LOG_ERROR(
-            kLogger, "pcd topic '%s' has type '%s', expected %s", topic.c_str(), t.type.c_str(),
-            kPointCloudType);
-          return 1;
-        }
-        break;
-      }
-    }
-    if (!found) {
+    const io::TopicInfo * info = io::find_topic(*reader, topic);
+    if (info == nullptr) {
       BAGWIZ_LOG_ERROR(
         kLogger, "pcd topic '%s' not found in %s", topic.c_str(), args.input_path.string().c_str());
+      return 1;
+    }
+    if (info->type != kPointCloudType) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "pcd topic '%s' has type '%s', expected %s", topic.c_str(), info->type.c_str(),
+        kPointCloudType);
       return 1;
     }
   }

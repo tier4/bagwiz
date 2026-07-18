@@ -8,10 +8,9 @@
 
 #include "bagwiz/commands/pcd_concat.hpp"
 
-#include "bagwiz/core/bag/bag_inplace.hpp"
+#include "bagwiz/core/bag/rewrite.hpp"
 #include "bagwiz/core/base/duration_parse.hpp"
 #include "bagwiz/core/base/logging.hpp"
-#include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/pointcloud/cloud_concat.hpp"
 #include "bagwiz/core/pointcloud/cloud_transform.hpp"
 #include "bagwiz/core/pointcloud/concat_sync.hpp"
@@ -19,6 +18,8 @@
 #include "bagwiz/core/tf/tf_buffer_loader.hpp"
 #include "bagwiz/core/tf/tf_chain.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/bag_open.hpp"
+#include "bagwiz/io/topics.hpp"
 
 #include <tf2/buffer_core.hpp>
 #include <tf2/time.hpp>
@@ -166,33 +167,19 @@ int run_pcd_concat(const PcdConcatArgs & args)
   }
 
   // ---- open reader, validate topics ---------------------------------------
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(args.input_path);
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", args.input_path.c_str(), e.what());
+  auto reader = io::open_read_or_log(args.input_path, kLogger);
+  if (!reader) {
     return 1;
   }
   reader->populate_schemas();
 
-  // Resolve output-topic existence and every input topic's TopicInfo in a single
-  // pass over the bag's topics, using the topic_index built above.
+  // Resolve every --pcd topic's TopicInfo (one lookup per topic) and check
+  // its type; then probe output-topic existence without logging on a miss.
   std::vector<const io::TopicInfo *> info_by_index(num_topics, nullptr);
-  bool output_topic_exists = false;
-  for (const auto & t : reader->topics()) {
-    if (t.name == args.output_topic) {
-      output_topic_exists = true;
-    }
-    if (const auto it = topic_index.find(t.name); it != topic_index.end()) {
-      info_by_index[it->second] = &t;
-    }
-  }
   for (std::size_t i = 0; i < num_topics; ++i) {
-    const io::TopicInfo * info = info_by_index[i];
+    const io::TopicInfo * info =
+      io::find_topic_or_log(*reader, args.pcd_topics[i], args.input_path, kLogger);
     if (info == nullptr) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Topic '%s' is not present in %s", args.pcd_topics[i].c_str(),
-        args.input_path.c_str());
       return 1;
     }
     if (info->type != kPointCloud2Type) {
@@ -201,7 +188,9 @@ int run_pcd_concat(const PcdConcatArgs & args)
         kPointCloud2Type);
       return 1;
     }
+    info_by_index[i] = info;
   }
+  const bool output_topic_exists = io::find_topic(*reader, args.output_topic) != nullptr;
   const io::TopicInfo * ref_info = info_by_index[ref_idx];
 
   if (output_topic_exists && !args.force) {
@@ -508,61 +497,28 @@ int run_pcd_concat(const PcdConcatArgs & args)
       }
     }
 
-    try {
-      writer.close();
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Writer close() failed: %s", e.what());
+    if (!io::close_writer_or_log(writer, kLogger)) {
       return 1;
     }
     return 0;
   };
 
   // ---- dispatch: -o (new bag) vs in-place ---------------------------------
-  int status = 0;
-  if (args.output_path.has_value()) {
-    if (const auto r = core::prepare_output_path(*args.output_path, args.overwrite); !r.ok) {
-      BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
-      return 1;
-    }
-    const auto input = args.input_path;
-    const auto output = *args.output_path;
-    std::unique_ptr<io::BagWriter> writer;
-    try {
-      auto copts = io::create_options_inheriting_format(input, output);
-      copts.mcap_compression = "none";
-      writer = io::open_write(output, copts);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(kLogger, "Failed to open output writer: %s", e.what());
-      return 1;
-    }
-    status = execute_pass(*writer);
-  } else {
-    const auto inplace_copts = io::create_options_preserving_storage(args.input_path);
-    if (inplace_copts.format == io::Format::Auto) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "pcd concat: could not detect storage format of input bag '%s'.",
-        args.input_path.c_str());
-      return 1;
-    }
-    try {
-      core::write_bag_inplace(args.input_path, [&](const std::filesystem::path & tmp) {
-        auto copts = inplace_copts;
-        copts.mcap_compression = "none";
-        auto writer = io::open_write(tmp, copts);
-        status = execute_pass(*writer);
-        if (status != 0) {
-          throw std::runtime_error("pcd concat: pass failed; aborting in-place swap");
-        }
-      });
-    } catch (const std::exception & e) {
-      // cppcheck-suppress knownConditionTrueFalse  // status is assigned inside the lambda above
-      if (status != 0) {
-        return status;
+  core::BagRewriteOptions rewrite_opts;
+  rewrite_opts.logger = kLogger;
+  rewrite_opts.format_unknown_error =
+    "pcd concat: could not detect storage format of input bag '%s'.";
+  rewrite_opts.pass_failed_error = "pcd concat: pass failed; aborting in-place swap";
+  rewrite_opts.inherit_output_format = true;
+  const int status = core::run_bag_rewrite(
+    args.input_path, args.output_path, args.overwrite, rewrite_opts,
+    [&](const io::WriterFactory & factory) {
+      auto writer = io::open_write_or_log(factory, kLogger);
+      if (!writer) {
+        return 1;
       }
-      BAGWIZ_LOG_ERROR(kLogger, "In-place swap failed: %s", e.what());
-      return 1;
-    }
-  }
+      return execute_pass(*writer);
+    });
   if (status != 0) {
     return status;
   }

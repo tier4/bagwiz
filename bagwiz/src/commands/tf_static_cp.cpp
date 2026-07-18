@@ -9,14 +9,14 @@
 #include "bagwiz/commands/tf_static_cp.hpp"
 
 #include "bagwiz/core/bag/bag_copy.hpp"
-#include "bagwiz/core/bag/bag_inplace.hpp"
 #include "bagwiz/core/bag/bag_topic_plan.hpp"
+#include "bagwiz/core/bag/rewrite.hpp"
 #include "bagwiz/core/base/logging.hpp"
-#include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/tf/tf_message_wire.hpp"
 #include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/bag_open.hpp"
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
@@ -225,16 +225,14 @@ bool plan_topic_writes(
 // conflicts, declare topics on the writer, stream-copy with suppression, then
 // append one TFMessage per source static topic stamped at the destination's
 // start time. Used for both in-place and explicit-output modes; the writer
-// factory is parameterised so write_bag_inplace can hand in a tmp path.
+// factory is parameterised so the rewrite dispatch (core::run_bag_rewrite)
+// can hand in a tmp path.
 int execute_cp_pass(
   const std::filesystem::path & dst_path, const std::vector<StaticTopicTransforms> & src_topics,
-  bool overwrite, const std::function<std::unique_ptr<io::BagWriter>()> & open_writer)
+  bool overwrite, const io::WriterFactory & open_writer)
 {
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(dst_path);
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to open %s: %s", dst_path.c_str(), e.what());
+  auto reader = io::open_read_or_log(dst_path, kLogger);
+  if (!reader) {
     return 1;
   }
   io::BagReader::TimeExtent time_extent;
@@ -271,11 +269,8 @@ int execute_cp_pass(
     return 1;
   }
 
-  std::unique_ptr<io::BagWriter> writer;
-  try {
-    writer = open_writer();
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to open output writer: %s", e.what());
+  auto writer = io::open_write_or_log(open_writer, kLogger);
+  if (!writer) {
     return 1;
   }
 
@@ -343,10 +338,7 @@ int execute_cp_pass(
     ++injected;
   }
 
-  try {
-    writer->close();
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Writer close() failed: %s", e.what());
+  if (!io::close_writer_or_log(*writer, kLogger)) {
     return 1;
   }
 
@@ -381,63 +373,20 @@ int run_tf_static_cp(
     return 1;
   }
 
-  // 2. Explicit -o: write a fresh bag, leaving <dst> untouched. The writer
-  //    picks format/layout from the output path's extension (.mcap / .db3 /
-  //    directory).
-  if (output_path.has_value()) {
-    if (const auto r = core::prepare_output_path(*output_path, overwrite); !r.ok) {
-      BAGWIZ_LOG_ERROR(kLogger, "%s", r.error.c_str());
-      return 1;
-    }
-    auto make_writer = [&]() {
-      io::CreateOptions copts;
-      copts.format = io::Format::Auto;
-      copts.layout = io::Layout::Auto;
-      copts.mcap_compression = "none";
-      return io::open_write(*output_path, copts);
-    };
-    return execute_cp_pass(dst_path, src_topics, overwrite, make_writer);
-  }
-
-  // 3. In-place mode: pin format/layout to <dst>'s identity. The tmp path used
-  //    by write_bag_inplace carries a synthetic suffix that Format::Auto /
-  //    Layout::Auto cannot interpret, so preserve them explicitly.
-  const auto inplace_copts = io::create_options_preserving_storage(dst_path);
-  if (inplace_copts.format == io::Format::Auto) {
-    BAGWIZ_LOG_ERROR(
-      kLogger, "tf static cp: could not detect storage format of destination bag '%s'.",
-      dst_path.string().c_str());
-    return 1;
-  }
-  auto make_inplace_writer = [inplace_copts](const std::filesystem::path & tmp) {
-    auto copts = inplace_copts;
-    copts.mcap_compression = "none";
-    return io::open_write(tmp, copts);
-  };
-
-  // write_bag_inplace materialises the tmp and swaps on success. execute_cp_pass
-  // returns int rather than throwing for command-level errors, so surface a
-  // non-zero exit via a captured status and translate it into an exception so
-  // the in-place helper aborts the swap and leaves <dst> untouched.
-  int pass_status = 0;
-  try {
-    core::write_bag_inplace(dst_path, [&](const std::filesystem::path & tmp) {
-      pass_status = execute_cp_pass(
-        dst_path, src_topics, overwrite, [&]() { return make_inplace_writer(tmp); });
-      if (pass_status != 0) {
-        throw std::runtime_error("tf static cp: pass failed; aborting in-place swap");
-      }
+  // 2. -o vs in-place dispatch, shared with the other rewrite-style commands:
+  //    -o writes a fresh bag (format/layout resolved from the output path's
+  //    extension) and leaves <dst> untouched; otherwise <dst> is rewritten
+  //    atomically via a sibling tmp, preserving its storage identity. The
+  //    dispatch rewrites the destination bag, so it is passed as the input.
+  core::BagRewriteOptions rewrite_opts;
+  rewrite_opts.logger = kLogger;
+  rewrite_opts.format_unknown_error =
+    "tf static cp: could not detect storage format of destination bag '%s'.";
+  rewrite_opts.pass_failed_error = "tf static cp: pass failed; aborting in-place swap";
+  return core::run_bag_rewrite(
+    dst_path, output_path, overwrite, rewrite_opts, [&](const io::WriterFactory & open_writer) {
+      return execute_cp_pass(dst_path, src_topics, overwrite, open_writer);
     });
-  } catch (const std::exception & e) {
-    // cppcheck-suppress knownConditionTrueFalse  // assigned inside the lambda above
-    if (pass_status != 0) {
-      // The pass already logged the specific error.
-      return pass_status;
-    }
-    BAGWIZ_LOG_ERROR(kLogger, "In-place swap failed: %s", e.what());
-    return 1;
-  }
-  return 0;
 }
 
 }  // namespace bagwiz::commands
