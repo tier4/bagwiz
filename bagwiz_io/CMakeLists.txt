@@ -66,8 +66,8 @@ target_include_directories(bagwiz_io
     $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(bagwiz_io PUBLIC bagwiz_base::bagwiz_base)
-# sqlite3.h appears in public headers (sqlite3_helpers.hpp, metadata_yaml.hpp),
-# so SQLite3 is linked PUBLIC and exported below. mcap, yaml-cpp, and zstd stay
+# sqlite3.h appears in a public header (sqlite3_helpers.hpp), so SQLite3 is
+# linked PUBLIC and exported below. mcap, yaml-cpp, and zstd stay
 # implementation details of the .cpp files and are linked PRIVATE.
 target_link_libraries(bagwiz_io PUBLIC SQLite::SQLite3)
 # ROS package dependencies of bagwiz_io. Jazzy's ament_target_dependencies
@@ -90,8 +90,8 @@ install(TARGETS bagwiz_io
 install(DIRECTORY include/ DESTINATION include)
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-# SQLite3 appears in public headers (sqlite3_helpers.hpp, metadata_yaml.hpp),
-# so consumers need it for the include path alone. mcap and zstd are private
+# SQLite3 appears in a public header (sqlite3_helpers.hpp), so consumers need
+# it for the include path alone. mcap and zstd are private
 # link dependencies, but bagwiz_io is a static archive: their imported targets
 # still show up in its link interface as $<LINK_ONLY:...>, so downstream
 # packages must be able to re-create those targets when they find_package

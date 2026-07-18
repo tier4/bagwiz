@@ -64,7 +64,11 @@ install(TARGETS bagwiz_bag
 install(DIRECTORY include/ DESTINATION include)
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(bagwiz_base bagwiz_io)
+# Threads::Threads is a PUBLIC link (PipelinedBackend's std::thread), so it
+# leaks through the static export as $<LINK_ONLY:Threads::Threads>; downstream
+# packages must be able to re-create that target. (conda's GTest happens to
+# pull Threads in and masks this in test builds.)
+ament_export_dependencies(bagwiz_base bagwiz_io Threads)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
