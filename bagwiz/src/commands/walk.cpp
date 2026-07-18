@@ -9,56 +9,31 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/core/base/logging.hpp"
-#include "bagwiz/core/base/str_utils.hpp"
 #include "bagwiz/core/base/terminal_input.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
-#include "bagwiz/core/image/camera_info.hpp"
-#include "bagwiz/core/image/camera_info_resolver.hpp"
-#include "bagwiz/core/image/image_encoder.hpp"
 #include "bagwiz/core/image/packed_raster.hpp"
-#include "bagwiz/core/image/undistort.hpp"
 #include "bagwiz/core/msg_yaml/message_formatter.hpp"
-#include "bagwiz/core/pointcloud/color_scheme.hpp"
-#include "bagwiz/core/pointcloud/fetcher.hpp"
-#include "bagwiz/core/pointcloud/overlay.hpp"
-#include "bagwiz/core/pointcloud/projector.hpp"
-#include "bagwiz/core/pointcloud/projector_helpers.hpp"
-#include "bagwiz/core/pointcloud/property.hpp"
-#include "bagwiz/core/tf/tf_buffer_loader.hpp"
 #include "bagwiz/core/tui/image/terminal_image_caps.hpp"
-#include "bagwiz/core/tui/image/terminal_image_renderer.hpp"
 #include "bagwiz/core/tui/layout.hpp"
 #include "bagwiz/core/tui/pager.hpp"
-#include "bagwiz/core/tui/renderer.hpp"
-#include "bagwiz/core/tui/width.hpp"
 #include "bagwiz/io/bag_io.hpp"
-#include "bagwiz/io/bag_open.hpp"
-#include "bagwiz/io/topics.hpp"
-
-#include <tf2/buffer_core.hpp>
+#include "walk_bag.hpp"      // NOLINT(build/include_subdir) src-local shared header
+#include "walk_cursor.hpp"   // NOLINT(build/include_subdir) src-local shared header
+#include "walk_frame.hpp"    // NOLINT(build/include_subdir) src-local shared header
+#include "walk_overlay.hpp"  // NOLINT(build/include_subdir) src-local shared header
+#include "walk_preview.hpp"  // NOLINT(build/include_subdir) src-local shared header
+#include "walk_save.hpp"     // NOLINT(build/include_subdir) src-local shared header
 
 #include <fmt/core.h>
-#include <fmt/ostream.h>
 #include <unistd.h>
 
-#include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <exception>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <istream>
-#include <iterator>
-#include <limits>
-#include <list>
-#include <memory>
-#include <ostream>
+#include <optional>
 #include <span>
 #include <string>
-#include <string_view>
-#include <unordered_map>
-#include <utility>
 #include <vector>
 
 namespace bagwiz::commands
@@ -68,155 +43,6 @@ namespace
 {
 
 constexpr const char * kLogger = "bagwiz.cmd.walk";
-
-// Message-cursor moves shared by the YAML view and the image preview, so
-// wrap-around, "at first message", and G's full-scan behave identically in both.
-enum class MsgNav {
-  kNext,
-  kPrev,
-  kFirst,
-  kLast,
-  kStepForward1s,
-  kStepBackward1s,
-  kStepForward10s,
-  kStepBackward10s,
-};
-
-constexpr int64_t kOneSecondNs = 1'000'000'000;
-constexpr int64_t kTenSecondNs = 10 * kOneSecondNs;
-
-// Cached owning copy of a single bag message. RawMessage's span is
-// invalidated by the next BagReader::next() call, so walk must take a
-// copy to allow backward navigation.
-struct OwnedMessage
-{
-  int64_t timestamp_ns = 0;
-  std::vector<std::byte> payload;
-};
-
-// Upper bound on decoded preview frames kept in memory at once. Decoding a
-// frame (JPEG/PNG via libav, or a raw copy) dominates repaint cost, so we cache
-// recently viewed rasters; the cap bounds memory (each raster is
-// width * height * 3 bytes, so a handful of HD frames is a few tens of MB).
-constexpr std::size_t kPreviewCacheCapacity = 16;
-
-// Bounded LRU cache of decoded preview frames keyed by message index. The base
-// raster for an index is a pure function of its immutable payload, so entries
-// never need invalidation. Interactive navigation revisits nearby frames, so
-// evicting the least-recently-used frame keeps the working set hot far better
-// than evicting by insertion order (FIFO) would. All operations are O(1).
-class DecodedFrameCache
-{
-public:
-  explicit DecodedFrameCache(std::size_t capacity) : capacity_(std::max<std::size_t>(1, capacity))
-  {
-  }
-
-  // Result of a lookup: `raster` points at the cached frame (valid until the
-  // next get() call) or is null when the frame failed to decode, in which case
-  // `error` carries the reason. Decode failures are not cached.
-  struct Lookup
-  {
-    const core::image::PackedRaster * raster = nullptr;
-    std::string error;
-  };
-
-  Lookup get(std::size_t index, std::string_view type, std::span<const std::byte> payload)
-  {
-    if (const auto it = map_.find(index); it != map_.end()) {
-      // Move the hit to the front so it is evicted last.
-      order_.splice(order_.begin(), order_, it->second);
-      return Lookup{&it->second->raster, {}};
-    }
-    auto decoded = core::image::to_packed_raster(type, payload);
-    if (!decoded.ok()) {
-      return Lookup{nullptr, std::move(decoded.error)};
-    }
-    order_.push_front(Entry{index, std::move(*decoded.raster)});
-    map_[index] = order_.begin();
-    if (map_.size() > capacity_) {
-      map_.erase(order_.back().index);
-      order_.pop_back();
-    }
-    return Lookup{&order_.front().raster, {}};
-  }
-
-private:
-  struct Entry
-  {
-    std::size_t index;
-    core::image::PackedRaster raster;
-  };
-
-  std::size_t capacity_;
-  std::list<Entry> order_;  // front = most recently used, back = least
-  std::unordered_map<std::size_t, std::list<Entry>::iterator> map_;
-};
-
-std::vector<std::byte> copy_payload(std::span<const std::byte> src)
-{
-  return std::vector<std::byte>(src.begin(), src.end());
-}
-
-// ROS topic names use `/`; replace each `/` with `__` so path separators
-// do not collide with underscores that appear inside topic name segments.
-std::string topic_for_filename(std::string_view topic)
-{
-  std::string out;
-  out.reserve(topic.size() * 2);
-  for (unsigned char uc : topic) {
-    const char c = static_cast<char>(uc);
-    if (c == '/') {
-      out += "__";
-    } else {
-      out.push_back(c);
-    }
-  }
-  return out;
-}
-
-std::filesystem::path resolve_save_path(
-  const std::string & line_from_stdin, const std::filesystem::path & cwd,
-  const std::string & default_filename)
-{
-  std::string trimmed = line_from_stdin;
-  while (!trimmed.empty() && (trimmed.back() == ' ' || trimmed.back() == '\t')) {
-    trimmed.pop_back();
-  }
-  if (trimmed.empty()) {
-    return cwd / default_filename;
-  }
-
-  std::filesystem::path user_path(trimmed);
-  std::error_code ec;
-  if (std::filesystem::exists(user_path, ec) && std::filesystem::is_directory(user_path, ec)) {
-    return user_path / default_filename;
-  }
-  const char last = trimmed.back();
-  if (last == '/' || last == '\\') {
-    return std::filesystem::path(trimmed) / default_filename;
-  }
-  return user_path;
-}
-
-// Paint `text` as a rainbow by assigning each character a standard ANSI
-// foreground color in sequence. The returned string contains the SGR escapes
-// and a trailing reset; width-aware code treats those escapes as zero-width,
-// so wrapping/layout is unaffected.
-std::string rainbow_text(std::string_view text)
-{
-  // Red, yellow, green, cyan, blue, magenta — a classic 6-step rainbow.
-  constexpr const char * kColors[] = {"\x1B[31m", "\x1B[33m", "\x1B[32m",
-                                      "\x1B[36m", "\x1B[34m", "\x1B[35m"};
-  std::string out;
-  out.reserve(text.size() * 6);
-  for (std::size_t i = 0; i < text.size(); ++i) {
-    out += kColors[i % std::size(kColors)];
-    out.push_back(text[i]);
-  }
-  out += "\x1B[0m";
-  return out;
-}
 
 }  // namespace
 
@@ -277,113 +103,54 @@ public:
       return 1;
     }
 
-    auto reader = io::open_read_or_log(input_path_, kLogger);
-    if (!reader) {
+    auto opened = open_bag_and_find_topic(input_path_, topic_, kLogger);
+    if (!opened.has_value()) {
       return 1;
     }
+    auto & reader = *opened->reader;
 
-    const io::TopicInfo * topic_info = io::find_topic_or_log(*reader, topic_, input_path_, kLogger);
-    if (topic_info == nullptr) {
-      return 1;
-    }
+    const std::vector<std::string> pcd_topics = collect_nonempty_pcd_topics(reader, kLogger);
 
-    constexpr const char * kPointCloudType = "sensor_msgs/msg/PointCloud2";
-    std::vector<std::string> pcd_topics;
-    {
-      // Collect every PointCloud2 topic, then drop the ones the bag records
-      // with zero messages: an empty topic cannot project anything, so it only
-      // clutters the picker. If counting fails, fall back to listing them all.
-      std::vector<std::string> pcd_candidates;
-      for (const auto & t : reader->topics()) {
-        if (t.type == kPointCloudType) {
-          pcd_candidates.push_back(t.name);
-        }
-      }
-      if (!pcd_candidates.empty()) {
-        try {
-          const auto pcd_counts = reader->compute_topic_counts(pcd_candidates);
-          for (auto & candidate : pcd_candidates) {
-            const auto it = pcd_counts.find(candidate);
-            if (it != pcd_counts.end() && it->second > 0) {
-              pcd_topics.push_back(std::move(candidate));
-            }
-          }
-        } catch (const std::exception & e) {
-          BAGWIZ_LOG_WARN(
-            kLogger, "Could not read PointCloud2 message counts (%s); listing all topics",
-            e.what());
-          pcd_topics = std::move(pcd_candidates);
-        }
-      }
-    }
-
-    std::optional<std::string> camera_info_topic;
-    std::optional<core::image::CameraInfo> camera_info;
-    std::string camera_info_error;
-
-    if (camera_info_topic_.has_value()) {
-      if (const auto err =
-            core::camera_info::validate_camera_info_topic(input_path_, *camera_info_topic_);
-          err.has_value()) {
-        camera_info_error = *err;
-      } else {
-        camera_info_topic = *camera_info_topic_;
-      }
-    } else {
-      const auto resolution =
-        core::camera_info::resolve_camera_info_topic(topic_, reader->topics());
-      camera_info_topic = resolution.topic;
-      if (resolution.error.has_value()) {
-        camera_info_error = *resolution.error;
-      }
-    }
-
-    if (camera_info_topic.has_value()) {
-      const auto ci = core::camera_info::load_camera_info(input_path_, *camera_info_topic);
-      if (ci.ok()) {
-        camera_info = *ci.info;
-      } else {
-        camera_info_error = ci.error;
-      }
-    }
+    const auto camera =
+      resolve_walk_camera_info(input_path_, topic_, camera_info_topic_, reader.topics());
+    const auto & camera_info = camera.info;
+    const auto & camera_info_error = camera.error;
 
     io::ReadFilter read_filter;
     read_filter.topics.push_back(topic_);
-    reader->set_filter(read_filter);
+    reader.set_filter(read_filter);
 
-    const std::string topic_name = topic_info->name;
-    const std::string type_name = topic_info->type;
+    const std::string topic_name = opened->topic_info->name;
+    const std::string type_name = opened->topic_info->type;
 
-    auto open_decoder = core::decoder::open_decoder(*topic_info);
+    auto open_decoder = core::decoder::open_decoder(*opened->topic_info);
     if (!open_decoder.ok()) {
       BAGWIZ_LOG_ERROR(kLogger, "Failed to open decoder: %s", open_decoder.error.c_str());
       return 1;
     }
     const auto & decoder = *open_decoder.decoder;
 
-    std::vector<OwnedMessage> cache;
-    bool exhausted = false;
-
-    auto load_next = [&]() -> bool {
-      if (exhausted) {
-        return false;
-      }
-      io::RawMessage raw;
-      try {
-        if (!reader->next(raw)) {
-          exhausted = true;
+    std::string status;
+    // The cursor owns the lazy message cache; its source pulls from the
+    // filtered reader and logs read errors at the point they happen.
+    MessageCursor cursor(
+      [&reader](OwnedMessage & msg) {
+        io::RawMessage raw;
+        try {
+          if (!reader.next(raw)) {
+            return false;
+          }
+        } catch (const std::exception & e) {
+          BAGWIZ_LOG_ERROR(kLogger, "read error: %s", e.what());
           return false;
         }
-      } catch (const std::exception & e) {
-        BAGWIZ_LOG_ERROR(kLogger, "read error: %s", e.what());
-        exhausted = true;
-        return false;
-      }
-      cache.push_back({raw.timestamp_ns, copy_payload(raw.payload)});
-      return true;
-    };
+        msg.timestamp_ns = raw.timestamp_ns;
+        msg.payload = copy_payload(raw.payload);
+        return true;
+      },
+      status);
 
-    if (!load_next()) {
+    if (!cursor.load_next()) {
       BAGWIZ_LOG_INFO(
         kLogger, "No messages found for topic '%s' in %s.", topic_name.c_str(),
         input_path_.string().c_str());
@@ -403,265 +170,61 @@ public:
     }
     const bool preview_available = is_image_topic && image_caps.can_render();
 
-    std::size_t index = 0;
     bool expand_arrays = false;
-    std::string status;
 
     core::tui::PagerConfig pager_cfg;
     core::tui::ScrollablePager pager(pager_cfg);
 
-    // Append each wrapped fragment of `line` (wrapped at `cols`) onto
-    // `out`. Continuation lines inherit the original's leading
-    // whitespace via wrap_to_width.
-    auto append_wrapped = [](std::vector<std::string> & out, std::string_view line, int cols) {
-      auto wrapped = core::tui::wrap_to_width(line, cols);
-      for (auto & w : wrapped) {
-        out.push_back(std::move(w));
-      }
-    };
+    PcdOverlayController overlay(input_path_, reader, pcd_topics, status);
+    ImagePreviewSession preview(
+      cursor, overlay, pager, status, topic_name, type_name, image_caps, camera_info,
+      camera_info_error);
 
     auto build_frame = [&](std::size_t scroll, core::tui::Size term) -> core::tui::Frame {
-      core::tui::Frame frame;
-
-      const auto & msg = cache[index];
-      const char * total_suffix = exhausted ? "" : "+";
-      const std::size_t last_loaded_index = cache.size() - 1;
-
-      // Header: build the two information rows, then wrap each one and
-      // append a blank separator on its own logical line.
-      const int cols = std::max(1, term.cols);
-      append_wrapped(
-        frame.header, fmt::format("timestamp: {}", core::format_timestamp(msg.timestamp_ns)), cols);
-      append_wrapped(frame.header, fmt::format("size:      {} bytes", msg.payload.size()), cols);
-      frame.header.emplace_back();  // blank separator
-
-      core::FormatOptions fmt_opts;
-      fmt_opts.expand_long_arrays = expand_arrays;
-      const auto decoded = decoder.decode(msg.payload);
-      const auto formatted = decoded.ok() ? core::format_message(*decoded.value, fmt_opts)
-                                          : core::FormatResult{"", decoded.error};
-      std::vector<std::string> body_logical;
-      if (formatted.ok()) {
-        body_logical = core::split_lines(formatted.text);
-      } else {
-        body_logical.push_back(
-          fmt::format("⚠  Could not decode this message: {}", formatted.error));
-      }
-      frame.body.reserve(body_logical.size());
-      for (const auto & line : body_logical) {
-        append_wrapped(frame.body, line, cols);
-      }
-
-      // Footer: build logical lines first (blank separator, index row,
-      // key legend, status row) so we know the wrapped footer height
-      // before computing the scroll hint.
-      std::vector<std::string> footer_logical;
-      footer_logical.reserve(4);
-      footer_logical.emplace_back();  // blank separator
-      // The scroll hint depends on body_rows, which itself depends on
-      // wrapped footer height. Resolve it iteratively below; emit a
-      // placeholder index row for now and patch it once we know the
-      // visible body window.
-      footer_logical.emplace_back();
-      std::string legend =
-        "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [<] -10s   [>] +10s   [↑ / k] "
-        "up   [↓ / j] down   "
-        "[Home / H] head   [End / T] tail   [g] first   [G] last   [s] save as yaml   "
-        "[a] expand arrays   ";
-      if (preview_available) {
-        legend += rainbow_text("[i] preview");
-        legend += "   ";
-      }
-      legend += "[q] quit";
-      footer_logical.emplace_back(std::move(legend));
-      footer_logical.push_back(status.empty() ? std::string{} : fmt::format("  {}", status));
-
-      // Wrap everything except the index row first to learn the
-      // footer's height; we know the index row will not change height
-      // since it differs only in the trailing scroll hint, which we
-      // append before re-wrapping.
-      std::vector<std::string> footer_wrapped;
-      auto wrap_footer = [&](const std::vector<std::string> & src) {
-        footer_wrapped.clear();
-        for (const auto & line : src) {
-          append_wrapped(footer_wrapped, line, cols);
-        }
-      };
-
-      auto recompute_footer = [&](const std::string & index_line) {
-        footer_logical[1] = index_line;
-        wrap_footer(footer_logical);
-      };
-
-      const std::string index_no_hint = fmt::format(
-        "  [{} / {}{}]  {}  {}", index, last_loaded_index, total_suffix, topic_name, type_name);
-
-      recompute_footer(index_no_hint);
-      // Body rows available after the (current) footer wrap.
-      auto body_rows_for = [&](const std::vector<std::string> & footer) {
-        return std::max(
-          0, term.rows - static_cast<int>(frame.header.size()) - static_cast<int>(footer.size()));
-      };
-
-      int body_rows = body_rows_for(footer_wrapped);
-      const std::size_t total_body = frame.body.size();
-      std::string scroll_hint;
-      if (body_rows > 0 && total_body > static_cast<std::size_t>(body_rows)) {
-        const std::size_t end = std::min(scroll + static_cast<std::size_t>(body_rows), total_body);
-        scroll_hint = fmt::format("    lines {}-{} of {}", scroll + 1, end, total_body);
-      }
-      if (!scroll_hint.empty()) {
-        recompute_footer(index_no_hint + scroll_hint);
-        // Recomputing the footer can change its wrapped height (the
-        // index row may now wrap), so re-derive body_rows once.
-        body_rows = body_rows_for(footer_wrapped);
-        if (total_body > static_cast<std::size_t>(std::max(body_rows, 0))) {
-          const std::size_t end =
-            std::min(scroll + static_cast<std::size_t>(body_rows), total_body);
-          const std::string new_hint =
-            fmt::format("    lines {}-{} of {}", scroll + 1, end, total_body);
-          if (new_hint != scroll_hint) {
-            scroll_hint = new_hint;
-            recompute_footer(index_no_hint + scroll_hint);
-          }
-        }
-      }
-
-      frame.footer = std::move(footer_wrapped);
-      return frame;
-    };
-
-    // Move the message cursor. Shared by the YAML view (on_nav) and the image
-    // preview so both wrap, clamp at the first message, and full-scan on kLast
-    // identically. Mutates index/cache/exhausted/status and returns whether the
-    // cursor actually moved, so callers can skip work that only matters on a real
-    // move (resetting the pager scroll offset; re-decoding the preview frame).
-    auto navigate = [&](MsgNav move) -> bool {
-      status.clear();
-      const std::size_t before = index;
-      switch (move) {
-        case MsgNav::kNext:
-          if (index + 1 < cache.size()) {
-            ++index;
-          } else if (load_next()) {
-            index = cache.size() - 1;
-          } else {
-            index = 0;
-            status = "(wrapped to first)";
-          }
-          break;
-        case MsgNav::kPrev:
-          if (index > 0) {
-            --index;
-          } else {
-            status = "(at first message)";
-          }
-          break;
-        case MsgNav::kFirst:
-          index = 0;
-          break;
-        case MsgNav::kLast: {
-          std::size_t loaded = 0;
-          while (load_next()) {
-            ++loaded;
-          }
-          index = cache.size() - 1;
-          if (loaded == 0 && exhausted) {
-            status = "(already at last message)";
-          }
-          break;
-        }
-        case MsgNav::kStepForward1s:
-        case MsgNav::kStepForward10s: {
-          const int64_t delta_ns = move == MsgNav::kStepForward10s ? kTenSecondNs : kOneSecondNs;
-          const int64_t target_ns = cache[index].timestamp_ns + delta_ns;
-          if (exhausted && cache.back().timestamp_ns < target_ns) {
-            if (index == cache.size() - 1) {
-              status = "(already at last message)";
-            } else {
-              index = cache.size() - 1;
-              status = "(reached end)";
-            }
-            break;
-          }
-          while (!exhausted && cache.back().timestamp_ns < target_ns) {
-            load_next();
-          }
-          auto it = std::lower_bound(
-            cache.begin(), cache.end(), target_ns,
-            [](const OwnedMessage & m, int64_t t) { return m.timestamp_ns < t; });
-          if (it != cache.end()) {
-            index = static_cast<std::size_t>(std::distance(cache.begin(), it));
-          } else {
-            index = cache.size() - 1;
-            status = "(reached end)";
-          }
-          break;
-        }
-        case MsgNav::kStepBackward1s:
-        case MsgNav::kStepBackward10s: {
-          const int64_t delta_ns = move == MsgNav::kStepBackward10s ? kTenSecondNs : kOneSecondNs;
-          const int64_t target_ns = cache[index].timestamp_ns - delta_ns;
-          if (target_ns <= cache.front().timestamp_ns) {
-            if (index == 0) {
-              status = "(at first message)";
-            } else {
-              index = 0;
-            }
-            break;
-          }
-          auto it = std::upper_bound(
-            cache.begin(), cache.end(), target_ns,
-            [](int64_t t, const OwnedMessage & m) { return t < m.timestamp_ns; });
-          // it is the first message strictly after target_ns; step back one
-          // to land on the last message at or before target_ns.
-          --it;
-          index = static_cast<std::size_t>(std::distance(cache.begin(), it));
-          break;
-        }
-      }
-      return index != before;
+      return build_yaml_frame(
+        scroll, term, cursor, decoder, expand_arrays, topic_name, type_name, status,
+        preview_available);
     };
 
     auto on_nav = [&](core::tui::NavKey nav) -> core::tui::AppKeyResult {
       status.clear();
       switch (nav) {
         case core::tui::NavKey::kNext:
-          navigate(MsgNav::kNext);
+          cursor.navigate(MsgNav::kNext);
           pager.set_scroll_offset(0);
           return core::tui::AppKeyResult::kHandled;
         case core::tui::NavKey::kPrev:
           // Preserve the YAML view's behaviour: only reset the body scroll when
           // the cursor actually moved (pressing prev at the first message keeps
           // the current scroll position).
-          if (navigate(MsgNav::kPrev)) {
+          if (cursor.navigate(MsgNav::kPrev)) {
             pager.set_scroll_offset(0);
           }
           return core::tui::AppKeyResult::kHandled;
         case core::tui::NavKey::kFirst:
-          navigate(MsgNav::kFirst);
+          cursor.navigate(MsgNav::kFirst);
           pager.set_scroll_offset(0);
           return core::tui::AppKeyResult::kHandled;
         case core::tui::NavKey::kLast:
-          navigate(MsgNav::kLast);
+          cursor.navigate(MsgNav::kLast);
           pager.set_scroll_offset(0);
           return core::tui::AppKeyResult::kHandled;
         case core::tui::NavKey::kStepForward1s:
-          navigate(MsgNav::kStepForward1s);
+          cursor.navigate(MsgNav::kStepForward1s);
           pager.set_scroll_offset(0);
           return core::tui::AppKeyResult::kHandled;
         case core::tui::NavKey::kStepForward10s:
-          navigate(MsgNav::kStepForward10s);
+          cursor.navigate(MsgNav::kStepForward10s);
           pager.set_scroll_offset(0);
           return core::tui::AppKeyResult::kHandled;
         case core::tui::NavKey::kStepBackward1s:
           // Like prev, preserve body scroll when already at the boundary.
-          if (navigate(MsgNav::kStepBackward1s)) {
+          if (cursor.navigate(MsgNav::kStepBackward1s)) {
             pager.set_scroll_offset(0);
           }
           return core::tui::AppKeyResult::kHandled;
         case core::tui::NavKey::kStepBackward10s:
-          if (navigate(MsgNav::kStepBackward10s)) {
+          if (cursor.navigate(MsgNav::kStepBackward10s)) {
             pager.set_scroll_offset(0);
           }
           return core::tui::AppKeyResult::kHandled;
@@ -670,749 +233,6 @@ public:
         default:
           return core::tui::AppKeyResult::kIgnored;
       }
-    };
-
-    std::unique_ptr<core::image::UndistortHelper> undistort_helper;
-    std::uint32_t undistort_helper_w = 0;
-    std::uint32_t undistort_helper_h = 0;
-
-    auto ensure_undistort_helper =
-      [&](std::uint32_t w, std::uint32_t h) -> core::image::UndistortHelper * {
-      if (!camera_info.has_value()) {
-        return nullptr;
-      }
-      if (!undistort_helper || undistort_helper_w != w || undistort_helper_h != h) {
-        undistort_helper = std::make_unique<core::image::UndistortHelper>(*camera_info, w, h);
-        undistort_helper_w = w;
-        undistort_helper_h = h;
-      }
-      return undistort_helper.get();
-    };
-
-    auto maybe_undistort = [&](core::image::PackedRaster * raster) {
-      if (raster == nullptr) {
-        return;
-      }
-      auto * helper = ensure_undistort_helper(raster->width, raster->height);
-      if (helper == nullptr) {
-        return;
-      }
-      const auto remapped = helper->remap(raster->bgr, raster->width * 3);
-      raster->bgr.assign(remapped.begin(), remapped.end());
-      raster->encoding = "bgr8";
-    };
-
-    bool undistort_enabled = false;
-
-    struct PcdOverlayState
-    {
-      bool enabled = false;
-      std::vector<std::string> topics;
-      core::pointcloud::PointCloudProperty property =
-        core::pointcloud::PointCloudProperty::kDistance;
-      core::pointcloud::ColorScheme scheme = core::pointcloud::ColorScheme::kJet;
-      std::uint32_t point_size = 2;
-      float alpha = 1.0f;
-      bool auto_range = true;
-      double manual_min = 0.0;
-      double manual_max = 1.0;
-      double computed_min = 0.0;
-      double computed_max = 1.0;
-      bool has_intensity = false;
-      // Min/max of every colour property, captured once when the topics are
-      // selected. Switching the active property then reuses these instead of
-      // re-scanning the bag, so [f] is instant even with auto range on.
-      core::pointcloud::PropertyRanges ranges;
-    };
-    PcdOverlayState pcd;
-
-    std::optional<tf2::BufferCore> tf_buffer;
-    std::vector<core::pointcloud::PointCloudFetcher> pcd_fetchers;
-    // Parallel to pcd_fetchers: whether each topic can be matched by capture time
-    // (every cloud carried a header.stamp). Topics that can't are matched by
-    // record time on both sides so the overlay stays in one clock.
-    std::vector<bool> pcd_topic_has_stamps;
-
-    auto property_name = [](core::pointcloud::PointCloudProperty prop) -> std::string_view {
-      switch (prop) {
-        case core::pointcloud::PointCloudProperty::kX:
-          return "x";
-        case core::pointcloud::PointCloudProperty::kY:
-          return "y";
-        case core::pointcloud::PointCloudProperty::kZ:
-          return "z";
-        case core::pointcloud::PointCloudProperty::kDistance:
-          return "distance";
-        case core::pointcloud::PointCloudProperty::kIntensity:
-          return "intensity";
-      }
-      return "?";
-    };
-
-    auto scheme_name = [](core::pointcloud::ColorScheme s) -> std::string_view {
-      switch (s) {
-        case core::pointcloud::ColorScheme::kViridis:
-          return "viridis";
-        case core::pointcloud::ColorScheme::kTurbo:
-          return "turbo";
-        case core::pointcloud::ColorScheme::kJet:
-          return "jet";
-        case core::pointcloud::ColorScheme::kPlasma:
-          return "plasma";
-        case core::pointcloud::ColorScheme::kInferno:
-          return "inferno";
-        case core::pointcloud::ColorScheme::kMagma:
-          return "magma";
-        case core::pointcloud::ColorScheme::kRainbow:
-          return "rainbow";
-      }
-      return "?";
-    };
-
-    auto prompt_for_pcd_topics = [&]() -> std::optional<std::vector<std::string>> {
-      if (pcd_topics.empty()) {
-        status = "no non-empty PointCloud2 topics in bag";
-        return std::nullopt;
-      }
-
-      // Pre-check the topics that are currently active so the picker reflects
-      // the existing selection instead of resetting every topic to unchecked.
-      std::vector<bool> checked(pcd_topics.size(), false);
-      for (std::size_t i = 0; i < pcd_topics.size(); ++i) {
-        checked[i] =
-          std::find(pcd.topics.begin(), pcd.topics.end(), pcd_topics[i]) != pcd.topics.end();
-      }
-      std::size_t cursor = 0;
-      bool done = false;
-      bool cancelled = false;
-
-      while (!done) {
-        core::tui::image::clear_image(std::cout, image_caps.backend);
-        std::cout << "\x1B[2J";
-        const auto term = core::tui::query_terminal_size();
-        core::tui::draw_line(
-          std::cout, 1,
-          "  Select PointCloud2 topics (Space toggle, Enter confirm, Esc/q cancel):", term.cols);
-        for (std::size_t i = 0; i < pcd_topics.size(); ++i) {
-          const std::string marker = (i == cursor) ? ">" : " ";
-          const std::string box = checked[i] ? "[x]" : "[ ]";
-          core::tui::draw_line(
-            std::cout, static_cast<int>(i) + 3,
-            fmt::format("  {} {} {}", marker, box, pcd_topics[i]), term.cols);
-        }
-        std::cout.flush();
-
-        switch (core::read_key_event()) {
-          case core::KeyEvent::kScrollUp:
-            if (cursor > 0) {
-              --cursor;
-            }
-            break;
-          case core::KeyEvent::kScrollDown:
-            if (cursor + 1 < pcd_topics.size()) {
-              ++cursor;
-            }
-            break;
-          case core::KeyEvent::kFirst:
-            cursor = 0;
-            break;
-          case core::KeyEvent::kLast:
-            cursor = pcd_topics.size() - 1;
-            break;
-          case core::KeyEvent::kNext:
-            checked[cursor] = !checked[cursor];
-            break;
-          case core::KeyEvent::kConfirm:
-            done = true;
-            break;
-          case core::KeyEvent::kQuit:
-            done = true;
-            cancelled = true;
-            break;
-          case core::KeyEvent::kResize:
-          default:
-            break;
-        }
-      }
-
-      if (cancelled) {
-        status = "(topic selection cancelled)";
-        return std::nullopt;
-      }
-
-      std::vector<std::string> selected;
-      for (std::size_t i = 0; i < pcd_topics.size(); ++i) {
-        if (checked[i]) {
-          selected.push_back(pcd_topics[i]);
-        }
-      }
-
-      // Confirming a selection identical to what is already applied would kick
-      // off a full (slow) bag re-scan for no visible change, so short-circuit it
-      // exactly like Esc/cancel — the overlay on screen is already correct.
-      auto sorted = [](std::vector<std::string> v) {
-        std::sort(v.begin(), v.end());
-        return v;
-      };
-      if (!pcd.topics.empty() && sorted(selected) == sorted(pcd.topics)) {
-        status = "(topic selection unchanged)";
-        return std::nullopt;
-      }
-      return selected;
-    };
-
-    auto initialize_pcd_overlay = [&](const std::vector<std::string> & topics) -> bool {
-      for (const auto & topic : topics) {
-        bool valid = false;
-        for (const auto & t : reader->topics()) {
-          if (t.name == topic && t.type == kPointCloudType) {
-            valid = true;
-            break;
-          }
-        }
-        if (!valid) {
-          status = fmt::format("not a PointCloud2 topic: {}", topic);
-          return false;
-        }
-      }
-
-      if (!tf_buffer.has_value()) {
-        tf_buffer.emplace();
-        if (const auto err = core::load_tf_buffer(input_path_, *tf_buffer); err.has_value()) {
-          status = *err;
-          tf_buffer.reset();
-          return false;
-        }
-      }
-
-      // One pass per topic captures the timestamps *and* the min/max of every
-      // colour property, so later property switches ([f]) never touch the bag.
-      core::pointcloud::PropertyRanges merged_ranges;
-      std::vector<std::string> initialized_topics;
-      std::vector<core::pointcloud::PointCloudFetcher> new_fetchers;
-      std::vector<bool> new_topic_has_stamps;
-
-      for (const auto & topic : topics) {
-        std::string error;
-        auto scan = core::pointcloud::scan_point_cloud(input_path_, topic, error);
-        if (!scan.has_value()) {
-          status = error;
-          return false;
-        }
-        merged_ranges.merge(scan->ranges);
-        new_topic_has_stamps.push_back(scan->header_stamps_present);
-        initialized_topics.push_back(topic);
-        new_fetchers.emplace_back(input_path_, topic, std::move(scan->entries));
-      }
-
-      const auto range = merged_ranges.resolve(pcd.property);
-      pcd.topics = std::move(initialized_topics);
-      pcd.has_intensity = merged_ranges.has_intensity;
-      pcd.ranges = merged_ranges;
-      pcd.computed_min = range.first;
-      pcd.computed_max = range.second;
-      pcd_fetchers = std::move(new_fetchers);
-      pcd_topic_has_stamps = std::move(new_topic_has_stamps);
-      return true;
-    };
-
-    auto maybe_overlay_pcd = [&](core::image::PackedRaster * raster) {
-      if (raster == nullptr || !pcd.enabled || pcd.topics.empty() || pcd_fetchers.empty()) {
-        return;
-      }
-      if (!camera_info.has_value()) {
-        status = "pcd projection requires camera_info";
-        return;
-      }
-
-      const auto & img = *raster;
-      const auto * helper = ensure_undistort_helper(img.width, img.height);
-      if (helper == nullptr) {
-        status = "pcd projection requires camera_info";
-        return;
-      }
-      const auto effective_ci = helper->effective_camera_info();
-
-      std::vector<core::pointcloud::ProjectedPoint> all_points;
-      std::string last_error;
-      for (std::size_t i = 0; i < pcd_fetchers.size(); ++i) {
-        // Pair the frame with the point cloud nearest in time (see
-        // core::pointcloud::choose_frame_match for the clock rule). The chosen
-        // target is also the TF-lookup time.
-        const auto match = core::pointcloud::choose_frame_match(
-          img.header_stamp_ns, cache[index].timestamp_ns, pcd_topic_has_stamps[i]);
-        const std::int64_t match_ns = match.target_ns;
-
-        std::string error;
-        const auto * cloud = pcd_fetchers[i].fetch(match_ns, match.key, error);
-        if (cloud == nullptr) {
-          last_error = std::move(error);
-          continue;
-        }
-
-        const auto projected = core::pointcloud::project_cloud_for_frame(
-          *cloud, effective_ci, *tf_buffer, img.width, img.height, pcd.property,
-          /*use_rectified=*/undistort_enabled, match_ns);
-        if (!projected.ok()) {
-          last_error = std::move(projected.error);
-          continue;
-        }
-        all_points.insert(all_points.end(), projected.points.begin(), projected.points.end());
-      }
-
-      if (all_points.empty()) {
-        if (!last_error.empty()) {
-          status = std::move(last_error);
-        }
-        return;
-      }
-
-      const double vmin = pcd.auto_range ? pcd.computed_min : pcd.manual_min;
-      const double vmax = pcd.auto_range ? pcd.computed_max : pcd.manual_max;
-      const auto err = core::pointcloud::overlay_projected_points(
-        img, all_points, vmin, vmax, pcd.scheme, pcd.point_size, pcd.alpha, *raster);
-      if (!err.empty()) {
-        status = err;
-      }
-    };
-
-    auto cycle_pcd_property = [&]() {
-      // Cycle order: distance -> intensity (only when the cloud carries it)
-      //           -> x -> y -> z -> distance ...
-      auto next = [&](core::pointcloud::PointCloudProperty cur) {
-        using Property = core::pointcloud::PointCloudProperty;
-        switch (cur) {
-          case Property::kDistance:
-            return pcd.has_intensity ? Property::kIntensity : Property::kX;
-          case Property::kIntensity:
-            return Property::kX;
-          case Property::kX:
-            return Property::kY;
-          case Property::kY:
-            return Property::kZ;
-          case Property::kZ:
-            return Property::kDistance;
-        }
-        return Property::kDistance;
-      };
-      pcd.property = next(pcd.property);
-      // Auto range reuses the extent captured up front, so switching property is
-      // O(1) and never re-reads the bag (the timestamps/fetchers are unchanged).
-      if (pcd.auto_range) {
-        const auto range = pcd.ranges.resolve(pcd.property);
-        pcd.computed_min = range.first;
-        pcd.computed_max = range.second;
-      }
-    };
-
-    auto cycle_pcd_scheme = [&]() {
-      switch (pcd.scheme) {
-        case core::pointcloud::ColorScheme::kJet:
-          pcd.scheme = core::pointcloud::ColorScheme::kViridis;
-          break;
-        case core::pointcloud::ColorScheme::kViridis:
-          pcd.scheme = core::pointcloud::ColorScheme::kTurbo;
-          break;
-        case core::pointcloud::ColorScheme::kTurbo:
-          pcd.scheme = core::pointcloud::ColorScheme::kPlasma;
-          break;
-        case core::pointcloud::ColorScheme::kPlasma:
-          pcd.scheme = core::pointcloud::ColorScheme::kInferno;
-          break;
-        case core::pointcloud::ColorScheme::kInferno:
-          pcd.scheme = core::pointcloud::ColorScheme::kMagma;
-          break;
-        case core::pointcloud::ColorScheme::kMagma:
-          pcd.scheme = core::pointcloud::ColorScheme::kRainbow;
-          break;
-        case core::pointcloud::ColorScheme::kRainbow:
-          pcd.scheme = core::pointcloud::ColorScheme::kJet;
-          break;
-      }
-    };
-
-    auto prompt_for_range = [&]() {
-      if (pcd.auto_range) {
-        pcd.auto_range = false;
-        core::tui::image::clear_image(std::cout, image_caps.backend);
-        std::cout << "\x1B[2J";
-        pager.with_line_input([&](std::istream & in, std::ostream & out) {
-          out << "Manual min: ";
-          out.flush();
-          std::string line;
-          if (std::getline(in, line)) {
-            try {
-              pcd.manual_min = std::stod(line);
-            } catch (...) {
-            }
-          }
-          out << "Manual max: ";
-          out.flush();
-          if (std::getline(in, line)) {
-            try {
-              pcd.manual_max = std::stod(line);
-            } catch (...) {
-            }
-          }
-        });
-      } else {
-        pcd.auto_range = true;
-      }
-    };
-
-    // Decoded-frame cache shared by the preview repaint and the PNG save path,
-    // so navigating back to a frame (or saving the one on screen) reuses the
-    // decode instead of paying for it again.
-    DecodedFrameCache decoded_frames{kPreviewCacheCapacity};
-
-    // Produce the frame to display/save for `idx`: fetch the cached base raster
-    // (decoding on a miss), then apply the active undistort / PCD overlay on a
-    // private copy so the cached frame stays pristine and reusable. Returns an
-    // error result when the frame cannot decode.
-    auto compose_preview_frame = [&](std::size_t idx) -> core::image::PackedRasterResult {
-      core::image::PackedRasterResult pr;
-      const auto & msg = cache[idx];
-      auto hit = decoded_frames.get(idx, type_name, msg.payload);
-      if (hit.raster == nullptr) {
-        pr.error = std::move(hit.error);
-        return pr;
-      }
-      pr.raster = *hit.raster;  // copy the pristine base before mutating overlays
-      if (undistort_enabled) {
-        maybe_undistort(&*pr.raster);
-      }
-      if (pcd.enabled) {
-        maybe_overlay_pcd(&*pr.raster);
-      }
-      return pr;
-    };
-
-    // Paint one preview frame: a two-line caption, the decoded image centred in
-    // the region between caption and key hint, and the key hint on the last row.
-    // Graphics escapes bypass the pager (they have no display width), so this
-    // writes straight to the pager's ostream.
-    auto render_preview = [&](std::ostream & out, core::tui::Size term) {
-      const int rows = std::max(1, term.rows);
-      const int cols = std::max(1, term.cols);
-
-      // Bracket the whole repaint in a synchronized update so the terminal keeps
-      // showing the current frame until the new one is fully transmitted, then
-      // swaps atomically. Without this the clear below blanks the screen for as
-      // long as the terminal needs to receive and decode the next image, which
-      // reads as a one-frame "blink" on every prev/next. Unsupported terminals
-      // ignore the mode and behave exactly as before.
-      core::tui::begin_synchronized_update(out);
-
-      // Drop any previously transmitted graphics and wipe the screen so kitty
-      // placements do not accumulate across navigation/resize.
-      core::tui::image::clear_image(out, image_caps.backend);
-      out << "\x1B[2J";
-
-      const char * total_suffix = exhausted ? "" : "+";
-      const std::size_t last_loaded_index = cache.size() - 1;
-      auto pr = compose_preview_frame(index);
-
-      std::string info;
-      if (pr.ok()) {
-        const auto & img = *pr.raster;
-        info = fmt::format(
-          "  {}x{}   [{} / {}{}]", img.width, img.height, index, last_loaded_index, total_suffix);
-      } else {
-        info = fmt::format("  [{} / {}{}]", index, last_loaded_index, total_suffix);
-      }
-      // Surface the save outcome (or any transient message) on the info row;
-      // navigate() clears `status` on a cursor move, so it disappears as soon as
-      // the user pages to another frame.
-      if (!status.empty()) {
-        info += fmt::format("   {}", status);
-      }
-      // Every state field reads as "field: value" with the value emphasised so
-      // it stands out from the label. The SGR wrapper is zero display-width (see
-      // width.cpp), so it does not perturb the wrap/truncate accounting below.
-      auto hl = [](auto && value) { return fmt::format("\x1B[1;36m{}\x1B[0m", value); };
-
-      info += fmt::format("   undistort: {}", hl(undistort_enabled ? "on" : "off"));
-      if (!pcd.topics.empty()) {
-        const std::string range_text =
-          pcd.auto_range ? "auto" : fmt::format("{:.2f}-{:.2f}", pcd.manual_min, pcd.manual_max);
-        info += fmt::format(
-          "   pcd: {}   property: {}   range: {}   scheme: {}   size: {}   alpha: {}",
-          hl(pcd.enabled ? "on" : "off"), hl(property_name(pcd.property)), hl(range_text),
-          hl(scheme_name(pcd.scheme)), hl(pcd.point_size), hl(fmt::format("{:.1f}", pcd.alpha)));
-      }
-
-      // Header: the topic/type row and the info row, each wrapped to width the
-      // same way build_frame's header and the legend below are, so a narrow
-      // terminal shows the full text on continuation lines instead of truncating
-      // it at the right edge. The image region starts just below the wrapped
-      // header (see region_row).
-      std::vector<std::string> header_lines;
-      append_wrapped(header_lines, fmt::format("  {}", topic_name), cols);
-      append_wrapped(header_lines, info, cols);
-      for (std::size_t i = 0; i < header_lines.size(); ++i) {
-        core::tui::draw_line(out, 1 + static_cast<int>(i), header_lines[i], cols);
-      }
-
-      // Wrap the key legend the way the YAML footer (build_frame) does, so a
-      // narrow terminal shows every key on continuation lines instead of
-      // truncating the row. The wrapped legend is pinned to the bottom and the
-      // image region above shrinks to make room, mirroring how build_frame
-      // derives its body height from the wrapped footer.
-      // The pcd overlay adjustment keys (f/c/r/=/-/[/]) are only meaningful once
-      // a PointCloud2 topic is selected, so surface them in the legend under the
-      // same condition the info row uses to show pcd state. The toggle/select
-      // keys ([p]/[t]) stay visible unconditionally to guide the user to enable
-      // the overlay in the first place.
-      std::string legend_text =
-        "  [→ / Space] next   [← / b] prev   [,] -1s   [.] +1s   [<] -10s   [>] +10s   [g] first "
-        "  [G] last   [s] save   "
-        "[u] undistort   [p] project pcd   [t] select pcd topics";
-      if (!pcd.topics.empty()) {
-        legend_text += "   [f] property   [c] scheme   [r] range   [= / -] size   [ [ / ] ] alpha";
-      }
-      legend_text += "   [q] back";
-      const std::vector<std::string> legend_lines = core::tui::wrap_to_width(legend_text, cols);
-      const int legend_top = std::max(1, rows - static_cast<int>(legend_lines.size()) + 1);
-
-      // Image region: from the row just below the wrapped header down to the row
-      // above the first legend line.
-      const int region_row = 1 + static_cast<int>(header_lines.size());
-      const int region_rows = std::max(1, legend_top - region_row);
-      if (pr.ok()) {
-        core::tui::image::CellRegion region;
-        region.row = region_row;
-        region.col = 1;
-        region.rows = region_rows;
-        region.cols = cols;
-        const std::string err = core::tui::image::render_image(out, *pr.raster, region, image_caps);
-        if (!err.empty()) {
-          core::tui::draw_line(
-            out, region_row, fmt::format("  preview unavailable: {}", err), cols);
-        }
-      } else {
-        core::tui::draw_line(
-          out, region_row, fmt::format("  cannot decode this message: {}", pr.error), cols);
-      }
-
-      for (std::size_t i = 0; i < legend_lines.size(); ++i) {
-        core::tui::draw_line(out, legend_top + static_cast<int>(i), legend_lines[i], cols);
-      }
-      // Close the synchronized update: the terminal now reveals the fully
-      // assembled frame in one atomic swap.
-      core::tui::end_synchronized_update(out);
-      out.flush();
-    };
-
-    // Save the frame currently shown in the preview as a PNG. Mirrors the YAML
-    // save handler (kSaveYaml): decode the message, prompt for a path via the
-    // pager's cooked-mode line input, and write the bytes. The result is left in
-    // `status`, which render_preview surfaces on the next repaint.
-    auto save_preview_image = [&]() {
-      status.clear();
-      auto pr = compose_preview_frame(index);
-      if (!pr.ok()) {
-        status = fmt::format("cannot save: {}", pr.error);
-        return;
-      }
-      const auto encoded = core::image::encode_png(*pr.raster);
-      if (!encoded.ok()) {
-        status = fmt::format("cannot save: {}", encoded.error);
-        return;
-      }
-
-      const std::string default_base =
-        fmt::format("{}_{}.png", topic_for_filename(topic_name), index);
-      std::filesystem::path cwd;
-      try {
-        cwd = std::filesystem::current_path();
-      } catch (const std::exception & e) {
-        status = fmt::format("cannot resolve working directory: {}", e.what());
-        return;
-      }
-      const std::filesystem::path default_full = cwd / default_base;
-
-      // Drop the on-screen graphic before switching to cooked-mode line input so
-      // the prompt is not drawn over a kitty placement; run_preview repaints the
-      // frame afterward.
-      core::tui::image::clear_image(std::cout, image_caps.backend);
-      std::cout << "\x1B[2J";
-      std::cout.flush();
-
-      std::filesystem::path out_path;
-      bool save_ok = false;
-      std::string failure_status;
-      pager.with_line_input([&](std::istream & in, std::ostream & out) {
-        out << fmt::format("Save image path (Enter for {}):\n", default_full.string());
-        out.flush();
-        std::string line;
-        if (!std::getline(in, line)) {
-          failure_status = "(save cancelled)";
-          return;
-        }
-        out_path = resolve_save_path(line, cwd, default_base);
-        std::error_code mk_ec;
-        const auto parent = out_path.parent_path();
-        if (!parent.empty()) {
-          std::filesystem::create_directories(parent, mk_ec);
-          if (mk_ec) {
-            failure_status =
-              fmt::format("could not create directory {}: {}", parent.string(), mk_ec.message());
-            return;
-          }
-        }
-        std::ofstream of(out_path, std::ios::binary);
-        if (!of) {
-          failure_status = fmt::format("could not open {} for writing", out_path.string());
-          return;
-        }
-        const auto & bytes = *encoded.png;
-        of.write(
-          reinterpret_cast<const char *>(  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
-            bytes.data()),
-          static_cast<std::streamsize>(bytes.size()));
-        if (!of.good()) {
-          failure_status = fmt::format("write failed: {}", out_path.string());
-          return;
-        }
-        save_ok = true;
-      });
-      if (save_ok) {
-        status = fmt::format("saved {}", out_path.string());
-      } else {
-        status = failure_status;
-      }
-    };
-
-    // Image-preview sub-loop. Runs inside on_app_key, reusing the raw-mode +
-    // SIGWINCH scope the pager already holds. Navigation keys re-decode and
-    // re-render; q returns to the YAML view, which the pager then repaints.
-    auto run_preview = [&]() {
-      std::ostream & out = std::cout;
-      bool running = true;
-      bool needs_render = true;
-      while (running) {
-        if (needs_render) {
-          render_preview(out, core::tui::query_terminal_size());
-          needs_render = false;
-        }
-        switch (core::read_key_event()) {
-          case core::KeyEvent::kNext:
-            // Re-decode only when the cursor actually moved; otherwise the frame
-            // is unchanged and a full decode + scale would be wasted.
-            needs_render = navigate(MsgNav::kNext);
-            break;
-          case core::KeyEvent::kPrev:
-            needs_render = navigate(MsgNav::kPrev);
-            break;
-          case core::KeyEvent::kFirst:
-            needs_render = navigate(MsgNav::kFirst);
-            break;
-          case core::KeyEvent::kLast:
-            needs_render = navigate(MsgNav::kLast);
-            break;
-          case core::KeyEvent::kStepForward1s:
-            needs_render = navigate(MsgNav::kStepForward1s);
-            break;
-          case core::KeyEvent::kStepForward10s:
-            needs_render = navigate(MsgNav::kStepForward10s);
-            break;
-          case core::KeyEvent::kStepBackward1s:
-            needs_render = navigate(MsgNav::kStepBackward1s);
-            break;
-          case core::KeyEvent::kStepBackward10s:
-            needs_render = navigate(MsgNav::kStepBackward10s);
-            break;
-          case core::KeyEvent::kResize:
-            needs_render = true;  // geometry changed: re-fit and re-render
-            break;
-          case core::KeyEvent::kSaveYaml:
-            // In the preview, [s] saves the displayed frame as a PNG (the YAML
-            // view's [s] still saves YAML). Always repaint so the save status is
-            // shown and the prompt's screen clear is undone.
-            save_preview_image();
-            needs_render = true;
-            break;
-          case core::KeyEvent::kToggleUndistort:
-            // Toggling undistort also re-aims the pcd overlay: with undistort on
-            // points project onto the rectified image, with it off they project
-            // onto the raw image using the lens distortion (see maybe_overlay_pcd).
-            if (!camera_info.has_value()) {
-              status = camera_info_error.empty() ? "undistort: no camera_info"
-                                                 : "undistort: " + camera_info_error;
-            } else {
-              undistort_enabled = !undistort_enabled;
-            }
-            needs_render = true;
-            break;
-          case core::KeyEvent::kToggleProjectPcd:
-            if (!camera_info.has_value()) {
-              status =
-                camera_info_error.empty() ? "pcd: no camera_info" : "pcd: " + camera_info_error;
-            } else if (pcd.topics.empty()) {
-              if (auto topics = prompt_for_pcd_topics(); topics.has_value() && !topics->empty()) {
-                if (initialize_pcd_overlay(*topics)) {
-                  pcd.enabled = true;
-                }
-              }
-            } else {
-              pcd.enabled = !pcd.enabled;
-            }
-            needs_render = true;
-            break;
-          case core::KeyEvent::kSelectPcdTopic:
-            if (camera_info.has_value()) {
-              if (auto topics = prompt_for_pcd_topics(); topics.has_value()) {
-                if (topics->empty()) {
-                  pcd.enabled = false;
-                } else if (initialize_pcd_overlay(*topics)) {
-                  pcd.enabled = true;
-                }
-              }
-            } else {
-              status =
-                camera_info_error.empty() ? "pcd: no camera_info" : "pcd: " + camera_info_error;
-            }
-            needs_render = true;
-            break;
-          case core::KeyEvent::kCyclePcdProperty:
-            cycle_pcd_property();
-            needs_render = true;
-            break;
-          case core::KeyEvent::kCyclePcdScheme:
-            cycle_pcd_scheme();
-            needs_render = true;
-            break;
-          case core::KeyEvent::kTogglePcdRange:
-            prompt_for_range();
-            needs_render = true;
-            break;
-          case core::KeyEvent::kPcdPointSizeUp:
-            pcd.point_size = std::min(pcd.point_size + 1, 64U);
-            needs_render = true;
-            break;
-          case core::KeyEvent::kPcdPointSizeDown:
-            pcd.point_size = std::max(pcd.point_size - 1, 1U);
-            needs_render = true;
-            break;
-          case core::KeyEvent::kPcdAlphaUp:
-            pcd.alpha = std::min(pcd.alpha + 0.1f, 1.0f);
-            needs_render = true;
-            break;
-          case core::KeyEvent::kPcdAlphaDown:
-            pcd.alpha = std::max(pcd.alpha - 0.1f, 0.0f);
-            needs_render = true;
-            break;
-          case core::KeyEvent::kQuit:
-            running = false;
-            break;
-          default:
-            break;  // scroll / expand keys are inert in the preview
-        }
-      }
-      // Hand a clean screen back to the pager for the YAML repaint.
-      core::tui::image::clear_image(out, image_caps.backend);
-      out << "\x1B[2J";
-      out.flush();
     };
 
     auto on_app_key = [&](core::KeyEvent ev) -> core::tui::AppKeyResult {
@@ -1425,7 +245,7 @@ public:
           }
           return core::tui::AppKeyResult::kHandled;
         case core::KeyEvent::kSaveYaml: {
-          const auto & cur = cache[index];
+          const auto & cur = cursor.cache()[cursor.index()];
           core::FormatOptions save_opts;
           save_opts.expand_long_arrays = expand_arrays;
           const auto decoded = decoder.decode(cur.payload);
@@ -1436,7 +256,7 @@ public:
             return core::tui::AppKeyResult::kHandled;
           }
           const std::string default_base =
-            fmt::format("{}_{}.yaml", topic_for_filename(topic_name), index);
+            fmt::format("{}_{}.yaml", topic_for_filename(topic_name), cursor.index());
           std::filesystem::path cwd;
           try {
             cwd = std::filesystem::current_path();
@@ -1444,47 +264,9 @@ public:
             status = fmt::format("cannot resolve working directory: {}", e.what());
             return core::tui::AppKeyResult::kHandled;
           }
-          const std::filesystem::path default_full = cwd / default_base;
-
-          std::filesystem::path out_path;
-          bool save_ok = false;
-          std::string failure_status;
-          pager.with_line_input([&](std::istream & in, std::ostream & out) {
-            out << fmt::format("Save YAML path (Enter for {}):\n", default_full.string());
-            out.flush();
-            std::string line;
-            if (!std::getline(in, line)) {
-              failure_status = "(save cancelled)";
-              return;
-            }
-            out_path = resolve_save_path(line, cwd, default_base);
-            std::error_code mk_ec;
-            const auto parent = out_path.parent_path();
-            if (!parent.empty()) {
-              std::filesystem::create_directories(parent, mk_ec);
-              if (mk_ec) {
-                failure_status = fmt::format(
-                  "could not create directory {}: {}", parent.string(), mk_ec.message());
-                return;
-              }
-            }
-            std::ofstream of(out_path, std::ios::binary);
-            if (!of) {
-              failure_status = fmt::format("could not open {} for writing", out_path.string());
-              return;
-            }
-            of << formatted.text;
-            if (!of.good()) {
-              failure_status = fmt::format("write failed: {}", out_path.string());
-              return;
-            }
-            save_ok = true;
-          });
-          if (save_ok) {
-            status = fmt::format("saved {}", out_path.string());
-          } else {
-            status = failure_status;
-          }
+          save_bytes_with_prompt(
+            pager, "Save YAML path", cwd, default_base, std::as_bytes(std::span{formatted.text}),
+            status);
           return core::tui::AppKeyResult::kHandled;
         }
         case core::KeyEvent::kTogglePreview:
@@ -1496,7 +278,7 @@ public:
             status = "(image preview not supported in this terminal)";
             return core::tui::AppKeyResult::kHandled;
           }
-          run_preview();
+          preview.run();
           return core::tui::AppKeyResult::kHandled;
         default:
           return core::tui::AppKeyResult::kIgnored;
