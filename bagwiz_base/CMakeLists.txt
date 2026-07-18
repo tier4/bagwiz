@@ -38,6 +38,7 @@ add_library(bagwiz_base
   src/core/base/logging.cpp
   src/core/base/output_path.cpp
   src/core/base/signal_handler.cpp
+  src/core/base/str_utils.cpp
   src/core/base/terminal_input.cpp
   src/core/base/topic_match.cpp
 )
@@ -84,6 +85,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_output_path_test test/core/base/output_path_test.cpp)
   target_link_libraries(bagwiz_output_path_test bagwiz_base)
+
+  ament_add_gtest(bagwiz_str_utils_test test/core/base/str_utils_test.cpp)
+  target_link_libraries(bagwiz_str_utils_test bagwiz_base)
 
   ament_add_gtest(bagwiz_terminal_input_test test/core/base/terminal_input_test.cpp)
   target_link_libraries(bagwiz_terminal_input_test bagwiz_base)
