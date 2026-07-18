@@ -89,13 +89,6 @@ private:
     sub->add_flag(
       "-w,--overwrite", drop_args_.overwrite,
       "Replace an existing -o/--output path. Without it, an existing output path stops the run.");
-    sub->footer(
-      "Removed topics disappear entirely from the output — both their messages and their\n"
-      "topic declarations. Messages are copied verbatim; no deserialization is performed.\n"
-      "A selector that matches no topic stops the run before anything is written.\n"
-      "Without -o, <input> is rewritten in place via an atomic tmp-swap that preserves its\n"
-      "storage format and layout (input is both source and destination); with -o, <input>\n"
-      "is left untouched.");
     sub->callback([this]() { selected_ = Subcommand::kDrop; });
   }
 
@@ -120,14 +113,6 @@ private:
     sub->add_flag(
       "-w,--overwrite", keep_args_.overwrite,
       "Replace an existing -o/--output path. Without it, an existing output path stops the run.");
-    sub->footer(
-      "Only the selected topics survive; every other topic disappears entirely from the\n"
-      "output — both its messages and its topic declarations. Messages are copied verbatim;\n"
-      "no deserialization is performed.\n"
-      "A selector that matches no topic stops the run before anything is written.\n"
-      "Without -o, <input> is rewritten in place via an atomic tmp-swap that preserves its\n"
-      "storage format and layout (input is both source and destination); with -o, <input>\n"
-      "is left untouched.");
     sub->callback([this]() { selected_ = Subcommand::kKeep; });
   }
 
@@ -151,16 +136,6 @@ private:
     sub->add_flag(
       "-w,--overwrite", rename_args_.overwrite,
       "Replace an existing -o/--output path. Without it, an existing output path stops the run.");
-    sub->footer(
-      "Only the topic's name changes; its type, QoS, and embedded schema are preserved, and all\n"
-      "other topics are copied verbatim. Messages are copied verbatim; no deserialization is\n"
-      "performed.\n"
-      "The run stops before anything is written if <src_topic> is not found, if <dst_topic>\n"
-      "already names a topic in the bag (which would collide two topics into one), or if the\n"
-      "two names are identical.\n"
-      "Without -o, <input> is rewritten in place via an atomic tmp-swap that preserves its\n"
-      "storage format and layout (input is both source and destination); with -o, <input>\n"
-      "is left untouched.");
     sub->callback([this]() { selected_ = Subcommand::kRename; });
   }
 };

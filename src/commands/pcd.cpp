@@ -68,8 +68,7 @@ private:
       "concat",
       "Merge multiple PointCloud2 topics into one new topic. Each topic is rigidly "
       "transformed into --frame using the bag's static TF, and messages are matched against "
-      "the first --pcd topic within --tolerance (nearest-in-time). Writes a new rosbag "
-      "with -o, or rewrites the input in place when omitted.");
+      "the first --pcd topic within --tolerance (nearest-in-time).");
     sub->add_option("input", concat_args_.input_path, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);

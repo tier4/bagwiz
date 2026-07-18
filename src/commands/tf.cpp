@@ -663,8 +663,7 @@ private:
       "-t,--topics", tree_args_.topics,
       "tf2_msgs/msg/TFMessage topic(s) to merge and render; defaults to all TF topics in the bag "
       "when omitted. The selectors 'static' and 'dynamic' expand to all static (*tf_static) / "
-      "dynamic TF topics respectively and may be combined with literal topic names. In the merged "
-      "tree, edges are colored by static vs dynamic.");
+      "dynamic TF topics respectively and may be combined with literal topic names.");
     sub->callback([this]() { selected_ = Subcommand::kTree; });
   }
 

@@ -85,29 +85,16 @@ private:
     sub->add_option(
       "--gnss", slam_args_.gnss_topic,
       "Optional NavSatFix topic; adds GNSS global constraints during global mapping "
-      "(horizontal translation priors on submap poses) to pin the world frame to GNSS "
-      "and curb drift. The antenna lever-arm is resolved from the bag's static TF (cloud "
-      "<- NavSatFix frame_id) and removed (a missing TF only warns). Each prior is "
-      "weighted by the fix's reported position covariance (falling back to a fixed "
-      "precision when unknown).");
+      "(horizontal translation priors on submap poses) to curb drift. The antenna "
+      "lever-arm is resolved from the bag's static TF (a missing TF only warns).");
     auto * cam_opt = sub->add_option(
       "--cam", slam_args_.image_topics,
       "Camera image topic(s) (sensor_msgs/msg/Image or CompressedImage); list several "
       "after one flag and/or repeat the flag. After the global optimization, map points "
-      "are colorized by splatting them into each camera's images against a per-pixel "
-      "depth buffer, and map.pcd gains an rgb field. Each point's color is a robust "
-      "weighted average over its observations (the weights favor close, frontal, sharp, "
-      "non-border views, and the lit-mode cluster wins over shadows) with per-image "
-      "exposure/gain compensation; map points sitting behind a vehicle or pedestrian "
-      "caught by the LiDAR scan nearest an image are skipped for that image, so moving "
-      "traffic does not stain the map. A point seen by several cameras gets a weighted "
-      "blend of them, gain-aligned to the first listed "
-      "topic. Points no image observed inherit the nearest observed neighbor's color "
-      "(see --no-color-propagate) or keep a neutral gray. Intrinsics come from each "
-      "camera's CameraInfo topic (see --cam-info); each camera extrinsic is resolved "
-      "from the bag's static TF (cloud <- camera frame), erroring if that chain is "
-      "absent. Images are assumed raw (unrectified): the CameraInfo distortion model "
-      "is applied during projection.");
+      "are colorized from each camera's images and map.pcd gains an rgb field. "
+      "Intrinsics come from each camera's CameraInfo topic (see --cam-info); each "
+      "camera extrinsic is resolved from the bag's static TF (errors if that chain is "
+      "absent). Images are assumed raw (unrectified).");
     sub
       ->add_option(
         "--cam-info", slam_args_.camera_info_topics,
@@ -117,10 +104,8 @@ private:
       ->needs(cam_opt);
     sub->add_flag(
       "!--no-color-propagate", slam_args_.color_propagate,
-      "Do not propagate colors to map points no camera observed. By default, unobserved "
-      "points inherit the color of the nearest observed neighbor within an automatic "
-      "radius (4x the median point spacing, clamped to [0.05, 5] m), so map.pcd is "
-      "fully colored; with this flag they keep a neutral gray instead.");
+      "Do not propagate colors to map points no camera observed; with this flag they "
+      "keep a neutral gray instead of inheriting the nearest observed neighbor's color.");
     sub->add_option(
       "--frame", slam_args_.output_frame,
       "Output trajectory frame. Defaults to the PointCloud2 topic's frame_id; a "
@@ -131,9 +116,8 @@ private:
         "--input-res", slam_args_.input_resolution,
         "Voxel size in meters (default 0.15) for BOTH the LiDAR input downsample and the "
         "exported-map merge — the single map-resolution knob. Smaller = denser map and finer "
-        "SLAM detail, at more points and runtime. Unlike a pure export voxel it feeds the "
-        "optimizer, so it also changes the trajectory. The range crop still bounds which returns "
-        "enter the pipeline.")
+        "SLAM detail, at more points and runtime. Feeds the optimizer, so it also changes "
+        "the trajectory.")
       ->check(CLI::PositiveNumber);
     sub
       ->add_option(
@@ -157,11 +141,10 @@ private:
     sub
       ->add_option(
         "--submap-keyframes", slam_args_.submap_max_keyframes,
-        "Keyframes per GLIM submap before it is finalized (default 15). Smaller = more, smaller "
-        "submaps: finer loop-closure granularity and more GNSS-covered submaps (can unblock GNSS "
-        "priors on short runs), but super-linearly more sub-mapping work per submap and thinner, "
-        "weaker submaps. Larger = fewer, larger submaps: a cheaper global graph but coarser "
-        "correction. Feeds the optimizer, so it also changes the trajectory.")
+        "Keyframes per GLIM submap before it is finalized (default 15). Smaller = more, "
+        "smaller submaps (finer loop-closure granularity) at super-linearly more "
+        "sub-mapping work; larger = fewer, larger submaps (cheaper global graph, coarser "
+        "correction). Feeds the optimizer, so it also changes the trajectory.")
       ->check(CLI::PositiveNumber);
     sub->add_flag(
       "-w,--overwrite", slam_args_.overwrite, "Overwrite the output file(s) if they already exist");
@@ -176,22 +159,17 @@ private:
 
     sub->add_flag(
       "!--no-warmup-fill", slam_args_.fill_start,
-      "Disable initialization-window ('start') pose fill (default on). GLIM's odometry emits "
-      "no "
-      "pose over its opening window (the LiDAR-IMU init, ~1 s), so traj.tum otherwise has no "
-      "samples there. By default those pre-init scans are buffered and filled in by scan-matching "
-      "each against the optimized map (so it works in LiDAR-only mode too); with --imu the "
-      "buffered "
-      "IMU additionally seeds each registration's initial guess and is the fallback if a "
-      "registration fails. Affects traj.tum's opening window only.");
+      "Disable initialization-window ('start') pose fill (default on). GLIM's odometry "
+      "emits no pose over its opening window (the LiDAR-IMU init, ~1 s), so traj.tum "
+      "otherwise has no samples there; by default those scans are buffered and filled "
+      "in by scan-matching against the optimized map. Affects traj.tum's opening window "
+      "only.");
     sub->add_flag(
       "!--no-cooldown-fill", slam_args_.fill_end,
-      "Disable cooldown-window ('end') pose fill (default on) — the symmetric counterpart of "
-      "--no-warmup-fill. The newest scans stay inside the odometry smoother window at "
-      "end-of-sequence, so traj.tum otherwise stops one window short of the last input scan. By "
-      "default those trailing scans are buffered and filled in by scan-matching each against the "
-      "optimized map (LiDAR-only included); with --imu the buffered IMU additionally seeds each "
-      "initial guess and is the fallback. Affects traj.tum's closing window only.");
+      "Disable cooldown-window ('end') pose fill (default on) — the symmetric "
+      "counterpart of --no-warmup-fill: the newest scans stay inside the odometry "
+      "smoother window at end-of-sequence, so traj.tum otherwise stops one window "
+      "short of the last input scan. Affects traj.tum's closing window only.");
     const int max_threads = static_cast<int>(std::thread::hardware_concurrency());
     sub
       ->add_option(
@@ -202,13 +180,10 @@ private:
     sub
       ->add_option(
         "--backend", slam_args_.backend,
-        "SLAM backend (default 'auto'). 'auto' uses the CUDA GPU backend when this binary was "
-        "built with -DBAGWIZ_WITH_SLAM_CUDA (pixi run -e humble-cuda build-full) AND a CUDA device "
-        "is "
-        "visible, else CPU. 'cuda' forces it (errors on a non-CUDA build / no device). 'cpu' "
-        "forces the CPU backend (the reproducibility-guaranteed path). The CUDA backend = GPU "
-        "LiDAR-IMU odometry with --imu (CT without it), GPU VGICP mapping, and GPU export "
-        "voxelization; it is OUTSIDE the CPU reproducibility guarantee.")
+        "SLAM backend (default 'auto'). 'auto' uses the CUDA GPU backend when this "
+        "binary was built with CUDA support AND a CUDA device is visible, else CPU. "
+        "'cuda' forces it (errors on a non-CUDA build / no device). 'cpu' forces the "
+        "CPU backend (the reproducibility-guaranteed path).")
       ->check(CLI::IsMember({"auto", "cpu", "cuda"}));
     sub->callback([this]() { selected_ = Subcommand::kSlam; });
   }

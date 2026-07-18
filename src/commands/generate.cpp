@@ -86,9 +86,8 @@ private:
     sub
       ->add_option(
         "--cam-info", video_args_.camera_info_topic,
-        "CameraInfo topic for --undistort and --pcd. When omitted, bagwiz derives it from "
-        "<img_topic>: /image_raw, /image_raw/compressed, /image_rect_color, and "
-        "/image_rect_color/compressed map their prefix to /camera_info.")
+        "CameraInfo topic for --undistort and --pcd. When omitted, it is derived from "
+        "<img_topic> following the standard /camera_info suffix rules.")
       ->check([](const std::string & topic) {
         if (topic.empty()) {
           return std::string{"cam-info topic must not be empty"};
@@ -109,10 +108,9 @@ private:
     sub
       ->add_option(
         "--pcd", video_args_.pointcloud_topics,
-        "PointCloud2 topic(s) to project onto each frame. Repeatable; every listed topic is "
-        "projected into the camera frame and drawn with the same field, color scheme, point size, "
-        "and alpha. Implies distortion correction and requires a CameraInfo topic and a TF chain "
-        "from each cloud frame to the camera frame.")
+        "PointCloud2 topic(s) to project onto each frame. Repeatable. Implies distortion "
+        "correction and requires a CameraInfo topic and a TF chain from each cloud frame "
+        "to the camera frame.")
       ->check([](const std::string & topic) {
         if (topic.empty()) {
           return std::string{"pcd topic must not be empty"};

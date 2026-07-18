@@ -142,18 +142,6 @@ private:
       "-w,--overwrite", format_args_.overwrite,
       "Replace <output> if it already exists. Without this flag, an "
       "existing output path stops the run.");
-    sub->footer(
-      "Messages are copied verbatim — only the storage backend and/or the\n"
-      "file/directory layout change; no deserialization or type conversion\n"
-      "is performed.\n"
-      "Target storage resolution order: --storage > output extension (.mcap or .db3)\n"
-      "> input bag's detected storage. Directory-layout outputs without --storage\n"
-      "therefore inherit the input's backend.\n"
-      "Compression: rosbag2 MESSAGE-mode (zstd) inputs are decompressed on read;\n"
-      "MCAP chunk compression is handled transparently by libmcap. SQLite3 FILE-mode\n"
-      "bags (whole-database .zstd envelopes) are decompressed to a temporary .db3 on\n"
-      "read (only zstd FILE-level compression is supported). The output bag is always\n"
-      "written uncompressed.");
     sub->callback([this]() { selected_ = Subcommand::kFormat; });
   }
 
@@ -209,12 +197,6 @@ private:
     sub->add_flag(
       "-w,--overwrite", msg_geo_args_.overwrite,
       "Replace an existing -o/--output path. Without it, an existing output path stops the run.");
-    sub->footer(
-      "Only the selected topics are re-typed; every other topic is copied verbatim. The source "
-      "header timestamp is preserved; the source frame_id is replaced by --frame-id. NavSatFix "
-      "position_covariance (3x3) maps into the upper-left block of the pose 6x6 covariance "
-      "(pose_with_covariance_stamped only); orientation is set to identity. The conversion is "
-      "one-directional (NavSatFix -> pose).");
     sub->callback([this]() { selected_ = Subcommand::kMsgGeo; });
   }
 

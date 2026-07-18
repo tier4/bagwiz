@@ -373,15 +373,12 @@ private:
   {
     auto * sub = app.add_subcommand(
       "dump",
-      "Dump a topic's trajectory to a file. The accepted message types and the meaning "
-      "of --of / --ref per type are listed in the SUPPORTED TOPIC TYPES section below.");
+      "Dump a topic's trajectory to a file. Every row is the pose of --of expressed in "
+      "--ref, resolved through the bag's TF tree (static + dynamic).");
     sub->add_option("input", dump_args_.input_path, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
-    sub
-      ->add_option(
-        "topic", dump_args_.topic,
-        "Topic to sample (e.g. /tf, /localization/pose). See SUPPORTED TOPIC TYPES below.")
+    sub->add_option("topic", dump_args_.topic, "Topic to sample (e.g. /tf, /localization/pose)")
       ->required();
     sub->add_option("output", dump_args_.output_path, "Output file path")->required();
     sub
@@ -392,43 +389,15 @@ private:
     sub->add_option(
       "--ref", dump_args_.ref_frame,
       "Reference frame the trajectory is expressed in. Required for TF topics; "
-      "optional for pose / odometry (defaults to each message's header.frame_id). "
-      "See SUPPORTED TOPIC TYPES below.");
+      "optional for pose / odometry topics.");
     sub->add_option(
       "--of", dump_args_.of_frame,
-      "Tracked frame whose trajectory is written. Required for TF topics; optional "
-      "for odometry (defaults to child_frame_id; a different value traverses the TF "
-      "tree). For pose topics it names the body the pose reports. See SUPPORTED "
-      "TOPIC TYPES below.");
+      "Tracked frame whose trajectory is written. Required for TF topics; "
+      "optional for pose / odometry topics.");
     sub->add_flag(
       "-w,--overwrite", dump_args_.overwrite,
       "Replace <output> if it already exists. Without this flag, an "
       "existing output path stops the run.");
-    sub->footer(
-      "SUPPORTED TOPIC TYPES:\n"
-      "  Every row is the pose of --of expressed in --ref. All TF lookups are\n"
-      "  resolved automatically from the bag's static and dynamic TFs (/tf and\n"
-      "  *tf_static are picked up from the bag) — any multi-hop path through the TF\n"
-      "  tree is OK; --ref / --of need not be directly connected.\n"
-      "\n"
-      "  tf2_msgs/msg/TFMessage  (e.g. /tf)\n"
-      "    --ref  REQUIRED  reference frame of the trajectory\n"
-      "    --of   REQUIRED  tracked frame\n"
-      "\n"
-      "  nav_msgs/msg/Odometry\n"
-      "    --ref  optional  reference frame; defaults to header.frame_id (no remap)\n"
-      "    --of   optional  tracked frame; defaults to child_frame_id. A value that\n"
-      "                     differs from child_frame_id walks the TF tree from the\n"
-      "                     body to --of (e.g. static base_link -> sensor)\n"
-      "\n"
-      "  geometry_msgs/msg/PoseStamped\n"
-      "  geometry_msgs/msg/PoseWithCovarianceStamped\n"
-      "    --ref  optional  re-express each pose into this frame via TF;\n"
-      "                     when omitted, the pose's header.frame_id is kept as-is\n"
-      "    --of   optional  the body frame the pose reports. The pose already\n"
-      "                     encodes its body, so --of does not change the numbers\n"
-      "                     and never traverses further; use Odometry or /tf for\n"
-      "                     tracked-side TF traversal");
     sub->callback([this]() { selected_ = Subcommand::kDump; });
   }
 
@@ -922,10 +891,12 @@ private:
       ->check(CLI::IsMember({kJoinMsgTypeTf}));
     sub->add_option(
       "--ref", join_args_.ref_frame,
-      "Parent frame id. Required for --msg-type tf; mapped to TransformStamped.header.frame_id.");
+      "Reference frame the trajectory is expressed in; mapped to "
+      "TransformStamped.header.frame_id. Required for --msg-type tf.");
     sub->add_option(
       "--of", join_args_.of_frame,
-      "Child frame id. Required for --msg-type tf; mapped to TransformStamped.child_frame_id.");
+      "Tracked frame whose trajectory is embedded; mapped to "
+      "TransformStamped.child_frame_id. Required for --msg-type tf.");
     sub
       ->add_flag(
         "--force", join_args_.force,

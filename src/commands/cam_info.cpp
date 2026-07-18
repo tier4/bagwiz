@@ -83,9 +83,7 @@ private:
     sub
       ->add_option(
         "calib_yaml", replace_args_.yaml_path,
-        "Camera calibration YAML in the camera_calibration / camera_info_manager format "
-        "(image_width, image_height, camera_matrix, distortion_model, distortion_coefficients, "
-        "rectification_matrix, projection_matrix)")
+        "Camera calibration YAML in the camera_calibration / camera_info_manager format")
       ->required()
       ->check(CLI::ExistingFile);
     sub
@@ -106,12 +104,6 @@ private:
       "Replace an existing -o/--output path. Without it, an existing output path stops the run. "
       "Has no effect in in-place mode (when -o is omitted, <input> is replaced atomically by "
       "design).");
-    sub->footer(
-      "Only the named CameraInfo topics are rewritten; every other topic is copied verbatim. For "
-      "each message on those topics, the calibration fields (height, width, distortion_model, d, "
-      "k, r, p) are taken from the YAML while the original header timestamp, frame_id (unless "
-      "--frame-id is given), binning_x/y, and roi are preserved. The YAML's camera_name, if "
-      "present, is informational only and ignored.");
     sub->callback([this]() { selected_ = Subcommand::kReplace; });
   }
 
@@ -149,39 +141,6 @@ private:
       "Replace an existing -o/--output path. Without it, an existing output path stops the run. "
       "Has no effect in in-place mode (when -o is omitted, <input> is replaced atomically by "
       "design).");
-    sub->footer(
-      "<input> says where the calibration comes from and what is produced: a .yaml/.yml file is a "
-      "camera_calibration YAML (--topics does not apply), anything else is a ROS 2 bag (--topics "
-      "is required). The result always has the same shape as <input> -- a YAML in, a YAML out; a "
-      "bag in, a bag out -- and -o only says where it goes. To pull a bag's calibration out as a "
-      "YAML instead, use `bagwiz cam-info dump`.\n"
-      "\n"
-      "For a bag, -o's extension picks the storage format: .mcap or .db3 writes that format "
-      "(converting when <input> is the other), and anything else writes a directory bag in "
-      "<input>'s own format.\n"
-      "\n"
-      "p is recomputed as [getOptimalNewCameraMatrix(k, d, (width, height), alpha) | 0], so k, d, "
-      "and the image size are the inputs -- everything else in the file (or message) is preserved. "
-      "For a bag, only the named topics are touched and each message's p is recomputed from that "
-      "same message's own k/d/width/height; header, binning, roi, and every other topic are copied "
-      "verbatim.\n"
-      "\n"
-      "Supported distortion_model values: 'plumb_bob' (5 coefficients), 'rational_polynomial' (8), "
-      "and an empty model or 'none' (declares no distortion, so p is [k | 0]). Any other model -- "
-      "including the fisheye family ('equidistant', 'fisheye'), which needs "
-      "cv::fisheye::estimateNewCameraMatrixForUndistortRectify and a `balance` instead of an alpha "
-      "-- is an error, checked before d so it is refused even with all-zero coefficients.\n"
-      "\n"
-      "Also refused where recomputing from k would be wrong rather than imprecise: a "
-      "stereo-rectified camera (non-identity r), or a p carrying a stereo baseline (non-zero "
-      "p[3]/p[7]). Nothing is written when a run is refused.\n"
-      "\n"
-      "Expect a sub-pixel difference from a p an older camera_calibration wrote, rather than an "
-      "identical value: getOptimalNewCameraMatrix shifts slightly between OpenCV versions. The "
-      "run logs how far p moved so a small change is legible as version drift.\n"
-      "\n"
-      "Note a YAML rewrite is a re-emit: values are preserved but comments and formatting are "
-      "normalized. Use -o to keep the original file untouched.");
     sub->callback([this]() { selected_ = Subcommand::kRecomputeP; });
   }
 
@@ -206,24 +165,6 @@ private:
       "-w,--overwrite", dump_args_.overwrite,
       "Replace an existing -o/--output path. Without it, an existing output path stops the run. "
       "Has no effect without -o (there is nothing to overwrite when writing to stdout).");
-    sub->footer(
-      "The dump is verbatim: height, width, distortion_model, d, k, r, and p are copied from the "
-      "bag exactly as recorded. p is NOT recomputed -- run `bagwiz cam-info recompute-p` on the "
-      "dumped YAML for that, so the two compose:\n"
-      "\n"
-      "  bagwiz cam-info dump drive.mcap /camera/camera_info -o calib.yaml\n"
-      "  bagwiz cam-info recompute-p calib.yaml\n"
-      "\n"
-      "A camera_calibration YAML holds exactly one calibration, so exactly one <topic> is taken. "
-      "The first message's calibration is used, and a topic whose calibration is not constant "
-      "across the bag is reported. The bag is only ever read.\n"
-      "\n"
-      "The output carries no camera_name: it is not a CameraInfo field, so the bag cannot supply "
-      "one, and inventing a name from the topic or frame_id would be a guess. The key is "
-      "optional.\n"
-      "\n"
-      "Without -o the YAML goes to stdout while diagnostics go to stderr, so "
-      "`bagwiz cam-info dump drive.mcap /camera/camera_info > calib.yaml` works.");
     sub->callback([this]() { selected_ = Subcommand::kDump; });
   }
 };
