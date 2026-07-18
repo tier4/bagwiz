@@ -8,8 +8,8 @@
 
 #include "bagwiz/commands/generate_video.hpp"
 
-#include "bagwiz/core/camera_info_resolver.hpp"
-#include "bagwiz/core/tf_message_wire.hpp"
+#include "bagwiz/core/image/camera_info_resolver.hpp"
+#include "bagwiz/core/tf/tf_message_wire.hpp"
 #include "bagwiz/core/video/video_encoder.hpp"
 #include "bagwiz/io/bag_io.hpp"
 #include "core/image/image_fixture.hpp"

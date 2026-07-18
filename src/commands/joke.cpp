@@ -8,9 +8,9 @@
 
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
+#include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/joke/joke_layout.hpp"
 #include "bagwiz/core/joke/jokes.hpp"
-#include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/tui/layout.hpp"
 
 #include <exception>

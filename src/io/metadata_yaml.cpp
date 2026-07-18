@@ -8,7 +8,7 @@
 
 #include "bagwiz/io/metadata_yaml.hpp"
 
-#include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/base/logging.hpp"
 
 #include <yaml-cpp/yaml.h>
 

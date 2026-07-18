@@ -12,7 +12,7 @@
 // Internal header (not installed). Implementation detail of open_decoder().
 
 #include "bagwiz/core/decoder/decoder.hpp"
-#include "bagwiz/core/introspection_loader.hpp"
+#include "bagwiz/core/introspection/introspection_loader.hpp"
 
 #include <span>
 #include <string_view>

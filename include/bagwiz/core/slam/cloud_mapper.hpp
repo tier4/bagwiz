@@ -12,7 +12,7 @@
 #include "bagwiz/core/slam/imu_sample.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
-#include "bagwiz/core/trajectory.hpp"
+#include "bagwiz/core/tf/trajectory.hpp"
 
 #include <array>
 #include <cstddef>

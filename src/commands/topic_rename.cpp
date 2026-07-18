@@ -8,10 +8,10 @@
 
 #include "bagwiz/commands/topic_rename.hpp"
 
-#include "bagwiz/core/bag_copy.hpp"
-#include "bagwiz/core/bag_inplace.hpp"
-#include "bagwiz/core/logging.hpp"
-#include "bagwiz/core/output_path.hpp"
+#include "bagwiz/core/bag/bag_copy.hpp"
+#include "bagwiz/core/bag/bag_inplace.hpp"
+#include "bagwiz/core/base/logging.hpp"
+#include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <algorithm>

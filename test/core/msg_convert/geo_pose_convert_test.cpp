@@ -10,7 +10,7 @@
 
 #include "bagwiz/core/cdr_walker/value.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
-#include "bagwiz/core/tf_value_extract.hpp"
+#include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <gtest/gtest.h>

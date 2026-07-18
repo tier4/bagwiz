@@ -10,7 +10,7 @@
 #define BAGWIZ__CORE__POINTCLOUD__DESKEW_HPP_
 
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
-#include "bagwiz/core/trajectory.hpp"
+#include "bagwiz/core/tf/trajectory.hpp"
 
 #include <geometry_msgs/msg/transform.hpp>
 

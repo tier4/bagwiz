@@ -8,14 +8,14 @@
 
 #include "bagwiz/commands/tf_static_cp.hpp"
 
-#include "bagwiz/core/bag_copy.hpp"
-#include "bagwiz/core/bag_inplace.hpp"
-#include "bagwiz/core/bag_topic_plan.hpp"
+#include "bagwiz/core/bag/bag_copy.hpp"
+#include "bagwiz/core/bag/bag_inplace.hpp"
+#include "bagwiz/core/bag/bag_topic_plan.hpp"
+#include "bagwiz/core/base/logging.hpp"
+#include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
-#include "bagwiz/core/logging.hpp"
-#include "bagwiz/core/output_path.hpp"
-#include "bagwiz/core/tf_message_wire.hpp"
-#include "bagwiz/core/tf_value_extract.hpp"
+#include "bagwiz/core/tf/tf_message_wire.hpp"
+#include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <geometry_msgs/msg/transform_stamped.hpp>

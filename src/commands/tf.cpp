@@ -10,12 +10,12 @@
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/tf_static_cp.hpp"
 #include "bagwiz/commands/tf_walk.hpp"
+#include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
-#include "bagwiz/core/logging.hpp"
-#include "bagwiz/core/tf_chain.hpp"
-#include "bagwiz/core/tf_merge_check.hpp"
-#include "bagwiz/core/tf_transform_format.hpp"
-#include "bagwiz/core/tf_value_extract.hpp"
+#include "bagwiz/core/tf/tf_chain.hpp"
+#include "bagwiz/core/tf/tf_merge_check.hpp"
+#include "bagwiz/core/tf/tf_transform_format.hpp"
+#include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <rang.hpp>

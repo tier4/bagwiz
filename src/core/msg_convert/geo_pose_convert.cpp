@@ -9,7 +9,7 @@
 #include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
 
 #include "bagwiz/core/cdr_walker/cdr_writer.hpp"
-#include "bagwiz/core/introspection_loader.hpp"
+#include "bagwiz/core/introspection/introspection_loader.hpp"
 
 #include <GeographicLib/LocalCartesian.hpp>
 #include <GeographicLib/UTMUPS.hpp>

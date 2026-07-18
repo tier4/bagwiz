@@ -11,7 +11,7 @@
 #include "bagwiz/commands/cam_info_recompute_p.hpp"
 #include "bagwiz/commands/cam_info_replace.hpp"
 #include "bagwiz/commands/command.hpp"
-#include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/base/logging.hpp"
 
 #include <string_view>
 

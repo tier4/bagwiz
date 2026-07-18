@@ -8,16 +8,16 @@
 
 #include "bagwiz/commands/pcd_concat.hpp"
 
-#include "bagwiz/core/bag_inplace.hpp"
-#include "bagwiz/core/duration_parse.hpp"
-#include "bagwiz/core/logging.hpp"
-#include "bagwiz/core/output_path.hpp"
+#include "bagwiz/core/bag/bag_inplace.hpp"
+#include "bagwiz/core/base/duration_parse.hpp"
+#include "bagwiz/core/base/logging.hpp"
+#include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/pointcloud/cloud_concat.hpp"
 #include "bagwiz/core/pointcloud/cloud_transform.hpp"
 #include "bagwiz/core/pointcloud/concat_sync.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
-#include "bagwiz/core/tf_buffer_loader.hpp"
-#include "bagwiz/core/tf_chain.hpp"
+#include "bagwiz/core/tf/tf_buffer_loader.hpp"
+#include "bagwiz/core/tf/tf_chain.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <tf2/buffer_core.hpp>

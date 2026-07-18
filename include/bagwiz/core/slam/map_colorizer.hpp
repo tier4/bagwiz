@@ -13,7 +13,7 @@
 #include "bagwiz/core/pointcloud/kdtree.hpp"
 #include "bagwiz/core/slam/colorize_rasterizer.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
-#include "bagwiz/core/trajectory.hpp"
+#include "bagwiz/core/tf/trajectory.hpp"
 
 #include <array>
 #include <cstddef>

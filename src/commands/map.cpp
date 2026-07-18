@@ -10,7 +10,7 @@
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/map_slam.hpp"
 #include "bagwiz/commands/map_viewer.hpp"
-#include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/base/logging.hpp"
 
 #include <string_view>
 #include <thread>

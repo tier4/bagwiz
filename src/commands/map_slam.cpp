@@ -8,11 +8,11 @@
 
 #include "bagwiz/commands/map_slam.hpp"
 
-#include "bagwiz/core/camera_info_resolver.hpp"
+#include "bagwiz/core/base/logging.hpp"
+#include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
+#include "bagwiz/core/image/camera_info_resolver.hpp"
 #include "bagwiz/core/image/packed_raster.hpp"
-#include "bagwiz/core/logging.hpp"
-#include "bagwiz/core/output_path.hpp"
 #include "bagwiz/core/pointcloud/color_propagation.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
 #include "bagwiz/core/slam/cloud_mapper.hpp"
@@ -26,9 +26,9 @@
 #include "bagwiz/core/slam/point_cloud_io.hpp"
 #include "bagwiz/core/slam/progress_bar.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
-#include "bagwiz/core/tf_chain.hpp"
-#include "bagwiz/core/tf_value_extract.hpp"
-#include "bagwiz/core/trajectory.hpp"
+#include "bagwiz/core/tf/tf_chain.hpp"
+#include "bagwiz/core/tf/tf_value_extract.hpp"
+#include "bagwiz/core/tf/trajectory.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <tf2/buffer_core.hpp>

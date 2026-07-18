@@ -11,7 +11,7 @@
 #include "bagwiz/commands/topic_drop.hpp"
 #include "bagwiz/commands/topic_keep.hpp"
 #include "bagwiz/commands/topic_rename.hpp"
-#include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/base/logging.hpp"
 
 #include <string_view>
 

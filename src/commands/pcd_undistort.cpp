@@ -8,18 +8,18 @@
 
 #include "bagwiz/commands/pcd_undistort.hpp"
 
-#include "bagwiz/core/bag_inplace.hpp"
+#include "bagwiz/core/bag/bag_inplace.hpp"
+#include "bagwiz/core/base/logging.hpp"
+#include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/cdr_walker/value.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
-#include "bagwiz/core/logging.hpp"
-#include "bagwiz/core/output_path.hpp"
 #include "bagwiz/core/pointcloud/deskew.hpp"
 #include "bagwiz/core/pointcloud/point_time.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
-#include "bagwiz/core/tf_buffer_loader.hpp"
-#include "bagwiz/core/tf_chain.hpp"
-#include "bagwiz/core/tf_value_extract.hpp"
-#include "bagwiz/core/trajectory.hpp"
+#include "bagwiz/core/tf/tf_buffer_loader.hpp"
+#include "bagwiz/core/tf/tf_chain.hpp"
+#include "bagwiz/core/tf/tf_value_extract.hpp"
+#include "bagwiz/core/tf/trajectory.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <tf2/buffer_core.hpp>

@@ -8,7 +8,7 @@
 
 #include "bagwiz/core/pipeline/stage_profiler.hpp"
 
-#include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/base/logging.hpp"
 
 #include <algorithm>
 #include <cctype>

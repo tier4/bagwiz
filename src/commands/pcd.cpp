@@ -10,7 +10,7 @@
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/pcd_concat.hpp"
 #include "bagwiz/commands/pcd_undistort.hpp"
-#include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/base/logging.hpp"
 
 #include <string_view>
 

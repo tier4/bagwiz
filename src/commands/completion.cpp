@@ -10,9 +10,9 @@
 
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
+#include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
-#include "bagwiz/core/logging.hpp"
-#include "bagwiz/core/tf_value_extract.hpp"
+#include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <algorithm>

@@ -10,8 +10,8 @@
 
 #include "bagwiz/core/cdr_walker/value.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
-#include "bagwiz/core/introspection_loader.hpp"
-#include "bagwiz/core/message_deserializer.hpp"
+#include "bagwiz/core/introspection/introspection_loader.hpp"
+#include "bagwiz/core/introspection/message_deserializer.hpp"
 
 #include <rosidl_typesupport_introspection_cpp/field_types.hpp>
 #include <rosidl_typesupport_introspection_cpp/message_introspection.hpp>

@@ -8,8 +8,8 @@
 
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
-#include "bagwiz/core/broken_bag.hpp"
-#include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/bag/broken_bag.hpp"
+#include "bagwiz/core/base/logging.hpp"
 
 #include <fmt/core.h>
 #include <unistd.h>

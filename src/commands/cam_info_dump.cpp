@@ -8,11 +8,11 @@
 
 #include "bagwiz/commands/cam_info_dump.hpp"
 
-#include "bagwiz/core/atomic_write.hpp"
+#include "bagwiz/core/base/atomic_write.hpp"
+#include "bagwiz/core/base/logging.hpp"
+#include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/image/camera_calibration_yaml.hpp"
 #include "bagwiz/core/image/camera_info.hpp"
-#include "bagwiz/core/logging.hpp"
-#include "bagwiz/core/output_path.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <fmt/core.h>
@@ -153,7 +153,7 @@ int run_cam_info_dump(const CamInfoDumpArgs & args)
   if (!args.output_path.has_value()) {
     // The calibration is this command's data output, so it goes to stdout while
     // every diagnostic above went to stderr -- `bagwiz cam-info dump <bag>
-    // <topic> > calib.yaml` is pipe-clean. See core/logging.hpp.
+    // <topic> > calib.yaml` is pipe-clean. See core/base/logging.hpp.
     fmt::print(stdout, "{}", yaml);
     BAGWIZ_LOG_INFO(
       kLogger, "cam-info dump: wrote '%s' from '%s' to stdout (%" PRIu64 " message(s) read).",

@@ -9,9 +9,9 @@
 #include "bagwiz/commands/convert_msg_geo.hpp"
 
 #include "bagwiz/core/decoder/decoder.hpp"
-#include "bagwiz/core/introspection_loader.hpp"
+#include "bagwiz/core/introspection/introspection_loader.hpp"
 #include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
-#include "bagwiz/core/tf_value_extract.hpp"
+#include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <geometry_msgs/msg/pose_stamped.hpp>

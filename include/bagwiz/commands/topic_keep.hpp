@@ -26,7 +26,7 @@ struct TopicKeepArgs
 {
   std::filesystem::path input_path;
   // Topic selectors to keep. Each is a literal topic name or a '*' glob;
-  // see bagwiz/core/topic_match.hpp for the matching rules.
+  // see bagwiz/core/base/topic_match.hpp for the matching rules.
   std::vector<std::string> topics;
   // Empty: rewrite <input> in place. Set: write the result to this new bag and
   // leave <input> untouched.

@@ -8,12 +8,12 @@
 
 #include "bagwiz/commands/convert_msg_geo.hpp"
 
-#include "bagwiz/core/bag_inplace.hpp"
+#include "bagwiz/core/bag/bag_inplace.hpp"
+#include "bagwiz/core/base/logging.hpp"
+#include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
-#include "bagwiz/core/logging.hpp"
 #include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
-#include "bagwiz/core/msg_definition_resolver.hpp"
-#include "bagwiz/core/output_path.hpp"
+#include "bagwiz/core/msg_yaml/msg_definition_resolver.hpp"
 #include "bagwiz/core/pipeline/backend_select.hpp"
 #include "bagwiz/core/pipeline/rewrite_backend.hpp"
 #include "bagwiz/io/bag_io.hpp"

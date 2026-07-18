@@ -6,10 +6,10 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
+#include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/decoder/introspection_decoder.hpp"
 #include "bagwiz/core/decoder/schema_decoder.hpp"
-#include "bagwiz/core/logging.hpp"
 
 #include <cstdlib>
 #include <cstring>

@@ -9,7 +9,7 @@
 #include "bagwiz/commands/pcd_undistort.hpp"
 
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
-#include "bagwiz/core/tf_message_wire.hpp"
+#include "bagwiz/core/tf/tf_message_wire.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <geometry_msgs/msg/transform_stamped.hpp>

@@ -8,7 +8,7 @@
 
 #include "bagwiz/commands/map_viewer.hpp"
 
-#include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/base/logging.hpp"
 #ifdef BAGWIZ_WITH_MAP_VIEWER
 #include "bagwiz/core/slam/map_viewer.hpp"
 #endif

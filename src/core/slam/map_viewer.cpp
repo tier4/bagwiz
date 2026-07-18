@@ -8,7 +8,7 @@
 
 #include "bagwiz/core/slam/map_viewer.hpp"
 
-#include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/slam/map_viewer_assets.hpp"  // generated: kMapViewerHtml / kMapViewerJs
 #include "bagwiz/core/slam/map_viewer_open.hpp"
 

@@ -8,8 +8,8 @@
 
 #include "bagwiz/core/tui/pager.hpp"
 
-#include "bagwiz/core/terminal_input.hpp"
-#include "bagwiz/core/tui/internal/signal_handler.hpp"
+#include "bagwiz/core/base/signal_handler.hpp"
+#include "bagwiz/core/base/terminal_input.hpp"
 #include "bagwiz/core/tui/layout.hpp"
 #include "bagwiz/core/tui/renderer.hpp"
 #include "bagwiz/core/tui/screen_scope.hpp"
@@ -166,7 +166,7 @@ int ScrollablePager::run(
   sc.use_alt_screen = cfg_.use_alt_screen;
   sc.out = out_;
   ScreenScope screen(sc);
-  internal::SigwinchScope sigwinch;
+  bagwiz::core::SigwinchScope sigwinch;
 
   needs_redraw_ = true;
   last_drawn_rows_ = 0;

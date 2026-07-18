@@ -9,7 +9,7 @@
 #ifndef BAGWIZ__CORE__TUI__PAGER_HPP_
 #define BAGWIZ__CORE__TUI__PAGER_HPP_
 
-#include "bagwiz/core/terminal_input.hpp"
+#include "bagwiz/core/base/terminal_input.hpp"
 #include "bagwiz/core/tui/layout.hpp"
 
 #include <cstddef>

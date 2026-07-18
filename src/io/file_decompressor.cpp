@@ -66,7 +66,7 @@ std::string inner_suffix(const std::filesystem::path & src)
 }
 
 // A process-unique temp path. Mirrors the pid + steady-clock naming used by
-// core/bag_inplace.cpp, plus an atomic counter so two decompressions in the
+// core/bag/bag_inplace.cpp, plus an atomic counter so two decompressions in the
 // same process (e.g. two shards) never collide.
 std::filesystem::path make_temp_path(const std::filesystem::path & src)
 {

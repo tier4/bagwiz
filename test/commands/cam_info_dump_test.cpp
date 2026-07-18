@@ -9,7 +9,7 @@
 #include "bagwiz/commands/cam_info_dump.hpp"
 
 #include "bagwiz/core/image/camera_calibration_yaml.hpp"
-#include "bagwiz/core/introspection_loader.hpp"
+#include "bagwiz/core/introspection/introspection_loader.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <sensor_msgs/msg/camera_info.hpp>

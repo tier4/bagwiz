@@ -8,7 +8,7 @@
 
 #include "bagwiz/io/mcap_writer.hpp"
 
-#include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <mcap/writer.hpp>

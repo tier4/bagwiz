@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/file_decompressor.hpp"
 #include "bagwiz/io/mcap_reader.hpp"

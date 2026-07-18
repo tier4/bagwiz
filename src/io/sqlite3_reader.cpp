@@ -8,7 +8,7 @@
 
 #include "bagwiz/io/sqlite3_reader.hpp"
 
-#include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/file_decompressor.hpp"
 #include "bagwiz/io/message_decompressor.hpp"

@@ -181,42 +181,42 @@ add_library(bagwiz_core
   src/core/decoder/introspection_decoder.cpp
   src/core/decoder/message_view.cpp
   src/core/decoder/schema_decoder.cpp
-  src/core/introspection_loader.cpp
+  src/core/introspection/introspection_loader.cpp
   src/core/joke/jokes.cpp
-  src/core/duration_parse.cpp
+  src/core/base/duration_parse.cpp
   src/core/joke/joke_layout.cpp
-  src/core/logging.cpp
-  src/core/message_deserializer.cpp
-  src/core/output_path.cpp
-  src/core/atomic_write.cpp
-  src/core/message_formatter.cpp
-  src/core/msg_definition_resolver.cpp
+  src/core/base/logging.cpp
+  src/core/introspection/message_deserializer.cpp
+  src/core/base/output_path.cpp
+  src/core/base/atomic_write.cpp
+  src/core/msg_yaml/message_formatter.cpp
+  src/core/msg_yaml/msg_definition_resolver.cpp
   src/core/msg_schema/parser.cpp
   src/core/msg_schema/schema_model.cpp
-  src/core/ros2_yaml_to_cdr.cpp
-  src/core/yaml_msg_stamp_sync.cpp
-  src/core/yaml_msg_validate.cpp
-  src/core/terminal_input.cpp
-  src/core/bag_copy.cpp
-  src/core/bag_inplace.cpp
-  src/core/bag_topic_plan.cpp
+  src/core/msg_yaml/ros2_yaml_to_cdr.cpp
+  src/core/msg_yaml/yaml_msg_stamp_sync.cpp
+  src/core/msg_yaml/yaml_msg_validate.cpp
+  src/core/base/terminal_input.cpp
+  src/core/bag/bag_copy.cpp
+  src/core/bag/bag_inplace.cpp
+  src/core/bag/bag_topic_plan.cpp
   src/core/pipeline/stage_profiler.cpp
   src/core/pipeline/rewrite_backend.cpp
   src/core/pipeline/sequential_backend.cpp
   src/core/pipeline/topic_router.cpp
   src/core/pipeline/pipelined_backend.cpp
   src/core/pipeline/backend_select.cpp
-  src/core/topic_match.cpp
-  src/core/camera_info_resolver.cpp
-  src/core/broken_bag.cpp
-  src/core/tf_chain.cpp
-  src/core/tf_merge_check.cpp
-  src/core/tf_message_wire.cpp
-  src/core/tf_transform_format.cpp
-  src/core/tf_value_extract.cpp
-  src/core/tf_buffer_loader.cpp
-  src/core/tf_walk_timeline.cpp
-  src/core/trajectory.cpp
+  src/core/base/topic_match.cpp
+  src/core/image/camera_info_resolver.cpp
+  src/core/bag/broken_bag.cpp
+  src/core/tf/tf_chain.cpp
+  src/core/tf/tf_merge_check.cpp
+  src/core/tf/tf_message_wire.cpp
+  src/core/tf/tf_transform_format.cpp
+  src/core/tf/tf_value_extract.cpp
+  src/core/tf/tf_buffer_loader.cpp
+  src/core/tf/tf_walk_timeline.cpp
+  src/core/tf/trajectory.cpp
   src/core/msg_convert/geo_pose_convert.cpp
   src/core/image/raw_image.cpp
   src/core/image/compressed_image.cpp
@@ -260,7 +260,7 @@ add_library(bagwiz_core
   src/core/tui/pager.cpp
   src/core/tui/renderer.cpp
   src/core/tui/screen_scope.cpp
-  src/core/tui/signal_handler.cpp
+  src/core/base/signal_handler.cpp
   src/core/tui/width.cpp
   src/core/tui/word_wrap.cpp
   src/core/tui/image/terminal_image_caps.cpp
@@ -616,18 +616,18 @@ if(BUILD_TESTING)
   target_link_libraries(bagwiz_pcd_undistort_command_test bagwiz_core fmt::fmt)
 
   ament_add_gtest(bagwiz_smoke_test test/smoke_test.cpp)
-  ament_add_gtest(bagwiz_yaml_msg_validate_test test/core/yaml_msg_validate_test.cpp)
+  ament_add_gtest(bagwiz_yaml_msg_validate_test test/core/msg_yaml/yaml_msg_validate_test.cpp)
   target_link_libraries(bagwiz_yaml_msg_validate_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_yaml_msg_stamp_sync_test test/core/yaml_msg_stamp_sync_test.cpp)
+  ament_add_gtest(bagwiz_yaml_msg_stamp_sync_test test/core/msg_yaml/yaml_msg_stamp_sync_test.cpp)
   target_link_libraries(bagwiz_yaml_msg_stamp_sync_test bagwiz_core)
 
   target_link_libraries(bagwiz_smoke_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_broken_bag_test test/core/broken_bag_test.cpp)
+  ament_add_gtest(bagwiz_broken_bag_test test/core/bag/broken_bag_test.cpp)
   target_link_libraries(bagwiz_broken_bag_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_message_formatter_test test/core/message_formatter_test.cpp)
+  ament_add_gtest(bagwiz_message_formatter_test test/core/msg_yaml/message_formatter_test.cpp)
   target_link_libraries(bagwiz_message_formatter_test bagwiz_core)
 
   ament_add_gtest(bagwiz_msg_schema_parser_test test/core/msg_schema/parser_test.cpp)
@@ -745,7 +745,7 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_mcap_schema_decode_test test/io/mcap_schema_decode_test.cpp)
   target_link_libraries(bagwiz_mcap_schema_decode_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_terminal_input_test test/core/terminal_input_test.cpp)
+  ament_add_gtest(bagwiz_terminal_input_test test/core/base/terminal_input_test.cpp)
   target_link_libraries(bagwiz_terminal_input_test bagwiz_core)
 
   ament_add_gtest(bagwiz_tui_width_test test/core/tui/width_test.cpp)
@@ -777,32 +777,32 @@ if(BUILD_TESTING)
     bagwiz_terminal_image_renderer_test test/core/tui/image/terminal_image_renderer_test.cpp)
   target_link_libraries(bagwiz_terminal_image_renderer_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_trajectory_test test/core/trajectory_test.cpp)
+  ament_add_gtest(bagwiz_trajectory_test test/core/tf/trajectory_test.cpp)
   target_link_libraries(bagwiz_trajectory_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_tf_buffer_loader_test test/core/tf_buffer_loader_test.cpp)
+  ament_add_gtest(bagwiz_tf_buffer_loader_test test/core/tf/tf_buffer_loader_test.cpp)
   target_link_libraries(bagwiz_tf_buffer_loader_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_tf_chain_test test/core/tf_chain_test.cpp)
+  ament_add_gtest(bagwiz_tf_chain_test test/core/tf/tf_chain_test.cpp)
   target_link_libraries(bagwiz_tf_chain_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_tf_merge_check_test test/core/tf_merge_check_test.cpp)
+  ament_add_gtest(bagwiz_tf_merge_check_test test/core/tf/tf_merge_check_test.cpp)
   target_link_libraries(bagwiz_tf_merge_check_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_tf_message_wire_test test/core/tf_message_wire_test.cpp)
+  ament_add_gtest(bagwiz_tf_message_wire_test test/core/tf/tf_message_wire_test.cpp)
   target_link_libraries(bagwiz_tf_message_wire_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_tf_transform_format_test test/core/tf_transform_format_test.cpp)
+  ament_add_gtest(bagwiz_tf_transform_format_test test/core/tf/tf_transform_format_test.cpp)
   target_link_libraries(
     bagwiz_tf_transform_format_test bagwiz_core nlohmann_json::nlohmann_json)
 
-  ament_add_gtest(bagwiz_tf_walk_timeline_test test/core/tf_walk_timeline_test.cpp)
+  ament_add_gtest(bagwiz_tf_walk_timeline_test test/core/tf/tf_walk_timeline_test.cpp)
   target_link_libraries(bagwiz_tf_walk_timeline_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_bag_topic_plan_test test/core/bag_topic_plan_test.cpp)
+  ament_add_gtest(bagwiz_bag_topic_plan_test test/core/bag/bag_topic_plan_test.cpp)
   target_link_libraries(bagwiz_bag_topic_plan_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_bag_copy_test test/core/bag_copy_test.cpp)
+  ament_add_gtest(bagwiz_bag_copy_test test/core/bag/bag_copy_test.cpp)
   target_link_libraries(bagwiz_bag_copy_test bagwiz_core)
 
   ament_add_gtest(bagwiz_stage_profiler_test test/core/pipeline/stage_profiler_test.cpp)
@@ -814,13 +814,13 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_pipelined_backend_test test/core/pipeline/pipelined_backend_test.cpp)
   target_link_libraries(bagwiz_pipelined_backend_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_bag_inplace_test test/core/bag_inplace_test.cpp)
+  ament_add_gtest(bagwiz_bag_inplace_test test/core/bag/bag_inplace_test.cpp)
   target_link_libraries(bagwiz_bag_inplace_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_topic_match_test test/core/topic_match_test.cpp)
+  ament_add_gtest(bagwiz_topic_match_test test/core/base/topic_match_test.cpp)
   target_link_libraries(bagwiz_topic_match_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_camera_info_resolver_test test/core/camera_info_resolver_test.cpp)
+  ament_add_gtest(bagwiz_camera_info_resolver_test test/core/image/camera_info_resolver_test.cpp)
   target_link_libraries(bagwiz_camera_info_resolver_test bagwiz_core)
 
   ament_add_gtest(bagwiz_topic_drop_test
@@ -878,7 +878,7 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_cloud_concat_test test/core/pointcloud/cloud_concat_test.cpp)
   target_link_libraries(bagwiz_cloud_concat_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_duration_parse_test test/core/duration_parse_test.cpp)
+  ament_add_gtest(bagwiz_duration_parse_test test/core/base/duration_parse_test.cpp)
   target_link_libraries(bagwiz_duration_parse_test bagwiz_core)
 
   ament_add_gtest(bagwiz_concat_sync_test test/core/pointcloud/concat_sync_test.cpp)
@@ -948,10 +948,10 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_SOURCE_DIR}/test")
   target_link_libraries(bagwiz_generate_video_test bagwiz_core fmt::fmt PkgConfig::LIBAV ${OpenCV_LIBS})
 
-  ament_add_gtest(bagwiz_output_path_test test/core/output_path_test.cpp)
+  ament_add_gtest(bagwiz_output_path_test test/core/base/output_path_test.cpp)
   target_link_libraries(bagwiz_output_path_test bagwiz_core)
 
-  ament_add_gtest(bagwiz_atomic_write_test test/core/atomic_write_test.cpp)
+  ament_add_gtest(bagwiz_atomic_write_test test/core/base/atomic_write_test.cpp)
   target_link_libraries(bagwiz_atomic_write_test bagwiz_core)
 
   ament_add_gtest(bagwiz_mcap_reader_test test/io/mcap_reader_test.cpp)
@@ -995,7 +995,7 @@ if(BUILD_TESTING)
   target_link_libraries(bagwiz_create_options_preserving_storage_test bagwiz_core)
 
   ament_add_gtest(
-    bagwiz_msg_definition_resolver_test test/core/msg_definition_resolver_test.cpp)
+    bagwiz_msg_definition_resolver_test test/core/msg_yaml/msg_definition_resolver_test.cpp)
   target_link_libraries(bagwiz_msg_definition_resolver_test bagwiz_core)
 
   # geo_pose_convert lives in bagwiz_core; GeographicLib is linked explicitly so

@@ -10,7 +10,7 @@
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/completion.hpp"
 #include "bagwiz/commands/help_formatter.hpp"
-#include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/base/logging.hpp"
 
 #include <exception>
 #include <memory>

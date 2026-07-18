@@ -8,7 +8,7 @@
 
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
-#include "bagwiz/core/logging.hpp"
+#include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <fmt/core.h>

@@ -19,7 +19,7 @@
 #include "bagwiz/core/slam/lidar_scan.hpp"
 #include "bagwiz/core/slam/scan_match_fill.hpp"
 #include "bagwiz/core/slam/warmup_fill.hpp"
-#include "bagwiz/core/trajectory.hpp"
+#include "bagwiz/core/tf/trajectory.hpp"
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>

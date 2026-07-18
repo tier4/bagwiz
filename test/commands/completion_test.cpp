@@ -8,7 +8,7 @@
 
 #include "bagwiz/commands/completion.hpp"
 
-#include "bagwiz/core/tf_message_wire.hpp"
+#include "bagwiz/core/tf/tf_message_wire.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
