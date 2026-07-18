@@ -12,6 +12,7 @@
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/message_decompressor.hpp"
 #include "bagwiz/io/metadata_yaml.hpp"
+#include "shard_multiplexer.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 // mcap_vendor ships MCAP as a pre-compiled library, so MCAP_IMPLEMENTATION
 // must NOT be defined here — the symbols are provided via linkage against
@@ -282,179 +283,25 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Multi-shard reader: concatenates McapFileReaders in declared order.
-// rosbag2 writes shards in time order without overlap so simple concat is
-// equivalent to time-ordered merge.
-//
-// Shards are opened lazily: when metadata.yaml carries a complete summary
-// (total count, start time, duration, per-topic counts) and the topic list,
-// `topics()` and `compute_stats()` answer from metadata alone, so commands
-// like `bagwiz ls` never touch the shard files. Iteration via `next()` (or
-// a stats query against an incomplete summary) still opens all shards in
-// declared order.
+// Multi-shard MCAP reader: the shard multiplexing (lazy shard opening, filter
+// push-down, topic-pointer remapping, stats/count/extent folding) is shared
+// with the SQLite3 directory reader in ShardMultiplexer. What stays here is
+// how a shard file becomes an McapFileReader, the MCAP-specific schema
+// backfill (shards always carry schema bytes; a metadata-derived TopicInfo
+// may not), populate_schemas(), and the from_summary policy: MCAP shard
+// stats read summary records, so the combined flag ANDs the per-shard flags.
 // ---------------------------------------------------------------------------
-class McapShardReader : public BagReader
+class McapShardReader : public ShardMultiplexer<McapFileReader>
 {
 public:
   McapShardReader(
     std::filesystem::path dir, std::vector<std::filesystem::path> shard_rel_paths,
     std::vector<TopicInfo> topics, BagMetadata metadata,
     std::shared_ptr<MessageDecompressor> decompressor)
-  : dir_(std::move(dir)),
-    shard_rel_paths_(std::move(shard_rel_paths)),
-    topics_(std::move(topics)),
-    metadata_(std::move(metadata)),
+  : ShardMultiplexer(
+      std::move(dir), std::move(shard_rel_paths), std::move(topics), std::move(metadata)),
     decompressor_(std::move(decompressor))
   {
-    shards_.resize(shard_rel_paths_.size());
-  }
-
-  std::span<const TopicInfo> topics() const override
-  {
-    if (!topics_.empty()) {
-      return topics_;
-    }
-    // Last-resort fallback: derive topics from the first shard. Cached
-    // into topics_ so subsequent calls stay O(1).
-    if (!shard_rel_paths_.empty()) {
-      const auto & first = ensure_shard(0);
-      auto shard_topics = first.topics();
-      topics_.assign(shard_topics.begin(), shard_topics.end());
-    }
-    return topics_;
-  }
-
-  void set_filter(const ReadFilter & f) override
-  {
-    if (iteration_started_) {
-      throw std::runtime_error("BagReader::set_filter called after iteration started");
-    }
-    pending_filter_ = f;
-    has_pending_filter_ = true;
-  }
-
-  bool next(RawMessage & out) override
-  {
-    iteration_started_ = true;
-    while (current_ < shard_rel_paths_.size()) {
-      auto & shard = ensure_shard(current_);
-      if (shards_filter_applied_.size() <= current_) {
-        shards_filter_applied_.resize(current_ + 1, false);
-      }
-      if (has_pending_filter_ && !shards_filter_applied_[current_]) {
-        shard.set_filter(pending_filter_);
-        shards_filter_applied_[current_] = true;
-      }
-      if (shard.next(out)) {
-        // Remap the shard-local TopicInfo pointer to our owned vector so
-        // callers see a stable pointer for the whole bag. Take the chance
-        // to backfill schema bytes from the shard (which always carries
-        // them) into our metadata-derived TopicInfo (which may not).
-        for (auto & t : topics_) {
-          if (t.name == out.topic->name) {
-            if (t.schema_text.empty() && !out.topic->schema_text.empty()) {
-              t.schema_text = out.topic->schema_text;
-            }
-            if (t.schema_encoding.empty() && !out.topic->schema_encoding.empty()) {
-              t.schema_encoding = out.topic->schema_encoding;
-            }
-            out.topic = &t;
-            return true;
-          }
-        }
-        return true;
-      }
-      ++current_;
-    }
-    return false;
-  }
-
-  Stats compute_stats() override
-  {
-    if (metadata_.has_summary) {
-      Stats stats;
-      stats.from_summary = true;
-      stats.total_messages = metadata_.total_messages;
-      stats.start_ns = metadata_.start_ns;
-      stats.end_ns = metadata_.end_ns;
-      stats.per_topic = metadata_.per_topic_counts;
-      return stats;
-    }
-
-    Stats combined;
-    combined.from_summary = true;
-    bool first = true;
-    for (std::size_t i = 0; i < shard_rel_paths_.size(); ++i) {
-      auto st = ensure_shard(i).compute_stats();
-      combined.from_summary = combined.from_summary && st.from_summary;
-      combined.total_messages += st.total_messages;
-      if (first || st.start_ns < combined.start_ns) {
-        combined.start_ns = st.start_ns;
-      }
-      if (first || st.end_ns > combined.end_ns) {
-        combined.end_ns = st.end_ns;
-      }
-      first = false;
-      // cppcheck-suppress unassignedVariable
-      for (const auto & [k, v] : st.per_topic) {
-        combined.per_topic[k] += v;
-      }
-    }
-    return combined;
-  }
-
-  std::unordered_map<std::string, int64_t> compute_topic_counts(
-    std::span<const std::string> topics) override
-  {
-    std::unordered_map<std::string, int64_t> result;
-    if (topics.empty()) {
-      return result;
-    }
-
-    if (metadata_.has_summary) {
-      for (const auto & topic : topics) {
-        if (auto it = metadata_.per_topic_counts.find(topic);
-            it != metadata_.per_topic_counts.end()) {
-          result[topic] = it->second;
-        }
-      }
-      return result;
-    }
-
-    for (std::size_t i = 0; i < shard_rel_paths_.size(); ++i) {
-      auto shard_counts = ensure_shard(i).compute_topic_counts(topics);
-      // cppcheck-suppress unassignedVariable
-      for (const auto & [k, v] : shard_counts) {
-        result[k] += v;
-      }
-    }
-    return result;
-  }
-
-  TimeExtent compute_time_extent() override
-  {
-    TimeExtent extent;
-    if (metadata_.has_summary) {
-      extent.start_ns = metadata_.start_ns;
-      extent.end_ns = metadata_.end_ns;
-      extent.has_data = true;
-      return extent;
-    }
-
-    for (std::size_t i = 0; i < shard_rel_paths_.size(); ++i) {
-      auto shard_extent = ensure_shard(i).compute_time_extent();
-      if (!shard_extent.has_data) {
-        continue;
-      }
-      if (!extent.has_data || shard_extent.start_ns < extent.start_ns) {
-        extent.start_ns = shard_extent.start_ns;
-      }
-      if (!extent.has_data || shard_extent.end_ns > extent.end_ns) {
-        extent.end_ns = shard_extent.end_ns;
-      }
-      extent.has_data = true;
-    }
-    return extent;
   }
 
   void populate_schemas() override
@@ -487,29 +334,32 @@ public:
   }
 
 private:
-  McapFileReader & ensure_shard(std::size_t i) const
+  std::unique_ptr<McapFileReader> open_shard(
+    const std::filesystem::path & shard_path) const override
   {
-    if (!shards_[i]) {
-      // Share the decompressor across shards so the ZSTD_DCtx is reused for
-      // the entire iteration (per-thread context reuse is the hot-path
-      // contract documented by rosbag2_compression_zstd).
-      shards_[i] = std::make_unique<McapFileReader>(dir_ / shard_rel_paths_[i], decompressor_);
-    }
-    return *shards_[i];
+    // Share the decompressor across shards so the ZSTD_DCtx is reused for
+    // the entire iteration (per-thread context reuse is the hot-path
+    // contract documented by rosbag2_compression_zstd).
+    return std::make_unique<McapFileReader>(shard_path, decompressor_);
   }
 
-  std::filesystem::path dir_;
-  std::vector<std::filesystem::path> shard_rel_paths_;
-  // mutable because topics() and ensure_shard() are logically const for
-  // callers but cache lazily-derived state.
-  mutable std::vector<TopicInfo> topics_;
-  mutable std::vector<std::unique_ptr<McapFileReader>> shards_;
-  BagMetadata metadata_;
-  ReadFilter pending_filter_;
-  bool has_pending_filter_ = false;
-  std::vector<bool> shards_filter_applied_;
-  std::size_t current_ = 0;
-  bool iteration_started_ = false;
+  void on_topic_remapped(TopicInfo & bag_topic, const TopicInfo & shard_topic) const override
+  {
+    // Backfill schema bytes from the shard (which always carries them) into
+    // our metadata-derived TopicInfo (which may not).
+    if (bag_topic.schema_text.empty() && !shard_topic.schema_text.empty()) {
+      bag_topic.schema_text = shard_topic.schema_text;
+    }
+    if (bag_topic.schema_encoding.empty() && !shard_topic.schema_encoding.empty()) {
+      bag_topic.schema_encoding = shard_topic.schema_encoding;
+    }
+  }
+
+  bool scan_from_summary(const std::vector<bool> & shard_flags) const override
+  {
+    return std::all_of(shard_flags.begin(), shard_flags.end(), [](bool f) { return f; });
+  }
+
   bool schemas_loaded_ = false;
   std::shared_ptr<MessageDecompressor> decompressor_;
 };

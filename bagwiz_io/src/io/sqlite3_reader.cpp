@@ -14,6 +14,7 @@
 #include "bagwiz/io/message_decompressor.hpp"
 #include "bagwiz/io/metadata_yaml.hpp"
 #include "bagwiz/io/sqlite3_helpers.hpp"
+#include "shard_multiplexer.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #include <sqlite3.h>
 
@@ -405,199 +406,47 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Multi-shard SQLite3 reader: concatenates SqliteFileReaders in declared
-// order. Matches rosbag2's monotonic shard ordering.
-//
-// Shards are opened lazily. When metadata.yaml carries a complete summary
-// (total count, start time, duration, per-topic counts) and the topic list,
-// `topics()` and `compute_stats()` answer from metadata alone — `bagwiz ls`
-// against a multi-shard SQLite bag avoids the otherwise unavoidable
-// `COUNT(*) GROUP BY topic_id` scan on every shard.
+// Multi-shard SQLite3 reader: the shard multiplexing (lazy shard opening,
+// filter push-down, topic-pointer remapping, stats/count/extent folding) is
+// shared with the MCAP directory reader in ShardMultiplexer. What stays here
+// is how a shard file becomes a SqliteFileReader (MESSAGE-mode decompressor
+// sharing, `.db3.zstd` FILE-mode envelope handling) and the from_summary
+// policy: sqlite shard stats read raw tables, never a summary.
 // ---------------------------------------------------------------------------
-class SqliteShardReader : public BagReader
+class SqliteShardReader : public ShardMultiplexer<SqliteFileReader>
 {
 public:
   SqliteShardReader(
     std::filesystem::path dir, std::vector<std::filesystem::path> shard_rel_paths,
     std::vector<TopicInfo> topics, BagMetadata metadata,
     std::shared_ptr<MessageDecompressor> decompressor, bool zstd_envelope)
-  : dir_(std::move(dir)),
-    shard_rel_paths_(std::move(shard_rel_paths)),
-    topics_(std::move(topics)),
-    metadata_(std::move(metadata)),
+  : ShardMultiplexer(
+      std::move(dir), std::move(shard_rel_paths), std::move(topics), std::move(metadata)),
     decompressor_(std::move(decompressor)),
     zstd_envelope_(zstd_envelope)
   {
-    shards_.resize(shard_rel_paths_.size());
-  }
-
-  std::span<const TopicInfo> topics() const override
-  {
-    if (!topics_.empty()) {
-      return topics_;
-    }
-    if (!shard_rel_paths_.empty()) {
-      const auto & first = ensure_shard(0);
-      auto shard_topics = first.topics();
-      topics_.assign(shard_topics.begin(), shard_topics.end());
-    }
-    return topics_;
-  }
-
-  void set_filter(const ReadFilter & f) override
-  {
-    if (iteration_started_) {
-      throw std::runtime_error("BagReader::set_filter called after iteration started");
-    }
-    pending_filter_ = f;
-    has_pending_filter_ = true;
-  }
-
-  bool next(RawMessage & out) override
-  {
-    iteration_started_ = true;
-    while (current_ < shard_rel_paths_.size()) {
-      auto & shard = ensure_shard(current_);
-      if (shards_filter_applied_.size() <= current_) {
-        shards_filter_applied_.resize(current_ + 1, false);
-      }
-      if (has_pending_filter_ && !shards_filter_applied_[current_]) {
-        shard.set_filter(pending_filter_);
-        shards_filter_applied_[current_] = true;
-      }
-      if (shard.next(out)) {
-        for (auto & t : topics_) {
-          if (t.name == out.topic->name) {
-            out.topic = &t;
-            return true;
-          }
-        }
-        return true;
-      }
-      ++current_;
-    }
-    return false;
-  }
-
-  Stats compute_stats() override
-  {
-    if (metadata_.has_summary) {
-      Stats stats;
-      stats.from_summary = true;
-      stats.total_messages = metadata_.total_messages;
-      stats.start_ns = metadata_.start_ns;
-      stats.end_ns = metadata_.end_ns;
-      stats.per_topic = metadata_.per_topic_counts;
-      return stats;
-    }
-
-    Stats combined;
-    combined.from_summary = false;
-    bool first = true;
-    for (std::size_t i = 0; i < shard_rel_paths_.size(); ++i) {
-      auto st = ensure_shard(i).compute_stats();
-      combined.total_messages += st.total_messages;
-      if (first || st.start_ns < combined.start_ns) {
-        combined.start_ns = st.start_ns;
-      }
-      if (first || st.end_ns > combined.end_ns) {
-        combined.end_ns = st.end_ns;
-      }
-      first = false;
-      // cppcheck-suppress unassignedVariable
-      for (const auto & [k, v] : st.per_topic) {
-        combined.per_topic[k] += v;
-      }
-    }
-    return combined;
-  }
-
-  std::unordered_map<std::string, int64_t> compute_topic_counts(
-    std::span<const std::string> topics) override
-  {
-    std::unordered_map<std::string, int64_t> result;
-    if (topics.empty()) {
-      return result;
-    }
-
-    if (metadata_.has_summary) {
-      for (const auto & topic : topics) {
-        if (auto it = metadata_.per_topic_counts.find(topic);
-            it != metadata_.per_topic_counts.end()) {
-          result[topic] = it->second;
-        }
-      }
-      return result;
-    }
-
-    for (std::size_t i = 0; i < shard_rel_paths_.size(); ++i) {
-      auto shard_counts = ensure_shard(i).compute_topic_counts(topics);
-      // cppcheck-suppress unassignedVariable
-      for (const auto & [k, v] : shard_counts) {
-        result[k] += v;
-      }
-    }
-    return result;
-  }
-
-  TimeExtent compute_time_extent() override
-  {
-    TimeExtent extent;
-    if (metadata_.has_summary) {
-      extent.start_ns = metadata_.start_ns;
-      extent.end_ns = metadata_.end_ns;
-      extent.has_data = true;
-      return extent;
-    }
-
-    for (std::size_t i = 0; i < shard_rel_paths_.size(); ++i) {
-      auto shard_extent = ensure_shard(i).compute_time_extent();
-      if (!shard_extent.has_data) {
-        continue;
-      }
-      if (!extent.has_data || shard_extent.start_ns < extent.start_ns) {
-        extent.start_ns = shard_extent.start_ns;
-      }
-      if (!extent.has_data || shard_extent.end_ns > extent.end_ns) {
-        extent.end_ns = shard_extent.end_ns;
-      }
-      extent.has_data = true;
-    }
-    return extent;
   }
 
 private:
-  SqliteFileReader & ensure_shard(std::size_t i) const
+  std::unique_ptr<SqliteFileReader> open_shard(
+    const std::filesystem::path & shard_path) const override
   {
-    if (!shards_[i]) {
-      const auto shard_path = dir_ / shard_rel_paths_[i];
-      if (zstd_envelope_) {
-        // FILE-mode `.db3.zstd` envelope: decompress this shard to a temp
-        // `.db3` lazily (only now, when it is actually iterated) and hand
-        // ownership of the temp file to the reader so it is removed on close.
-        TempFile temp = decompress_zstd_file_to_temp(shard_path);
-        const auto temp_path = temp.path();
-        shards_[i] = std::make_unique<SqliteFileReader>(temp_path, decompressor_, std::move(temp));
-      } else {
-        // Share the decompressor across shards so the ZSTD_DCtx is reused for
-        // the entire iteration (per-thread context reuse is the hot-path
-        // contract documented by rosbag2_compression_zstd).
-        shards_[i] = std::make_unique<SqliteFileReader>(shard_path, decompressor_);
-      }
+    if (zstd_envelope_) {
+      // FILE-mode `.db3.zstd` envelope: decompress this shard to a temp
+      // `.db3` lazily (only now, when it is actually iterated) and hand
+      // ownership of the temp file to the reader so it is removed on close.
+      TempFile temp = decompress_zstd_file_to_temp(shard_path);
+      const auto temp_path = temp.path();
+      return std::make_unique<SqliteFileReader>(temp_path, decompressor_, std::move(temp));
     }
-    return *shards_[i];
+    // Share the decompressor across shards so the ZSTD_DCtx is reused for
+    // the entire iteration (per-thread context reuse is the hot-path
+    // contract documented by rosbag2_compression_zstd).
+    return std::make_unique<SqliteFileReader>(shard_path, decompressor_);
   }
 
-  std::filesystem::path dir_;
-  std::vector<std::filesystem::path> shard_rel_paths_;
-  mutable std::vector<TopicInfo> topics_;
-  mutable std::vector<std::unique_ptr<SqliteFileReader>> shards_;
-  BagMetadata metadata_;
-  ReadFilter pending_filter_;
-  bool has_pending_filter_ = false;
-  std::vector<bool> shards_filter_applied_;
-  std::size_t current_ = 0;
-  bool iteration_started_ = false;
+  bool scan_from_summary(const std::vector<bool> & /*shard_flags*/) const override { return false; }
+
   std::shared_ptr<MessageDecompressor> decompressor_;
   // True when each shard in shard_rel_paths_ is a `.db3.zstd` envelope that
   // must be decompressed to a temp `.db3` before SQLite can open it.

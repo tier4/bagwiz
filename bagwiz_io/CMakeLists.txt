@@ -172,6 +172,13 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_topics_test test/io/topics_test.cpp)
   target_link_libraries(bagwiz_topics_test bagwiz_io)
+
+  # The multiplexer template is a src-local detail header; the test drives it
+  # with a fake file-reader (the mcap/sqlite3 reader suites cover the two real
+  # instantiations end to end).
+  ament_add_gtest(bagwiz_shard_multiplexer_test test/io/shard_multiplexer_test.cpp)
+  target_include_directories(bagwiz_shard_multiplexer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(bagwiz_shard_multiplexer_test bagwiz_io)
 endif()
 
 ament_package()
