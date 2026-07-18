@@ -17,10 +17,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <memory>
 #include <span>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -150,6 +149,31 @@ std::shared_ptr<const ColorizeGeometry> make_owned_geometry(
     build_colorize_geometry(points, config.geometry_neighbors, config.rasterizer.num_threads));
 }
 
+// Runs `fn(begin, end, chunk_index)` over `count` items split into
+// num_threads contiguous chunks, one chunk per worker thread; serial when
+// num_threads <= 1 or count == 0. Deterministic for any thread count when
+// per-chunk results are merged in chunk order.
+template <typename Fn>
+void run_parallel(int num_threads, std::size_t count, Fn && fn)
+{
+  if (num_threads <= 1 || count == 0) {
+    fn(0, count, 0);
+    return;
+  }
+  std::vector<std::thread> workers;
+  workers.reserve(static_cast<std::size_t>(num_threads));
+  const std::size_t chunk =
+    (count + static_cast<std::size_t>(num_threads) - 1) / static_cast<std::size_t>(num_threads);
+  for (int t = 0; t < num_threads; ++t) {
+    const std::size_t begin = std::min(count, static_cast<std::size_t>(t) * chunk);
+    const std::size_t end = std::min(count, begin + chunk);
+    workers.emplace_back([&, begin, end, t]() { fn(begin, end, static_cast<std::size_t>(t)); });
+  }
+  for (auto & w : workers) {
+    w.join();
+  }
+}
+
 }  // namespace
 
 ColorizeGeometry build_colorize_geometry(
@@ -276,93 +300,130 @@ bool MapColorizer::add_image(
   view.height = height;
   rasterizer_->visible_points(view, dynamic_points, visible_scratch_);
 
-  // Weight and sample every visible point into the pending list.
-  pending_scratch_.clear();
-  for (const auto & vp : visible_scratch_) {
-    double weight = 1.0;
-    if (config_.use_weights) {
-      const double z = static_cast<double>(vp.depth);
-      const double ref_over_z = config_.weight_distance_ref / z;
-      const double w_dist = std::clamp(ref_over_z * ref_over_z, 0.0, 1.0);
-      double w_inc = 1.0;
-      if (geometry_ && vp.index < geometry_->normals.size()) {
-        const auto & n = geometry_->normals[vp.index];
-        const double nn = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
-        if (nn > 0.0) {
-          const auto & p = points_[vp.index];
-          const double dx = static_cast<double>(p[0]) - cam_center[0];
-          const double dy = static_cast<double>(p[1]) - cam_center[1];
-          const double dz = static_cast<double>(p[2]) - cam_center[2];
-          const double len = std::sqrt(dx * dx + dy * dy + dz * dz);
-          if (len > 0.0) {
-            w_inc = std::abs(n[0] * dx + n[1] * dy + n[2] * dz) / (std::sqrt(nn) * len);
+  // The sweeps below are independent per point, so they run over num_threads
+  // chunks (merged in chunk order, keeping the result deterministic for any
+  // thread count): weight + sample, gain vote, then gain-apply +
+  // reservoir-add.
+  const int num_threads = std::clamp(
+    config_.rasterizer.num_threads, 1,
+    static_cast<int>(std::max<std::size_t>(1, visible_scratch_.size())));
+  if (pending_chunks_.size() != static_cast<std::size_t>(num_threads)) {
+    pending_chunks_.assign(static_cast<std::size_t>(num_threads), {});
+  }
+
+  // Weight and sample every visible point into per-chunk pending lists.
+  auto weight_chunk = [&](std::size_t begin, std::size_t end, std::size_t chunk) {
+    auto & out = pending_chunks_[chunk];
+    out.clear();
+    for (std::size_t j = begin; j < end; ++j) {
+      const auto & vp = visible_scratch_[j];
+      double weight = 1.0;
+      if (config_.use_weights) {
+        const double z = static_cast<double>(vp.depth);
+        const double ref_over_z = config_.weight_distance_ref / z;
+        const double w_dist = std::clamp(ref_over_z * ref_over_z, 0.0, 1.0);
+        double w_inc = 1.0;
+        if (geometry_ && vp.index < geometry_->normals.size()) {
+          const auto & n = geometry_->normals[vp.index];
+          const double nn = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
+          if (nn > 0.0) {
+            const auto & p = points_[vp.index];
+            const double dx = static_cast<double>(p[0]) - cam_center[0];
+            const double dy = static_cast<double>(p[1]) - cam_center[1];
+            const double dz = static_cast<double>(p[2]) - cam_center[2];
+            const double len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (len > 0.0) {
+              w_inc = std::abs(n[0] * dx + n[1] * dy + n[2] * dz) / (std::sqrt(nn) * len);
+            }
           }
         }
+        const double g = image::sobel_gradient_magnitude_bilinear(bgr, width, height, vp.u, vp.v);
+        const double w_sharp =
+          config_.weight_sharpness_g0 > 0.0 ? g / (g + config_.weight_sharpness_g0) : 1.0;
+        const double edge = std::min(
+          std::min(vp.u, vp.v),
+          std::min(static_cast<double>(width - 1) - vp.u, static_cast<double>(height - 1) - vp.v));
+        const double w_border = config_.weight_border_margin_px > 0.0
+                                  ? std::clamp(edge / config_.weight_border_margin_px, 0.0, 1.0)
+                                  : 1.0;
+        weight = w_dist * w_inc * w_sharp * w_border;
+        if (weight < config_.weight_min) {
+          continue;
+        }
       }
-      const double g = image::sobel_gradient_magnitude_bilinear(bgr, width, height, vp.u, vp.v);
-      const double w_sharp =
-        config_.weight_sharpness_g0 > 0.0 ? g / (g + config_.weight_sharpness_g0) : 1.0;
-      const double edge = std::min(
-        std::min(vp.u, vp.v),
-        std::min(static_cast<double>(width - 1) - vp.u, static_cast<double>(height - 1) - vp.v));
-      const double w_border = config_.weight_border_margin_px > 0.0
-                                ? std::clamp(edge / config_.weight_border_margin_px, 0.0, 1.0)
-                                : 1.0;
-      weight = w_dist * w_inc * w_sharp * w_border;
-      if (weight < config_.weight_min) {
-        continue;
-      }
+      const auto sample = image::bilinear_sample_bgr(bgr, width, height, vp.u, vp.v);
+      out.push_back(PendingObservation{vp.index, sample[2], sample[1], sample[0], weight});
     }
-    const auto sample = image::bilinear_sample_bgr(bgr, width, height, vp.u, vp.v);
-    pending_scratch_.push_back(
-      PendingObservation{vp.index, sample[2], sample[1], sample[0], weight});
+  };
+  run_parallel(num_threads, visible_scratch_.size(), weight_chunk);
+  pending_scratch_.clear();
+  for (const auto & chunk : pending_chunks_) {
+    pending_scratch_.insert(pending_scratch_.end(), chunk.begin(), chunk.end());
   }
 
   // Gain compensation, pass A: estimate this image's RGB gain from the ratio
-  // of each re-observed point's reservoir mean to its new observation.
+  // of each re-observed point's reservoir mean to its new observation. Votes
+  // accumulate per chunk and merge below; the median is order-independent.
   std::array<double, 3> gain{1.0, 1.0, 1.0};
   if (config_.gain_compensation) {
+    if (gain_ratio_chunks_.size() != static_cast<std::size_t>(num_threads)) {
+      gain_ratio_chunks_.assign(static_cast<std::size_t>(num_threads), {});
+    }
+    auto vote_chunk = [&](std::size_t begin, std::size_t end, std::size_t chunk) {
+      auto & ratios = gain_ratio_chunks_[chunk];
+      for (auto & r : ratios) {
+        r.clear();
+      }
+      for (std::size_t j = begin; j < end; ++j) {
+        const auto & obs = pending_scratch_[j];
+        const auto & page = pages_[obs.index / kPageSize];
+        if (!page) {
+          continue;
+        }
+        const std::size_t offset = obs.index % kPageSize;
+        const std::size_t stored = std::min<std::size_t>(page->seen[offset], kMaxObservations);
+        if (stored < config_.gain_min_prior_obs) {
+          continue;
+        }
+        std::array<double, 3> mean{0.0, 0.0, 0.0};
+        std::array<double, 3> cmin{255.0, 255.0, 255.0};
+        std::array<double, 3> cmax{0.0, 0.0, 0.0};
+        for (std::size_t s = 0; s < stored; ++s) {
+          const std::uint32_t packed = page->slots[offset][s];
+          const std::array<double, 3> value{
+            static_cast<double>((packed >> 16) & 0xFFU), static_cast<double>((packed >> 8) & 0xFFU),
+            static_cast<double>(packed & 0xFFU)};
+          for (std::size_t c = 0; c < 3; ++c) {
+            mean[c] += value[c];
+            cmin[c] = std::min(cmin[c], value[c]);
+            cmax[c] = std::max(cmax[c], value[c]);
+          }
+        }
+        const std::array<double, 3> current{obs.r, obs.g, obs.b};
+        bool usable = true;
+        for (std::size_t c = 0; c < 3; ++c) {
+          mean[c] /= static_cast<double>(stored);
+          // Appearance-unstable reservoirs abstain (see kGainVoteStableRange);
+          // near-black channels make the ratio numerically meaningless.
+          usable = usable && cmax[c] - cmin[c] <= kGainVoteStableRange && mean[c] >= 8.0 &&
+                   current[c] >= 8.0;
+        }
+        if (!usable) {
+          continue;
+        }
+        for (std::size_t c = 0; c < 3; ++c) {
+          ratios[c].push_back(mean[c] / current[c]);
+        }
+      }
+    };
+    run_parallel(num_threads, pending_scratch_.size(), vote_chunk);
     for (auto & ratios : gain_ratio_scratch_) {
       ratios.clear();
     }
-    for (const auto & obs : pending_scratch_) {
-      const auto & page = pages_[obs.index / kPageSize];
-      if (!page) {
-        continue;
-      }
-      const std::size_t offset = obs.index % kPageSize;
-      const std::size_t stored = std::min<std::size_t>(page->seen[offset], kMaxObservations);
-      if (stored < config_.gain_min_prior_obs) {
-        continue;
-      }
-      std::array<double, 3> mean{0.0, 0.0, 0.0};
-      std::array<double, 3> cmin{255.0, 255.0, 255.0};
-      std::array<double, 3> cmax{0.0, 0.0, 0.0};
-      for (std::size_t s = 0; s < stored; ++s) {
-        const std::uint32_t packed = page->slots[offset][s];
-        const std::array<double, 3> value{
-          static_cast<double>((packed >> 16) & 0xFFU), static_cast<double>((packed >> 8) & 0xFFU),
-          static_cast<double>(packed & 0xFFU)};
-        for (std::size_t c = 0; c < 3; ++c) {
-          mean[c] += value[c];
-          cmin[c] = std::min(cmin[c], value[c]);
-          cmax[c] = std::max(cmax[c], value[c]);
-        }
-      }
-      const std::array<double, 3> current{obs.r, obs.g, obs.b};
-      bool usable = true;
+    for (const auto & chunk : gain_ratio_chunks_) {
       for (std::size_t c = 0; c < 3; ++c) {
-        mean[c] /= static_cast<double>(stored);
-        // Appearance-unstable reservoirs abstain (see kGainVoteStableRange);
-        // near-black channels make the ratio numerically meaningless.
-        usable = usable && cmax[c] - cmin[c] <= kGainVoteStableRange && mean[c] >= 8.0 &&
-                 current[c] >= 8.0;
-      }
-      if (!usable) {
-        continue;
-      }
-      for (std::size_t c = 0; c < 3; ++c) {
-        gain_ratio_scratch_[c].push_back(mean[c] / current[c]);
+        gain_ratio_scratch_[c].insert(
+          gain_ratio_scratch_[c].end(), chunk[c].begin(), chunk[c].end());
       }
     }
     if (gain_ratio_scratch_[0].size() >= config_.gain_min_samples) {
@@ -372,14 +433,29 @@ bool MapColorizer::add_image(
     }
   }
 
-  // Pass B: apply the gain, quantize the weight, and reservoir-add.
+  // Reservoir pages are allocated lazily on a point's first observation;
+  // the parallel pass below must not race the allocation, so ensure every
+  // pending point's page exists first (pointer checks only, cheap).
   for (const auto & obs : pending_scratch_) {
-    const std::uint32_t r = quantize8(obs.r * gain[0]);
-    const std::uint32_t g = quantize8(obs.g * gain[1]);
-    const std::uint32_t b = quantize8(obs.b * gain[2]);
-    const std::uint32_t w_q = quantize8(obs.weight * 255.0);
-    reservoir_add(obs.index, (w_q << 24) | (r << 16) | (g << 8) | b);
+    auto & page = pages_[obs.index / kPageSize];
+    if (!page) {
+      page = std::make_unique<ObservationPage>();
+    }
   }
+
+  // Pass B: apply the gain, quantize the weight, and reservoir-add. Points
+  // are unique within an image, so per-point writes never collide.
+  auto add_chunk = [&](std::size_t begin, std::size_t end, std::size_t /*chunk*/) {
+    for (std::size_t j = begin; j < end; ++j) {
+      const auto & obs = pending_scratch_[j];
+      const std::uint32_t r = quantize8(obs.r * gain[0]);
+      const std::uint32_t g = quantize8(obs.g * gain[1]);
+      const std::uint32_t b = quantize8(obs.b * gain[2]);
+      const std::uint32_t w_q = quantize8(obs.weight * 255.0);
+      reservoir_add(obs.index, (w_q << 24) | (r << 16) | (g << 8) | b);
+    }
+  };
+  run_parallel(num_threads, pending_scratch_.size(), add_chunk);
 
   ++images_used_;
   return true;

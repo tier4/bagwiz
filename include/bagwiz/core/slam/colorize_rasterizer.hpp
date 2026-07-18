@@ -107,9 +107,11 @@ struct ColorizeRasterizerConfig
   double dynamic_splat_radius_min_px = 1.5;
   double dynamic_splat_radius_max_px = 16.0;
 
-  // Worker threads for the per-image projection/visibility sweeps. <= 1 runs
-  // serially. The result is identical for any thread count (the depth buffer
-  // is reduced with order-independent atomic min).
+  // Worker threads for the per-image projection/visibility sweeps (the
+  // MapColorizer reuses the same value for its per-image weight, gain-vote,
+  // and accumulation sweeps). <= 1 runs serially. The result is identical
+  // for any thread count (the depth buffer is reduced with
+  // order-independent atomic min).
   int num_threads = 4;
 };
 

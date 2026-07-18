@@ -267,7 +267,9 @@ private:
     double weight = 0.0;
   };
   std::vector<PendingObservation> pending_scratch_;
+  std::vector<std::vector<PendingObservation>> pending_chunks_;  // per worker, merged in order
   std::array<std::vector<double>, 3> gain_ratio_scratch_;
+  std::vector<std::array<std::vector<double>, 3>> gain_ratio_chunks_;  // per worker
 
   std::size_t images_used_ = 0;
   std::size_t images_skipped_ = 0;
