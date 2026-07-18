@@ -194,6 +194,7 @@ add_executable(bagwiz
   src/commands/pcd_concat.cpp
   src/commands/pcd_concat_common.cpp
   src/commands/pcd_undistort.cpp
+  src/commands/pcd_undistort_common.cpp
   src/commands/walk.cpp
   src/commands/traj.cpp
   src/commands/tf.cpp
@@ -350,6 +351,19 @@ if(BUILD_TESTING)
     src/commands/pcd_undistort.cpp)
   target_include_directories(bagwiz_pcd_undistort_command_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(bagwiz_pcd_undistort_command_test ${bagwiz_test_libs} fmt::fmt)
+
+  # pcd_undistort_common.hpp lives in src/commands (CLI-internal, not
+  # installed), so this test adds src/commands to its include path
+  # (pcd_concat_common idiom). rmw + geometry/nav_msgs are linked for the
+  # typed round-trip through rmw_serialize (PoseStamped / Odometry fixtures).
+  ament_add_gtest(bagwiz_pcd_undistort_common_test
+    test/commands/pcd_undistort_common_test.cpp
+    src/commands/pcd_undistort_common.cpp)
+  target_include_directories(bagwiz_pcd_undistort_common_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
+  target_link_libraries(
+    bagwiz_pcd_undistort_common_test ${bagwiz_test_libs} fmt::fmt
+    ${geometry_msgs_TARGETS} ${nav_msgs_TARGETS} ${rmw_TARGETS} ${rmw_implementation_TARGETS})
 
   # smoke_test touches Registry::instance() directly, so it compiles
   # registry.cpp (which otherwise lives only in the `bagwiz` executable).
