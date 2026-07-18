@@ -178,31 +178,13 @@ struct ProjectionWorkResult
   [[nodiscard]] bool ok() const noexcept { return error.empty(); }
 };
 
-// The clock a camera frame is matched against for one cloud topic: capture time
-// (header.stamp) when both the frame and that topic carry header stamps, else
-// bag record time so the comparison stays within a single clock.
-struct FrameMatch
-{
-  std::int64_t target_ns;
-  core::pointcloud::PointCloudMatchKey key;
-};
-
-FrameMatch choose_frame_match(
-  std::int64_t header_stamp_ns, std::int64_t record_ns, bool topic_has_stamps)
-{
-  if (header_stamp_ns > 0 && topic_has_stamps) {
-    return {header_stamp_ns, core::pointcloud::PointCloudMatchKey::kHeaderStamp};
-  }
-  return {record_ns, core::pointcloud::PointCloudMatchKey::kRecordTime};
-}
-
 // Fetch, parse, transform, and project the point cloud nearest the frame for
 // every listed topic. Each topic is matched in its own clock (see
-// choose_frame_match): `frame_header_stamp_ns` (0 if unset) and `frame_record_ns`
-// are the frame's two clocks, and `topic_has_stamps[i]` says whether topic i can
-// be matched by capture time. Each call opens its own BagReader(s) so the work
-// can safely run on a background thread; the caller supplies the read-only
-// camera info and TF buffer.
+// core::pointcloud::choose_frame_match): `frame_header_stamp_ns` (0 if unset)
+// and `frame_record_ns` are the frame's two clocks, and `topic_has_stamps[i]`
+// says whether topic i can be matched by capture time. Each call opens its own
+// BagReader(s) so the work can safely run on a background thread; the caller
+// supplies the read-only camera info and TF buffer.
 ProjectionWorkResult run_projection_work(
   const std::filesystem::path & input, const std::vector<std::string> & pointcloud_topics,
   const std::vector<std::vector<PointCloudIndexEntry>> & entries_per_topic,
@@ -216,8 +198,8 @@ ProjectionWorkResult run_projection_work(
     for (std::size_t i = 0; i < pointcloud_topics.size(); ++i) {
       PointCloudFetcher fetcher(input, pointcloud_topics[i], entries_per_topic[i]);
       std::string error;
-      const auto match =
-        choose_frame_match(frame_header_stamp_ns, frame_record_ns, topic_has_stamps[i]);
+      const auto match = core::pointcloud::choose_frame_match(
+        frame_header_stamp_ns, frame_record_ns, topic_has_stamps[i]);
       const auto * cloud = fetcher.fetch(match.target_ns, match.key, error);
       if (cloud == nullptr) {
         return {{}, std::move(error)};
@@ -749,7 +731,7 @@ int run_generate_video(const GenerateVideoArgs & args)
         if (!pcd_fetchers.empty()) {
           for (std::size_t i = 0; i < pcd_fetchers.size(); ++i) {
             std::string pcd_error;
-            const auto match = choose_frame_match(
+            const auto match = core::pointcloud::choose_frame_match(
               frame->header_stamp_ns, frame->timestamp_ns, pcd_topic_has_stamps[i]);
             const auto * cloud = pcd_fetchers[i].fetch(match.target_ns, match.key, pcd_error);
             if (cloud == nullptr) {

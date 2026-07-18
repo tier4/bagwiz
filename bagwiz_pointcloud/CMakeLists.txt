@@ -136,6 +136,9 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_pointcloud_fetcher_test test/core/pointcloud/fetcher_test.cpp)
   target_link_libraries(bagwiz_pointcloud_fetcher_test bagwiz_pointcloud)
 
+  ament_add_gtest(bagwiz_frame_match_test test/core/pointcloud/frame_match_test.cpp)
+  target_link_libraries(bagwiz_frame_match_test bagwiz_pointcloud)
+
   ament_add_gtest(
     bagwiz_pointcloud_property_ranges_test test/core/pointcloud/property_ranges_test.cpp)
   target_link_libraries(bagwiz_pointcloud_property_ranges_test bagwiz_pointcloud)

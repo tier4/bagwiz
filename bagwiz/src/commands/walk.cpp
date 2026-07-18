@@ -936,17 +936,15 @@ public:
       std::vector<core::pointcloud::ProjectedPoint> all_points;
       std::string last_error;
       for (std::size_t i = 0; i < pcd_fetchers.size(); ++i) {
-        // Pair the frame with the point cloud nearest in time. Use capture time
-        // (header.stamp) only when both the image and this topic carry header
-        // stamps; otherwise match by bag record time on both sides so the compare
-        // stays in one clock. The chosen target is also the TF-lookup time.
-        const bool use_capture = img.header_stamp_ns > 0 && pcd_topic_has_stamps[i];
-        const std::int64_t match_ns = use_capture ? img.header_stamp_ns : cache[index].timestamp_ns;
-        const auto match_key = use_capture ? core::pointcloud::PointCloudMatchKey::kHeaderStamp
-                                           : core::pointcloud::PointCloudMatchKey::kRecordTime;
+        // Pair the frame with the point cloud nearest in time (see
+        // core::pointcloud::choose_frame_match for the clock rule). The chosen
+        // target is also the TF-lookup time.
+        const auto match = core::pointcloud::choose_frame_match(
+          img.header_stamp_ns, cache[index].timestamp_ns, pcd_topic_has_stamps[i]);
+        const std::int64_t match_ns = match.target_ns;
 
         std::string error;
-        const auto * cloud = pcd_fetchers[i].fetch(match_ns, match_key, error);
+        const auto * cloud = pcd_fetchers[i].fetch(match_ns, match.key, error);
         if (cloud == nullptr) {
           last_error = std::move(error);
           continue;

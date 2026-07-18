@@ -110,6 +110,24 @@ struct PointCloudScan
 // single clock.
 enum class PointCloudMatchKey { kHeaderStamp, kRecordTime };
 
+// The match a camera frame asks a PointCloudFetcher for: which clock to search
+// and the target expressed in that clock (see choose_frame_match).
+struct FrameMatch
+{
+  std::int64_t target_ns = 0;
+  PointCloudMatchKey key = PointCloudMatchKey::kRecordTime;
+};
+
+// The clock a camera frame is matched against for one cloud topic: capture time
+// (the frame's header.stamp) only when BOTH sides carry stamps — the frame's
+// header.stamp is set (`frame_header_stamp_ns` > 0) and the topic's index
+// reports PointCloudIndex::header_stamps_present — else bag record time on both
+// sides, so the comparison stays within a single clock. The returned target_ns
+// doubles as the TF-lookup time when the matched cloud is projected onto the
+// frame.
+[[nodiscard]] FrameMatch choose_frame_match(
+  std::int64_t frame_header_stamp_ns, std::int64_t frame_record_ns, bool cloud_has_header_stamps);
+
 // Fetch the PointCloud2 message whose key (header.stamp or record time) is
 // closest to target_ns. The matched cloud is then loaded from storage by its bag
 // record time. The returned pointer is valid until the next fetch() call or

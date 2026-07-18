@@ -108,6 +108,15 @@ float compute_property_value(
 
 }  // namespace
 
+FrameMatch choose_frame_match(
+  std::int64_t frame_header_stamp_ns, std::int64_t frame_record_ns, bool cloud_has_header_stamps)
+{
+  if (frame_header_stamp_ns > 0 && cloud_has_header_stamps) {
+    return {frame_header_stamp_ns, PointCloudMatchKey::kHeaderStamp};
+  }
+  return {frame_record_ns, PointCloudMatchKey::kRecordTime};
+}
+
 std::optional<PointCloudIndex> build_point_cloud_index(
   const std::filesystem::path & input, const std::string & topic, PointCloudProperty property,
   const std::optional<double> & manual_min, const std::optional<double> & manual_max,
