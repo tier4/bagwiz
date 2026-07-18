@@ -51,6 +51,7 @@ find_package(zstd REQUIRED)
 
 add_library(bagwiz_io
   src/io/bag_factory.cpp
+  src/io/bag_open.cpp
   src/io/file_decompressor.cpp
   src/io/mcap_reader.cpp
   src/io/mcap_writer.cpp
@@ -59,6 +60,7 @@ add_library(bagwiz_io
   src/io/metadata_yaml.cpp
   src/io/sqlite3_reader.cpp
   src/io/sqlite3_writer.cpp
+  src/io/topics.cpp
 )
 target_include_directories(bagwiz_io
   PUBLIC
@@ -164,6 +166,12 @@ if(BUILD_TESTING)
     bagwiz_create_options_preserving_storage_test
     test/io/create_options_preserving_storage_test.cpp)
   target_link_libraries(bagwiz_create_options_preserving_storage_test bagwiz_io)
+
+  ament_add_gtest(bagwiz_bag_open_test test/io/bag_open_test.cpp)
+  target_link_libraries(bagwiz_bag_open_test bagwiz_io)
+
+  ament_add_gtest(bagwiz_topics_test test/io/topics_test.cpp)
+  target_link_libraries(bagwiz_topics_test bagwiz_io)
 endif()
 
 ament_package()
