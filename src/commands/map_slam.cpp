@@ -1357,7 +1357,6 @@ private:
       }
     };
 
-    std::vector<std::array<float, 3>> scan_world;
     io::RawMessage raw;
     try {
       while (reader->next(raw)) {
@@ -1386,7 +1385,7 @@ private:
             continue;
           }
           const std::array<double, 9> r = quat_to_rot(pose->qx, pose->qy, pose->qz, pose->qw);
-          scan_world.clear();
+          std::vector<std::array<float, 3>> scan_world;
           scan_world.reserve(scan.points.size());
           for (const auto & p : scan.points) {
             scan_world.push_back(
