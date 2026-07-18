@@ -9,6 +9,7 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/core/base/logging.hpp"
+#include "bagwiz/core/base/str_utils.hpp"
 #include "bagwiz/core/base/terminal_input.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/image/camera_info.hpp"
@@ -43,7 +44,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <ctime>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -153,39 +153,9 @@ private:
   std::unordered_map<std::size_t, std::list<Entry>::iterator> map_;
 };
 
-std::string format_timestamp(int64_t ns)
-{
-  const auto seconds = static_cast<std::time_t>(ns / 1'000'000'000);
-  const auto nanos = static_cast<int64_t>(ns % 1'000'000'000);
-  std::tm tm_utc{};
-  ::gmtime_r(&seconds, &tm_utc);
-  char buf[32];
-  std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_utc);
-  return fmt::format("{}.{:09d} UTC ({}.{:09d})", buf, nanos, seconds, nanos);
-}
-
 std::vector<std::byte> copy_payload(std::span<const std::byte> src)
 {
   return std::vector<std::byte>(src.begin(), src.end());
-}
-
-// Split a '\n'-delimited string into owned lines so the body vector
-// can outlive the source string. A trailing '\n' does not produce an
-// empty final element; a missing trailing '\n' keeps the tail.
-std::vector<std::string> split_lines(const std::string & s)
-{
-  std::vector<std::string> out;
-  std::size_t start = 0;
-  for (std::size_t i = 0; i < s.size(); ++i) {
-    if (s[i] == '\n') {
-      out.emplace_back(s.data() + start, i - start);
-      start = i + 1;
-    }
-  }
-  if (start < s.size()) {
-    out.emplace_back(s.data() + start, s.size() - start);
-  }
-  return out;
 }
 
 // ROS topic names use `/`; replace each `/` with `__` so path separators
@@ -461,7 +431,7 @@ public:
       // append a blank separator on its own logical line.
       const int cols = std::max(1, term.cols);
       append_wrapped(
-        frame.header, fmt::format("timestamp: {}", format_timestamp(msg.timestamp_ns)), cols);
+        frame.header, fmt::format("timestamp: {}", core::format_timestamp(msg.timestamp_ns)), cols);
       append_wrapped(frame.header, fmt::format("size:      {} bytes", msg.payload.size()), cols);
       frame.header.emplace_back();  // blank separator
 
@@ -472,7 +442,7 @@ public:
                                           : core::FormatResult{"", decoded.error};
       std::vector<std::string> body_logical;
       if (formatted.ok()) {
-        body_logical = split_lines(formatted.text);
+        body_logical = core::split_lines(formatted.text);
       } else {
         body_logical.push_back(
           fmt::format("⚠  Could not decode this message: {}", formatted.error));

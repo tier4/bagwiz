@@ -81,6 +81,12 @@ struct TfReplayOutputs
 // opened ("Could not open decoder for TF topic '<name>': ..."), when a message
 // fails to decode ("Failed to decode TF message on '<name>': ..."), or when
 // the conflict checker reports a contradiction.
+//
+// Decoding goes through the unified open_decoder() path, so for MCAP inputs
+// the schema-driven backend does the work and tf2_msgs does not need to be on
+// AMENT_PREFIX_PATH at runtime; only its header-only struct definition is
+// required at build time (via extract_tf_message ->
+// geometry_msgs::msg::TransformStamped).
 void replay_tf_topics(
   io::BagReader & reader, const std::vector<TfTopic> & tf_topics, const TfReplayOutputs & outputs);
 

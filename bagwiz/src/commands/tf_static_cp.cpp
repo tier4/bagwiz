@@ -14,6 +14,7 @@
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/tf/tf_message_wire.hpp"
+#include "bagwiz/core/tf/tf_topics.hpp"
 #include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/bag_open.hpp"
@@ -31,7 +32,6 @@
 #include <span>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -45,19 +45,6 @@ namespace
 
 constexpr const char * kLogger = "bagwiz.cmd.tf.static.cp";
 constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
-constexpr std::string_view kTfStaticSuffix = "tf_static";
-
-// True when a TF topic's name marks it static (ends with "tf_static", e.g.
-// "/tf_static"). `tf static cp` copies only these topics.
-bool is_static_tf_topic(std::string_view topic_name)
-{
-  if (topic_name.size() < kTfStaticSuffix.size()) {
-    return false;
-  }
-  return topic_name.compare(
-           topic_name.size() - kTfStaticSuffix.size(), kTfStaticSuffix.size(), kTfStaticSuffix) ==
-         0;
-}
 
 // The transforms gathered from one source static TF topic, ready to be written
 // into the destination under the same name. `transforms` is deduplicated by
@@ -76,7 +63,7 @@ std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> open_st
 {
   std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> decoder_by_topic;
   for (const auto & topic_info : reader.topics()) {
-    if (topic_info.type != kTfMessageType || !is_static_tf_topic(topic_info.name)) {
+    if (topic_info.type != kTfMessageType || !core::is_static_tf_topic(topic_info.name)) {
       continue;
     }
     auto open = core::decoder::open_decoder(topic_info);
@@ -118,7 +105,7 @@ std::vector<StaticTopicTransforms> collect_src_static_tf(const std::filesystem::
 
   std::vector<std::string> static_topics;
   for (const auto & t : reader->topics()) {
-    if (t.type == kTfMessageType && is_static_tf_topic(t.name)) {
+    if (t.type == kTfMessageType && core::is_static_tf_topic(t.name)) {
       static_topics.push_back(t.name);
     }
   }

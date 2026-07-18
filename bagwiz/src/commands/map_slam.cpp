@@ -27,6 +27,7 @@
 #include "bagwiz/core/slam/progress_bar.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
 #include "bagwiz/core/tf/tf_chain.hpp"
+#include "bagwiz/core/tf/tf_topics.hpp"
 #include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/core/tf/trajectory.hpp"
 #include "bagwiz/io/bag_io.hpp"
@@ -72,20 +73,9 @@ constexpr const char * kPointCloud2Type = "sensor_msgs/msg/PointCloud2";
 constexpr const char * kImuType = "sensor_msgs/msg/Imu";
 constexpr const char * kNavSatFixType = "sensor_msgs/msg/NavSatFix";
 constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
-constexpr std::string_view kTfStaticSuffix = "tf_static";
 // Static transforms are timeless; a year-long cache dwarfs any bag and matches
 // `tf walk` / `tf static calc` buffer sizing.
 constexpr std::chrono::hours kTfBufferCacheTime{24 * 365};
-
-bool is_static_tf_topic(std::string_view topic_name)
-{
-  if (topic_name.size() < kTfStaticSuffix.size()) {
-    return false;
-  }
-  return topic_name.compare(
-           topic_name.size() - kTfStaticSuffix.size(), kTfStaticSuffix.size(), kTfStaticSuffix) ==
-         0;
-}
 
 // Clamp an explicit --threads value to the host's hardware concurrency so the
 // user cannot oversubscribe the machine. A value <= 0 or a concurrency that
@@ -531,7 +521,7 @@ private:
 
     std::vector<std::string> static_topics;
     for (const auto & t : reader->topics()) {
-      if (t.type == kTfMessageType && is_static_tf_topic(t.name)) {
+      if (t.type == kTfMessageType && core::is_static_tf_topic(t.name)) {
         static_topics.push_back(t.name);
       }
     }
@@ -550,7 +540,7 @@ private:
 
     std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> decoders;
     for (const auto & info : reader->topics()) {
-      if (info.type != kTfMessageType || !is_static_tf_topic(info.name)) {
+      if (info.type != kTfMessageType || !core::is_static_tf_topic(info.name)) {
         continue;
       }
       auto open = core::decoder::open_decoder(info);
@@ -682,7 +672,7 @@ private:
       return false;
     }
     for (const auto & t : reader->topics()) {
-      if (t.type == kTfMessageType && is_static_tf_topic(t.name)) {
+      if (t.type == kTfMessageType && core::is_static_tf_topic(t.name)) {
         return true;
       }
     }

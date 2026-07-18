@@ -49,7 +49,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <system_error>
 #include <thread>
 #include <unordered_map>
@@ -65,7 +64,6 @@ constexpr const char * kLogger = "bagwiz.cmd.generate";
 constexpr const char * kImageType = "sensor_msgs/msg/Image";
 constexpr const char * kCompressedImageType = "sensor_msgs/msg/CompressedImage";
 constexpr const char * kPointCloudType = "sensor_msgs/msg/PointCloud2";
-constexpr std::string_view kTfStaticSuffix = "tf_static";
 
 bool is_supported_type(const std::string & type)
 {

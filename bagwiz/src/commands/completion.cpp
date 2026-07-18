@@ -12,6 +12,7 @@
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
+#include "bagwiz/core/tf/tf_topics.hpp"
 #include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
@@ -487,18 +488,6 @@ std::vector<std::string> complete_topics(
   return result;
 }
 
-constexpr std::string_view kTfStaticSuffix = "tf_static";
-
-// True when a TF topic's name marks it static (ends with "tf_static", e.g.
-// "/tf_static"). `tf static calc` resolves only the static tree, so its
-// frame-id completion is restricted to these topics.
-bool is_static_tf_topic_name(std::string_view name)
-{
-  return name.size() >= kTfStaticSuffix.size() &&
-         name.compare(
-           name.size() - kTfStaticSuffix.size(), kTfStaticSuffix.size(), kTfStaticSuffix) == 0;
-}
-
 // Soft cap on TF messages scanned for frame-id discovery. Static TF is
 // usually one message; dynamic TF re-publishes the same edges, so the
 // distinct frame-id set saturates well before this cap. The cap keeps
@@ -535,7 +524,7 @@ std::vector<std::string> collect_tf_frame_ids(
 
     std::vector<std::string> tf_topic_names;
     for (const auto & t : reader->topics()) {
-      if (t.type == kTfMessageType && (!static_only || is_static_tf_topic_name(t.name))) {
+      if (t.type == kTfMessageType && (!static_only || core::is_static_tf_topic(t.name))) {
         tf_topic_names.push_back(t.name);
       }
     }
@@ -552,7 +541,7 @@ std::vector<std::string> collect_tf_frame_ids(
       if (topic_info.type != kTfMessageType) {
         continue;
       }
-      if (static_only && !is_static_tf_topic_name(topic_info.name)) {
+      if (static_only && !core::is_static_tf_topic(topic_info.name)) {
         continue;
       }
       auto open = core::decoder::open_decoder(topic_info);

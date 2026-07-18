@@ -9,11 +9,12 @@
 #include "bagwiz/commands/tf_walk.hpp"
 
 #include "bagwiz/core/base/logging.hpp"
+#include "bagwiz/core/base/str_utils.hpp"
 #include "bagwiz/core/base/terminal_input.hpp"
-#include "bagwiz/core/decoder/decoder.hpp"
+#include "bagwiz/core/tf/tf_buffer_loader.hpp"
 #include "bagwiz/core/tf/tf_chain.hpp"
+#include "bagwiz/core/tf/tf_topics.hpp"
 #include "bagwiz/core/tf/tf_transform_format.hpp"
-#include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/core/tf/tf_walk_timeline.hpp"
 #include "bagwiz/core/tui/layout.hpp"
 #include "bagwiz/core/tui/pager.hpp"
@@ -24,24 +25,17 @@
 #include <tf2/buffer_core.hpp>
 #include <tf2/time.hpp>
 
-#include <geometry_msgs/msg/transform_stamped.hpp>
-
 #include <fmt/core.h>
 #include <unistd.h>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <ctime>
 #include <exception>
 #include <filesystem>
-#include <memory>
-#include <stdexcept>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -52,55 +46,10 @@ namespace
 {
 
 constexpr const char * kLogger = "bagwiz.cmd.tf.walk";
-constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
-constexpr std::string_view kTfStaticSuffix = "tf_static";
 // Retain every dynamic transform for the whole walk so stepping back to an
 // early time still resolves. A year dwarfs any realistic bag and matches
 // `tf static calc`'s buffer sizing.
 constexpr std::chrono::hours kTfBufferCacheTime{24 * 365};
-
-// is_static here only governs how a transform is fed to the buffer (static
-// transforms are stored timeless so they resolve at every query time). The
-// walk itself does not expose the static/dynamic distinction.
-bool is_static_tf_topic(std::string_view topic_name)
-{
-  if (topic_name.size() < kTfStaticSuffix.size()) {
-    return false;
-  }
-  return topic_name.compare(
-           topic_name.size() - kTfStaticSuffix.size(), kTfStaticSuffix.size(), kTfStaticSuffix) ==
-         0;
-}
-
-// UTC timestamp with nanosecond precision, identical in shape to `bagwiz walk`.
-std::string format_timestamp(std::int64_t ns)
-{
-  const auto seconds = static_cast<std::time_t>(ns / 1'000'000'000);
-  const auto nanos = static_cast<std::int64_t>(ns % 1'000'000'000);
-  std::tm tm_utc{};
-  ::gmtime_r(&seconds, &tm_utc);
-  std::array<char, 32> buf{};
-  std::strftime(buf.data(), buf.size(), "%Y-%m-%d %H:%M:%S", &tm_utc);
-  return fmt::format("{}.{:09d} UTC ({}.{:09d})", buf.data(), nanos, seconds, nanos);
-}
-
-// Split a '\n'-delimited string into owned lines (a trailing '\n' does not
-// produce an empty final element).
-std::vector<std::string> split_lines(const std::string & s)
-{
-  std::vector<std::string> out;
-  std::size_t start = 0;
-  for (std::size_t i = 0; i < s.size(); ++i) {
-    if (s[i] == '\n') {
-      out.push_back(s.substr(start, i - start));
-      start = i + 1;
-    }
-  }
-  if (start < s.size()) {
-    out.push_back(s.substr(start));
-  }
-  return out;
-}
 
 std::int64_t time_point_to_ns(tf2::TimePoint tp)
 {
@@ -119,67 +68,6 @@ std::string join_frames(std::vector<std::string> frames)
     csv += frames[i];
   }
   return csv.empty() ? "(none)" : csv;
-}
-
-// A TF topic in the bag plus the static flag used to populate the buffer.
-struct TfTopic
-{
-  std::string name;
-  bool is_static = false;
-};
-
-// Merge every TF topic in the bag into `buffer` and return the stamp of every
-// contained transform (unsorted, with duplicates). Throws on decode failure.
-std::vector<tf2::TimePoint> load_merged_tf(
-  io::BagReader & reader, const std::vector<TfTopic> & tf_topics, tf2::BufferCore & buffer)
-{
-  std::unordered_map<std::string, bool> is_static_by_topic;
-  io::ReadFilter filter;
-  for (const auto & t : tf_topics) {
-    filter.topics.push_back(t.name);
-    is_static_by_topic[t.name] = t.is_static;
-  }
-  reader.set_filter(filter);
-
-  // One decoder per TF topic so per-topic schema_text differences are handled
-  // by the factory rather than us (mirrors `load_tf` in tf.cpp).
-  std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> decoder_by_topic;
-  for (const auto & topic_info : reader.topics()) {
-    if (topic_info.type != kTfMessageType) {
-      continue;
-    }
-    if (is_static_by_topic.find(topic_info.name) == is_static_by_topic.end()) {
-      continue;
-    }
-    auto open = core::decoder::open_decoder(topic_info);
-    if (!open.ok()) {
-      throw std::runtime_error(
-        "Could not open decoder for TF topic '" + topic_info.name + "': " + open.error);
-    }
-    decoder_by_topic.emplace(topic_info.name, std::move(open.decoder));
-  }
-
-  std::vector<tf2::TimePoint> stamps;
-  io::RawMessage raw;
-  while (reader.next(raw)) {
-    auto it = decoder_by_topic.find(raw.topic->name);
-    if (it == decoder_by_topic.end()) {
-      continue;
-    }
-    const auto decoded = it->second->decode(raw.payload);
-    if (!decoded.ok()) {
-      throw std::runtime_error(
-        "Failed to decode TF message on '" + raw.topic->name + "': " + decoded.error);
-    }
-    const bool is_static = is_static_by_topic.at(raw.topic->name);
-    for (const auto & t : core::extract_tf_message(*decoded.value)) {
-      buffer.setTransform(t, "bagwiz", is_static);
-      stamps.emplace_back(
-        std::chrono::seconds(t.header.stamp.sec) +
-        std::chrono::nanoseconds(t.header.stamp.nanosec));
-    }
-  }
-  return stamps;
 }
 
 }  // namespace
@@ -201,12 +89,7 @@ int run_tf_walk(
 
   // Merge every TF topic (no static/dynamic filtering); static topics are still
   // fed as static so the buffer can resolve them at any query time.
-  std::vector<TfTopic> tf_topics;
-  for (const auto & t : reader->topics()) {
-    if (t.type == kTfMessageType) {
-      tf_topics.push_back({t.name, is_static_tf_topic(t.name)});
-    }
-  }
+  const std::vector<core::TfTopic> tf_topics = core::collect_tf_topics(*reader);
   if (tf_topics.empty()) {
     BAGWIZ_LOG_ERROR(kLogger, "Bag has no tf2_msgs/msg/TFMessage topic; nothing to walk.");
     return 1;
@@ -215,7 +98,10 @@ int run_tf_walk(
   tf2::BufferCore buffer{kTfBufferCacheTime};
   std::vector<tf2::TimePoint> stamps;
   try {
-    stamps = load_merged_tf(*reader, tf_topics, buffer);
+    core::TfReplayOutputs outputs;
+    outputs.buffer = &buffer;
+    outputs.stamps = &stamps;
+    core::replay_tf_topics(*reader, tf_topics, outputs);
   } catch (const std::exception & e) {
     BAGWIZ_LOG_ERROR(kLogger, "Failed to load TF from the bag: %s", e.what());
     return 1;
@@ -263,7 +149,8 @@ int run_tf_walk(
     // Header: the resolved transform's timestamp, then a blank separator.
     append_wrapped(
       frame.header,
-      fmt::format("timestamp: {}", format_timestamp(time_point_to_ns(timeline[index]))), cols);
+      fmt::format("timestamp: {}", core::format_timestamp(time_point_to_ns(timeline[index]))),
+      cols);
     frame.header.emplace_back();
 
     std::vector<std::string> body_logical;
@@ -277,7 +164,7 @@ int run_tf_walk(
       if (chain.empty()) {
         chain = {of_frame, ref_frame};
       }
-      body_logical = split_lines(core::format_transform_human(*step.transform, chain));
+      body_logical = core::split_lines(core::format_transform_human(*step.transform, chain));
     } else {
       body_logical.push_back(
         fmt::format(

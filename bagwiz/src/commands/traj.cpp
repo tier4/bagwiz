@@ -15,9 +15,11 @@
 #include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/cdr_walker/value.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
+#include "bagwiz/core/tf/tf_buffer_loader.hpp"
 #include "bagwiz/core/tf/tf_chain.hpp"
 #include "bagwiz/core/tf/tf_merge_check.hpp"
 #include "bagwiz/core/tf/tf_message_wire.hpp"
+#include "bagwiz/core/tf/tf_topics.hpp"
 #include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/core/tf/trajectory.hpp"
 #include "bagwiz/io/bag_io.hpp"
@@ -45,14 +47,11 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -73,21 +72,6 @@ constexpr const char * kPoseWithCovarianceStampedType =
 constexpr const char * kOdometryType = "nav_msgs/msg/Odometry";
 
 enum class PoseDumpKind { PoseStamped, PoseWithCovarianceStamped, Odometry };
-constexpr std::string_view kTfStaticSuffix = "tf_static";
-
-// /tf_static and any topic whose name terminates in "tf_static" use the
-// transient_local durability and carry one-shot, time-independent
-// transforms. Everything else carrying TFMessage is treated as dynamic
-// and stored in the time-indexed history.
-bool is_static_tf_topic(std::string_view topic_name)
-{
-  if (topic_name.size() < kTfStaticSuffix.size()) {
-    return false;
-  }
-  return topic_name.compare(
-           topic_name.size() - kTfStaticSuffix.size(), kTfStaticSuffix.size(), kTfStaticSuffix) ==
-         0;
-}
 
 // Lowercase extension without leading dot, or empty when missing / not usable.
 std::string output_path_extension_lower(const std::filesystem::path & output_path)
@@ -138,105 +122,6 @@ bool resolve_dump_format(
     "use '*.tum' or pass --format %s.",
     ext.c_str(), kFormatTum);
   return false;
-}
-
-struct TfTopic
-{
-  std::string name;
-  bool is_static = false;
-};
-
-std::vector<TfTopic> collect_tf_topics(const io::BagReader & reader)
-{
-  std::vector<TfTopic> topics;
-  for (const auto & t : reader.topics()) {
-    if (t.type == kTfMessageType) {
-      topics.push_back({t.name, is_static_tf_topic(t.name)});
-    }
-  }
-  return topics;
-}
-
-// One observed edge from the input topic. Stored separately from the
-// TF buffer so we can filter by chain-edge membership after the chain
-// has been resolved.
-struct InputEdge
-{
-  std::string frame_id;
-  std::string child_frame_id;
-  std::int64_t stamp_ns = 0;
-};
-
-// Walk every TF topic once: insert each contained TransformStamped into
-// `buffer` (static or dynamic per topic name) and, for messages on
-// `input_topic`, record the (frame_id, child_frame_id, stamp_ns) so the
-// caller can later filter by chain-edge membership without a second
-// bag pass.
-void load_tf_buffer_and_input_edges(
-  const std::filesystem::path & bag_path, const std::vector<TfTopic> & tf_topics,
-  const std::string & input_topic, tf2::BufferCore & buffer, std::vector<InputEdge> & input_edges)
-{
-  auto reader = io::open_read(bag_path);
-  io::ReadFilter filter;
-  for (const auto & t : tf_topics) {
-    filter.topics.push_back(t.name);
-  }
-  reader->set_filter(filter);
-
-  std::unordered_map<std::string, bool> is_static_by_topic;
-  for (const auto & t : tf_topics) {
-    is_static_by_topic[t.name] = t.is_static;
-  }
-
-  std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> decoder_by_topic;
-  for (const auto & topic_info : reader->topics()) {
-    if (topic_info.type != kTfMessageType) {
-      continue;
-    }
-    if (is_static_by_topic.find(topic_info.name) == is_static_by_topic.end()) {
-      continue;
-    }
-    auto open = core::decoder::open_decoder(topic_info);
-    if (!open.ok()) {
-      throw std::runtime_error(
-        "Could not open decoder for TF topic '" + topic_info.name + "': " + open.error);
-    }
-    decoder_by_topic.emplace(topic_info.name, std::move(open.decoder));
-  }
-
-  // Refuse to merge TF that disagrees: a child given different parents by two
-  // topics, or a child declared by both a static and a dynamic topic. The
-  // checker is cross-topic only, so a single topic's own time series is fine.
-  core::TfMergeConflictChecker conflict_checker;
-
-  io::RawMessage raw;
-  while (reader->next(raw)) {
-    auto it = decoder_by_topic.find(raw.topic->name);
-    if (it == decoder_by_topic.end()) {
-      continue;
-    }
-    const auto decoded = it->second->decode(raw.payload);
-    if (!decoded.ok()) {
-      throw std::runtime_error(
-        "Failed to decode TF message on '" + raw.topic->name + "': " + decoded.error);
-    }
-    const auto transforms = core::extract_tf_message(*decoded.value);
-    const bool is_static = is_static_by_topic.at(raw.topic->name);
-    const bool is_input = (raw.topic->name == input_topic);
-    for (const auto & t : transforms) {
-      if (
-        const auto conflict =
-          conflict_checker.add(t.header.frame_id, t.child_frame_id, raw.topic->name, is_static)) {
-        throw std::runtime_error("TF merge conflict: " + *conflict);
-      }
-      buffer.setTransform(t, "bagwiz", is_static);
-      if (is_input) {
-        const std::int64_t ns = static_cast<std::int64_t>(t.header.stamp.sec) * 1'000'000'000LL +
-                                static_cast<std::int64_t>(t.header.stamp.nanosec);
-        input_edges.push_back({t.header.frame_id, t.child_frame_id, ns});
-      }
-    }
-  }
 }
 
 // One decoded sample from a pose / odometry input topic. `pose` carries the
@@ -427,7 +312,7 @@ private:
     // /tf_static is one-shot and not a sensible sampling source. The
     // assumption is "1 dynamic + 1 static topic per bag", so the user
     // is expected to point at the dynamic side.
-    if (is_static_tf_topic(args.topic)) {
+    if (core::is_static_tf_topic(args.topic)) {
       BAGWIZ_LOG_ERROR(
         kLogger,
         "Topic '%s' looks like a static TF topic (name ends with 'tf_static'). "
@@ -436,17 +321,26 @@ private:
       return 1;
     }
 
-    const auto tf_topics = collect_tf_topics(*reader);
+    const auto tf_topics = core::collect_tf_topics(*reader);
     if (tf_topics.empty()) {
       BAGWIZ_LOG_ERROR(kLogger, "Bag has no tf2_msgs/msg/TFMessage topics; nothing to dump.");
       return 1;
     }
 
+    // Walk every TF topic once: feed each contained TransformStamped into the
+    // buffer (static or dynamic per topic name) and record the input topic's
+    // (frame_id, child_frame_id, stamp_ns) edges so chain-edge filtering below
+    // needs no second bag pass. The merge checker refuses contradictory TF.
     tf2::BufferCore tf_buffer{std::chrono::hours(24 * 365)};
-    std::vector<InputEdge> input_edges;
+    std::vector<core::TfInputEdge> input_edges;
     try {
-      load_tf_buffer_and_input_edges(
-        args.input_path, tf_topics, args.topic, tf_buffer, input_edges);
+      core::TfMergeConflictChecker conflict_checker;
+      core::TfReplayOutputs outputs;
+      outputs.buffer = &tf_buffer;
+      outputs.conflict_checker = &conflict_checker;
+      outputs.input_topic = args.topic;
+      outputs.input_edges = &input_edges;
+      core::replay_tf_topics(*reader, tf_topics, outputs);
     } catch (const std::exception & e) {
       BAGWIZ_LOG_ERROR(kLogger, "Failed to load TF from the bag: %s", e.what());
       return 1;
@@ -561,7 +455,7 @@ private:
     if (!reader) {
       return false;
     }
-    const auto tf_topics = collect_tf_topics(*reader);
+    const auto tf_topics = core::collect_tf_topics(*reader);
     if (tf_topics.empty()) {
       BAGWIZ_LOG_ERROR(
         kLogger,
@@ -571,10 +465,12 @@ private:
       return false;
     }
     try {
-      // input_topic = "" : load every TF topic into the buffer, record no edges.
-      std::vector<InputEdge> ignored_edges;
-      load_tf_buffer_and_input_edges(
-        args.input_path, tf_topics, std::string{}, tf_buffer, ignored_edges);
+      // No input_edges output: load every TF topic into the buffer only.
+      core::TfMergeConflictChecker conflict_checker;
+      core::TfReplayOutputs outputs;
+      outputs.buffer = &tf_buffer;
+      outputs.conflict_checker = &conflict_checker;
+      core::replay_tf_topics(*reader, tf_topics, outputs);
     } catch (const std::exception & e) {
       BAGWIZ_LOG_ERROR(kLogger, "Failed to load TF from the bag: %s", e.what());
       return false;

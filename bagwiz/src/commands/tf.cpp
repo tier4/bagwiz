@@ -11,11 +11,12 @@
 #include "bagwiz/commands/tf_static_cp.hpp"
 #include "bagwiz/commands/tf_walk.hpp"
 #include "bagwiz/core/base/logging.hpp"
-#include "bagwiz/core/decoder/decoder.hpp"
+#include "bagwiz/core/base/str_utils.hpp"
+#include "bagwiz/core/tf/tf_buffer_loader.hpp"
 #include "bagwiz/core/tf/tf_chain.hpp"
 #include "bagwiz/core/tf/tf_merge_check.hpp"
+#include "bagwiz/core/tf/tf_topics.hpp"
 #include "bagwiz/core/tf/tf_transform_format.hpp"
-#include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/bag_open.hpp"
 
@@ -37,7 +38,6 @@
 #include <exception>
 #include <filesystem>
 #include <map>
-#include <memory>
 #include <optional>
 #include <ostream>
 #include <set>
@@ -56,124 +56,6 @@ namespace
 {
 
 constexpr const char * kLogger = "bagwiz.cmd.tf";
-constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
-constexpr std::string_view kTfStaticSuffix = "tf_static";
-
-bool is_static_tf_topic(std::string_view topic_name)
-{
-  if (topic_name.size() < kTfStaticSuffix.size()) {
-    return false;
-  }
-  return topic_name.compare(
-           topic_name.size() - kTfStaticSuffix.size(), kTfStaticSuffix.size(), kTfStaticSuffix) ==
-         0;
-}
-
-struct TfTopic
-{
-  std::string name;
-  bool is_static;
-};
-
-std::vector<TfTopic> collect_tf_topics(const io::BagReader & reader)
-{
-  std::vector<TfTopic> topics;
-  for (const auto & t : reader.topics()) {
-    if (t.type == kTfMessageType) {
-      topics.push_back({t.name, is_static_tf_topic(t.name)});
-    }
-  }
-  return topics;
-}
-
-// Replay the given TF topics once: when `buffer` is non-null, feed every
-// contained TransformStamped into it with the correct static/dynamic flag;
-// when `edges_by_topic_out` is non-null, collect the distinct parent→child
-// edges into it keyed by the source topic name. `tf static calc` needs the
-// buffer (to resolve transforms) but not the edges; `tf tree` needs the
-// per-topic edges but not the buffer.
-//
-// When `conflict_checker` is non-null, every edge is run through it and the
-// first cross-topic conflict (multi-parent, or static/dynamic mix) throws —
-// used by `tf static calc` so several `*tf_static` topics are merged but a
-// contradiction aborts instead of silently last-winning. Both `tf static calc`
-// and `tf tree` pass a checker; `tf tree` additionally runs its own forest
-// validation downstream.
-//
-// Decoding goes through the unified open_decoder() path so for MCAP
-// inputs the schema-driven backend handles the work and tf2_msgs no
-// longer needs to be on AMENT_PREFIX_PATH at runtime; only its
-// header-only struct definition is required at build time (via
-// extract_tf_message → geometry_msgs::msg::TransformStamped).
-void load_tf(
-  const std::filesystem::path & bag_path, const std::vector<TfTopic> & tf_topics,
-  tf2::BufferCore * buffer = nullptr,
-  std::map<std::string, std::set<std::pair<std::string, std::string>>> * edges_by_topic_out =
-    nullptr,
-  core::TfMergeConflictChecker * conflict_checker = nullptr)
-{
-  auto tf_reader = io::open_read(bag_path);
-  io::ReadFilter filter;
-  for (const auto & t : tf_topics) {
-    filter.topics.push_back(t.name);
-  }
-  tf_reader->set_filter(filter);
-
-  std::unordered_map<std::string, bool> is_static_by_topic;
-  for (const auto & t : tf_topics) {
-    is_static_by_topic[t.name] = t.is_static;
-  }
-
-  // One decoder per TF topic so the schema_text differences across
-  // shards / topics are handled by the factory rather than us.
-  std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> decoder_by_topic;
-  for (const auto & topic_info : tf_reader->topics()) {
-    if (topic_info.type != kTfMessageType) {
-      continue;
-    }
-    if (is_static_by_topic.find(topic_info.name) == is_static_by_topic.end()) {
-      continue;
-    }
-    auto open = core::decoder::open_decoder(topic_info);
-    if (!open.ok()) {
-      throw std::runtime_error(
-        "Could not open decoder for TF topic '" + topic_info.name + "': " + open.error);
-    }
-    decoder_by_topic.emplace(topic_info.name, std::move(open.decoder));
-  }
-
-  io::RawMessage raw;
-  while (tf_reader->next(raw)) {
-    auto it = decoder_by_topic.find(raw.topic->name);
-    if (it == decoder_by_topic.end()) {
-      continue;
-    }
-    const auto decoded = it->second->decode(raw.payload);
-    if (!decoded.ok()) {
-      throw std::runtime_error(
-        "Failed to decode TF message on '" + raw.topic->name + "': " + decoded.error);
-    }
-    const auto transforms = core::extract_tf_message(*decoded.value);
-    const bool is_static = is_static_by_topic.at(raw.topic->name);
-    for (const auto & t : transforms) {
-      if (conflict_checker != nullptr && !t.header.frame_id.empty() && !t.child_frame_id.empty()) {
-        if (
-          const auto conflict = conflict_checker->add(
-            t.header.frame_id, t.child_frame_id, raw.topic->name, is_static)) {
-          throw std::runtime_error("TF merge conflict: " + *conflict);
-        }
-      }
-      if (
-        edges_by_topic_out != nullptr && !t.header.frame_id.empty() && !t.child_frame_id.empty()) {
-        (*edges_by_topic_out)[raw.topic->name].insert(
-          std::make_pair(t.header.frame_id, t.child_frame_id));
-      }
-      if (buffer != nullptr) {
-        buffer->setTransform(t, "bagwiz", is_static);
-      }
-    }
-  }
-}
 
 bool stdout_use_color()
 {
@@ -448,28 +330,12 @@ std::string format_tree_forest(
     parent_to_children, roots, glyphs, use_color, edge_to_category, show_category);
 }
 
-// Comma-joined list for human-readable messages; "(none)" when empty.
-std::string join_csv(const std::vector<std::string> & names)
-{
-  if (names.empty()) {
-    return "(none)";
-  }
-  std::string out;
-  for (std::size_t i = 0; i < names.size(); ++i) {
-    if (i > 0) {
-      out += ", ";
-    }
-    out += names[i];
-  }
-  return out;
-}
-
 // Sorted, comma-separated list of every frame id known to `buffer`, or "(none)".
 std::string sorted_frames_csv(const tf2::BufferCore & buffer)
 {
   std::vector<std::string> frames = buffer.getAllFrameNames();
   std::sort(frames.begin(), frames.end());
-  return join_csv(frames);
+  return core::join_csv(frames);
 }
 
 // Reserved <topics> selectors. "static" expands to every *tf_static topic,
@@ -484,11 +350,11 @@ constexpr const char * kSelectDynamic = "dynamic";
 // other token must name a TFMessage topic that exists. On an unknown literal,
 // logs the offending names + the bag's available TF topics and returns false.
 bool select_tree_topics(
-  const std::vector<std::string> & requested, const std::vector<TfTopic> & tf_topics,
-  std::vector<TfTopic> & selected_out)
+  const std::vector<std::string> & requested, const std::vector<core::TfTopic> & tf_topics,
+  std::vector<core::TfTopic> & selected_out)
 {
   std::unordered_set<std::string> added;
-  auto add_topic = [&](const TfTopic & t) {
+  auto add_topic = [&](const core::TfTopic & t) {
     if (added.insert(t.name).second) {
       selected_out.push_back(t);
     }
@@ -509,7 +375,7 @@ bool select_tree_topics(
         }
       }
     } else {
-      const TfTopic * match = nullptr;
+      const core::TfTopic * match = nullptr;
       for (const auto & t : tf_topics) {
         if (t.name == token) {
           match = &t;
@@ -537,8 +403,8 @@ bool select_tree_topics(
   BAGWIZ_LOG_ERROR(
     kLogger,
     "Not a tf2_msgs/msg/TFMessage topic in the bag (nor the 'static' / 'dynamic' selector): %s",
-    join_csv(unknown).c_str());
-  BAGWIZ_LOG_ERROR(kLogger, "Available TF topics: %s", join_csv(available).c_str());
+    core::join_csv(unknown).c_str());
+  BAGWIZ_LOG_ERROR(kLogger, "Available TF topics: %s", core::join_csv(available).c_str());
   return false;
 }
 
@@ -694,7 +560,7 @@ private:
       return 1;
     }
 
-    const auto tf_topics = collect_tf_topics(*reader);
+    const auto tf_topics = core::collect_tf_topics(*reader);
     if (tf_topics.empty()) {
       BAGWIZ_LOG_ERROR(kLogger, "Bag has no tf2_msgs/msg/TFMessage topic; nothing to show.");
       return 1;
@@ -705,7 +571,7 @@ private:
     // dynamic TF topics (and compose with literal names); any other token must
     // be a TFMessage topic that exists. select_tree_topics logs the unknown
     // names + available TF topics on failure.
-    std::vector<TfTopic> selected;
+    std::vector<core::TfTopic> selected;
     if (requested.empty()) {
       selected = tf_topics;
     } else if (!select_tree_topics(requested, tf_topics, selected)) {
@@ -720,7 +586,7 @@ private:
       std::sort(available.begin(), available.end());
       BAGWIZ_LOG_ERROR(
         kLogger, "No TF topics matched <topics> %s. Available TF topics: %s",
-        join_csv(requested).c_str(), join_csv(available).c_str());
+        core::join_csv(requested).c_str(), core::join_csv(available).c_str());
       return 1;
     }
 
@@ -733,7 +599,10 @@ private:
     std::map<std::string, std::set<std::pair<std::string, std::string>>> edges_by_topic;
     core::TfMergeConflictChecker conflict_checker;
     try {
-      load_tf(args.input_path, selected, /*buffer=*/nullptr, &edges_by_topic, &conflict_checker);
+      core::TfReplayOutputs outputs;
+      outputs.edges_by_topic = &edges_by_topic;
+      outputs.conflict_checker = &conflict_checker;
+      core::replay_tf_topics(*reader, selected, outputs);
     } catch (const std::exception & e) {
       BAGWIZ_LOG_ERROR(kLogger, "Failed to load TF from the bag: %s", e.what());
       return 1;
@@ -765,7 +634,7 @@ private:
     if (merged.empty()) {
       BAGWIZ_LOG_ERROR(
         kLogger, "Topic(s) %s carry no decodable transforms; nothing to show.",
-        join_csv(requested).c_str());
+        core::join_csv(requested).c_str());
       return 1;
     }
 
@@ -875,8 +744,8 @@ private:
     // This subcommand resolves transforms purely from the static tree, so
     // dynamic /tf topics are intentionally ignored: only *tf_static topics
     // are fed into the buffer (as static entries).
-    std::vector<TfTopic> static_topics;
-    for (const auto & t : collect_tf_topics(*reader)) {
+    std::vector<core::TfTopic> static_topics;
+    for (const auto & t : core::collect_tf_topics(*reader)) {
       if (t.is_static) {
         static_topics.push_back(t);
       }
@@ -894,9 +763,10 @@ private:
     tf2::BufferCore tf_buffer{std::chrono::hours(24 * 365)};
     core::TfMergeConflictChecker conflict_checker;
     try {
-      load_tf(
-        args.input_path, static_topics, &tf_buffer, /*edges_by_topic_out=*/nullptr,
-        &conflict_checker);
+      core::TfReplayOutputs outputs;
+      outputs.buffer = &tf_buffer;
+      outputs.conflict_checker = &conflict_checker;
+      core::replay_tf_topics(*reader, static_topics, outputs);
     } catch (const std::exception & e) {
       BAGWIZ_LOG_ERROR(kLogger, "Failed to load static TF from the bag: %s", e.what());
       return 1;
@@ -910,7 +780,8 @@ private:
       core::missing_frames(tf_buffer, args.of_frame, args.ref_frame);
     if (!missing.empty()) {
       BAGWIZ_LOG_ERROR(
-        kLogger, "Frame(s) not present in the bag's static TF tree: %s", join_csv(missing).c_str());
+        kLogger, "Frame(s) not present in the bag's static TF tree: %s",
+        core::join_csv(missing).c_str());
       BAGWIZ_LOG_ERROR(
         kLogger, "Available static frames: %s", sorted_frames_csv(tf_buffer).c_str());
       return 1;

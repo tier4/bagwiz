@@ -10,6 +10,7 @@
 
 #include "bagwiz/core/bag/rewrite.hpp"
 #include "bagwiz/core/base/logging.hpp"
+#include "bagwiz/core/base/str_utils.hpp"
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
 #include "bagwiz/core/msg_yaml/msg_definition_resolver.hpp"
@@ -88,22 +89,6 @@ std::string default_frame_id(mtc::GeoCrs crs)
   return crs == mtc::GeoCrs::kEnu ? "map" : "utm";
 }
 
-// Comma-joined list for human-readable messages; "(none)" when empty.
-std::string join_csv(const std::vector<std::string> & names)
-{
-  if (names.empty()) {
-    return "(none)";
-  }
-  std::string out;
-  for (std::size_t i = 0; i < names.size(); ++i) {
-    if (i > 0) {
-      out += ", ";
-    }
-    out += names[i];
-  }
-  return out;
-}
-
 // Resolve which topics to convert and the single source ROS type they share.
 // Implements the two selection modes (explicit --topic vs by --src type).
 // Returns false (after logging) on any selection error.
@@ -157,8 +142,8 @@ bool select_topics(
       for (const auto & t : topics) {
         available.push_back(t.name);
       }
-      BAGWIZ_LOG_ERROR(kLogger, "No such topic(s) in the bag: %s", join_csv(unknown).c_str());
-      BAGWIZ_LOG_ERROR(kLogger, "Available topics: %s", join_csv(available).c_str());
+      BAGWIZ_LOG_ERROR(kLogger, "No such topic(s) in the bag: %s", core::join_csv(unknown).c_str());
+      BAGWIZ_LOG_ERROR(kLogger, "Available topics: %s", core::join_csv(available).c_str());
       return false;
     }
     selected_out = std::move(requested);
@@ -175,7 +160,7 @@ bool select_topics(
   if (!from_ros.has_value()) {
     BAGWIZ_LOG_ERROR(
       kLogger, "Unknown --src '%s'. Supported: %s", args.src.c_str(),
-      join_csv(mtc::from_snake_choices()).c_str());
+      core::join_csv(mtc::from_snake_choices()).c_str());
     return false;
   }
   for (const auto & t : topics) {
@@ -427,7 +412,7 @@ int run_convert_msg_geo(const ConvertMsgGeoArgs & args)
   if (!to_ros.has_value()) {
     BAGWIZ_LOG_ERROR(
       kLogger, "Unknown --dst '%s'. Supported: %s", args.dst.c_str(),
-      join_csv(mtc::to_snake_choices()).c_str());
+      core::join_csv(mtc::to_snake_choices()).c_str());
     return 1;
   }
 
@@ -452,8 +437,9 @@ int run_convert_msg_geo(const ConvertMsgGeoArgs & args)
       kLogger, "Unsupported geo conversion: %s -> %s.",
       source_snake.value_or(source_ros_type).c_str(), args.dst.c_str());
     BAGWIZ_LOG_ERROR(
-      kLogger, "Supported sources: %s; targets: %s.", join_csv(mtc::from_snake_choices()).c_str(),
-      join_csv(mtc::to_snake_choices()).c_str());
+      kLogger, "Supported sources: %s; targets: %s.",
+      core::join_csv(mtc::from_snake_choices()).c_str(),
+      core::join_csv(mtc::to_snake_choices()).c_str());
     return 1;
   }
 
