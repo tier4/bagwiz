@@ -10,7 +10,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -171,6 +173,60 @@ TEST(SobelGradientMagnitude, InvalidInputReturnsEmpty)
   EXPECT_TRUE(
     image::sobel_gradient_magnitude(std::span<const std::byte>(raster.data(), 12), 1, 2).empty());
   EXPECT_TRUE(image::sobel_gradient_magnitude({}, 2, 2).empty());
+}
+
+TEST(SobelGradientMagnitudeBilinear, MatchesFullMapSampling)
+{
+  // The lazy sampler must agree with computing the full map and bilinear-
+  // sampling it, at interior, border, and out-of-range positions.
+  const std::uint32_t w = 37;
+  const std::uint32_t h = 23;
+  const auto raster = make_bgr(w, h, [](std::uint32_t x, std::uint32_t y) {
+    const auto v = static_cast<std::uint8_t>((x * 37u + y * 91u + (x * y) % 17u) % 256u);
+    return std::array<std::uint8_t, 3>{v, static_cast<std::uint8_t>(255u - v), v};
+  });
+  const auto map = image::sobel_gradient_magnitude(raster, w, h);
+  ASSERT_EQ(map.size(), static_cast<std::size_t>(w) * h);
+
+  auto reference = [&](double u, double v) {
+    const double cu = std::clamp(u, 0.0, static_cast<double>(w - 1));
+    const double cv = std::clamp(v, 0.0, static_cast<double>(h - 1));
+    const std::uint32_t u0 = static_cast<std::uint32_t>(cu);
+    const std::uint32_t v0 = static_cast<std::uint32_t>(cv);
+    const std::uint32_t u1 = std::min(u0 + 1, w - 1);
+    const std::uint32_t v1 = std::min(v0 + 1, h - 1);
+    const double fu = cu - static_cast<double>(u0);
+    const double fv = cv - static_cast<double>(v0);
+    const double m00 = map[static_cast<std::size_t>(v0) * w + u0];
+    const double m01 = map[static_cast<std::size_t>(v0) * w + u1];
+    const double m10 = map[static_cast<std::size_t>(v1) * w + u0];
+    const double m11 = map[static_cast<std::size_t>(v1) * w + u1];
+    return (1.0 - fu) * (1.0 - fv) * m00 + fu * (1.0 - fv) * m01 + (1.0 - fu) * fv * m10 +
+           fu * fv * m11;
+  };
+
+  const double positions[][2] = {
+    {0.0, 0.0}, {5.25, 7.75}, {18.5, 11.5},   {36.0, 22.0}, {36.9, 22.9},
+    {0.4, 0.6}, {1.0, 1.0},   {35.99, 21.99}, {-3.0, 10.0}, {50.0, -1.0},
+  };
+  for (const auto & [u, v] : positions) {
+    EXPECT_NEAR(image::sobel_gradient_magnitude_bilinear(raster, w, h, u, v), reference(u, v), 1e-4)
+      << "at (" << u << ", " << v << ")";
+  }
+}
+
+TEST(SobelGradientMagnitudeBilinear, DegenerateInputsAreZero)
+{
+  const auto raster = make_solid_bgr(4, 3, 1, 2, 3);
+  EXPECT_DOUBLE_EQ(image::sobel_gradient_magnitude_bilinear(raster, 0, 3, 1.0, 1.0), 0.0);
+  EXPECT_DOUBLE_EQ(image::sobel_gradient_magnitude_bilinear(raster, 2, 3, 1.0, 1.0), 0.0);
+  EXPECT_DOUBLE_EQ(
+    image::sobel_gradient_magnitude_bilinear(
+      std::span<const std::byte>(raster.data(), 6), 2, 3, 1.0, 1.0),
+    0.0);
+  EXPECT_DOUBLE_EQ(image::sobel_gradient_magnitude_bilinear(raster, 4, 3, NAN, 1.0), 0.0);
+  // A flat raster has zero gradient anywhere, including lazily.
+  EXPECT_DOUBLE_EQ(image::sobel_gradient_magnitude_bilinear(raster, 4, 3, 1.5, 1.5), 0.0);
 }
 
 }  // namespace

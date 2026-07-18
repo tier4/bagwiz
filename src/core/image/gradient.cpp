@@ -18,6 +18,35 @@
 namespace bagwiz::core::image
 {
 
+namespace
+{
+
+float luma_at(const std::byte * bgr, std::size_t pixel)
+{
+  const double b = static_cast<double>(bgr[pixel * 3 + 0]);
+  const double g = static_cast<double>(bgr[pixel * 3 + 1]);
+  const double r = static_cast<double>(bgr[pixel * 3 + 2]);
+  return static_cast<float>(0.114 * b + 0.587 * g + 0.299 * r);
+}
+
+// Sobel magnitude at one pixel, border pixels evaluated at the clamped
+// interior coordinate (matching the full-map border replication). Only valid
+// for width >= 3 and height >= 3.
+float sobel_at(
+  const std::byte * bgr, std::size_t width, std::size_t height, std::size_t col, std::size_t row)
+{
+  col = std::clamp(col, std::size_t{1}, width - 2);
+  row = std::clamp(row, std::size_t{1}, height - 2);
+  const auto g = [&](std::size_t c, std::size_t r) { return luma_at(bgr, r * width + c); };
+  const float gx = (g(col + 1, row - 1) + 2.0F * g(col + 1, row) + g(col + 1, row + 1)) -
+                   (g(col - 1, row - 1) + 2.0F * g(col - 1, row) + g(col - 1, row + 1));
+  const float gy = (g(col - 1, row + 1) + 2.0F * g(col, row + 1) + g(col + 1, row + 1)) -
+                   (g(col - 1, row - 1) + 2.0F * g(col, row - 1) + g(col + 1, row - 1));
+  return std::fabs(gx) + std::fabs(gy);
+}
+
+}  // namespace
+
 std::vector<float> sobel_gradient_magnitude(
   std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height)
 {
@@ -75,6 +104,37 @@ std::vector<float> sobel_gradient_magnitude(
     magnitude[row * w + (w - 1)] = magnitude[interior_row * w + (w - 2)];
   }
   return magnitude;
+}
+
+double sobel_gradient_magnitude_bilinear(
+  std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height, double u, double v)
+{
+  if (
+    width == 0 || height == 0 ||
+    bgr.size() != static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 3) {
+    return 0.0;
+  }
+  if (width < 3 || height < 3) {
+    return 0.0;  // no interior pixels, mirroring the full-map result
+  }
+  if (std::isnan(u) || std::isnan(v)) {
+    return 0.0;
+  }
+  const double cu = std::clamp(u, 0.0, static_cast<double>(width - 1));
+  const double cv = std::clamp(v, 0.0, static_cast<double>(height - 1));
+  const std::uint32_t u0 = static_cast<std::uint32_t>(cu);
+  const std::uint32_t v0 = static_cast<std::uint32_t>(cv);
+  const std::uint32_t u1 = std::min(u0 + 1, width - 1);
+  const std::uint32_t v1 = std::min(v0 + 1, height - 1);
+  const double fu = cu - static_cast<double>(u0);
+  const double fv = cv - static_cast<double>(v0);
+  const std::byte * data = bgr.data();
+  const double m00 = sobel_at(data, width, height, u0, v0);
+  const double m01 = sobel_at(data, width, height, u1, v0);
+  const double m10 = sobel_at(data, width, height, u0, v1);
+  const double m11 = sobel_at(data, width, height, u1, v1);
+  return (1.0 - fu) * (1.0 - fv) * m00 + fu * (1.0 - fv) * m01 + (1.0 - fu) * fv * m10 +
+         fu * fv * m11;
 }
 
 }  // namespace bagwiz::core::image

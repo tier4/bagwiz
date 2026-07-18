@@ -27,6 +27,16 @@ namespace bagwiz::core::image
 [[nodiscard]] std::vector<float> sobel_gradient_magnitude(
   std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height);
 
+// The same gradient magnitude bilinearly sampled at subpixel (u, v) (u =
+// column, v = row, integer values land on pixel centers), computed LAZILY:
+// only the four corner neighborhoods are evaluated instead of the whole map,
+// so callers that need a handful of samples per image skip the full-image
+// pass. Produces the same values as bilinear-sampling
+// sobel_gradient_magnitude() with clamped coordinates; 0.0 on invalid input
+// or NaN coordinates.
+[[nodiscard]] double sobel_gradient_magnitude_bilinear(
+  std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height, double u, double v);
+
 }  // namespace bagwiz::core::image
 
 #endif  // BAGWIZ__CORE__IMAGE__GRADIENT_HPP_

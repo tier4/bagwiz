@@ -143,32 +143,6 @@ std::uint32_t quantize8(double value)
   return static_cast<std::uint32_t>(std::clamp(value, 0.0, 255.0) + 0.5);
 }
 
-// Bilinear sample of a float map (one value per pixel) at (u, v), with the
-// same coordinate convention as image::bilinear_sample_bgr: integer
-// coordinates land on pixel centers and the footprint clamps at the border.
-// Returns 0 for a map that does not hold exactly width * height values.
-double bilinear_sample_float(
-  std::span<const float> map, std::uint32_t width, std::uint32_t height, double u, double v)
-{
-  if (map.size() != static_cast<std::size_t>(width) * height) {
-    return 0.0;
-  }
-  const double cu = std::clamp(u, 0.0, static_cast<double>(width - 1));
-  const double cv = std::clamp(v, 0.0, static_cast<double>(height - 1));
-  const std::uint32_t u0 = static_cast<std::uint32_t>(cu);
-  const std::uint32_t v0 = static_cast<std::uint32_t>(cv);
-  const std::uint32_t u1 = std::min(u0 + 1, width - 1);
-  const std::uint32_t v1 = std::min(v0 + 1, height - 1);
-  const double fu = cu - static_cast<double>(u0);
-  const double fv = cv - static_cast<double>(v0);
-  const double m00 = map[static_cast<std::size_t>(v0) * width + u0];
-  const double m01 = map[static_cast<std::size_t>(v0) * width + u1];
-  const double m10 = map[static_cast<std::size_t>(v1) * width + u0];
-  const double m11 = map[static_cast<std::size_t>(v1) * width + u1];
-  return (1.0 - fu) * (1.0 - fv) * m00 + fu * (1.0 - fv) * m01 + (1.0 - fu) * fv * m10 +
-         fu * fv * m11;
-}
-
 std::shared_ptr<const ColorizeGeometry> make_owned_geometry(
   std::span<const std::array<float, 3>> points, const MapColorizerConfig & config)
 {
@@ -302,12 +276,6 @@ bool MapColorizer::add_image(
   view.height = height;
   rasterizer_->visible_points(view, dynamic_points, visible_scratch_);
 
-  // Sharpness map: one Sobel pass per image, bilinear-sampled per point.
-  std::vector<float> gradient;
-  if (config_.use_weights) {
-    gradient = image::sobel_gradient_magnitude(bgr, width, height);
-  }
-
   // Weight and sample every visible point into the pending list.
   pending_scratch_.clear();
   for (const auto & vp : visible_scratch_) {
@@ -331,7 +299,7 @@ bool MapColorizer::add_image(
           }
         }
       }
-      const double g = bilinear_sample_float(gradient, width, height, vp.u, vp.v);
+      const double g = image::sobel_gradient_magnitude_bilinear(bgr, width, height, vp.u, vp.v);
       const double w_sharp =
         config_.weight_sharpness_g0 > 0.0 ? g / (g + config_.weight_sharpness_g0) : 1.0;
       const double edge = std::min(
