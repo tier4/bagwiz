@@ -10,13 +10,13 @@
 
 #include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/tf/tf_value_extract.hpp"
-#include "bagwiz/io/bag_io.hpp"
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
+#include <chrono>
 #include <memory>
+#include <stdexcept>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -28,14 +28,6 @@ namespace
 {
 
 constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
-constexpr std::string_view kTfStaticSuffix = "tf_static";
-
-bool is_static_tf_topic(std::string_view name)
-{
-  return name.size() >= kTfStaticSuffix.size() &&
-         name.compare(
-           name.size() - kTfStaticSuffix.size(), kTfStaticSuffix.size(), kTfStaticSuffix) == 0;
-}
 
 }  // namespace
 
@@ -155,6 +147,84 @@ std::optional<std::string> load_static_tf_buffer(
     return std::string("error reading static TF: ") + e.what();
   }
   return std::nullopt;
+}
+
+void replay_tf_topics(
+  io::BagReader & reader, const std::vector<TfTopic> & tf_topics, const TfReplayOutputs & outputs)
+{
+  io::ReadFilter filter;
+  std::unordered_map<std::string, bool> is_static_by_topic;
+  for (const auto & t : tf_topics) {
+    filter.topics.push_back(t.name);
+    is_static_by_topic[t.name] = t.is_static;
+  }
+  reader.set_filter(filter);
+
+  // One decoder per TF topic so per-topic schema_text differences are handled
+  // by the decoder factory rather than by the caller.
+  std::unordered_map<std::string, std::unique_ptr<decoder::Decoder>> decoder_by_topic;
+  for (const auto & topic_info : reader.topics()) {
+    if (topic_info.type != kTfMessageType) {
+      continue;
+    }
+    if (is_static_by_topic.find(topic_info.name) == is_static_by_topic.end()) {
+      continue;
+    }
+    auto open = decoder::open_decoder(topic_info);
+    if (!open.ok()) {
+      throw std::runtime_error(
+        "Could not open decoder for TF topic '" + topic_info.name + "': " + open.error);
+    }
+    decoder_by_topic.emplace(topic_info.name, std::move(open.decoder));
+  }
+
+  io::RawMessage raw;
+  while (reader.next(raw)) {
+    auto it = decoder_by_topic.find(raw.topic->name);
+    if (it == decoder_by_topic.end()) {
+      continue;
+    }
+    const auto decoded = it->second->decode(raw.payload);
+    if (!decoded.ok()) {
+      throw std::runtime_error(
+        "Failed to decode TF message on '" + raw.topic->name + "': " + decoded.error);
+    }
+    const auto transforms = extract_tf_message(*decoded.value);
+    const bool is_static = is_static_by_topic.at(raw.topic->name);
+    for (const auto & t : transforms) {
+      // Transforms with an empty parent/child frame id say nothing about the
+      // tree's shape, so they are excluded from conflict detection and edge
+      // collection; the buffer, stamps, and input edges still record them.
+      if (
+        outputs.conflict_checker != nullptr && !t.header.frame_id.empty() &&
+        !t.child_frame_id.empty()) {
+        if (
+          const auto conflict = outputs.conflict_checker->add(
+            t.header.frame_id, t.child_frame_id, raw.topic->name, is_static)) {
+          throw std::runtime_error("TF merge conflict: " + *conflict);
+        }
+      }
+      if (outputs.buffer != nullptr) {
+        outputs.buffer->setTransform(t, "bagwiz", is_static);
+      }
+      if (
+        outputs.edges_by_topic != nullptr && !t.header.frame_id.empty() &&
+        !t.child_frame_id.empty()) {
+        (*outputs.edges_by_topic)[raw.topic->name].insert(
+          std::make_pair(t.header.frame_id, t.child_frame_id));
+      }
+      if (outputs.stamps != nullptr) {
+        outputs.stamps->emplace_back(
+          std::chrono::seconds(t.header.stamp.sec) +
+          std::chrono::nanoseconds(t.header.stamp.nanosec));
+      }
+      if (outputs.input_edges != nullptr && raw.topic->name == outputs.input_topic) {
+        const std::int64_t ns = static_cast<std::int64_t>(t.header.stamp.sec) * 1'000'000'000LL +
+                                static_cast<std::int64_t>(t.header.stamp.nanosec);
+        outputs.input_edges->push_back({t.header.frame_id, t.child_frame_id, ns});
+      }
+    }
+  }
 }
 
 }  // namespace bagwiz::core
