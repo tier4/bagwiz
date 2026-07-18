@@ -39,7 +39,7 @@ rosbag2_*/
 *.ts
 # ...but the map viewer's TypeScript sources are real source code, not MPEG-TS
 # video; keep them tracked.
-!assets/slam/*.ts
+!bagwiz_slam/assets/slam/*.ts
 
 # Generated ROS files
 *.idl

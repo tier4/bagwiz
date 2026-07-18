@@ -16,6 +16,19 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic;-Wshadow>")
 endif()
 
+# SLAM / map-viewer build options. scripts/bagwiz-build.sh passes them
+# colcon-wide (--cmake-args reaches every package in the workspace), so every
+# bagwiz_* package declares them: an undeclared cache variable makes CMake
+# warn "Manually-specified variables were not used" per package. They are
+# consumed only by bagwiz_slam (the GLIM wrapper library) and bagwiz (the
+# CLI's `map` command group); this package builds the same either way.
+option(BAGWIZ_WITH_SLAM "Build the in-process GLIM `bagwiz map slam` command" OFF)
+option(BAGWIZ_WITH_SLAM_CUDA "GPU-accelerate `bagwiz map slam --gpu` (implies BAGWIZ_WITH_SLAM)" OFF)
+option(BAGWIZ_WITH_MAP_VIEWER "Build the `map slam --viewer` browser map viewer (fetches cpp-httplib)" OFF)
+if(BAGWIZ_WITH_SLAM_CUDA)
+  set(BAGWIZ_WITH_SLAM ON CACHE BOOL "Implied by BAGWIZ_WITH_SLAM_CUDA" FORCE)
+endif()
+
 find_package(ament_cmake REQUIRED)
 
 # FFmpeg/libav (conda-forge `ffmpeg`) backs `bagwiz generate video`

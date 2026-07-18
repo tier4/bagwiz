@@ -3,5 +3,5 @@
 
 # Map-viewer TypeScript toolchain: npm owns the lockfile format, and dist/ is a
 # generated build artifact.
-assets/slam/package-lock.json
-assets/slam/dist/
+bagwiz_slam/assets/slam/package-lock.json
+bagwiz_slam/assets/slam/dist/

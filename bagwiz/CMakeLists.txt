@@ -16,7 +16,83 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic;-Wshadow>")
 endif()
 
+# SLAM / map-viewer build options. scripts/bagwiz-build.sh passes them
+# colcon-wide (--cmake-args reaches every package in the workspace), so every
+# bagwiz_* package declares them: an undeclared cache variable makes CMake
+# warn "Manually-specified variables were not used" per package. They are
+# consumed only here (the `map` command group) and in bagwiz_slam (the GLIM
+# wrapper library). SLAM is the default `pixi run build-full` (humble/jazzy):
+# it builds the GLIM stack into install/<distro>/glim-deps via
+# scripts/build-glim-deps.sh and passes -DBAGWIZ_WITH_SLAM=ON plus that prefix
+# on CMAKE_PREFIX_PATH. (The `build-core` task leaves this OFF.)
+option(BAGWIZ_WITH_SLAM "Build the in-process GLIM `bagwiz map slam` command" OFF)
+# GPU fast path for `bagwiz map slam --gpu` (CUDA odometry + VGICP_GPU mapping +
+# GPU export voxelization). OFF by default; implies BAGWIZ_WITH_SLAM. Enabled via
+# `pixi run -e <distro>-cuda build-full` (humble-cuda/jazzy-cuda), which builds
+# the CUDA GLIM stack into install/<distro>-cuda/glim-deps-cuda and passes
+# -DBAGWIZ_WITH_SLAM_CUDA=ON plus the CUDA toolchain. A CPU build (`pixi run
+# build-full` in a CPU env) leaves this OFF and links no CUDA.
+option(BAGWIZ_WITH_SLAM_CUDA "GPU-accelerate `bagwiz map slam --gpu` (implies BAGWIZ_WITH_SLAM)" OFF)
+if(BAGWIZ_WITH_SLAM_CUDA)
+  set(BAGWIZ_WITH_SLAM ON CACHE BOOL "Implied by BAGWIZ_WITH_SLAM_CUDA" FORCE)
+endif()
+# The viewer (a cpp-httplib loopback server + embedded Three.js assets + a
+# browser launch) is entirely GLIM-free, so it gets its own option that simply
+# DEFAULTS to BAGWIZ_WITH_SLAM: a SLAM build (the default `pixi run build-full`
+# on humble/jazzy) gains the viewer, a core build (`build-core` or
+# BAGWIZ_WITH_SLAM=OFF) pulls in neither cpp-httplib nor the viewer code, and
+# the viewer can be built on its own with -DBAGWIZ_WITH_MAP_VIEWER=ON (no GLIM
+# needed). The implementation lives in bagwiz_slam; this package only forwards
+# the macro that map_slam.cpp's --viewer call guards on.
+option(BAGWIZ_WITH_MAP_VIEWER
+  "Build the `map slam --viewer` browser map viewer (fetches cpp-httplib)"
+  ${BAGWIZ_WITH_SLAM})
+
 find_package(ament_cmake REQUIRED)
+
+# CLI11 and fmt are not available as rosdep keys on all supported distros, so
+# fetch them at configure time. Both are small, header-light libraries. This
+# block must run BEFORE find_package(bagwiz_slam) below: in SLAM builds that
+# package's config re-resolves the GLIM stack (find_dependency(glim) ->
+# spdlog -> find_dependency(fmt CONFIG)), which would create the toolchain's
+# imported fmt::fmt target first and collide with the FetchContent population
+# here. The toolchain's fmt-config.cmake carries the reverse guard
+# (NOT TARGET fmt::fmt), so populating ours first is safe in both directions.
+include(FetchContent)
+
+FetchContent_Declare(
+  cli11
+  GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+  GIT_TAG v2.4.2
+  GIT_SHALLOW TRUE
+)
+set(CLI11_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(CLI11_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+  fmt
+  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+  GIT_TAG 11.0.2
+  GIT_SHALLOW TRUE
+)
+set(FMT_TEST OFF CACHE BOOL "" FORCE)
+set(FMT_DOC OFF CACHE BOOL "" FORCE)
+set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+  rang
+  GIT_REPOSITORY https://github.com/agauniyal/rang.git
+  GIT_TAG v3.2
+  GIT_SHALLOW TRUE
+)
+# rang (and older CLI11) declare cmake_minimum_required below the floor CMake
+# 4.0 still accepts, which is a hard error on newer toolchains. Give the fetched
+# subprojects a compatibility floor. Older CMake (Humble/Jazzy) does not know
+# this variable and simply ignores it.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+FetchContent_MakeAvailable(cli11 fmt rang)
+unset(CMAKE_POLICY_VERSION_MINIMUM)
+
 find_package(bagwiz_base REQUIRED)
 find_package(bagwiz_io REQUIRED)
 find_package(bagwiz_msg REQUIRED)
@@ -89,49 +165,12 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
   libavcodec libavformat libavutil libswscale)
 
-# CLI11 and fmt are not available as rosdep keys on all supported distros, so
-# fetch them at configure time. Both are small, header-light libraries.
-include(FetchContent)
-
-FetchContent_Declare(
-  cli11
-  GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
-  GIT_TAG v2.4.2
-  GIT_SHALLOW TRUE
-)
-set(CLI11_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(CLI11_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-
-FetchContent_Declare(
-  fmt
-  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-  GIT_TAG 11.0.2
-  GIT_SHALLOW TRUE
-)
-set(FMT_TEST OFF CACHE BOOL "" FORCE)
-set(FMT_DOC OFF CACHE BOOL "" FORCE)
-set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
-
-FetchContent_Declare(
-  rang
-  GIT_REPOSITORY https://github.com/agauniyal/rang.git
-  GIT_TAG v3.2
-  GIT_SHALLOW TRUE
-)
-# rang (and older CLI11) declare cmake_minimum_required below the floor CMake
-# 4.0 still accepts, which is a hard error on newer toolchains. Give the fetched
-# subprojects a compatibility floor. Older CMake (Humble/Jazzy) does not know
-# this variable and simply ignores it.
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
-FetchContent_MakeAvailable(cli11 fmt rang)
-unset(CMAKE_POLICY_VERSION_MINIMUM)
-
 # ---------------------------------------------------------------------------
 # bagwiz: CLI executable. Installs to bin/ so users run it directly after
 # sourcing the ROS setup. Command implementations live in the executable
 # target so their static registrars pull into the final binary. The `map`
-# command group sources (map.cpp, map_slam.cpp, map_viewer.cpp) stay on disk
-# but unwired until the SLAM/viewer follow-up task adds the option blocks.
+# command group sources (map.cpp, map_slam.cpp, map_viewer.cpp) join the
+# executable in the BAGWIZ_WITH_SLAM block below.
 # ---------------------------------------------------------------------------
 add_executable(bagwiz
   src/main.cpp
@@ -191,6 +230,44 @@ target_link_libraries(bagwiz
     ${tf2_TARGETS}
     ${geometry_msgs_TARGETS}
 )
+
+# --- Optional in-process GLIM SLAM command (`bagwiz map slam`) ----------------
+# The GLIM-bearing objects live in bagwiz_slam's bagwiz_slam_glim static
+# library (exported in bagwiz_slam's export set); the command sources here are
+# GLIM-free but link that library plus the GLIM stack directly, mirroring the
+# pre-split package.
+if(BAGWIZ_WITH_SLAM)
+  find_package(glim CONFIG REQUIRED)
+  find_package(gtsam_points CONFIG REQUIRED)
+  find_package(GTSAM CONFIG REQUIRED)
+
+  target_sources(bagwiz PRIVATE
+    src/commands/map.cpp
+    src/commands/map_slam.cpp
+    src/commands/map_viewer.cpp)
+  target_link_libraries(bagwiz PRIVATE
+    bagwiz_slam::bagwiz_slam_glim
+    glim::glim
+    gtsam_points::gtsam_points
+    gtsam)
+  target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_SLAM)
+
+  # GPU fast path: the .cu voxelizer stays in bagwiz_slam_glim; the executable
+  # only links the CUDA runtime for the GLIM stack's own CUDA TUs and defines
+  # the macro that switches on the CUDA code paths.
+  if(BAGWIZ_WITH_SLAM_CUDA)
+    find_package(CUDAToolkit REQUIRED)
+    target_link_libraries(bagwiz PRIVATE CUDA::cudart)
+    target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_SLAM_CUDA)
+  endif()
+endif()
+
+# map_slam.cpp lives on the executable and guards its --viewer call on this
+# macro (the viewer server itself is compiled into bagwiz_slam, which defines
+# it there privately).
+if(BAGWIZ_WITH_MAP_VIEWER)
+  target_compile_definitions(bagwiz PRIVATE BAGWIZ_WITH_MAP_VIEWER)
+endif()
 
 install(TARGETS bagwiz RUNTIME DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include)
