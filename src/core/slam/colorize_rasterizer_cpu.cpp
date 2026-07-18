@@ -41,8 +41,8 @@ class CpuColorizeRasterizer : public ColorizeRasterizer
 public:
   CpuColorizeRasterizer(
     std::span<const std::array<float, 3>> points, std::span<const float> spacings,
-    const ColorizeRasterizerConfig & config)
-  : points_(points), spacings_(spacings), config_(config)
+    const ColorizeRasterizerConfig & config, const pointcloud::KdTree * tree)
+  : points_(points), spacings_(spacings), config_(config), tree_(tree)
   {
   }
 
@@ -82,8 +82,36 @@ public:
     const double f_avg = 0.5 * (fx + fy);
     const bool splat = config_.splat && spacings_.size() == points_.size();
 
-    const int num_threads = std::clamp(
-      config_.num_threads, 1, static_cast<int>(std::max<std::size_t>(1, points_.size())));
+    // Spatial cull: with a kd-tree attached and a positive max_range, sweep
+    // only the points within range of this view's camera position. The
+    // visible set is identical to a full sweep (the projection's own range
+    // check rejects the rest); it just costs one radius search instead of a
+    // whole-map projection. The query returns indices in tree order (not
+    // sorted), which changes no result: every downstream accumulation is
+    // per-point.
+    std::size_t sweep_count = points_.size();
+    const std::uint32_t * sweep_indices = nullptr;  // null -> sweep everything
+    if (tree_ != nullptr && tree_->size() == points_.size() && config_.max_range > 0.0) {
+      // The camera center in the world frame is -R^T t of the world->camera
+      // rigid transform.
+      const std::array<float, 3> cam_center{
+        static_cast<float>(
+          -(view.r_cam_world[0] * view.t_cam_world[0] + view.r_cam_world[3] * view.t_cam_world[1] +
+            view.r_cam_world[6] * view.t_cam_world[2])),
+        static_cast<float>(
+          -(view.r_cam_world[1] * view.t_cam_world[0] + view.r_cam_world[4] * view.t_cam_world[1] +
+            view.r_cam_world[7] * view.t_cam_world[2])),
+        static_cast<float>(
+          -(view.r_cam_world[2] * view.t_cam_world[0] + view.r_cam_world[5] * view.t_cam_world[1] +
+            view.r_cam_world[8] * view.t_cam_world[2]))};
+      tree_->radius_search(
+        cam_center, static_cast<float>(config_.max_range), sweep_indices_scratch_);
+      sweep_count = sweep_indices_scratch_.size();
+      sweep_indices = sweep_indices_scratch_.data();
+    }
+
+    const int num_threads =
+      std::clamp(config_.num_threads, 1, static_cast<int>(std::max<std::size_t>(1, sweep_count)));
     // Per-chunk candidate storage, kept between calls to limit allocations;
     // each chunk's list is touched by exactly one worker at a time.
     if (chunk_candidates_.size() != static_cast<std::size_t>(num_threads)) {
@@ -125,13 +153,16 @@ public:
       return std::array<double, 3>{u, v, z};
     };
 
-    // Pass 1 (parallel over point chunks): transform + project every map
-    // point, splat its depth into the buffer, and stash the in-bounds
-    // candidates for pass 2.
+    // Pass 1 (parallel over chunks of the sweep set): transform + project
+    // every swept map point, splat its depth into the buffer, and stash the
+    // in-bounds candidates for pass 2. Chunks index the sweep list (identity
+    // when unculled, the kd-tree query result when culled).
     auto project_chunk =
       [&](std::size_t begin, std::size_t end, std::vector<VisiblePoint> & candidates) {
         candidates.clear();
-        for (std::size_t i = begin; i < end; ++i) {
+        for (std::size_t j = begin; j < end; ++j) {
+          const std::uint32_t i =
+            sweep_indices != nullptr ? sweep_indices[j] : static_cast<std::uint32_t>(j);
           const auto projected = project(points_[i]);
           if (!projected) {
             continue;
@@ -139,7 +170,7 @@ public:
           const double u = (*projected)[0];
           const double v = (*projected)[1];
           const float depth = static_cast<float>((*projected)[2]);
-          candidates.push_back(VisiblePoint{static_cast<std::uint32_t>(i), u, v, depth});
+          candidates.push_back(VisiblePoint{i, u, v, depth});
           const double radius_px =
             splat ? std::clamp(
                       f_avg * static_cast<double>(spacings_[i]) / (2.0 * (*projected)[2]), 0.0,
@@ -148,7 +179,7 @@ public:
           splat_depth(depth_buffer_, u, v, radius_px, std::bit_cast<std::uint32_t>(depth));
         }
       };
-    run_chunked(num_threads, project_chunk);
+    run_chunked(num_threads, sweep_count, project_chunk);
 
     // Pass 1b (parallel over scan chunks): splat the dynamic occluders into
     // their own depth buffer, each with the depth-dependent disc radius that
@@ -211,9 +242,8 @@ public:
     };
     run_chunked(num_threads, filter_chunk);
 
-    // Merge in chunk order: chunk t covers the contiguous point range
-    // [begin_t, end_t) in ascending order, so the merged list is ordered by
-    // point index regardless of the thread count.
+    // Merge in chunk order (each chunk kept its sweep order), so the output
+    // is deterministic for any thread count.
     for (const auto & candidates : chunk_candidates_) {
       out.insert(out.end(), candidates.begin(), candidates.end());
     }
@@ -324,20 +354,22 @@ private:
   std::span<const std::array<float, 3>> points_;
   std::span<const float> spacings_;
   ColorizeRasterizerConfig config_;
+  const pointcloud::KdTree * tree_ = nullptr;  // optional spatial cull index
   std::vector<std::uint32_t> depth_buffer_;    // float bit patterns, see kInfinityBits
   std::vector<std::uint32_t> dynamic_buffer_;  // per-image scan splat, same layout
   std::uint32_t depth_width_ = 0;
   std::uint32_t depth_height_ = 0;
   std::vector<std::vector<VisiblePoint>> chunk_candidates_;
+  std::vector<std::uint32_t> sweep_indices_scratch_;  // per-view kd-tree query result
 };
 
 }  // namespace
 
 std::unique_ptr<ColorizeRasterizer> make_cpu_colorize_rasterizer(
   std::span<const std::array<float, 3>> points, std::span<const float> spacings,
-  const ColorizeRasterizerConfig & config)
+  const ColorizeRasterizerConfig & config, const pointcloud::KdTree * tree)
 {
-  return std::make_unique<CpuColorizeRasterizer>(points, spacings, config);
+  return std::make_unique<CpuColorizeRasterizer>(points, spacings, config, tree);
 }
 
 }  // namespace bagwiz::core::slam

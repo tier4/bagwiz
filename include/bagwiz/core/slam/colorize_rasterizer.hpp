@@ -10,6 +10,7 @@
 #define BAGWIZ__CORE__SLAM__COLORIZE_RASTERIZER_HPP_
 
 #include "bagwiz/core/image/camera_info.hpp"
+#include "bagwiz/core/pointcloud/kdtree.hpp"
 
 #include <array>
 #include <cstdint>
@@ -121,9 +122,11 @@ class ColorizeRasterizer
 public:
   virtual ~ColorizeRasterizer() = default;
 
-  // Fills `out` with the points visible in `view`, ordered by point index
-  // (deterministic, independent of the configured thread count). `out` is
-  // cleared first; keeping the buffer across calls avoids reallocation.
+  // Fills `out` with the points visible in `view` (deterministic for a fixed
+  // input, independent of the configured thread count; the order itself is an
+  // implementation detail — sorted by point index when unculled, the spatial
+  // index's query order when a tree culls the sweep). `out` is cleared
+  // first; keeping the buffer across calls avoids reallocation.
   // `dynamic_points` is the occluder geometry of the scene at the image's
   // own time — the raw LiDAR scan nearest to it, in the same world frame as
   // the map points. A map point sitting well behind a dynamic return is
@@ -139,10 +142,15 @@ public:
 // referenced, NOT copied, and must outlive the returned rasterizer; `spacings`
 // is the per-point local point spacing used for the splat footprint and must
 // be parallel to `points` (an empty span is accepted and treated as all
-// zeros, which reduces the splat to the single center pixel).
+// zeros, which reduces the splat to the single center pixel). When `tree`
+// (a spatial index over the same `points`) is non-null and config.max_range
+// is positive, each view first collects only the points within max_range of
+// the camera position from the tree and sweeps just those — far cheaper than
+// projecting a whole-map span per image, with an identical visible set (the
+// projection culls those points anyway). The tree is referenced, not owned.
 [[nodiscard]] std::unique_ptr<ColorizeRasterizer> make_cpu_colorize_rasterizer(
   std::span<const std::array<float, 3>> points, std::span<const float> spacings,
-  const ColorizeRasterizerConfig & config);
+  const ColorizeRasterizerConfig & config, const pointcloud::KdTree * tree = nullptr);
 
 }  // namespace bagwiz::core::slam
 

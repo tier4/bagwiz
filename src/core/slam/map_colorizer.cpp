@@ -210,7 +210,7 @@ MapColorizer::MapColorizer(
   if (!rasterizer_) {
     rasterizer_ = make_cpu_colorize_rasterizer(
       points, geometry_ ? std::span<const float>(geometry_->spacings) : std::span<const float>{},
-      config_.rasterizer);
+      config_.rasterizer, geometry_ ? &geometry_->tree : nullptr);
   }
 }
 
