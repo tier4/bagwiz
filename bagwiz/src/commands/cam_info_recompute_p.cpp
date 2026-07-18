@@ -12,7 +12,6 @@
 #include "bagwiz/core/base/atomic_write.hpp"
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/base/output_path.hpp"
-#include "bagwiz/core/cdr_walker/cdr_writer.hpp"
 #include "bagwiz/core/image/camera_calibration_yaml.hpp"
 #include "bagwiz/core/image/projection_matrix.hpp"
 #include "bagwiz/core/introspection/introspection_loader.hpp"
@@ -20,13 +19,10 @@
 #include "bagwiz/core/pipeline/rewrite_backend.hpp"
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/bag_open.hpp"
+#include "cam_info_common.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #include <sensor_msgs/msg/camera_info.hpp>
 
-#include <rcutils/allocator.h>
-#include <rcutils/error_handling.h>
-#include <rmw/rmw.h>
-#include <rmw/serialized_message.h>
 #include <rmw/types.h>
 
 #include <algorithm>
@@ -41,11 +37,8 @@
 #include <functional>
 #include <memory>
 #include <optional>
-#include <span>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace bagwiz::commands
@@ -55,10 +48,8 @@ namespace
 {
 
 namespace img = bagwiz::core::image;
-namespace cdr = bagwiz::core::cdr_walker;
 
 constexpr const char * kLogger = "bagwiz.cmd.cam-info.recompute-p";
-constexpr const char * kCameraInfoType = "sensor_msgs/msg/CameraInfo";
 
 // Below this, a change in p is cv::getOptimalNewCameraMatrix drifting between
 // OpenCV versions rather than a corrected calibration. Saying so keeps a
@@ -66,14 +57,6 @@ constexpr const char * kCameraInfoType = "sensor_msgs/msg/CameraInfo";
 // 4.13.0 drift (up to 0.77px on a 1920x1280 plumb_bob calibration); a genuinely
 // wrong p is off by tens of pixels, far above this.
 constexpr double kDriftPx = 1.5;
-
-std::string take_rmw_error()
-{
-  const rcutils_error_state_t * s = rcutils_get_error_state();
-  std::string err = (s != nullptr) ? s->message : "(no error message)";
-  rcutils_reset_error();
-  return err;
-}
 
 // Largest absolute per-entry change between two projection matrices. Every entry
 // of p is either a pixel quantity or a fixed 0/1, so the max reads as pixels.
@@ -194,65 +177,28 @@ int run_yaml_mode(const CamInfoRecomputePArgs & args)
 
 // --- bag mode --------------------------------------------------------------
 
-// Recomputes p on one or more CameraInfo topics. Non-target topics pass through
-// verbatim. For a target topic the original CDR is deserialized into a typed
-// sensor_msgs/msg/CameraInfo (so header, binning, and roi survive untouched), p
-// is recomputed from that same message's own k/d/width/height, and the message
-// is re-serialized. transform() runs on the single producer thread, so the
-// scratch state below is never shared across threads.
-class CamInfoRecomputePProcessor : public core::pipeline::Processor
+// Recomputes p on one or more CameraInfo topics: the shared CameraInfoProcessor
+// skeleton routes every topic through under its own name and round-trips each
+// target payload through rmw (so header, binning, and roi survive untouched);
+// this class only recomputes p from that same message's own k/d/width/height.
+// mutate() runs on the single producer thread, so the scratch state below is
+// never shared across threads.
+class CamInfoRecomputePProcessor : public CameraInfoProcessor
 {
 public:
   CamInfoRecomputePProcessor(
     const std::vector<std::string> & topics, const rosidl_message_type_support_t * typesupport,
     double alpha)
-  : targets_(topics.begin(), topics.end()), typesupport_(typesupport), alpha_(alpha)
+  : CameraInfoProcessor(topics, typesupport), alpha_(alpha)
   {
-    for (const auto & topic : topics) {
-      rewritten_.emplace(topic, 0);
-    }
-  }
-
-  [[nodiscard]] std::uint64_t rewritten_count(const std::string & topic) const
-  {
-    const auto it = rewritten_.find(topic);
-    return it == rewritten_.end() ? 0 : it->second;
   }
 
   // Largest change applied to any message's p over the pass, for log_delta().
   [[nodiscard]] double max_delta() const { return max_delta_; }
 
-  [[nodiscard]] core::pipeline::Emit route(const std::string & in_topic) const override
+protected:
+  void mutate(const std::string & in_topic, sensor_msgs::msg::CameraInfo & msg) const override
   {
-    return core::pipeline::Emit{true, in_topic};
-  }
-
-  [[nodiscard]] bool transforms() const override { return true; }
-
-  [[nodiscard]] core::pipeline::TransformAction transform(
-    const std::string & in_topic, std::span<const std::byte> in,
-    std::vector<std::byte> & out) const override
-  {
-    if (targets_.find(in_topic) == targets_.end()) {
-      return core::pipeline::TransformAction::kPassthrough;
-    }
-
-    // Wrap the reader's payload without taking ownership (no _fini on this view;
-    // the bytes belong to the reader).
-    rmw_serialized_message_t in_view = rmw_get_zero_initialized_serialized_message();
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast) rmw API is non-const but only reads.
-    in_view.buffer = const_cast<std::uint8_t *>(reinterpret_cast<const std::uint8_t *>(in.data()));
-    in_view.buffer_length = in.size();
-    in_view.buffer_capacity = in.size();
-    in_view.allocator = rcutils_get_default_allocator();
-
-    sensor_msgs::msg::CameraInfo msg;
-    if (rmw_deserialize(&in_view, typesupport_, &msg) != RMW_RET_OK) {
-      throw std::runtime_error(
-        "failed to deserialize a message on '" + in_topic + "' as " + kCameraInfoType + ": " +
-        take_rmw_error());
-    }
-
     img::ProjectionMatrixInput input;
     std::copy(msg.k.begin(), msg.k.end(), input.k.begin());
     std::copy(msg.r.begin(), msg.r.end(), input.r.begin());
@@ -266,42 +212,6 @@ public:
 
     max_delta_ = std::max(max_delta_, max_abs_delta(input.p, new_p));
     std::copy(new_p.begin(), new_p.end(), msg.p.begin());
-
-    // Direct CDR serialization avoids the per-message rmw_serialize cost. The
-    // CameraInfo layout is fixed except for the variable-length D array, so it
-    // can be emitted with CdrWriter using the ROS 2 message definition's field
-    // order.
-    cdr::CdrWriter writer;
-    writer.write_i32(msg.header.stamp.sec);
-    writer.write_u32(msg.header.stamp.nanosec);
-    writer.write_string(msg.header.frame_id);
-    writer.write_u32(msg.height);
-    writer.write_u32(msg.width);
-    writer.write_string(msg.distortion_model);
-    writer.write_sequence_length(static_cast<std::uint32_t>(msg.d.size()));
-    for (const double v : msg.d) {
-      writer.write_f64(v);
-    }
-    for (const double v : msg.k) {
-      writer.write_f64(v);
-    }
-    for (const double v : msg.r) {
-      writer.write_f64(v);
-    }
-    for (const double v : msg.p) {
-      writer.write_f64(v);
-    }
-    writer.write_u32(msg.binning_x);
-    writer.write_u32(msg.binning_y);
-    writer.write_u32(msg.roi.x_offset);
-    writer.write_u32(msg.roi.y_offset);
-    writer.write_u32(msg.roi.height);
-    writer.write_u32(msg.roi.width);
-    writer.write_bool(msg.roi.do_rectify);
-    out = writer.take();
-
-    ++rewritten_.at(in_topic);
-    return core::pipeline::TransformAction::kWrite;
   }
 
 private:
@@ -332,14 +242,10 @@ private:
            a.k == b.k && a.r == b.r && a.p == b.p && a.d == b.d;
   }
 
-  std::unordered_set<std::string> targets_;
-  const rosidl_message_type_support_t * typesupport_;
   double alpha_;
-  // Mutable because transform() is const per the Processor contract, which also
-  // guarantees it runs on the single producer thread -- so these are
-  // single-writer and need no synchronization. rewritten_'s keys are fixed at
-  // construction; transform() only updates existing values via at().
-  mutable std::unordered_map<std::string, std::uint64_t> rewritten_;
+  // Mutable because mutate() is const per the CameraInfoProcessor contract,
+  // which also guarantees it runs on the single producer thread -- so these are
+  // single-writer and need no synchronization.
   mutable double max_delta_ = 0.0;
   mutable img::ProjectionMatrixInput cached_input_;
   mutable std::array<double, 12> cached_p_{};
@@ -441,48 +347,10 @@ int run_bag_mode(const CamInfoRecomputePArgs & args)
     return 1;
   }
 
-  std::unordered_map<std::string, const io::TopicInfo *> topics_by_name;
-  std::string camera_info_topics;
-  for (const auto & t : reader->topics()) {
-    topics_by_name.emplace(t.name, &t);
-    if (t.type == kCameraInfoType) {
-      if (!camera_info_topics.empty()) {
-        camera_info_topics += ", ";
-      }
-      camera_info_topics += t.name;
-    }
-  }
-
-  // Validate each requested topic, deduplicating while preserving command-line
-  // order. Collect all failures before bailing so one run reports every bad
-  // topic.
-  std::vector<std::string> target_topics;
-  std::unordered_set<std::string> seen;
-  bool all_valid = true;
-  for (const auto & topic : args.topics) {
-    if (!seen.insert(topic).second) {
-      continue;  // duplicate on the command line; validated on its first occurrence
-    }
-    const auto it = topics_by_name.find(topic);
-    if (it == topics_by_name.end()) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Topic '%s' is not present in %s.", topic.c_str(), args.input_path.c_str());
-      all_valid = false;
-      continue;
-    }
-    if (it->second->type != kCameraInfoType) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Topic '%s' has type '%s', expected '%s'.", topic.c_str(),
-        it->second->type.c_str(), kCameraInfoType);
-      all_valid = false;
-      continue;
-    }
-    target_topics.push_back(topic);
-  }
-  if (!all_valid) {
-    BAGWIZ_LOG_ERROR(
-      kLogger, "Available %s topic(s): %s", kCameraInfoType,
-      camera_info_topics.empty() ? "(none)" : camera_info_topics.c_str());
+  const std::vector<io::TopicInfo> topics(reader->topics().begin(), reader->topics().end());
+  const CameraInfoTargets targets =
+    validate_camera_info_targets(topics, args.topics, args.input_path, kLogger);
+  if (!targets.all_valid) {
     return 1;
   }
 
@@ -512,7 +380,7 @@ int run_bag_mode(const CamInfoRecomputePArgs & args)
     args.input_path, args.output_path, args.overwrite, rewrite_opts,
     [&](const io::WriterFactory & open_writer) {
       return execute_pass(
-        args.input_path, target_topics, intro.typesupport, args.alpha, open_writer);
+        args.input_path, targets.topics, intro.typesupport, args.alpha, open_writer);
     });
 }
 

@@ -105,9 +105,10 @@ find_package(bagwiz_bag REQUIRED)
 find_package(bagwiz_slam REQUIRED)
 find_package(rcutils REQUIRED)
 find_package(rmw REQUIRED)
-# cam_info_recompute_p/cam_info_replace round-trip typed messages through
-# rmw_(de)serialize, which is declared in <rmw/rmw.h> but DEFINED in
-# librmw_implementation.so, so both packages are needed at link time.
+# cam_info_common.cpp (the shared internals of cam_info_recompute_p and
+# cam_info_replace) round-trips typed messages through rmw_(de)serialize,
+# which is declared in <rmw/rmw.h> but DEFINED in librmw_implementation.so,
+# so both packages are needed at link time.
 find_package(rmw_implementation REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -177,6 +178,7 @@ add_executable(bagwiz
   src/commands/registry.cpp
   src/commands/help_formatter.cpp
   src/commands/cam_info.cpp
+  src/commands/cam_info_common.cpp
   src/commands/cam_info_dump.cpp
   src/commands/cam_info_recompute_p.cpp
   src/commands/cam_info_replace.cpp
@@ -202,8 +204,8 @@ add_executable(bagwiz
   src/commands/topic_rename.cpp
 )
 target_include_directories(bagwiz PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-# sensor_msgs is needed only by src/commands/cam_info_replace.cpp and
-# src/commands/cam_info_recompute_p.cpp, which build a typed
+# sensor_msgs is needed only by src/commands/cam_info_common.cpp (shared by
+# cam_info_replace.cpp and cam_info_recompute_p.cpp), which builds a typed
 # sensor_msgs/msg/CameraInfo to round-trip through rmw_(de)serialize.
 # It is not a dependency of any bagwiz library, so link it on the
 # executable directly. rmw, tf2, and geometry_msgs headers are likewise used
@@ -375,7 +377,8 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_cam_info_recompute_p_test
     test/commands/cam_info_recompute_p_test.cpp
-    src/commands/cam_info_recompute_p.cpp)
+    src/commands/cam_info_recompute_p.cpp
+    src/commands/cam_info_common.cpp)
   target_include_directories(bagwiz_cam_info_recompute_p_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(
     bagwiz_cam_info_recompute_p_test ${bagwiz_test_libs} fmt::fmt
@@ -383,7 +386,8 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_cam_info_replace_test
     test/commands/cam_info_replace_test.cpp
-    src/commands/cam_info_replace.cpp)
+    src/commands/cam_info_replace.cpp
+    src/commands/cam_info_common.cpp)
   target_include_directories(bagwiz_cam_info_replace_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(
     bagwiz_cam_info_replace_test ${bagwiz_test_libs} fmt::fmt
@@ -395,6 +399,17 @@ if(BUILD_TESTING)
   target_include_directories(bagwiz_cam_info_dump_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(
     bagwiz_cam_info_dump_test ${bagwiz_test_libs} fmt::fmt
+    ${sensor_msgs_TARGETS} ${rmw_TARGETS} ${rmw_implementation_TARGETS})
+
+  # cam_info_common.hpp lives in src/commands (CLI-internal, not installed), so
+  # this test adds src/commands to its include path in addition to include/.
+  ament_add_gtest(bagwiz_cam_info_common_test
+    test/commands/cam_info_common_test.cpp
+    src/commands/cam_info_common.cpp)
+  target_include_directories(bagwiz_cam_info_common_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
+  target_link_libraries(
+    bagwiz_cam_info_common_test ${bagwiz_test_libs} fmt::fmt
     ${sensor_msgs_TARGETS} ${rmw_TARGETS} ${rmw_implementation_TARGETS})
 
   ament_add_gtest(bagwiz_generate_video_test
