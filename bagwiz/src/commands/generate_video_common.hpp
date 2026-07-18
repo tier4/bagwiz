@@ -108,6 +108,27 @@ struct VideoInputScan
   bool has_pointcloud_topics, bool enable_threaded, std::uint64_t frame_count,
   unsigned int hardware_concurrency);
 
+// ---- pass-2 geometry ---------------------------------------------------------
+
+// The camera info (already scaled by --resize-scale) and TF buffer the encode
+// loop needs for --undistort / --pcd, loaded up front so a failure aborts
+// before the encode. camera_info is set iff `camera_info_topic` was resolved;
+// the TF buffer iff point-cloud topics are present. Filled via an out
+// parameter because tf2::BufferCore is immobile (it owns a mutex), so this
+// struct cannot be returned by value.
+struct VideoGeometry
+{
+  std::optional<core::image::CameraInfo> camera_info;
+  std::optional<tf2::BufferCore> tf_buffer;
+};
+
+// Load the pass-2 geometry into `out`: camera info from `camera_info_topic`
+// when given, and the bag's TF when point-cloud overlay topics are present.
+// Returns "" on success; on failure logs and returns the message.
+[[nodiscard]] std::string load_video_geometry(
+  const GenerateVideoArgs & args, const std::optional<std::string> & camera_info_topic,
+  VideoGeometry & out);
+
 // ---- partial tmp output -------------------------------------------------------
 
 // The sibling temp path the video is encoded into before being moved into
@@ -147,6 +168,10 @@ private:
   bool overwrite);
 
 // ---- pass 2: frame pipeline ---------------------------------------------------
+
+// Open the input bag for the encode pass, restricted to the image topic. Logs
+// "failed to open ..." and returns nullptr on failure.
+[[nodiscard]] std::unique_ptr<io::BagReader> open_encode_reader(const GenerateVideoArgs & args);
 
 // Owned decode buffer that survives across BagReader::next() calls, which
 // invalidate raw payload spans. Used by both the synchronous and the threaded
@@ -264,6 +289,24 @@ private:
   io::BagReader & reader, const GenerateVideoArgs & args, VideoInputScan & scan,
   const core::image::CameraInfo & camera_info, tf2::BufferCore & tf_buffer,
   const FrameNormalizer & normalizer, VideoFrameEncoder & encoder);
+
+// Dispatch the encode pass: the threaded projection pipeline when it can pay
+// for itself (should_use_threaded_projection), otherwise the synchronous loop.
+// Both pointers must be non-null when point-cloud topics are present (the
+// threaded path dereferences them). Reader/decoder exceptions are caught with
+// the command's "error reading topic" log. Returns a process exit code.
+[[nodiscard]] int run_encode_pass(
+  io::BagReader & reader, const GenerateVideoArgs & args, VideoInputScan & scan,
+  const core::image::CameraInfo * camera_info, tf2::BufferCore * tf_buffer,
+  const FrameNormalizer & normalizer, VideoFrameEncoder & encoder);
+
+// Close out the encode: require at least one rendered frame (pass 1 saw
+// messages, so a frameless pass 2 means the bag changed between passes), flush
+// + close the encoder, and move the tmp output into place. Returns "" on
+// success; logs and returns the message on failure.
+[[nodiscard]] std::string finish_video_encode(
+  VideoFrameEncoder & encoder, const std::string & topic, const std::filesystem::path & tmp_path,
+  const std::filesystem::path & output_path, bool overwrite);
 
 // ---- summary ------------------------------------------------------------------
 

@@ -33,6 +33,7 @@
 #include <span>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -408,6 +409,29 @@ bool should_use_threaded_projection(
          hardware_concurrency > 1;
 }
 
+std::string load_video_geometry(
+  const GenerateVideoArgs & args, const std::optional<std::string> & camera_info_topic,
+  VideoGeometry & out)
+{
+  if (camera_info_topic.has_value()) {
+    auto ci = core::camera_info::load_camera_info(args.input_path, *camera_info_topic);
+    if (!ci.ok()) {
+      BAGWIZ_LOG_ERROR(kLogger, "%s", ci.error.c_str());
+      return ci.error;
+    }
+    out.camera_info =
+      core::image::scale_camera_info(*ci.info, static_cast<double>(args.resize_scale));
+  }
+  if (!args.pointcloud_topics.empty()) {
+    out.tf_buffer.emplace();
+    if (const auto err = core::load_tf_buffer(args.input_path, *out.tf_buffer); err.has_value()) {
+      BAGWIZ_LOG_ERROR(kLogger, "%s", err->c_str());
+      return *err;
+    }
+  }
+  return "";
+}
+
 std::filesystem::path partial_tmp_path_for(const std::filesystem::path & output)
 {
   return output.parent_path() /
@@ -451,6 +475,22 @@ std::string finalize_video_output(
     }
   }
   return "";
+}
+
+std::unique_ptr<io::BagReader> open_encode_reader(const GenerateVideoArgs & args)
+{
+  std::unique_ptr<io::BagReader> reader;
+  try {
+    reader = io::open_read(args.input_path);
+  } catch (const std::exception & e) {
+    BAGWIZ_LOG_ERROR(
+      kLogger, "failed to open '%s': %s", args.input_path.string().c_str(), e.what());
+    return nullptr;
+  }
+  io::ReadFilter filter;
+  filter.topics.push_back(args.topic);
+  reader->set_filter(filter);
+  return reader;
 }
 
 std::optional<FrameBuffer> FrameNormalizer::decode(
@@ -744,6 +784,41 @@ int run_encode_loop_async(
     pending_projection = std::move(*next_projection);
   }
   return 0;
+}
+
+int run_encode_pass(
+  io::BagReader & reader, const GenerateVideoArgs & args, VideoInputScan & scan,
+  const core::image::CameraInfo * camera_info, tf2::BufferCore * tf_buffer,
+  const FrameNormalizer & normalizer, VideoFrameEncoder & encoder)
+{
+  try {
+    if (should_use_threaded_projection(
+          !args.pointcloud_topics.empty(), args.enable_threaded_projection, scan.span.count,
+          std::thread::hardware_concurrency())) {
+      return run_encode_loop_async(
+        reader, args, scan, *camera_info, *tf_buffer, normalizer, encoder);
+    }
+    return run_encode_loop_sync(reader, args, scan, camera_info, tf_buffer, normalizer, encoder);
+  } catch (const std::exception & e) {
+    BAGWIZ_LOG_ERROR(kLogger, "error reading topic '%s': %s", args.topic.c_str(), e.what());
+    return 1;
+  }
+}
+
+std::string finish_video_encode(
+  VideoFrameEncoder & encoder, const std::string & topic, const std::filesystem::path & tmp_path,
+  const std::filesystem::path & output_path, bool overwrite)
+{
+  // Pass 1 saw messages, but if pass 2 yielded none (e.g. the bag changed
+  // between passes) the encoder was never created. Nothing was rendered.
+  if (!encoder.started()) {
+    BAGWIZ_LOG_ERROR(kLogger, "topic '%s' yielded no frames in the encode pass.", topic.c_str());
+    return "topic '" + topic + "' yielded no frames in the encode pass.";
+  }
+  if (const auto err = encoder.finish(); !err.empty()) {
+    return err;
+  }
+  return finalize_video_output(tmp_path, output_path, overwrite);
 }
 
 void log_video_summary(

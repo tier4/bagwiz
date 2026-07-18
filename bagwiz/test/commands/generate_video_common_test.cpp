@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <span>
 #include <string>
 #include <system_error>
@@ -33,8 +34,11 @@ namespace
 {
 
 using bagwiz::commands::finalize_video_output;
+using bagwiz::commands::finish_video_encode;
 using bagwiz::commands::FrameBuffer;
 using bagwiz::commands::FrameNormalizer;
+using bagwiz::commands::load_video_geometry;
+using bagwiz::commands::open_encode_reader;
 using bagwiz::commands::partial_tmp_path_for;
 using bagwiz::commands::PartialFileGuard;
 using bagwiz::commands::scan_video_inputs;
@@ -454,6 +458,81 @@ TEST_F(GenerateVideoCommonTest, ScanDerivesSpanAndFps)
   EXPECT_TRUE(s.pcd_topic_has_stamps.empty());
   EXPECT_EQ(s.global_property_min, 0.0);
   EXPECT_EQ(s.global_property_max, 0.0);
+}
+
+// ---- load_video_geometry ----------------------------------------------------
+
+TEST_F(GenerateVideoCommonTest, LoadVideoGeometryDefaultsToEmpty)
+{
+  const auto bag = write_image_bag(tmp_dir_, "in.mcap", 1);
+  bagwiz::commands::GenerateVideoArgs args(bag, "/cam/image", tmp_dir_ / "out.avi", false);
+  bagwiz::commands::VideoGeometry g;
+  EXPECT_EQ(load_video_geometry(args, std::nullopt, g), "");
+  EXPECT_FALSE(g.camera_info.has_value());
+  EXPECT_FALSE(g.tf_buffer.has_value());
+}
+
+TEST_F(GenerateVideoCommonTest, LoadVideoGeometryFailsWhenCamInfoUnreadable)
+{
+  // The cam-info topic is declared but carries no message to load.
+  const auto bag = tmp_dir_ / "in.mcap";
+  {
+    auto w = bagwiz::io::open_write(bag, mcap_options());
+    declare_topic(*w, "/cam/image_raw", kImageType);
+    declare_topic(*w, "/cam/camera_info", kCameraInfoType);
+    w->close();
+  }
+  bagwiz::commands::GenerateVideoArgs args(bag, "/cam/image_raw", tmp_dir_ / "out.avi", false);
+  bagwiz::commands::VideoGeometry g;
+  EXPECT_FALSE(load_video_geometry(args, "/cam/camera_info", g).empty());
+}
+
+// ---- open_encode_reader -----------------------------------------------------
+
+TEST_F(GenerateVideoCommonTest, OpenEncodeReaderMissingBagReturnsNull)
+{
+  bagwiz::commands::GenerateVideoArgs args(
+    tmp_dir_ / "does_not_exist.mcap", "/cam/image", tmp_dir_ / "out.avi", false);
+  EXPECT_EQ(open_encode_reader(args), nullptr);
+}
+
+TEST_F(GenerateVideoCommonTest, OpenEncodeReaderFiltersToTheImageTopic)
+{
+  const auto bag = tmp_dir_ / "in.mcap";
+  {
+    auto w = bagwiz::io::open_write(bag, mcap_options());
+    declare_topic(*w, "/cam/image", kImageType);
+    declare_topic(*w, "/other", kImageType);
+    const std::array<std::byte, 4> garbage{
+      std::byte{0x00}, std::byte{0x01}, std::byte{0x02}, std::byte{0x03}};
+    w->write("/cam/image", 1'000'000'000LL, garbage);
+    w->write("/other", 1'000'000'000LL, garbage);
+    w->close();
+  }
+  bagwiz::commands::GenerateVideoArgs args(bag, "/cam/image", tmp_dir_ / "out.avi", false);
+  auto reader = open_encode_reader(args);
+  ASSERT_NE(reader, nullptr);
+  bagwiz::io::RawMessage raw;
+  ASSERT_TRUE(reader->next(raw));
+  EXPECT_EQ(raw.topic->name, "/cam/image");
+  EXPECT_FALSE(reader->next(raw));  // /other is filtered out
+}
+
+// ---- finish_video_encode ----------------------------------------------------
+
+TEST_F(GenerateVideoCommonTest, FinishEncodeRequiresAStartedEncoder)
+{
+  bagwiz::commands::GenerateVideoArgs args(
+    tmp_dir_ / "in.mcap", "/cam/image", tmp_dir_ / "out.avi", false);
+  bagwiz::commands::VideoFrameEncoder encoder(
+    partial_tmp_path_for(args.output_path), bagwiz::core::video::FrameRate{10, 1}, args, nullptr,
+    0.0, 0.0);
+  EXPECT_EQ(
+    finish_video_encode(
+      encoder, args.topic, partial_tmp_path_for(args.output_path), args.output_path, false),
+    "topic '/cam/image' yielded no frames in the encode pass.");
+  EXPECT_FALSE(std::filesystem::exists(args.output_path));
+  EXPECT_FALSE(std::filesystem::exists(partial_tmp_path_for(args.output_path)));
 }
 
 // ---- FrameNormalizer::decode ------------------------------------------------
