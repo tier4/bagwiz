@@ -197,6 +197,12 @@ add_executable(bagwiz
   src/commands/pcd_undistort.cpp
   src/commands/pcd_undistort_common.cpp
   src/commands/walk.cpp
+  src/commands/walk_bag.cpp
+  src/commands/walk_cursor.cpp
+  src/commands/walk_frame.cpp
+  src/commands/walk_overlay.cpp
+  src/commands/walk_preview.cpp
+  src/commands/walk_save.cpp
   src/commands/traj.cpp
   src/commands/tf.cpp
   src/commands/tf_walk.cpp
@@ -458,6 +464,63 @@ if(BUILD_TESTING)
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
   target_link_libraries(
     bagwiz_generate_video_common_test ${bagwiz_test_libs} fmt::fmt ${OpenCV_LIBS})
+
+  # The walk_*.hpp headers live in src/commands (CLI-internal, not installed),
+  # so the walk unit tests add src/commands to their include path
+  # (pcd_concat_common idiom).
+  ament_add_gtest(bagwiz_walk_cursor_test
+    test/commands/walk_cursor_test.cpp
+    src/commands/walk_cursor.cpp)
+  target_include_directories(bagwiz_walk_cursor_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
+  target_link_libraries(bagwiz_walk_cursor_test ${bagwiz_test_libs} fmt::fmt)
+
+  ament_add_gtest(bagwiz_walk_bag_test
+    test/commands/walk_bag_test.cpp
+    src/commands/walk_bag.cpp)
+  target_include_directories(bagwiz_walk_bag_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
+  target_link_libraries(bagwiz_walk_bag_test ${bagwiz_test_libs} fmt::fmt)
+
+  ament_add_gtest(bagwiz_walk_frame_test
+    test/commands/walk_frame_test.cpp
+    src/commands/walk_frame.cpp
+    src/commands/walk_cursor.cpp)
+  target_include_directories(bagwiz_walk_frame_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
+  target_link_libraries(bagwiz_walk_frame_test ${bagwiz_test_libs} fmt::fmt)
+
+  ament_add_gtest(bagwiz_walk_scroll_hint_test
+    test/commands/walk_scroll_hint_test.cpp
+    src/commands/walk_frame.cpp
+    src/commands/walk_cursor.cpp)
+  target_include_directories(bagwiz_walk_scroll_hint_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
+  target_link_libraries(bagwiz_walk_scroll_hint_test ${bagwiz_test_libs} fmt::fmt)
+
+  ament_add_gtest(bagwiz_walk_save_test
+    test/commands/walk_save_test.cpp
+    src/commands/walk_save.cpp)
+  target_include_directories(bagwiz_walk_save_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
+  target_link_libraries(bagwiz_walk_save_test ${bagwiz_test_libs} fmt::fmt)
+
+  # walk.cpp carries a BAGWIZ_REGISTER_COMMAND registrar, so the test also
+  # compiles registry.cpp (completion_test idiom).
+  ament_add_gtest(bagwiz_walk_test
+    test/commands/walk_test.cpp
+    src/commands/walk.cpp
+    src/commands/walk_bag.cpp
+    src/commands/walk_cursor.cpp
+    src/commands/walk_frame.cpp
+    src/commands/walk_overlay.cpp
+    src/commands/walk_preview.cpp
+    src/commands/walk_save.cpp
+    src/commands/registry.cpp)
+  target_include_directories(bagwiz_walk_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
+  target_link_libraries(
+    bagwiz_walk_test ${bagwiz_test_libs} CLI11::CLI11 fmt::fmt ${OpenCV_LIBS} ${tf2_TARGETS})
 endif()
 
 ament_package()
