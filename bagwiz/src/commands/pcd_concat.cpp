@@ -15,14 +15,13 @@
 #include "bagwiz/core/pointcloud/cloud_transform.hpp"
 #include "bagwiz/core/pointcloud/concat_sync.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
+#include "bagwiz/core/pointcloud/static_extrinsic.hpp"
 #include "bagwiz/core/tf/tf_buffer_loader.hpp"
-#include "bagwiz/core/tf/tf_chain.hpp"
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/bag_open.hpp"
 #include "bagwiz/io/topics.hpp"
 
 #include <tf2/buffer_core.hpp>
-#include <tf2/time.hpp>
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
@@ -291,21 +290,19 @@ int run_pcd_concat(const PcdConcatArgs & args)
       // not given and a topic cannot reach the default (base_link), the default
       // does not span every input, so --frame is required.
       std::string reach_error;
-      const auto missing = core::missing_frames(buffer, target_frame, ts.frame_id);
-      if (!missing.empty()) {
+      const auto resolved =
+        core::pointcloud::resolve_static_extrinsic(buffer, target_frame, ts.frame_id);
+      if (!resolved.missing.empty()) {
         std::string names;
-        for (std::size_t i = 0; i < missing.size(); ++i) {
-          names += (i ? ", " : "") + missing[i];
+        for (std::size_t i = 0; i < resolved.missing.size(); ++i) {
+          names += (i ? ", " : "") + resolved.missing[i];
         }
         reach_error = "frame(s) not present in the bag's static TF tree: " + names;
+      } else if (!resolved.ok()) {
+        reach_error = "no static TF chain from '" + target_frame + "' to '" + ts.frame_id +
+                      "': " + resolved.lookup_error;
       } else {
-        try {
-          ts.extrinsic =
-            to_rigid(buffer.lookupTransform(target_frame, ts.frame_id, tf2::TimePointZero));
-        } catch (const std::exception & e) {
-          reach_error =
-            "no static TF chain from '" + target_frame + "' to '" + ts.frame_id + "': " + e.what();
-        }
+        ts.extrinsic = to_rigid(resolved.transform);
       }
       if (!reach_error.empty()) {
         if (frame_explicit) {

@@ -106,6 +106,65 @@ float compute_property_value(
   return 0.0f;
 }
 
+// Bookkeeping shared by the two PointCloud2 topic scans below: every message's
+// matching-key entry plus the header-stamp tracking that gates capture-time
+// matching (see PointCloudIndex::header_stamps_present).
+struct TopicScanBookkeeping
+{
+  std::vector<PointCloudIndexEntry> entries;
+  bool all_header_stamps = true;
+};
+
+// The open/filter/loop skeleton shared by build_point_cloud_index and
+// scan_point_cloud: opens `input`, filters to `topic`, and drives `visitor`
+// once per message. The visitor parses the payload (header-only or full — its
+// choice), reports the message's header stamp (0 = unset), and accumulates
+// whatever it needs; the skeleton owns the stamp-fallback rule
+// (stamp_ns = header > 0 ? header : record), the entries vector, the
+// all_header_stamps tracking, and the empty-topic error.
+template <typename Visitor>
+std::optional<TopicScanBookkeeping> scan_point_cloud_topic(
+  const std::filesystem::path & input, const std::string & topic, Visitor && visitor,
+  std::string & error)
+{
+  std::unique_ptr<io::BagReader> reader;
+  try {
+    reader = io::open_read(input);
+  } catch (const std::exception & e) {
+    error = "failed to open '" + input.string() + "': " + e.what();
+    return std::nullopt;
+  }
+
+  io::ReadFilter filter;
+  filter.topics.push_back(topic);
+  reader->set_filter(filter);
+
+  TopicScanBookkeeping scan;
+  io::RawMessage raw;
+  try {
+    while (reader->next(raw)) {
+      std::int64_t header_stamp_ns = 0;
+      if (!visitor(raw.payload, header_stamp_ns, error)) {
+        return std::nullopt;
+      }
+      // stamp_ns is the header.stamp when present, else the bag record time so
+      // the entry still has a usable key. record_ns always seeks the message.
+      const std::int64_t stamp_ns = header_stamp_ns > 0 ? header_stamp_ns : raw.timestamp_ns;
+      scan.entries.push_back({stamp_ns, raw.timestamp_ns});
+      scan.all_header_stamps = scan.all_header_stamps && header_stamp_ns > 0;
+    }
+  } catch (const std::exception & e) {
+    error = "error reading point-cloud topic '" + topic + "': " + e.what();
+    return std::nullopt;
+  }
+
+  if (scan.entries.empty()) {
+    error = "point-cloud topic '" + topic + "' has no messages";
+    return std::nullopt;
+  }
+  return scan;
+}
+
 }  // namespace
 
 FrameMatch choose_frame_match(
@@ -122,62 +181,41 @@ std::optional<PointCloudIndex> build_point_cloud_index(
   const std::optional<double> & manual_min, const std::optional<double> & manual_max,
   std::string & error)
 {
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(input);
-  } catch (const std::exception & e) {
-    error = "failed to open '" + input.string() + "': " + e.what();
-    return std::nullopt;
-  }
-
-  io::ReadFilter filter;
-  filter.topics.push_back(topic);
-  reader->set_filter(filter);
-
   const bool need_auto_min = !manual_min.has_value();
   const bool need_auto_max = !manual_max.has_value();
   const bool need_value_scan = need_auto_min || need_auto_max;
+  const bool need_intensity = (property == PointCloudProperty::kIntensity);
 
   PointCloudIndex result;
   double running_min = std::numeric_limits<double>::infinity();
   double running_max = -std::numeric_limits<double>::infinity();
-  // True only while every message seen so far carried a header.stamp.
-  bool all_header_stamps = true;
 
-  const bool need_intensity = (property == PointCloudProperty::kIntensity);
-
-  io::RawMessage raw;
-  try {
-    while (reader->next(raw)) {
+  const auto scan = scan_point_cloud_topic(
+    input, topic,
+    [&](std::span<const std::byte> payload, std::int64_t & header_stamp_ns, std::string & err) {
       // Only the header is needed for the matching key and intensity detection.
       // parse_pointcloud2_header skips the point-data copy, so this stays cheap
       // regardless of cloud size; the full parse below runs only for the
       // per-point value scan, which genuinely needs the point bytes.
-      const auto header = parse_pointcloud2_header(raw.payload);
+      const auto header = parse_pointcloud2_header(payload);
       if (!header.ok()) {
-        error = header.error;
-        return std::nullopt;
+        err = header.error;
+        return false;
       }
-
-      // stamp_ns is the header.stamp when present, else the bag record time so
-      // the entry still has a usable key. record_ns always seeks the message.
-      const std::int64_t stamp_ns =
-        header.header->timestamp_ns > 0 ? header.header->timestamp_ns : raw.timestamp_ns;
-      result.entries.push_back({stamp_ns, raw.timestamp_ns});
-      all_header_stamps = all_header_stamps && header.header->timestamp_ns > 0;
+      header_stamp_ns = header.header->timestamp_ns;
 
       if (!result.has_intensity) {
         result.has_intensity = header.header->field_offset("intensity").has_value();
       }
 
       if (!need_value_scan) {
-        continue;
+        return true;
       }
 
-      const auto parsed = parse_pointcloud2(raw.payload);
+      const auto parsed = parse_pointcloud2(payload);
       if (!parsed.ok()) {
-        error = parsed.error;
-        return std::nullopt;
+        err = parsed.error;
+        return false;
       }
       const auto & cloud = *parsed.cloud;
 
@@ -185,8 +223,8 @@ std::optional<PointCloudIndex> build_point_cloud_index(
       const auto off_y = cloud.field_offset("y");
       const auto off_z = cloud.field_offset("z");
       if (!off_x || !off_y || !off_z) {
-        error = "point cloud is missing required x/y/z fields";
-        return std::nullopt;
+        err = "point cloud is missing required x/y/z fields";
+        return false;
       }
       const auto * field_x = find_point_field(cloud, "x");
       const auto * field_y = find_point_field(cloud, "y");
@@ -197,8 +235,8 @@ std::optional<PointCloudIndex> build_point_cloud_index(
       if (need_intensity) {
         off_intensity = cloud.field_offset("intensity");
         if (!off_intensity) {
-          error = "point cloud has no intensity field";
-          return std::nullopt;
+          err = "point cloud has no intensity field";
+          return false;
         }
         field_intensity = find_point_field(cloud, "intensity");
       }
@@ -211,21 +249,18 @@ std::optional<PointCloudIndex> build_point_cloud_index(
         running_min = std::min(running_min, static_cast<double>(value));
         running_max = std::max(running_max, static_cast<double>(value));
       }
-    }
-  } catch (const std::exception & e) {
-    error = "error reading point-cloud topic '" + topic + "': " + e.what();
-    return std::nullopt;
-  }
-
-  if (result.entries.empty()) {
-    error = "point-cloud topic '" + topic + "' has no messages";
+      return true;
+    },
+    error);
+  if (!scan.has_value()) {
     return std::nullopt;
   }
 
   // Entries stay in read (record) order; PointCloudFetcher builds whichever
   // sorted view it needs. header_stamps_present gates capture-time matching, so
   // it is true only when no message fell back to record time.
-  result.header_stamps_present = all_header_stamps;
+  result.entries = std::move(scan->entries);
+  result.header_stamps_present = scan->all_header_stamps;
 
   result.property_min = need_auto_min ? running_min : *manual_min;
   result.property_max = need_auto_max ? running_max : *manual_max;
@@ -317,54 +352,27 @@ bool accumulate_property_ranges(
 std::optional<PointCloudScan> scan_point_cloud(
   const std::filesystem::path & input, const std::string & topic, std::string & error)
 {
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(input);
-  } catch (const std::exception & e) {
-    error = "failed to open '" + input.string() + "': " + e.what();
-    return std::nullopt;
-  }
-
-  io::ReadFilter filter;
-  filter.topics.push_back(topic);
-  reader->set_filter(filter);
-
   PointCloudScan scan;
-  bool all_header_stamps = true;
-  io::RawMessage raw;
-  try {
-    while (reader->next(raw)) {
-      const auto parsed = parse_pointcloud2(raw.payload);
+  const auto bookkeeping = scan_point_cloud_topic(
+    input, topic,
+    [&](std::span<const std::byte> payload, std::int64_t & header_stamp_ns, std::string & err) {
+      const auto parsed = parse_pointcloud2(payload);
       if (!parsed.ok()) {
-        error = parsed.error;
-        return std::nullopt;
+        err = parsed.error;
+        return false;
       }
-      const auto & cloud = *parsed.cloud;
-
-      // stamp_ns is the header.stamp when present, else the bag record time so
-      // the entry still has a usable key. record_ns always seeks the message.
-      const std::int64_t stamp_ns = cloud.timestamp_ns > 0 ? cloud.timestamp_ns : raw.timestamp_ns;
-      scan.entries.push_back({stamp_ns, raw.timestamp_ns});
-      all_header_stamps = all_header_stamps && cloud.timestamp_ns > 0;
-
-      if (!accumulate_property_ranges(cloud, scan.ranges, error)) {
-        return std::nullopt;
-      }
-    }
-  } catch (const std::exception & e) {
-    error = "error reading point-cloud topic '" + topic + "': " + e.what();
-    return std::nullopt;
-  }
-
-  if (scan.entries.empty()) {
-    error = "point-cloud topic '" + topic + "' has no messages";
+      header_stamp_ns = parsed.cloud->timestamp_ns;
+      return accumulate_property_ranges(*parsed.cloud, scan.ranges, err);
+    },
+    error);
+  if (!bookkeeping.has_value()) {
     return std::nullopt;
   }
 
   // Entries stay in read (record) order; the fetcher builds whichever sorted view
   // it needs. header_stamps_present is true only when no message fell back.
-  scan.header_stamps_present = all_header_stamps;
-
+  scan.entries = std::move(bookkeeping->entries);
+  scan.header_stamps_present = bookkeeping->all_header_stamps;
   return scan;
 }
 

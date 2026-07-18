@@ -15,6 +15,7 @@
 #include "bagwiz/core/pointcloud/deskew.hpp"
 #include "bagwiz/core/pointcloud/point_time.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
+#include "bagwiz/core/pointcloud/static_extrinsic.hpp"
 #include "bagwiz/core/tf/tf_buffer_loader.hpp"
 #include "bagwiz/core/tf/tf_chain.hpp"
 #include "bagwiz/core/tf/tf_value_extract.hpp"
@@ -823,20 +824,20 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
     const std::string & frame_id = pcd_state.at(topic).frame_id;
     std::optional<geometry_msgs::msg::Transform> extrinsic;
     if (frame_id != of) {
-      if (!core::missing_frames(buffer, of, frame_id).empty()) {
+      const auto resolved = core::pointcloud::resolve_static_extrinsic(buffer, of, frame_id);
+      if (!resolved.missing.empty()) {
         BAGWIZ_LOG_ERROR(
           kLogger, "pcd undistort: --of '%s' has no static TF chain to --pcd topic '%s' frame '%s'",
           of.c_str(), topic.c_str(), frame_id.c_str());
         return 1;
       }
-      try {
-        extrinsic = buffer.lookupTransform(of, frame_id, tf2::TimePointZero).transform;
-      } catch (const std::exception & e) {
+      if (!resolved.ok()) {
         BAGWIZ_LOG_ERROR(
           kLogger, "pcd undistort: --of '%s' -> --pcd topic '%s' frame '%s' TF lookup failed: %s",
-          of.c_str(), topic.c_str(), frame_id.c_str(), e.what());
+          of.c_str(), topic.c_str(), frame_id.c_str(), resolved.lookup_error.c_str());
         return 1;
       }
+      extrinsic = resolved.transform.transform;
     }
     extrinsics.emplace(topic, extrinsic);
   }

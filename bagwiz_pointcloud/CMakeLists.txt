@@ -53,6 +53,7 @@ add_library(bagwiz_pointcloud
   src/core/pointcloud/pointcloud2.cpp
   src/core/pointcloud/projector.cpp
   src/core/pointcloud/projector_helpers.cpp
+  src/core/pointcloud/static_extrinsic.cpp
 )
 target_include_directories(bagwiz_pointcloud
   PUBLIC
@@ -135,6 +136,14 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_pointcloud_fetcher_test test/core/pointcloud/fetcher_test.cpp)
   target_link_libraries(bagwiz_pointcloud_fetcher_test bagwiz_pointcloud)
+
+  # Pins build_point_cloud_index's manual-bounds and intensity paths (the
+  # value-scan-free header path no command exercises end to end).
+  ament_add_gtest(bagwiz_index_bounds_test test/core/pointcloud/index_bounds_test.cpp)
+  target_link_libraries(bagwiz_index_bounds_test bagwiz_pointcloud)
+
+  ament_add_gtest(bagwiz_static_extrinsic_test test/core/pointcloud/static_extrinsic_test.cpp)
+  target_link_libraries(bagwiz_static_extrinsic_test bagwiz_pointcloud)
 
   ament_add_gtest(bagwiz_frame_match_test test/core/pointcloud/frame_match_test.cpp)
   target_link_libraries(bagwiz_frame_match_test bagwiz_pointcloud)
