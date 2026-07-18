@@ -348,7 +348,8 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_pcd_undistort_command_test
     test/commands/pcd_undistort_test.cpp
-    src/commands/pcd_undistort.cpp)
+    src/commands/pcd_undistort.cpp
+    src/commands/pcd_undistort_common.cpp)
   target_include_directories(bagwiz_pcd_undistort_command_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(bagwiz_pcd_undistort_command_test ${bagwiz_test_libs} fmt::fmt)
 
