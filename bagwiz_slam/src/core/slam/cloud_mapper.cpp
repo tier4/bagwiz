@@ -252,6 +252,61 @@ ScanMatchParams make_window_fill_params(const CloudMapperConfig & cfg)
   return params;
 }
 
+// Antenna lever-arm in the submap-origin sensor frame. cfg.gnss_antenna_offset
+// is the antenna phase center in the cloud (LiDAR) frame; the submap origin X(i)
+// is the LiDAR pose for the CT backend but the IMU pose for the CPU backend, so
+// re-express the antenna point in the IMU frame there (p_imu = T_imu_lidar *
+// p_lidar). {0,0,0} leaves it zero -> identical to the no-correction path.
+Eigen::Vector3d lever_arm_in_origin_frame(const CloudMapperConfig & cfg)
+{
+  Eigen::Vector3d lever_origin(
+    cfg.gnss_antenna_offset[0], cfg.gnss_antenna_offset[1], cfg.gnss_antenna_offset[2]);
+  if (cfg.t_lidar_imu) {
+    const Eigen::Isometry3d T_lidar_imu = detail::to_isometry(*cfg.t_lidar_imu);
+    lever_origin = T_lidar_imu.inverse() * lever_origin;
+  }
+  return lever_origin;
+}
+
+// Build the noise model of one GNSS translation prior from the nearest fix's ENU
+// covariance and the fitted world<-ENU rotation. Fixed-precision fallback (used
+// when the fix has no usable covariance or gnss_use_covariance is off): the
+// original glim_ext-style behavior. Vertical (z) handling mirrors the fixed path:
+// honor a configured z precision, otherwise leave height effectively
+// unconstrained (a large variance ~ zero information) so GNSS height — the
+// weakest GNSS axis — does not fight the LiDAR. The model is robust-wrapped so
+// one multipath outlier cannot dominate; a Huber k of 0 disables it.
+gtsam::SharedNoiseModel make_gnss_noise_model(
+  const std::array<double, 9> & cov, std::uint8_t cov_type, const GnssOffsetTargets & aligned,
+  const CloudMapperConfig & cfg)
+{
+  const Eigen::Vector3d precisions(
+    cfg.gnss_prior_inf_scale[0], cfg.gnss_prior_inf_scale[1], cfg.gnss_prior_inf_scale[2]);
+  const gtsam::SharedNoiseModel fixed_model = gtsam::noiseModel::Diagonal::Precisions(precisions);
+  const double z_variance =
+    cfg.gnss_prior_inf_scale[2] > 0.0 ? 1.0 / cfg.gnss_prior_inf_scale[2] : kUnconstrainedZVariance;
+
+  gtsam::SharedNoiseModel base = fixed_model;
+  if (cfg.gnss_use_covariance && cov_type != kNavSatCovarianceTypeUnknown) {
+    // Horizontal ENU covariance {c_ee, c_en, c_ne, c_nn} from the nearest fix,
+    // rotated into the world frame, inflated and floored; z left per z_variance.
+    const std::array<double, 4> cov_h = {cov[0], cov[1], cov[3], cov[4]};
+    const std::array<double, 9> w = gnss_world_prior_covariance(
+      cov_h, aligned.world_from_enu_cos, aligned.world_from_enu_sin,
+      cfg.gnss_horizontal_sigma_floor, cfg.gnss_covariance_inflation, z_variance);
+    Eigen::Matrix3d cov_w;
+    cov_w << w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8];
+    base = gtsam::noiseModel::Gaussian::Covariance(cov_w);
+  }
+
+  gtsam::SharedNoiseModel model = base;
+  if (cfg.gnss_robust_huber_k > 0.0) {
+    model = gtsam::noiseModel::Robust::Create(
+      gtsam::noiseModel::mEstimator::Huber::Create(cfg.gnss_robust_huber_k), base);
+  }
+  return model;
+}
+
 // Per-frame point geometry held in the stash. Float by default (the CPU export
 // stays byte-identical to the historical output). In use_gpu mode it is
 // int16-quantized about the frame's own centroid (Tier-1c), roughly halving the
@@ -440,6 +495,45 @@ struct CloudMapper::Impl
   // GNSS translation-prior factors built in finish() and injected into the
   // global factor graph via the on_smoother_update callback during optimize().
   std::vector<gtsam::NonlinearFactor::shared_ptr> gnss_factors;
+
+  // RAII removal of the process-global on_smoother_update slot the GNSS injector
+  // is registered under (see inject_gnss_factors). id is the slot handle from
+  // the registration (or -1 when no injector was registered), so the
+  // destructor's guard is genuinely conditional.
+  struct ScopedGnssCallback
+  {
+    int id;
+    ~ScopedGnssCallback()
+    {
+      if (id >= 0) {
+        glim::GlobalMappingCallbacks::on_smoother_update.remove(id);
+      }
+    }
+  };
+
+  // What inject_gnss_factors() hands finish(): the number of GNSS priors built
+  // (reported as CloudMap::gnss_factor_count) plus the RAII slot guard, which
+  // must stay alive until the global optimize() that consumes the priors has
+  // run.
+  struct GnssInjection
+  {
+    std::size_t factor_count;
+    ScopedGnssCallback guard;
+  };
+
+  // The GNSS-constrainable submaps collected by collect_constrained_submaps():
+  // those whose whole frame span is covered by the GNSS timespan. Parallel
+  // vectors: submap id, pre-optimization origin, world-frame antenna offset,
+  // interpolated GNSS fix, and nearest-fix ENU covariance (+ its type).
+  struct ConstrainedSubmaps
+  {
+    std::vector<std::uint64_t> ids;
+    std::vector<std::array<double, 3>> est;
+    std::vector<std::array<double, 3>> offsets;  // per-submap antenna offset in world
+    std::vector<std::array<double, 3>> gnss;
+    std::vector<std::array<double, 9>> covs;  // nearest-fix ENU covariance per submap
+    std::vector<std::uint8_t> cov_types;
+  };
 
   // --- Feed pipeline (active unless config.disable_pipeline) -----------------
   // A 3-stage producer/consumer so the CPU preprocess (T1), odometry (T2), and
@@ -979,42 +1073,15 @@ struct CloudMapper::Impl
     return (t - left->stamp <= right->stamp - t) ? *left : *right;
   }
 
-  // Build GNSS translation-prior factors from the collected submaps + fixes
-  // (ported from glim_ext's gnss_global backend, run synchronously instead of in
-  // a background thread). Leaves gnss_factors empty unless at least two submaps
-  // are fully covered by the GNSS timespan and the SLAM baseline between the
-  // first and last of them exceeds config.gnss_min_baseline.
-  void build_gnss_factors()
+  // Collect the submaps fully covered by the GNSS timespan [t_lo, t_hi] together
+  // with each submap's pre-optimization origin, world-frame antenna offset
+  // (lever_origin rotated by the submap's orientation), interpolated mid-frame
+  // GNSS fix, and nearest-fix covariance — the inputs the alignment and prior
+  // construction in build_gnss_factors() consume.
+  ConstrainedSubmaps collect_constrained_submaps(
+    double t_lo, double t_hi, const Eigen::Vector3d & lever_origin) const
   {
-    gnss_factors.clear();
-    if (gnss_points.size() < 2 || entries.empty()) {
-      return;
-    }
-
-    std::sort(
-      gnss_points.begin(), gnss_points.end(),
-      [](const GnssMetric & a, const GnssMetric & b) { return a.stamp < b.stamp; });
-    const double t_lo = gnss_points.front().stamp;
-    const double t_hi = gnss_points.back().stamp;
-
-    // Antenna lever-arm in the submap-origin sensor frame. config.gnss_antenna_offset
-    // is the antenna phase center in the cloud (LiDAR) frame; the submap origin X(i)
-    // is the LiDAR pose for the CT backend but the IMU pose for the CPU backend, so
-    // re-express the antenna point in the IMU frame there (p_imu = T_imu_lidar *
-    // p_lidar). {0,0,0} leaves it zero -> identical to the no-correction path.
-    Eigen::Vector3d lever_origin(
-      config.gnss_antenna_offset[0], config.gnss_antenna_offset[1], config.gnss_antenna_offset[2]);
-    if (config.t_lidar_imu) {
-      const Eigen::Isometry3d T_lidar_imu = detail::to_isometry(*config.t_lidar_imu);
-      lever_origin = T_lidar_imu.inverse() * lever_origin;
-    }
-
-    std::vector<std::uint64_t> ids;
-    std::vector<std::array<double, 3>> est;
-    std::vector<std::array<double, 3>> offsets;  // per-submap antenna offset in world
-    std::vector<std::array<double, 3>> gnss;
-    std::vector<std::array<double, 9>> covs;  // nearest-fix ENU covariance per submap
-    std::vector<std::uint8_t> cov_types;
+    ConstrainedSubmaps out;
     for (const auto & entry : entries) {
       if (!entry.submap || entry.frames.empty()) {
         continue;
@@ -1033,22 +1100,45 @@ struct CloudMapper::Impl
       const Eigen::Vector3d offset_world = entry.submap->T_world_origin.rotation() * lever_origin;
       const Eigen::Vector3d fix = interpolate_gnss(t_mid);
       const GnssMetric & near = nearest_gnss(t_mid);
-      ids.push_back(static_cast<std::uint64_t>(entry.submap->id));
-      est.push_back({origin.x(), origin.y(), origin.z()});
-      offsets.push_back({offset_world.x(), offset_world.y(), offset_world.z()});
-      gnss.push_back({fix.x(), fix.y(), fix.z()});
-      covs.push_back(near.covariance);
-      cov_types.push_back(near.covariance_type);
+      out.ids.push_back(static_cast<std::uint64_t>(entry.submap->id));
+      out.est.push_back({origin.x(), origin.y(), origin.z()});
+      out.offsets.push_back({offset_world.x(), offset_world.y(), offset_world.z()});
+      out.gnss.push_back({fix.x(), fix.y(), fix.z()});
+      out.covs.push_back(near.covariance);
+      out.cov_types.push_back(near.covariance_type);
     }
-    if (ids.size() < 2) {
+    return out;
+  }
+
+  // Build GNSS translation-prior factors from the collected submaps + fixes
+  // (ported from glim_ext's gnss_global backend, run synchronously instead of in
+  // a background thread). Leaves gnss_factors empty unless at least two submaps
+  // are fully covered by the GNSS timespan and the SLAM baseline between the
+  // first and last of them exceeds config.gnss_min_baseline.
+  void build_gnss_factors()
+  {
+    gnss_factors.clear();
+    if (gnss_points.size() < 2 || entries.empty()) {
+      return;
+    }
+
+    std::sort(
+      gnss_points.begin(), gnss_points.end(),
+      [](const GnssMetric & a, const GnssMetric & b) { return a.stamp < b.stamp; });
+    const double t_lo = gnss_points.front().stamp;
+    const double t_hi = gnss_points.back().stamp;
+
+    const Eigen::Vector3d lever_origin = lever_arm_in_origin_frame(config);
+    const ConstrainedSubmaps constrained = collect_constrained_submaps(t_lo, t_hi, lever_origin);
+    if (constrained.ids.size() < 2) {
       return;
     }
 
     // Pre-optimization baseline: too little motion makes the planar alignment
     // ill-conditioned (matches glim_ext's min_baseline gate).
-    const double dx = est.front()[0] - est.back()[0];
-    const double dy = est.front()[1] - est.back()[1];
-    const double dz = est.front()[2] - est.back()[2];
+    const double dx = constrained.est.front()[0] - constrained.est.back()[0];
+    const double dy = constrained.est.front()[1] - constrained.est.back()[1];
+    const double dz = constrained.est.front()[2] - constrained.est.back()[2];
     if (std::sqrt(dx * dx + dy * dy + dz * dz) < config.gnss_min_baseline) {
       return;
     }
@@ -1057,56 +1147,149 @@ struct CloudMapper::Impl
     // not contaminate the fit) and map each fix back onto its submap origin; that
     // mapped position is the submap's translation-prior target. The fitted ENU->world
     // rotation lets each fix's covariance be expressed in the world frame.
-    const GnssOffsetTargets aligned = gnss_targets_with_offset(est, offsets, gnss);
-    if (aligned.targets.size() != ids.size()) {
+    const GnssOffsetTargets aligned =
+      gnss_targets_with_offset(constrained.est, constrained.offsets, constrained.gnss);
+    if (aligned.targets.size() != constrained.ids.size()) {
       return;
     }
 
-    // Fixed-precision fallback (used when a fix has no usable covariance or
-    // gnss_use_covariance is off): the original glim_ext-style behavior.
-    const Eigen::Vector3d precisions(
-      config.gnss_prior_inf_scale[0], config.gnss_prior_inf_scale[1],
-      config.gnss_prior_inf_scale[2]);
-    const gtsam::SharedNoiseModel fixed_model = gtsam::noiseModel::Diagonal::Precisions(precisions);
-
-    // Vertical (z) handling mirrors the fixed path: honor a configured z precision,
-    // otherwise leave height effectively unconstrained (a large variance ~ zero
-    // information) so GNSS height — the weakest GNSS axis — does not fight the LiDAR.
-    const double z_variance = config.gnss_prior_inf_scale[2] > 0.0
-                                ? 1.0 / config.gnss_prior_inf_scale[2]
-                                : kUnconstrainedZVariance;
-
     using gtsam::symbol_shorthand::X;
-    gnss_factors.reserve(ids.size());
-    for (std::size_t i = 0; i < ids.size(); ++i) {
+    gnss_factors.reserve(constrained.ids.size());
+    for (std::size_t i = 0; i < constrained.ids.size(); ++i) {
       const gtsam::Point3 target(
         aligned.targets[i][0], aligned.targets[i][1], aligned.targets[i][2]);
-
-      gtsam::SharedNoiseModel base = fixed_model;
-      if (config.gnss_use_covariance && cov_types[i] != kNavSatCovarianceTypeUnknown) {
-        // Horizontal ENU covariance {c_ee, c_en, c_ne, c_nn} from the nearest fix,
-        // rotated into the world frame, inflated and floored; z left per z_variance.
-        const std::array<double, 4> cov_h = {covs[i][0], covs[i][1], covs[i][3], covs[i][4]};
-        const std::array<double, 9> w = gnss_world_prior_covariance(
-          cov_h, aligned.world_from_enu_cos, aligned.world_from_enu_sin,
-          config.gnss_horizontal_sigma_floor, config.gnss_covariance_inflation, z_variance);
-        Eigen::Matrix3d cov_w;
-        cov_w << w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8];
-        base = gtsam::noiseModel::Gaussian::Covariance(cov_w);
-      }
-
-      // Robust-wrap so one multipath outlier cannot dominate; a Huber k of 0
-      // disables it.
-      gtsam::SharedNoiseModel model = base;
-      if (config.gnss_robust_huber_k > 0.0) {
-        model = gtsam::noiseModel::Robust::Create(
-          gtsam::noiseModel::mEstimator::Huber::Create(config.gnss_robust_huber_k), base);
-      }
-
+      const gtsam::SharedNoiseModel model =
+        make_gnss_noise_model(constrained.covs[i], constrained.cov_types[i], aligned, config);
       gtsam::NonlinearFactor::shared_ptr factor(
-        new gtsam::PoseTranslationPrior<gtsam::Pose3>(X(ids[i]), target, model));
+        new gtsam::PoseTranslationPrior<gtsam::Pose3>(X(constrained.ids[i]), target, model));
       gnss_factors.push_back(factor);
     }
+  }
+
+  // ---- finish() phases (called in order by CloudMapper::finish()) -------------
+
+  // Drain the 3-stage feed pipeline: stop input, let odometry (T2) flush its
+  // smoother window into the mapping stage (T3) and close map_queue, then join
+  // both workers. After the joins finish()'s thread is the sole owner of the
+  // GLIM modules, so the flush + optimize below run exactly as the serial path.
+  // No-op when the pipeline was never started (config.disable_pipeline, or no
+  // inserts).
+  void drain_pipeline_and_rethrow()
+  {
+    if (pipeline_started) {
+      odom_queue.close();
+      odometry_thread.join();  // closes map_queue after flushing the odom tail
+      mapping_thread.join();
+      const auto odom_error = odom_queue.error();
+      const auto map_error = map_queue.error();
+      // Release the streaming cout mute now the workers are gone — before the
+      // finish-scope mute, so the two ScopedCoutSilence guards nest/destruct in
+      // LIFO order (resetting the outer one while the inner is alive would
+      // corrupt the saved rdbuf). Done before the rethrows so std::cout is
+      // restored on error too.
+      feed_silence.reset();
+      if (odom_error) {
+        std::rethrow_exception(odom_error);
+      }
+      if (map_error) {
+        std::rethrow_exception(map_error);
+      }
+    }
+  }
+
+  // Flush the odometry smoother window — the remaining frames are marginalized
+  // exactly as glim's async pipeline does at end of sequence — into sub mapping,
+  // then force out the final submap.
+  void flush_odometry_window()
+  {
+    for (const auto & frame : odometry->get_remaining_frames()) {
+      // Capture the warmup boundary here too: on a bag shorter than the odometry
+      // smoother window, the first frame (id 0) is never marginalized mid-stream
+      // and only surfaces in this end-of-sequence flush. No-op once already caught.
+      warmup_note_frame(frame);
+      // Capture the cooldown boundary: these end-of-sequence frames are the newest
+      // to reach a finalized submap, so the LAST one flushed here is the cooldown
+      // anchor. cooldown_note_frame overwrites, so it keeps that latest frame.
+      cooldown_note_frame(frame);
+      feed_sub_mapping(frame);
+    }
+    // This drain only sees submaps the flushed remaining frames newly completed —
+    // get_submaps() destructively swaps its queue, so the submaps drained during
+    // insert() are already gone. submit_end_of_sequence() then forces a final
+    // submap out of whatever odometry frames remain; it builds a fresh submap
+    // rather than pulling from that queue, so there is no overlap.
+    drain_submaps();
+    for (const auto & submap : sub_mapping->submit_end_of_sequence()) {
+      if (submap) {
+        capture_and_insert(submap);
+      }
+    }
+  }
+
+  // Build GNSS translation priors (config.enable_gnss) from the collected
+  // submaps + fixes and register the injector that adds them to the global
+  // factor graph during optimize() via the on_smoother_update callback. The
+  // on_smoother_update slot is process-global, so the injector is registered
+  // only around our own optimize() and removed right after, via the returned
+  // RAII guard. The guard also protects against a throwing optimize() leaving a
+  // dangling callback bound to this Impl on the slot (which would fire — and
+  // dereference freed memory — for any later mapper instance in the same
+  // process, e.g. across tests).
+  GnssInjection inject_gnss_factors()
+  {
+    std::size_t gnss_count = 0;
+    if (config.enable_gnss) {
+      build_gnss_factors();
+      gnss_count = gnss_factors.size();
+    }
+
+    int gnss_slot_id = -1;
+    if (gnss_count > 0) {
+      gnss_slot_id = glim::GlobalMappingCallbacks::on_smoother_update.add(
+        [this](
+          gtsam_points::ISAM2Ext &, gtsam::NonlinearFactorGraph & new_factors, gtsam::Values &) {
+          // GlobalMapping::optimize() fires on_smoother_update exactly once, and
+          // all submap poses X(i) already exist in iSAM2 by now, so the
+          // translation priors are valid. Clearing after adding is a
+          // belt-and-suspenders guard so they enter the graph exactly once even
+          // if GLIM's call count changes.
+          if (!gnss_factors.empty()) {
+            new_factors.add(gnss_factors);
+            gnss_factors.clear();
+          }
+        });
+    }
+    return GnssInjection{gnss_count, ScopedGnssCallback{gnss_slot_id}};
+  }
+
+  // Heavy step: global matching-based iSAM2 optimization, then the trajectory,
+  // window-fill, and map export. The optimization updates each held submap's
+  // T_world_origin in place (GlobalMapping::update_submaps). With the GNSS
+  // callback registered, the priors enter the graph in this single update. The
+  // optimize / window-fill / export phases are timed individually into the
+  // CloudMap so the command layer can log where finalization time went (endpoint
+  // fill, not this update, dominates LiDAR-only runs).
+  void optimize_and_export(CloudMap & result)
+  {
+    const auto optimize_start = std::chrono::steady_clock::now();
+    global_mapping->optimize();
+    const auto optimize_end = std::chrono::steady_clock::now();
+
+    result.optimize_seconds = std::chrono::duration<double>(optimize_end - optimize_start).count();
+    fill_trajectory(result);
+    const auto fill_started_at = std::chrono::steady_clock::now();
+    fill_warmup_window(result);
+    fill_cooldown_window(result);
+    result.window_fill_seconds =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - fill_started_at).count();
+    // Surface a warmup buffer overflow so the caller can distinguish "gave up"
+    // from "nothing to fill" (warmup_disable() sets this and clears
+    // warmup.active).
+    result.warmup_overflowed = warmup.overflowed;
+    const auto export_start = std::chrono::steady_clock::now();
+    fill_map(result);
+    result.export_seconds =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - export_start).count();
   }
 
   // Optimized world pose per frame = T_world_origin * T_origin_frame. Keyed by
@@ -1748,129 +1931,26 @@ void CloudMapper::insert(const LidarScan & scan)
 
 CloudMap CloudMapper::finish()
 {
-  // Drain the 3-stage feed pipeline first: stop input, let odometry (T2) flush its
-  // smoother window into the mapping stage (T3) and close map_queue, then join both
-  // workers. After the joins this thread is the sole owner of the GLIM modules, so
-  // the flush + optimize below run exactly as the serial path. No-op when the
-  // pipeline was never started (config.disable_pipeline, or no inserts).
-  if (impl_->pipeline_started) {
-    impl_->odom_queue.close();
-    impl_->odometry_thread.join();  // closes map_queue after flushing the odom tail
-    impl_->mapping_thread.join();
-    const auto odom_error = impl_->odom_queue.error();
-    const auto map_error = impl_->map_queue.error();
-    // Release the streaming cout mute now the workers are gone — before the finish-
-    // scope mute below, so the two ScopedCoutSilence guards nest/destruct in LIFO
-    // order (resetting the outer one while the inner is alive would corrupt the
-    // saved rdbuf). Done before the rethrows so std::cout is restored on error too.
-    impl_->feed_silence.reset();
-    if (odom_error) {
-      std::rethrow_exception(odom_error);
-    }
-    if (map_error) {
-      std::rethrow_exception(map_error);
-    }
-  }
+  // Finalization phases (see the Impl helpers for the per-phase details): drain
+  // the feed pipeline, flush the odometry smoother window into sub/global
+  // mapping, build the GNSS priors and register their injector, then run the
+  // global optimization and export the map + trajectory.
+  impl_->drain_pipeline_and_rethrow();
 
   // Mute GLIM's std::cout chatter for the whole flush + global optimization (same
   // rationale as insert(): bagwiz's own output goes through fmt::print, not cout).
   const detail::ScopedCoutSilence cout_silence;
 
-  // Flush the odometry smoother window — the remaining frames are marginalized
-  // exactly as glim's async pipeline does at end of sequence — into sub mapping,
-  // then force out the final submap.
-  for (const auto & frame : impl_->odometry->get_remaining_frames()) {
-    // Capture the warmup boundary here too: on a bag shorter than the odometry
-    // smoother window, the first frame (id 0) is never marginalized mid-stream
-    // and only surfaces in this end-of-sequence flush. No-op once already caught.
-    impl_->warmup_note_frame(frame);
-    // Capture the cooldown boundary: these end-of-sequence frames are the newest
-    // to reach a finalized submap, so the LAST one flushed here is the cooldown
-    // anchor. cooldown_note_frame overwrites, so it keeps that latest frame.
-    impl_->cooldown_note_frame(frame);
-    impl_->feed_sub_mapping(frame);
-  }
-  // This drain only sees submaps the flushed remaining frames newly completed —
-  // get_submaps() destructively swaps its queue, so the submaps drained during
-  // insert() are already gone. submit_end_of_sequence() then forces a final
-  // submap out of whatever odometry frames remain; it builds a fresh submap
-  // rather than pulling from that queue, so there is no overlap.
-  impl_->drain_submaps();
-  for (const auto & submap : impl_->sub_mapping->submit_end_of_sequence()) {
-    if (submap) {
-      impl_->capture_and_insert(submap);
-    }
-  }
+  impl_->flush_odometry_window();
 
-  // Build GNSS translation priors (config.enable_gnss) from the collected
-  // submaps + fixes. They are injected into the global factor graph during
-  // optimize() via the on_smoother_update callback below.
-  std::size_t gnss_count = 0;
-  if (impl_->config.enable_gnss) {
-    impl_->build_gnss_factors();
-    gnss_count = impl_->gnss_factors.size();
-  }
-
-  // The on_smoother_update slot is process-global, so register our injector only
-  // around our own optimize() and remove it right after. Register first, capturing
-  // the slot id, then hand it to an RAII guard whose destructor removes it. The
-  // guard also protects against a throwing optimize() leaving a dangling `impl`
-  // callback on the slot (which would fire — and dereference freed memory — for any
-  // later mapper instance in the same process, e.g. across tests).
-  int gnss_slot_id = -1;
-  if (gnss_count > 0) {
-    Impl * impl = impl_.get();
-    gnss_slot_id = glim::GlobalMappingCallbacks::on_smoother_update.add(
-      [impl](gtsam_points::ISAM2Ext &, gtsam::NonlinearFactorGraph & new_factors, gtsam::Values &) {
-        // GlobalMapping::optimize() fires on_smoother_update exactly once, and
-        // all submap poses X(i) already exist in iSAM2 by now, so the translation
-        // priors are valid. Clearing after adding is a belt-and-suspenders guard
-        // so they enter the graph exactly once even if GLIM's call count changes.
-        if (!impl->gnss_factors.empty()) {
-          new_factors.add(impl->gnss_factors);
-          impl->gnss_factors.clear();
-        }
-      });
-  }
-  // id is the slot handle from the registration above (or -1 when no injector was
-  // registered), so the destructor's guard is genuinely conditional.
-  struct ScopedGnssCallback
-  {
-    int id;
-    ~ScopedGnssCallback()
-    {
-      if (id >= 0) {
-        glim::GlobalMappingCallbacks::on_smoother_update.remove(id);
-      }
-    }
-  } gnss_callback{gnss_slot_id};
-
-  // Heavy step: global matching-based iSAM2 optimization. Updates each held
-  // submap's T_world_origin in place (GlobalMapping::update_submaps). With the
-  // GNSS callback registered, the priors enter the graph in this single update.
-  // The optimize / window-fill / export phases are timed individually into the
-  // returned CloudMap so the command layer can log where finalization time went
-  // (endpoint fill, not this update, dominates LiDAR-only runs).
-  const auto optimize_start = std::chrono::steady_clock::now();
-  impl_->global_mapping->optimize();
-  const auto optimize_end = std::chrono::steady_clock::now();
+  // The guard keeps the GNSS injector registered exactly across the global
+  // optimize() inside optimize_and_export(): it destructs — removing the
+  // process-global callback — at the end of finish(), after the optimization.
+  const auto gnss_injection = impl_->inject_gnss_factors();
 
   CloudMap result;
-  result.gnss_factor_count = gnss_count;
-  result.optimize_seconds = std::chrono::duration<double>(optimize_end - optimize_start).count();
-  impl_->fill_trajectory(result);
-  const auto fill_started_at = std::chrono::steady_clock::now();
-  impl_->fill_warmup_window(result);
-  impl_->fill_cooldown_window(result);
-  result.window_fill_seconds =
-    std::chrono::duration<double>(std::chrono::steady_clock::now() - fill_started_at).count();
-  // Surface a warmup buffer overflow so the caller can distinguish "gave up" from
-  // "nothing to fill" (warmup_disable() sets this and clears warmup.active).
-  result.warmup_overflowed = impl_->warmup.overflowed;
-  const auto export_start = std::chrono::steady_clock::now();
-  impl_->fill_map(result);
-  result.export_seconds =
-    std::chrono::duration<double>(std::chrono::steady_clock::now() - export_start).count();
+  result.gnss_factor_count = gnss_injection.factor_count;
+  impl_->optimize_and_export(result);
   return result;
 }
 
