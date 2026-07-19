@@ -22,6 +22,13 @@
   <depend>rosidl_typesupport_introspection_cpp</depend>
   <depend>yaml_cpp_vendor</depend>
 
+  <!-- Runtime-only: never find_package()'d and no headers are included.
+       message_deserializer.cpp / ros2_yaml_to_cdr.cpp call
+       rmw_deserialize/rmw_serialize, which route through rmw_implementation
+       to the RMW selected by RMW_IMPLEMENTATION at run time; the pixi
+       environments pin that to rmw_cyclonedds_cpp. -->
+  <exec_depend>rmw_cyclonedds_cpp</exec_depend>
+
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>builtin_interfaces</test_depend>
   <test_depend>diagnostic_msgs</test_depend>
