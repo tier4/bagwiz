@@ -56,7 +56,7 @@ cannot form one consistent tree. Specifically:
 
 ### Stdout layout
 
-<!-- AUTO-GENERATED: bagwiz tf tree print order (sync with `run_tree` in `src/commands/tf.cpp`) -->
+<!-- AUTO-GENERATED: bagwiz tf tree print order (sync with `run_tree` in `bagwiz/src/commands/tf.cpp`) -->
 
 When the merged tree is a **single category** (only static, or only dynamic),
 `tf tree` writes:
@@ -76,7 +76,7 @@ When it contains **both** static and dynamic edges it writes:
 
 ### Terminal styling
 
-<!-- AUTO-GENERATED: `tf tree` / terminal styling (sync with `stdout_use_color`, `make_tree_glyphs` in `src/commands/tf.cpp`) -->
+<!-- AUTO-GENERATED: `tf tree` / terminal styling (sync with `stdout_use_color`, `make_tree_glyphs` in `bagwiz/src/commands/tf.cpp`) -->
 
 - On a color-capable TTY (and when `NO_COLOR` is unset) section headers and root
   lines are bold and branch glyphs are dim gray. In a mixed tree, dynamic edges
@@ -89,10 +89,10 @@ When it contains **both** static and dynamic edges it writes:
 
 ### Environment
 
-<!-- AUTO-GENERATED: `tf tree` / terminal styling (sync with `stdout_use_color`, `make_tree_glyphs` in `src/commands/tf.cpp`) -->
+<!-- AUTO-GENERATED: `tf tree` / terminal styling (sync with `stdout_use_color`, `make_tree_glyphs` in `bagwiz/src/commands/tf.cpp`) -->
 
 - `NO_COLOR`: if set to any value, disables ANSI colors on `tf tree`. The `[S]` / `[D]` category tags are still printed.
-- `BAGWIZ_TF_TREE_ASCII`: if set to any value, uses ASCII branch glyphs instead of Unicode box drawing (see `make_tree_glyphs` in `src/commands/tf.cpp`).
+- `BAGWIZ_TF_TREE_ASCII`: if set to any value, uses ASCII branch glyphs instead of Unicode box drawing (see `make_tree_glyphs` in `bagwiz/src/commands/tf.cpp`).
 
 Colors are also omitted when stdout is not a TTY (same effect as `NO_COLOR` for styling).
 

@@ -15,7 +15,7 @@ per-stage read/write split comes from the env-gated `BAGWIZ_PROFILE` instrumenta
 | ----------------- | ------------------------------------------------------------------------------------ |
 | Commit            | `16cbc79` (profiler re-applied onto current `main`)                                  |
 | Host              | 24 cores / 62 GB                                                                     |
-| Build             | `pixi run -e default build` (Release, Humble)                                        |
+| Build             | `pixi run -e humble build-full` (Release)                                            |
 | Canonical fixture | A 2.5 GB automotive MCAP recording (smallest of the local `raw/` set)                |
 | Fixture size      | 2.5 GB (2,677,294,482 bytes), zstd-compressed chunks; 31,678 msgs; 2,835 MiB payload |
 | Cache             | warm (OS page cache primed before timed runs)                                        |
@@ -103,7 +103,7 @@ transform commands are barred from any reordering backend.
 
 ## Milestone #3 — PipelinedBackend results
 
-`PipelinedBackend` (`src/core/pipeline/pipelined_backend.cpp`) overlaps the read
+`PipelinedBackend` (`bagwiz_bag/src/core/pipeline/pipelined_backend.cpp`) overlaps the read
 and write stages on two threads: the calling thread reads + routes + copies each
 kept message into a byte-bounded FIFO queue (`BoundedMessageQueue`, 128 MiB cap)
 and a single writer thread drains it. A single consumer over a FIFO preserves the
