@@ -185,10 +185,11 @@ TrajectoryBuildResult build_trajectory_from_tf_message(
 // Odometry / PoseStamped / PoseWithCovarianceStamped pose topic: for each
 // message, compose T_ref_of = T_ref_header * T_header_body * T_body_of,
 // bridging into --ref / --of via the bag's static TF when the message's own
-// frames do not already match. Mirrors traj.cpp's run_dump_pose_topic
-// composition (traj.cpp:732-757), except an unresolvable bridge is fatal here
-// rather than a per-sample skip: pcd undistort's TF is static-only, so a
-// failure is a configuration problem, not transient sensor noise.
+// frames do not already match. Mirrors the traj dump pose-topic composition
+// (core::compose_tf_bridged_sample in bagwiz_tf), except an unresolvable
+// bridge is fatal here rather than a per-sample skip: pcd undistort's TF is
+// static-only, so a failure is a configuration problem, not transient sensor
+// noise.
 TrajectoryBuildResult build_trajectory_from_pose_topic(
   const std::filesystem::path & input_path, const io::TopicInfo & pose_ti, PoseComposeKind kind,
   const std::string & ref, const std::string & of, tf2::BufferCore & buffer)
