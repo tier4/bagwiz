@@ -20,8 +20,8 @@ namespace bagwiz::core::tui
 void move_cursor(std::ostream & out, int row, int col)
 {
   // Hand-roll the CUP sequence to avoid pulling fmt's consteval format
-  // machinery into a header that is also exercised by clang-tidy (the
-  // tidy run trips over fmt's compile-time checks).
+  // machinery into bagwiz_tui: the package carries no fmt dependency (fmt is
+  // fetched only by the CLI package), and this tiny writer keeps it that way.
   out << "\x1B[" << row << ';' << col << 'H';
 }
 

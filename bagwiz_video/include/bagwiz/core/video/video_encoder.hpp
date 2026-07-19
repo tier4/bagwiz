@@ -18,7 +18,7 @@
 
 // Thin RAII wrapper around a libav (FFmpeg) encode + mux pipeline. All
 // <libav*> types are confined to the .cpp via a pimpl, so neither this header
-// nor bagwiz_core's public/export surface pulls in FFmpeg headers — mirroring
+// nor bagwiz_video's public/export surface pulls in FFmpeg headers — mirroring
 // how geo_pose_convert hides GeographicLib.
 namespace bagwiz::core::video
 {

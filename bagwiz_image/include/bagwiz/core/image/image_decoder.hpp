@@ -20,7 +20,7 @@
 // Decode a compressed still image (JPEG / PNG, as carried by
 // sensor_msgs/msg/CompressedImage) into a packed 8-bit BGR raster. libav
 // (FFmpeg) does the decode; like video_encoder.hpp this header exposes only std
-// types so FFmpeg never enters bagwiz_core's export set.
+// types so FFmpeg never enters bagwiz_image's export set.
 namespace bagwiz::core::image
 {
 

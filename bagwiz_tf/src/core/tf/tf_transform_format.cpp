@@ -100,10 +100,10 @@ std::string format_transform_human(
   const auto & rot = tf.transform.rotation;
   const RollPitchYaw rpy = quaternion_to_rpy(rot);
 
-  // std::ostringstream rather than fmt: bagwiz_core is built with
-  // FMT_HEADER_ONLY, and fmt's consteval format-string checking trips the
-  // clang-tidy pass when instantiated here (the same reason renderer.cpp
-  // avoids fmt formatting). Fixed 6-decimal precision matches tf2_echo.
+  // std::ostringstream rather than fmt: bagwiz_tf carries no fmt
+  // dependency (fmt is fetched only by the CLI package) — the same reason
+  // renderer.cpp avoids fmt formatting. Fixed 6-decimal precision matches
+  // tf2_echo.
   //
   // The label states the direction as "of=<of>  ref=<ref>"; the frame chain
   // moves to its own `chain:` line, where the " -> " arrow describes the tree

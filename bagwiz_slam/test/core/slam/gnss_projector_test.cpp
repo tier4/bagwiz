@@ -16,7 +16,7 @@
 // Unit test for GnssProjector: WGS84 lat/lon/alt -> local ENU meters around the
 // first projected fix. Verifies the origin latches on the first call (yielding
 // the zero vector) and that the East/North/Up axes carry the expected sign and
-// magnitude. Links GeographicLib (via bagwiz_core); no GLIM involved.
+// magnitude. Links GeographicLib (alongside bagwiz_slam); no GLIM involved.
 namespace
 {
 namespace slam = bagwiz::core::slam;

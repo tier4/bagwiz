@@ -20,7 +20,8 @@
 // prior.
 //
 // Kept GLIM-free and Eigen-free (closed-form 2-D Procrustes, see the .cpp) so it
-// lives in bagwiz_core and is unit-tested without the GLIM stack — this is the
+// lives in the plain bagwiz_slam library, which builds in every configuration,
+// and is unit-tested without the GLIM stack — this is the
 // numerically interesting half of the GNSS constraint, so it is the half worth
 // testing in isolation.
 namespace bagwiz::core::slam

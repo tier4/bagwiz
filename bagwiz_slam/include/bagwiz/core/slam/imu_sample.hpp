@@ -22,7 +22,8 @@
 // LiDAR-IMU odometry preintegrates raw IMU and estimates bias itself, so the
 // orientation and the covariance arrays are not needed and are skipped.
 //
-// Lives in bagwiz_core so it compiles in every build and is unit-tested without
+// Lives in the plain bagwiz_slam library, which builds in every
+// configuration, so it is unit-tested without
 // the GLIM stack; the IMU-coupled odometry that consumes these samples is still
 // confined to the BAGWIZ_WITH_SLAM translation units.
 namespace bagwiz::core::slam

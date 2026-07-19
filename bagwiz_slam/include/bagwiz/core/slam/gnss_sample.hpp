@@ -24,7 +24,8 @@
 // NO_FIX samples, and the covariance lets the mapper weight each prior by the
 // fix's reported accuracy instead of a single fixed precision.
 //
-// Lives in bagwiz_core so it compiles in every build and is unit-tested without
+// Lives in the plain bagwiz_slam library, which builds in every
+// configuration, so it is unit-tested without
 // the GLIM stack; the projection to a local metric frame (gnss_projector) and
 // the GLIM-coupled mapping that consumes the projected points stay separate.
 namespace bagwiz::core::slam

@@ -25,9 +25,9 @@ TopicWriteDecision decide_topic_write(
   TopicWriteDecision out;
   out.existing_count = existing_count;
 
-  // Concatenate reason messages without fmt::format so this translation
-  // unit compiles cleanly under both header-only fmt (clang-tidy's view
-  // of bagwiz_core) and the regular linked fmt mode.
+  // Concatenate reason messages without fmt::format: bagwiz_bag carries no
+  // fmt dependency (fmt is fetched only by the CLI package), and plain
+  // string concatenation keeps it that way.
   const std::string target_str(target_topic);
 
   // The search is inlined here (rather than a helper returning

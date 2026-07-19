@@ -22,7 +22,7 @@ namespace bagwiz::core::image
 // OpenCV-based undistortion helper. Initializes distortion/rectification maps
 // from CameraInfo and the target image size, then remaps subsequent frames.
 // Implementation is hidden with a pimpl so OpenCV headers do not leak into
-// bagwiz_core's public interface.
+// bagwiz_image's public interface.
 class UndistortHelper
 {
 public:

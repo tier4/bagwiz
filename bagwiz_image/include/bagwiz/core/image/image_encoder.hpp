@@ -18,7 +18,7 @@
 
 // Encode a canonical packed BGR24 raster into a still-image bitstream. libav
 // (FFmpeg) does the encode; like image_decoder.hpp this header exposes only std
-// types so FFmpeg never enters bagwiz_core's export set. The inverse of
+// types so FFmpeg never enters bagwiz_image's export set. The inverse of
 // decode_compressed_image(): a PNG produced here round-trips back to the same
 // raster (PNG is lossless), which is exactly what walk's image preview needs to
 // save the frame the user is looking at.

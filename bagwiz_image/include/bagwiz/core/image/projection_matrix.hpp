@@ -98,7 +98,7 @@ struct ProjectionMatrixResult
 //
 // Exposed because the result is version-dependent (see above), so callers that
 // report a recomputed p want to name the version that produced it. Returning it
-// from here keeps OpenCV a private implementation detail of bagwiz_core rather
+// from here keeps OpenCV a private implementation detail of bagwiz_image rather
 // than something command code has to include to ask.
 [[nodiscard]] std::string projection_backend_version();
 

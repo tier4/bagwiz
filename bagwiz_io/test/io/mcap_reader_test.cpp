@@ -10,7 +10,7 @@
 
 #include <gtest/gtest.h>
 
-// MCAP_IMPLEMENTATION lives in src/io/mcap_reader.cpp (bagwiz_core). Tests
+// MCAP_IMPLEMENTATION lives in src/io/mcap_reader.cpp (bagwiz_io). Tests
 // only need the declarations here.
 #include <mcap/writer.hpp>
 

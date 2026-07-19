@@ -15,7 +15,9 @@
 #include <unordered_map>
 #include <vector>
 
-// GLIM-free point-cloud filters. Kept in bagwiz_core (no GLIM dependency) so the
+// GLIM-free point-cloud filters. Kept in the plain bagwiz_slam library, which
+// builds in every configuration (the GLIM-bearing TUs form the separate
+// bagwiz_slam_glim library), so the
 // logic is unit-testable on every distro without the SLAM build, and so the
 // `slam` command's exported-map density is controlled by plain, deterministic
 // code rather than by GLIM's internal parameters.
