@@ -169,8 +169,9 @@ TEST(CameraInfoProcessorSkeleton, RewrittenCountStartsAtZero)
 // ---------------------------------------------------------------------------
 
 // A CameraInfo with every field set to a distinct, non-default value so a
-// dropped or misordered field cannot coincide with the expected one. `d` has
-// 5 entries (plumb_bob), the sequence length the fixed-size arrays follow.
+// field that is dropped, or written out of order, cannot coincide with the
+// expected one. `d` has 5 entries (plumb_bob), the sequence length the
+// fixed-size arrays follow.
 sensor_msgs::msg::CameraInfo make_full_camera_info()
 {
   sensor_msgs::msg::CameraInfo msg;
@@ -268,9 +269,9 @@ TEST(SerializeCameraInfo, RoundTripPreservesTheMutationAndEveryOtherField)
   decoded.p = {2000.0, 0.0, 100.5, 0.0, 0.0, 2001.0, 200.5, 0.0, 0.0, 0.0, 1.0, 0.0};
   decoded.header.frame_id = "rectified_frame";
 
-  const auto reencoded = serialize_camera_info(decoded);
+  const auto round_tripped = serialize_camera_info(decoded);
   const auto final_msg =
-    deserialize_camera_info(reencoded, intro.typesupport, "/camera/camera_info");
+    deserialize_camera_info(round_tripped, intro.typesupport, "/camera/camera_info");
   expect_camera_info_eq(final_msg, decoded);
   EXPECT_NE(final_msg.p, original.p);
 }
