@@ -20,10 +20,12 @@
 #include "bagwiz/core/tf/tf_merge_check.hpp"
 #include "bagwiz/core/tf/tf_message_wire.hpp"
 #include "bagwiz/core/tf/tf_topics.hpp"
+#include "bagwiz/core/tf/tf_trajectory_sample.hpp"
 #include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/core/tf/trajectory.hpp"
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/bag_open.hpp"
+#include "traj_common.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #include <tf2/LinearMath/Quaternion.hpp>
 #include <tf2/LinearMath/Transform.hpp>
@@ -37,7 +39,6 @@
 
 #include <fmt/core.h>
 
-#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cinttypes>
@@ -174,6 +175,128 @@ bool decode_pose_sample(
     }
   }
   return false;
+}
+
+// --- traj join pass phases -------------------------------------------------
+
+// Count the messages the input already carries on `topic` (0 when the topic
+// is absent). Logs and returns std::nullopt when the count itself fails.
+std::optional<std::int64_t> count_join_topic_messages(
+  io::BagReader & reader, const std::string & topic, const std::filesystem::path & input_path)
+{
+  try {
+    const std::vector<std::string> count_topics{topic};
+    const auto topic_counts = reader.compute_topic_counts(count_topics);
+    if (auto it = topic_counts.find(topic); it != topic_counts.end()) {
+      return it->second;
+    }
+    return 0;
+  } catch (const std::exception & e) {
+    BAGWIZ_LOG_ERROR(
+      kLogger, "Failed to compute topic count on %s: %s", input_path.c_str(), e.what());
+    return std::nullopt;
+  }
+}
+
+// Surface the decide_topic_write outcome: conflict aborts and type mismatches
+// are errors (the pass must stop), --force suppressions are warnings, and the
+// expected paths stay quiet. Returns false when the pass must abort.
+bool join_topic_decision_proceeds(const core::TopicWriteDecision & decision)
+{
+  switch (decision.action) {
+    case core::TopicWriteAction::kConflictAbort:
+    case core::TopicWriteAction::kTypeMismatch:
+      BAGWIZ_LOG_ERROR(kLogger, "%s", decision.reason.c_str());
+      return false;
+    case core::TopicWriteAction::kDeclareAndSuppress:
+      BAGWIZ_LOG_WARN(kLogger, "%s", decision.reason.c_str());
+      return true;
+    case core::TopicWriteAction::kDeclareNew:
+    case core::TopicWriteAction::kDeclareKeep:
+      // Quiet — these are the expected paths.
+      return true;
+  }
+  return true;
+}
+
+// Declare every existing input topic on the writer (so embedded schemas
+// round-trip). When the action is kDeclareNew, also declare a
+// freshly-synthesised TopicInfo for `topic`; kDeclareKeep /
+// kDeclareAndSuppress are covered by the input loop already.
+bool declare_join_pass_topics(
+  io::BagWriter & writer, std::span<const io::TopicInfo> input_topics,
+  core::TopicWriteAction action, const std::string & topic)
+{
+  for (const auto & t : input_topics) {
+    try {
+      writer.declare_topic(t);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "declare_topic failed for '%s': %s", t.name.c_str(), e.what());
+      return false;
+    }
+  }
+  if (action == core::TopicWriteAction::kDeclareNew) {
+    try {
+      writer.declare_topic(core::make_tf_message_topic_info(topic));
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "declare_topic failed for new topic '%s': %s", topic.c_str(), e.what());
+      return false;
+    }
+  }
+  return true;
+}
+
+// Stream-copy the input to the writer, suppressing `topic`'s existing
+// payloads when the decision said so. Logs and returns std::nullopt on
+// failure.
+std::optional<core::BagCopyCounts> copy_join_pass_messages(
+  io::BagReader & reader, io::BagWriter & writer, core::TopicWriteAction action,
+  const std::string & topic, const std::filesystem::path & input_path)
+{
+  std::unordered_set<std::string> suppress;
+  if (action == core::TopicWriteAction::kDeclareAndSuppress) {
+    suppress.insert(topic);
+  }
+  try {
+    return core::bag_copy_filtered(
+      reader, writer, suppress, "traj join", core::pipeline::BackendKind::Pipelined);
+  } catch (const std::exception & e) {
+    BAGWIZ_LOG_ERROR(kLogger, "Stream copy from %s failed: %s", input_path.c_str(), e.what());
+    return std::nullopt;
+  }
+}
+
+// Serialize every trajectory sample as one TFMessage and append it on
+// `topic`, with the message receive time taken from the row's timestamp.
+// Returns the injected count; logs and returns std::nullopt on failure.
+std::optional<std::uint64_t> inject_join_tf_messages(
+  io::BagWriter & writer, const std::string & topic,
+  std::span<const geometry_msgs::msg::TransformStamped> transforms,
+  std::span<const std::int64_t> stamps_ns)
+{
+  core::TfMessageSerializer serializer;
+  std::vector<std::byte> payload;
+  payload.reserve(256);
+  std::uint64_t injected = 0;
+  for (std::size_t i = 0; i < transforms.size(); ++i) {
+    try {
+      serializer.serialize_one(transforms[i], payload);
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(kLogger, "Failed to serialize TFMessage for sample #%zu: %s", i, e.what());
+      return std::nullopt;
+    }
+    try {
+      writer.write(topic, stamps_ns[i], std::span<const std::byte>(payload.data(), payload.size()));
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(
+        kLogger, "Failed to write TFMessage on '%s' at stamp %" PRId64 ": %s", topic.c_str(),
+        stamps_ns[i], e.what());
+      return std::nullopt;
+    }
+    ++injected;
+  }
+  return injected;
 }
 
 }  // namespace
@@ -364,21 +487,8 @@ private:
       return 1;
     }
     const auto path_edges = core::chain_to_edges(tf_buffer, chain, resolve_tp);
-
-    auto edge_key = [](const std::string & a, const std::string & b) { return a + '\0' + b; };
-    std::unordered_set<std::string> path_edge_set;
-    path_edge_set.reserve(path_edges.size());
-    for (const auto & e : path_edges) {
-      path_edge_set.insert(edge_key(e.first, e.second));
-    }
-
-    std::vector<std::int64_t> sample_stamps;
-    sample_stamps.reserve(input_edges.size());
-    for (const auto & ie : input_edges) {
-      if (path_edge_set.count(edge_key(ie.frame_id, ie.child_frame_id)) != 0) {
-        sample_stamps.push_back(ie.stamp_ns);
-      }
-    }
+    const std::vector<std::int64_t> sample_stamps =
+      core::collect_path_sample_stamps(input_edges, path_edges);
 
     if (sample_stamps.empty()) {
       BAGWIZ_LOG_ERROR(
@@ -391,54 +501,25 @@ private:
       return 1;
     }
 
-    std::sort(sample_stamps.begin(), sample_stamps.end());
-    sample_stamps.erase(
-      std::unique(sample_stamps.begin(), sample_stamps.end()), sample_stamps.end());
+    const auto lookup =
+      core::lookup_trajectory_at_stamps(tf_buffer, *args.ref_frame, *args.of_frame, sample_stamps);
 
-    std::vector<core::TrajectoryPose> poses;
-    poses.reserve(sample_stamps.size());
-    std::int64_t skipped = 0;
-    std::string last_skip_reason;
-    for (const std::int64_t ns : sample_stamps) {
-      const tf2::TimePoint tp{std::chrono::nanoseconds(ns)};
-      try {
-        const auto tf = tf_buffer.lookupTransform(*args.ref_frame, *args.of_frame, tp);
-        core::TrajectoryPose p;
-        p.timestamp_ns = ns;
-        p.tx = tf.transform.translation.x;
-        p.ty = tf.transform.translation.y;
-        p.tz = tf.transform.translation.z;
-        p.qx = tf.transform.rotation.x;
-        p.qy = tf.transform.rotation.y;
-        p.qz = tf.transform.rotation.z;
-        p.qw = tf.transform.rotation.w;
-        poses.push_back(p);
-      } catch (const tf2::TransformException & e) {
-        ++skipped;
-        last_skip_reason = e.what();
-      }
-    }
-
-    if (poses.empty()) {
+    if (lookup.poses.empty()) {
       BAGWIZ_LOG_ERROR(
         kLogger, "All %zu sample stamps failed to resolve via lookupTransform. Last reason: %s",
         sample_stamps.size(),
-        last_skip_reason.empty() ? "(none recorded)" : last_skip_reason.c_str());
+        lookup.last_skip_reason.empty() ? "(none recorded)" : lookup.last_skip_reason.c_str());
       return 1;
     }
 
-    std::ofstream out(args.output_path, std::ios::out | std::ios::trunc);
-    if (!out) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Failed to open output path %s for writing", args.output_path.c_str());
+    if (!write_tum_file(args.output_path, lookup.poses, kLogger)) {
       return 1;
     }
-    core::write_tum(out, poses);
-    out.close();
 
     BAGWIZ_LOG_INFO(
       kLogger, "Wrote %zu poses (from %zu sample stamps, %" PRId64 " skipped) to %s in %s format",
-      poses.size(), sample_stamps.size(), skipped, args.output_path.c_str(), args.format.c_str());
+      lookup.poses.size(), sample_stamps.size(), lookup.skipped, args.output_path.c_str(),
+      args.format.c_str());
     return 0;
   }
 
@@ -524,23 +605,8 @@ private:
     filter.topics.push_back(args.topic);
     reader->set_filter(filter);
 
-    std::unique_ptr<core::decoder::Decoder> decoder;
-    for (const auto & ti : reader->topics()) {
-      if (ti.name != args.topic) {
-        continue;
-      }
-      auto open = core::decoder::open_decoder(ti);
-      if (!open.ok()) {
-        BAGWIZ_LOG_ERROR(
-          kLogger, "Could not open decoder for topic '%s': %s", ti.name.c_str(),
-          open.error.c_str());
-        return 1;
-      }
-      decoder = std::move(open.decoder);
-      break;
-    }
+    const auto decoder = open_topic_decoder(*reader, args.topic, kLogger);
     if (!decoder) {
-      BAGWIZ_LOG_ERROR(kLogger, "Could not open decoder for topic '%s'.", args.topic.c_str());
       return 1;
     }
 
@@ -584,34 +650,16 @@ private:
       const std::int64_t ns =
         static_cast<std::int64_t>(sample.pose.header.stamp.sec) * 1'000'000'000LL +
         static_cast<std::int64_t>(sample.pose.header.stamp.nanosec);
-      const tf2::TimePoint tp{std::chrono::nanoseconds(ns)};
 
       try {
-        // Reference-side bridge: re-express the result into --ref. Identity
-        // (no lookup) when --ref is absent or already equals header.frame_id.
-        std::optional<geometry_msgs::msg::Transform> from_header;
-        if (ref_frame != header_frame) {
-          from_header = tf_buffer.lookupTransform(ref_frame, header_frame, tp).transform;
-        }
-        // Tracked-side bridge (Odometry only): walk body/child -> --of via the
-        // TF tree (e.g. base_link -> sensor through static TF). Identity when
-        // --of is absent or already equals the body frame.
-        std::optional<geometry_msgs::msg::Transform> body_to;
-        if (is_odom && args.of_frame.has_value() && *args.of_frame != sample.child_frame) {
-          body_to = tf_buffer.lookupTransform(sample.child_frame, *args.of_frame, tp).transform;
-        }
-
-        const auto out_pose = core::compose_trajectory_pose(from_header, sample.pose.pose, body_to);
-        core::TrajectoryPose p;
-        p.timestamp_ns = ns;
-        p.tx = out_pose.position.x;
-        p.ty = out_pose.position.y;
-        p.tz = out_pose.position.z;
-        p.qx = out_pose.orientation.x;
-        p.qy = out_pose.orientation.y;
-        p.qz = out_pose.orientation.z;
-        p.qw = out_pose.orientation.w;
-        poses.push_back(p);
+        // Compose T_ref_of = T_ref_header * T_header_body * T_body_of with the
+        // two TF bridges resolved at the sample stamp. The tracked-side
+        // bridge is engaged for Odometry only (pose topics never traverse:
+        // their --of is an asserted body frame, so nullopt is passed).
+        poses.push_back(
+          core::compose_tf_bridged_sample(
+            tf_buffer, ref_frame, header_frame, is_odom ? args.of_frame : std::nullopt,
+            sample.child_frame, sample.pose.pose, ns));
       } catch (const tf2::TransformException & e) {
         ++skipped;
         last_skip_reason = e.what();
@@ -627,14 +675,9 @@ private:
       return 1;
     }
 
-    std::ofstream out(args.output_path, std::ios::out | std::ios::trunc);
-    if (!out) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Failed to open output path %s for writing", args.output_path.c_str());
+    if (!write_tum_file(args.output_path, poses, kLogger)) {
       return 1;
     }
-    core::write_tum(out, poses);
-    out.close();
 
     BAGWIZ_LOG_INFO(
       kLogger, "Wrote %zu poses (%" PRId64 " skipped) to %s in %s format", poses.size(), skipped,
@@ -843,134 +886,72 @@ private:
   // declare topics on the writer, stream-copy with suppression, append
   // the injected payloads. Used for both in-place and explicit-output
   // modes; the writer factory is parameterised so the rewrite dispatch
-  // (core::run_bag_rewrite) can hand in a tmp path.
+  // (core::run_bag_rewrite) can hand in a tmp path. The numbered phases
+  // below are the extracted helpers grouped at the top of this file.
   static int execute_join_pass(
     const JoinArgs & args, std::span<const geometry_msgs::msg::TransformStamped> transforms,
     std::span<const std::int64_t> stamps_ns, const io::WriterFactory & open_writer)
   {
     constexpr const char * kExpectedType = "tf2_msgs/msg/TFMessage";
 
+    // 1. Open the input and snapshot its topic list for conflict detection;
+    //    the reader's span is invalidated by subsequent operations.
     auto reader = io::open_read_or_log(args.input_path, kLogger);
     if (!reader) {
       return 1;
     }
-
-    // Snapshot the input's topic list for conflict detection; the reader's
-    // span is invalidated by subsequent operations.
     const std::vector<io::TopicInfo> input_topics_pre(
       reader->topics().begin(), reader->topics().end());
 
-    std::int64_t existing_count = 0;
-    try {
-      const std::vector<std::string> count_topics{args.topic};
-      const auto topic_counts = reader->compute_topic_counts(count_topics);
-      if (auto it = topic_counts.find(args.topic); it != topic_counts.end()) {
-        existing_count = it->second;
-      }
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Failed to compute topic count on %s: %s", args.input_path.c_str(), e.what());
+    // 2. Count existing messages on <topic> and decide the conflict policy.
+    const auto existing_count = count_join_topic_messages(*reader, args.topic, args.input_path);
+    if (!existing_count.has_value()) {
+      return 1;
+    }
+    const auto decision = core::decide_topic_write(
+      input_topics_pre, args.topic, kExpectedType, *existing_count, args.force);
+    if (!join_topic_decision_proceeds(decision)) {
       return 1;
     }
 
-    const auto decision = core::decide_topic_write(
-      input_topics_pre, args.topic, kExpectedType, existing_count, args.force);
-    switch (decision.action) {
-      case core::TopicWriteAction::kConflictAbort:
-      case core::TopicWriteAction::kTypeMismatch:
-        BAGWIZ_LOG_ERROR(kLogger, "%s", decision.reason.c_str());
-        return 1;
-      case core::TopicWriteAction::kDeclareAndSuppress:
-        BAGWIZ_LOG_WARN(kLogger, "%s", decision.reason.c_str());
-        break;
-      case core::TopicWriteAction::kDeclareNew:
-      case core::TopicWriteAction::kDeclareKeep:
-        // Quiet — these are the expected paths.
-        break;
-    }
-
+    // 3. Open the writer, then backfill schemas. Deferring the schema load
+    //    avoids opening shard 0 for bags that abort early due to a topic
+    //    conflict; the post-backfill snapshot is what lets the output writer
+    //    receive embedded schemas.
     auto writer = io::open_write_or_log(open_writer, kLogger);
     if (!writer) {
       return 1;
     }
-
-    // Schemas are only needed once we start streaming messages. Deferring
-    // avoids opening shard 0 for bags that abort early due to a topic conflict.
     reader->populate_schemas();
-
-    // Snapshot the input's topic list after schema backfill so the output
-    // writer receives embedded schemas.
     const std::vector<io::TopicInfo> input_topics(reader->topics().begin(), reader->topics().end());
 
-    // Declare every existing topic from the input. When the action is
-    // kDeclareNew, also declare a freshly-synthesised TopicInfo for
-    // <topic>. When kDeclareKeep / kDeclareAndSuppress, the matching
-    // input topic is already in the declare loop.
-    for (const auto & t : input_topics) {
-      try {
-        writer->declare_topic(t);
-      } catch (const std::exception & e) {
-        BAGWIZ_LOG_ERROR(kLogger, "declare_topic failed for '%s': %s", t.name.c_str(), e.what());
-        return 1;
-      }
-    }
-    if (decision.action == core::TopicWriteAction::kDeclareNew) {
-      try {
-        writer->declare_topic(core::make_tf_message_topic_info(args.topic));
-      } catch (const std::exception & e) {
-        BAGWIZ_LOG_ERROR(
-          kLogger, "declare_topic failed for new topic '%s': %s", args.topic.c_str(), e.what());
-        return 1;
-      }
-    }
-
-    std::unordered_set<std::string> suppress;
-    if (decision.action == core::TopicWriteAction::kDeclareAndSuppress) {
-      suppress.insert(args.topic);
-    }
-
-    core::BagCopyCounts counts;
-    try {
-      counts = core::bag_copy_filtered(
-        *reader, *writer, suppress, "traj join", core::pipeline::BackendKind::Pipelined);
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Stream copy from %s failed: %s", args.input_path.c_str(), e.what());
+    // 4. Declare the input topics (plus <topic> itself when it is new).
+    if (!declare_join_pass_topics(*writer, input_topics, decision.action, args.topic)) {
       return 1;
     }
 
-    core::TfMessageSerializer serializer;
-    std::vector<std::byte> payload;
-    payload.reserve(256);
-    std::uint64_t injected = 0;
-    for (std::size_t i = 0; i < transforms.size(); ++i) {
-      try {
-        serializer.serialize_one(transforms[i], payload);
-      } catch (const std::exception & e) {
-        BAGWIZ_LOG_ERROR(kLogger, "Failed to serialize TFMessage for sample #%zu: %s", i, e.what());
-        return 1;
-      }
-      try {
-        writer->write(
-          args.topic, stamps_ns[i], std::span<const std::byte>(payload.data(), payload.size()));
-      } catch (const std::exception & e) {
-        BAGWIZ_LOG_ERROR(
-          kLogger, "Failed to write TFMessage on '%s' at stamp %" PRId64 ": %s", args.topic.c_str(),
-          stamps_ns[i], e.what());
-        return 1;
-      }
-      ++injected;
+    // 5. Stream-copy, suppressing <topic>'s existing payloads on --force.
+    const auto counts =
+      copy_join_pass_messages(*reader, *writer, decision.action, args.topic, args.input_path);
+    if (!counts.has_value()) {
+      return 1;
     }
 
+    // 6. Inject the trajectory as TFMessage payloads on <topic>.
+    const auto injected = inject_join_tf_messages(*writer, args.topic, transforms, stamps_ns);
+    if (!injected.has_value()) {
+      return 1;
+    }
+
+    // 7. Close and summarise.
     if (!io::close_writer_or_log(*writer, kLogger)) {
       return 1;
     }
-
     BAGWIZ_LOG_INFO(
       kLogger,
       "traj join: copied %" PRIu64 " message(s), suppressed %" PRIu64 ", injected %" PRIu64
       " TFMessage(s) on '%s'.",
-      counts.copied, counts.suppressed, injected, args.topic.c_str());
+      counts->copied, counts->suppressed, *injected, args.topic.c_str());
     return 0;
   }
 
