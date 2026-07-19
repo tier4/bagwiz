@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Run ESLint over the map viewer's TypeScript using its own toolchain
-# (assets/slam/node_modules, the same one the build uses for tsc). Lints the
-# whole viewer so the type-aware rules see every source (the project is tiny),
-# and installs the toolchain on first use so the hook also works on a fresh
-# checkout. Invoked by the `eslint-map-viewer` pre-commit hook.
+# (bagwiz_slam/assets/slam/node_modules, the same one the build uses for tsc).
+# Lints the whole viewer so the type-aware rules see every source (the project
+# is tiny), and installs the toolchain on first use so the hook also works on
+# a fresh checkout. Invoked by the `eslint-map-viewer` pre-commit hook.
 set -euo pipefail
 
 viewer_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
