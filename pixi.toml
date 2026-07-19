@@ -47,18 +47,20 @@ nlohmann_json = "*"
 sqlite = "*"
 # ffmpeg (conda-forge) supplies the libav* libraries (libavcodec/libavformat/
 # libavutil/libswscale) and their pkg-config files used by `generate video`
-# (src/core/video/video_encoder.cpp). The conda-forge build bundles the libx264
+# (bagwiz_video/src/core/video/video_encoder.cpp). The conda-forge build bundles the libx264
 # (H.264) and mjpeg encoders. Inherited by every distro environment.
 ffmpeg = "*"
 # opencv (conda-forge) backs the `bagwiz generate video --undistort` path: it
 # reads sensor_msgs/msg/CameraInfo intrinsics and applies cv::undistort to each
-# decoded frame before encoding. Linked PRIVATE so it does not leak into
-# bagwiz_core's export set, matching GeographicLib and libav.
+# decoded frame before encoding. Linked PRIVATE into bagwiz_image and
+# bagwiz_pointcloud so it does not leak into their export sets, matching
+# GeographicLib and libav.
 opencv = "*"
 # libsixel (conda-forge) supplies libsixel + its pkg-config file (`libsixel.pc`)
 # for the Sixel backend of `bagwiz walk`'s image preview
-# (src/core/tui/image/terminal_image_renderer.cpp). Linked PRIVATE behind the
-# renderer .cpp so it never enters bagwiz_core's export set, matching libav.
+# (bagwiz_tui/src/core/tui/image/terminal_image_renderer.cpp). Linked PRIVATE
+# behind the renderer .cpp so it never enters bagwiz_tui's export set,
+# matching libav.
 libsixel = "*"
 # libboost-devel (conda-forge) supplies Boost for the GLIM SLAM stack built by
 # `pixi run build-full` (via scripts/build-glim-deps.sh). System Boost is unusable here:
@@ -157,8 +159,9 @@ cmd = "rm -rf build install log"
 # ---------------------------------------------------------------------------
 # One feature per ROS 2 distro. Each adds its own robostack channel (higher
 # priority than conda-forge) and the ros-<distro>-* packages bagwiz needs.
-# The package set mirrors the find_package() calls in CMakeLists.txt plus the
-# runtime rmw, the test message packages, and the per-distro zstd provider.
+# The package set mirrors the find_package() calls in the per-package
+# CMakeLists.txt files plus the runtime rmw, the test message packages, and
+# the per-distro zstd provider.
 # ---------------------------------------------------------------------------
 [feature.humble]
 channels = [{ channel = "https://prefix.dev/robostack-humble", priority = 1 }]
