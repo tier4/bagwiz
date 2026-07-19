@@ -204,6 +204,7 @@ add_executable(bagwiz
   src/commands/walk_preview.cpp
   src/commands/walk_save.cpp
   src/commands/traj.cpp
+  src/commands/traj_common.cpp
   src/commands/tf.cpp
   src/commands/tf_walk.cpp
   src/commands/tf_static_cp.cpp
@@ -386,6 +387,15 @@ if(BUILD_TESTING)
     src/commands/topic_drop.cpp)
   target_include_directories(bagwiz_topic_drop_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(bagwiz_topic_drop_test ${bagwiz_test_libs} fmt::fmt)
+
+  # traj_common.hpp lives in src/commands (CLI-internal, not installed), so
+  # this test adds src/commands to its include path (pcd_concat_common idiom).
+  ament_add_gtest(bagwiz_traj_common_test
+    test/commands/traj_common_test.cpp
+    src/commands/traj_common.cpp)
+  target_include_directories(bagwiz_traj_common_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
+  target_link_libraries(bagwiz_traj_common_test ${bagwiz_test_libs} fmt::fmt)
 
   ament_add_gtest(bagwiz_topic_keep_test
     test/commands/topic_keep_test.cpp
