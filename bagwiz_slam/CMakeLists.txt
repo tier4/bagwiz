@@ -117,6 +117,7 @@ endif()
 add_library(bagwiz_slam
   src/core/slam/cloud_filters.cpp
   src/core/slam/colorize_rasterizer_cpu.cpp
+  src/core/slam/colorize_weight.cpp
   src/core/slam/gnss_alignment.cpp
   src/core/slam/gnss_projector.cpp
   src/core/slam/gnss_sample.cpp
@@ -389,6 +390,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_slam_map_colorizer_test test/core/slam/map_colorizer_test.cpp)
   target_link_libraries(bagwiz_slam_map_colorizer_test bagwiz_slam)
+
+  ament_add_gtest(bagwiz_slam_colorize_weight_test test/core/slam/colorize_weight_test.cpp)
+  target_link_libraries(bagwiz_slam_colorize_weight_test bagwiz_slam)
 
   ament_add_gtest(bagwiz_slam_scan_to_world_test test/core/slam/scan_to_world_test.cpp)
   target_link_libraries(bagwiz_slam_scan_to_world_test bagwiz_slam)
