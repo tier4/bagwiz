@@ -11,17 +11,16 @@
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/slam/point_cloud_io.hpp"
 #include "bagwiz/core/slam/progress_bar.hpp"
+#include "map_slam_threads.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #include <fmt/core.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cinttypes>
 #include <cstdlib>
 #include <exception>
 #include <fstream>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace bagwiz::commands
@@ -39,18 +38,6 @@ std::string imu_suffix(const MapSlamArgs & args, std::int64_t imu_count)
 }
 
 }  // namespace
-
-int cap_threads_at_hardware_limit(int num_threads)
-{
-  if (num_threads <= 0) {
-    return num_threads;
-  }
-  const unsigned int hardware = std::thread::hardware_concurrency();
-  if (hardware == 0) {
-    return num_threads;
-  }
-  return std::min(num_threads, static_cast<int>(hardware));
-}
 
 core::slam::CloudMapperConfig build_mapper_config(
   const MapSlamArgs & args, const std::optional<core::slam::SensorTransform> & t_lidar_imu,

@@ -31,7 +31,6 @@
 namespace
 {
 using bagwiz::commands::build_mapper_config;
-using bagwiz::commands::cap_threads_at_hardware_limit;
 using bagwiz::commands::MapSlamArgs;
 using bagwiz::commands::resolve_scan_progress;
 using bagwiz::commands::write_map_outputs;
@@ -189,12 +188,6 @@ TEST(BuildMapperConfig, CapsThreadsAtTheHardwareLimit)
   if (hardware > 0) {
     EXPECT_EQ(config.num_threads, static_cast<int>(hardware));
   }
-}
-
-TEST(CapThreads, NonPositiveValuesPassThrough)
-{
-  EXPECT_EQ(cap_threads_at_hardware_limit(0), 0);
-  EXPECT_EQ(cap_threads_at_hardware_limit(-3), -3);
 }
 
 TEST(ResolveScanProgress, DisabledByTheFlagSkipsTheStatsRead)

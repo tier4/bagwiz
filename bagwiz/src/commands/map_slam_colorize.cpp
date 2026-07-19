@@ -8,7 +8,7 @@
 
 #include "map_slam_colorize.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
-#include "map_slam_mapping.hpp"  // NOLINT(build/include_subdir) src-local shared header: cap_threads_at_hardware_limit
+#include "map_slam_threads.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #include <memory>
 #include <vector>

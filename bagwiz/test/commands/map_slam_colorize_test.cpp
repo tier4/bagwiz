@@ -8,6 +8,8 @@
 
 #include "map_slam_colorize.hpp"  // NOLINT(build/include_subdir) src-local shared header under test
 
+#include "map_slam_threads.hpp"  // NOLINT(build/include_subdir) src-local shared header under test
+
 #include <gtest/gtest.h>
 
 #include <array>
@@ -21,6 +23,7 @@ namespace
 {
 using bagwiz::commands::build_camera_colorizers;
 using bagwiz::commands::build_shared_colorize_geometry;
+using bagwiz::commands::cap_threads_at_hardware_limit;
 using bagwiz::commands::colorize_thread_count;
 using bagwiz::core::TrajectoryPose;
 
@@ -57,6 +60,12 @@ TEST(ColorizeThreadCount, PositivePassesThroughTheHardwareCap)
   if (hardware > 0) {
     EXPECT_EQ(colorize_thread_count(std::numeric_limits<int>::max()), static_cast<int>(hardware));
   }
+}
+
+TEST(CapThreads, NonPositiveValuesPassThrough)
+{
+  EXPECT_EQ(cap_threads_at_hardware_limit(0), 0);
+  EXPECT_EQ(cap_threads_at_hardware_limit(-3), -3);
 }
 
 TEST(BuildSharedColorizeGeometry, CoversEveryPoint)
