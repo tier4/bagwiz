@@ -26,8 +26,7 @@ TopicWriteDecision decide_topic_write(
   out.existing_count = existing_count;
 
   // Concatenate reason messages without fmt::format: bagwiz_bag carries no
-  // fmt dependency (fmt is fetched only by the CLI package), and plain
-  // string concatenation keeps it that way.
+  // fmt dependency, and plain string concatenation keeps it that way.
   const std::string target_str(target_topic);
 
   // The search is inlined here (rather than a helper returning

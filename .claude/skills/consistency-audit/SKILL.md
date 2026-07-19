@@ -4,7 +4,7 @@ description: >-
   Audit and fix drift between bagwiz source-code behavior (the source of truth)
   and its user-facing text: per-command and global --help, docs/commands/*.md,
   the README command table, in-source behavior comments, and the hardcoded
-  tables in src/commands/completion.cpp. Use when asked to check or fix
+  tables in bagwiz/src/commands/completion.cpp. Use when asked to check or fix
   help/doc/comment inconsistencies for one command, a set of commands, or the
   whole CLI. Fans work out to one read-only subagent per command so the main
   context stays lean.
@@ -21,7 +21,7 @@ corrected to match it, never the other way around.
 - The authoritative behavior of a command is its compiled C++: the CLI11 wiring
   in `configure*()` (flag names, positionals, `->default_val(...)`,
   `->check(CLI::IsMember(...))`, `->required()`) plus the `run*()` logic and the
-  `src/core/` / `src/io/` functions it delegates to.
+  `bagwiz_*/src/core/` / `bagwiz_io/src/io/` functions it delegates to.
 - Only prose may change: docs, help strings, footers, and comments. Never edit
   executable logic, flag definitions, defaults, or validators to "make the docs
   right" — if the code looks wrong, stop and report it instead of editing it.
@@ -32,17 +32,17 @@ corrected to match it, never the other way around.
 
 For any command, behavior is restated in up to four places that fall out of sync:
 
-1. Help text — string literals inside `src/commands/<cmd>.cpp` `configure*()`:
+1. Help text — string literals inside `bagwiz/src/commands/<cmd>.cpp` `configure*()`:
    the `add_subcommand(name, DESC)` 2nd arg, the `add_option/add_flag(..., HELP)`
    3rd arg, and `sub->footer("...")`. Top-level program description is at
-   `src/main.cpp` (`CLI::App app{"bagwiz - ..."}`) and the subcommand list is
+   `bagwiz/src/main.cpp` (`CLI::App app{"bagwiz - ..."}`) and the subcommand list is
    built from each command's `description()`.
 2. Docs — `docs/commands/<cmd>.md` (note: `cam-info.md` is hyphenated) and the
    command table + examples in `README.md`.
 3. Comments — class-level prose above each `Command` and rationale inside
    `run*()` in the `.cpp` files, plus contract comments in
    `include/bagwiz/commands/*.hpp` and `include/bagwiz/core/**`.
-4. Completion tables — `src/commands/completion.cpp` re-declares each command's
+4. Completion tables — `bagwiz/src/commands/completion.cpp` re-declares each command's
    flags and supported message types as static C++ arrays, independent of
    `configure()`. This is the easiest surface to forget; always include it.
 
@@ -53,24 +53,24 @@ stale, regenerate with the `update-codemaps` skill instead.
 
 Registered commands: `cam-info`, `check`, `complete`, `convert`, `generate`,
 `joke` (hidden, intentionally undocumented), `ls`, `map`, `tf`, `topic`,
-`traj`, `walk`. Re-derive this list from `src/commands/registry.cpp` /
+`traj`, `walk`. Re-derive this list from `bagwiz/src/commands/registry.cpp` /
 `name()` declarations before a full run, since it grows over time.
 
-| Command  | Source of truth (.cpp / core)                                             | Doc                         |
-| -------- | ------------------------------------------------------------------------- | --------------------------- |
-| cam-info | `cam_info.cpp`, `cam_info_replace.cpp`, `core/camera_info_resolver.cpp`   | `docs/commands/cam-info.md` |
-| check    | `check.cpp`                                                               | `docs/commands/check.md`    |
-| complete | `completion.cpp`                                                          | `docs/commands/complete.md` |
-| convert  | `convert.cpp`, `convert_msg_geo.cpp`                                      | `docs/commands/convert.md`  |
-| generate | `generate.cpp`, `generate_video.cpp`                                      | `docs/commands/generate.md` |
-| ls       | `ls.cpp`                                                                  | `docs/commands/ls.md`       |
-| map      | `map.cpp`, `map_slam.cpp`, `map_viewer.cpp`                               | `docs/commands/map.md`      |
-| tf       | `tf.cpp`, `tf_walk.cpp`, `tf_static_cp.cpp`, `core/tf_*.cpp`              | `docs/commands/tf.md`       |
-| topic    | `topic.cpp`, `topic_drop/keep/rename.cpp`, `core/topic_match`, `bag_copy` | `docs/commands/topic.md`    |
-| traj     | `traj.cpp`                                                                | `docs/commands/traj.md`     |
-| walk     | `walk.cpp`                                                                | `docs/commands/walk.md`     |
+| Command  | Source of truth (.cpp / core)                                                                                                  | Doc                         |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------ | --------------------------- |
+| cam-info | `cam_info.cpp`, `cam_info_replace.cpp`, `bagwiz_image/src/core/image/camera_info_resolver.cpp`                                 | `docs/commands/cam-info.md` |
+| check    | `check.cpp`                                                                                                                    | `docs/commands/check.md`    |
+| complete | `completion.cpp`                                                                                                               | `docs/commands/complete.md` |
+| convert  | `convert.cpp`, `convert_msg_geo.cpp`                                                                                           | `docs/commands/convert.md`  |
+| generate | `generate.cpp`, `generate_video.cpp`                                                                                           | `docs/commands/generate.md` |
+| ls       | `ls.cpp`                                                                                                                       | `docs/commands/ls.md`       |
+| map      | `map.cpp`, `map_slam.cpp`, `map_viewer.cpp`                                                                                    | `docs/commands/map.md`      |
+| tf       | `tf.cpp`, `tf_walk.cpp`, `tf_static_cp.cpp`, `bagwiz_tf/src/core/tf/*.cpp`                                                     | `docs/commands/tf.md`       |
+| topic    | `topic.cpp`, `topic_drop/keep/rename.cpp`, `bagwiz_base/src/core/base/topic_match.cpp`, `bagwiz_bag/src/core/bag/bag_copy.cpp` | `docs/commands/topic.md`    |
+| traj     | `traj.cpp`                                                                                                                     | `docs/commands/traj.md`     |
+| walk     | `walk.cpp`                                                                                                                     | `docs/commands/walk.md`     |
 
-(All `.cpp` paths are under `src/commands/`.)
+(All `.cpp` paths are under `bagwiz/src/commands/`.)
 
 ## Workflow
 
@@ -83,7 +83,7 @@ Determine the target set from the request:
 - `all` or no argument → every registered command plus the global/README surface.
 
 A build is optional. The audit runs from source alone. Only if you want to diff
-live help do you need a build: `pixi run -e humble build`, then
+live help do you need a build: `pixi run -e humble build-core`, then
 `scripts/bagwiz-run.sh <cmd> [<sub>] --help`. Treat live `--help` as a
 convenience cross-check, not the ground truth — the `configure*()` source is.
 
@@ -94,12 +94,12 @@ the `Explore` or `general-purpose` subagent type. Each agent owns exactly one
 command and is told:
 
 > Source code behavior is ground truth; do not modify anything. Read
-> `src/commands/<cmd>.cpp` (`configure*()` + `run*()`), the delegated
-> `src/commands/<cmd>_*.cpp` and `src/core/` it calls, and the relevant
+> `bagwiz/src/commands/<cmd>.cpp` (`configure*()` + `run*()`), the delegated
+> `bagwiz/src/commands/<cmd>_*.cpp` and the `bagwiz_*/src/core/` libraries it calls, and the relevant
 > `include/bagwiz/**` headers. Then compare against the four drift surfaces:
 > `docs/commands/<cmd>.md`, this command's row/examples in `README.md`,
 > the in-source comments, and this command's tables in
-> `src/commands/completion.cpp`. Return ONLY a findings list — no file contents.
+> `bagwiz/src/commands/completion.cpp`. Return ONLY a findings list — no file contents.
 
 Context discipline (this is the whole point of the skill): the main agent must
 not read the full command sources itself. It consumes only the compact findings
@@ -127,7 +127,7 @@ valid, useful result.
    FILE to avoid write conflicts:
    - Per-command files (`docs/commands/<cmd>.md` and that command's `.cpp`
      comments) are independent → safe to fix in parallel, one agent per command.
-   - Shared files (`README.md`, `src/commands/completion.cpp`) are touched by
+   - Shared files (`README.md`, `bagwiz/src/commands/completion.cpp`) are touched by
      many commands → batch all their edits into a single agent so two agents
      never write the same file at once.
 
@@ -135,7 +135,7 @@ Match existing Markdown and comment style. Keep edits minimal and factual.
 
 ### Phase 3 — Verify
 
-- `pixi run -e humble build` — comment edits live in compiled sources, so this
+- `pixi run -e humble build-core` — comment edits live in compiled sources, so this
   both proves nothing broke and catches any accidental logic edit. (Use the same
   `-e <distro>` the developer is working in.)
 - If live help was used: re-run `scripts/bagwiz-run.sh <cmd> --help` and confirm
@@ -162,7 +162,7 @@ Then follow the repo's git rules in `AGENTS.md`:
 - [ ] `docs/CODEMAPS/*` left alone (regenerate via `update-codemaps`, not edited).
 - [ ] Main context fed structured findings only, never raw command sources.
 - [ ] Shared files (README, completion.cpp) edited by a single agent.
-- [ ] `pixi run -e <distro> build` passes; pre-commit hooks not bypassed.
+- [ ] `pixi run -e <distro> build-core` passes; pre-commit hooks not bypassed.
 - [ ] English-only prose; AGENTS.md git/PR workflow followed.
 
 ## Scaling notes
