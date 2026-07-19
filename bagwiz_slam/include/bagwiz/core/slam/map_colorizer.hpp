@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -248,6 +249,47 @@ private:
   // images are processed serially, so a point's observation sequence — and
   // therefore the reservoir contents — is fixed regardless of thread count.
   void reservoir_add(std::uint32_t point_index, std::uint32_t packed);
+
+  // What resolve_colorize_view produces for one accepted image: the
+  // rasterized view (world->camera transform plus the rescaled intrinsics)
+  // and the camera center in the world frame, which the incidence weight
+  // reads its view directions from.
+  struct ResolvedView
+  {
+    ColorizeView view;
+    std::array<double, 3> cam_center;
+  };
+
+  // add_image's first phase: validate the image (non-empty map/trajectory,
+  // matching raster size, stamp inside the trajectory span, interpolatable
+  // pose), resolve the camera pose/intrinsics, and rasterize the map into
+  // visible_scratch_. std::nullopt rejects the image; add_image counts it as
+  // skipped.
+  std::optional<ResolvedView> resolve_colorize_view(
+    std::int64_t stamp_ns, std::span<const std::byte> bgr, std::uint32_t width,
+    std::uint32_t height, std::span<const std::array<float, 3>> dynamic_points);
+
+  // Second phase: weight and sample every visible point into
+  // pending_scratch_ (per-chunk pending lists, merged in chunk order).
+  void weight_and_sample(
+    std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height,
+    const std::array<double, 3> & cam_center);
+
+  // Third phase (gain compensation, pass A): estimate this image's RGB gain
+  // from the ratio of each re-observed point's reservoir mean to its new
+  // observation. {1, 1, 1} when gain compensation is disabled or too few
+  // points vote.
+  std::array<double, 3> estimate_image_gain();
+
+  // Fourth phase: ensure every pending point's reservoir page exists, then
+  // apply the gain, quantize the weight, and reservoir-add (pass B).
+  void reservoir_add_all(const std::array<double, 3> & gain);
+
+  // Worker count for the per-image sweeps: the configured thread count
+  // clamped to [1, max(1, visible count)] so an empty or tiny visible set
+  // spawns no idle workers. The sweeps merge per-chunk results in chunk
+  // order, keeping the result deterministic for any thread count.
+  int num_sweep_threads() const;
 
   MapColorizerConfig config_;
   std::span<const std::array<float, 3>> points_;

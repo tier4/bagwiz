@@ -8,9 +8,9 @@
 
 #include "bagwiz/core/slam/map_colorizer.hpp"
 
-#include "bagwiz/core/image/gradient.hpp"
 #include "bagwiz/core/image/sampling.hpp"
 #include "bagwiz/core/pointcloud/normals.hpp"
+#include "bagwiz/core/slam/colorize_weight.hpp"
 
 #include <algorithm>
 #include <array>
@@ -237,29 +237,25 @@ bool MapColorizer::add_image(
   return add_image(stamp_ns, bgr, width, height, {});
 }
 
-bool MapColorizer::add_image(
+std::optional<MapColorizer::ResolvedView> MapColorizer::resolve_colorize_view(
   std::int64_t stamp_ns, std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height,
   std::span<const std::array<float, 3>> dynamic_points)
 {
   if (points_.empty() || trajectory_.empty()) {
-    ++images_skipped_;
-    return false;
+    return std::nullopt;
   }
   if (width == 0 || height == 0 || bgr.size() != static_cast<std::size_t>(width) * 3U * height) {
-    ++images_skipped_;
-    return false;
+    return std::nullopt;
   }
   // Reject stamps outside the trajectory span: lookup_pose would clamp to an
   // endpoint pose, projecting the map from a viewpoint the platform never had
   // at that time and smearing wrong colors over it.
   if (stamp_ns < trajectory_.front().timestamp_ns || stamp_ns > trajectory_.back().timestamp_ns) {
-    ++images_skipped_;
-    return false;
+    return std::nullopt;
   }
   const auto pose = core::lookup_pose(stamp_ns, trajectory_);
   if (!pose) {
-    ++images_skipped_;
-    return false;
+    return std::nullopt;
   }
 
   // Camera pose in the world: T_world_cam = T_world_cloud * T_cloud_cam, then
@@ -273,9 +269,11 @@ bool MapColorizer::add_image(
     config_.t_cloud_cam.rotation_xyzw[2], config_.t_cloud_cam.rotation_xyzw[3]);
   t_cloud_cam.t = config_.t_cloud_cam.translation;
   const Rigid t_cam_world = invert(compose(t_world_cloud, t_cloud_cam));
+
+  ResolvedView resolved;
   // Camera center in the world, -R^T t of the world->camera transform, for
   // the incidence view directions.
-  const std::array<double, 3> cam_center = {
+  resolved.cam_center = {
     -(t_cam_world.r[0] * t_cam_world.t[0] + t_cam_world.r[3] * t_cam_world.t[1] +
       t_cam_world.r[6] * t_cam_world.t[2]),
     -(t_cam_world.r[1] * t_cam_world.t[0] + t_cam_world.r[4] * t_cam_world.t[1] +
@@ -285,28 +283,39 @@ bool MapColorizer::add_image(
 
   // Rescale the intrinsics when the delivered image differs from the
   // calibrated resolution (e.g. a downscaled republished stream).
-  ColorizeView view;
-  view.camera = config_.camera;
+  resolved.view.camera = config_.camera;
   if (
-    view.camera.width != 0 && view.camera.height != 0 &&
-    (view.camera.width != width || view.camera.height != height)) {
-    view.camera = image::scale_camera_info(
-      view.camera, static_cast<double>(width) / view.camera.width,
-      static_cast<double>(height) / view.camera.height);
+    resolved.view.camera.width != 0 && resolved.view.camera.height != 0 &&
+    (resolved.view.camera.width != width || resolved.view.camera.height != height)) {
+    resolved.view.camera = image::scale_camera_info(
+      resolved.view.camera, static_cast<double>(width) / resolved.view.camera.width,
+      static_cast<double>(height) / resolved.view.camera.height);
   }
-  view.r_cam_world = t_cam_world.r;
-  view.t_cam_world = t_cam_world.t;
-  view.width = width;
-  view.height = height;
-  rasterizer_->visible_points(view, dynamic_points, visible_scratch_);
+  resolved.view.r_cam_world = t_cam_world.r;
+  resolved.view.t_cam_world = t_cam_world.t;
+  resolved.view.width = width;
+  resolved.view.height = height;
+  rasterizer_->visible_points(resolved.view, dynamic_points, visible_scratch_);
+  return resolved;
+}
 
-  // The sweeps below are independent per point, so they run over num_threads
-  // chunks (merged in chunk order, keeping the result deterministic for any
-  // thread count): weight + sample, gain vote, then gain-apply +
-  // reservoir-add.
-  const int num_threads = std::clamp(
+int MapColorizer::num_sweep_threads() const
+{
+  return std::clamp(
     config_.rasterizer.num_threads, 1,
     static_cast<int>(std::max<std::size_t>(1, visible_scratch_.size())));
+}
+
+void MapColorizer::weight_and_sample(
+  std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height,
+  const std::array<double, 3> & cam_center)
+{
+  const ObservationWeightParams weight_params{
+    config_.weight_distance_ref, config_.weight_sharpness_g0, config_.weight_border_margin_px};
+  const std::span<const std::array<float, 3>> normals =
+    geometry_ ? std::span<const std::array<float, 3>>(geometry_->normals)
+              : std::span<const std::array<float, 3>>{};
+  const int num_threads = num_sweep_threads();
   if (pending_chunks_.size() != static_cast<std::size_t>(num_threads)) {
     pending_chunks_.assign(static_cast<std::size_t>(num_threads), {});
   }
@@ -319,34 +328,8 @@ bool MapColorizer::add_image(
       const auto & vp = visible_scratch_[j];
       double weight = 1.0;
       if (config_.use_weights) {
-        const double z = static_cast<double>(vp.depth);
-        const double ref_over_z = config_.weight_distance_ref / z;
-        const double w_dist = std::clamp(ref_over_z * ref_over_z, 0.0, 1.0);
-        double w_inc = 1.0;
-        if (geometry_ && vp.index < geometry_->normals.size()) {
-          const auto & n = geometry_->normals[vp.index];
-          const double nn = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
-          if (nn > 0.0) {
-            const auto & p = points_[vp.index];
-            const double dx = static_cast<double>(p[0]) - cam_center[0];
-            const double dy = static_cast<double>(p[1]) - cam_center[1];
-            const double dz = static_cast<double>(p[2]) - cam_center[2];
-            const double len = std::sqrt(dx * dx + dy * dy + dz * dz);
-            if (len > 0.0) {
-              w_inc = std::abs(n[0] * dx + n[1] * dy + n[2] * dz) / (std::sqrt(nn) * len);
-            }
-          }
-        }
-        const double g = image::sobel_gradient_magnitude_bilinear(bgr, width, height, vp.u, vp.v);
-        const double w_sharp =
-          config_.weight_sharpness_g0 > 0.0 ? g / (g + config_.weight_sharpness_g0) : 1.0;
-        const double edge = std::min(
-          std::min(vp.u, vp.v),
-          std::min(static_cast<double>(width - 1) - vp.u, static_cast<double>(height - 1) - vp.v));
-        const double w_border = config_.weight_border_margin_px > 0.0
-                                  ? std::clamp(edge / config_.weight_border_margin_px, 0.0, 1.0)
-                                  : 1.0;
-        weight = w_dist * w_inc * w_sharp * w_border;
+        weight = compute_observation_weight(
+          vp, points_, normals, cam_center, bgr, width, height, weight_params);
         if (weight < config_.weight_min) {
           continue;
         }
@@ -360,79 +343,87 @@ bool MapColorizer::add_image(
   for (const auto & chunk : pending_chunks_) {
     pending_scratch_.insert(pending_scratch_.end(), chunk.begin(), chunk.end());
   }
+}
 
+std::array<double, 3> MapColorizer::estimate_image_gain()
+{
   // Gain compensation, pass A: estimate this image's RGB gain from the ratio
   // of each re-observed point's reservoir mean to its new observation. Votes
   // accumulate per chunk and merge below; the median is order-independent.
   std::array<double, 3> gain{1.0, 1.0, 1.0};
-  if (config_.gain_compensation) {
-    if (gain_ratio_chunks_.size() != static_cast<std::size_t>(num_threads)) {
-      gain_ratio_chunks_.assign(static_cast<std::size_t>(num_threads), {});
+  if (!config_.gain_compensation) {
+    return gain;
+  }
+  const int num_threads = num_sweep_threads();
+  if (gain_ratio_chunks_.size() != static_cast<std::size_t>(num_threads)) {
+    gain_ratio_chunks_.assign(static_cast<std::size_t>(num_threads), {});
+  }
+  auto vote_chunk = [&](std::size_t begin, std::size_t end, std::size_t chunk) {
+    auto & ratios = gain_ratio_chunks_[chunk];
+    for (auto & r : ratios) {
+      r.clear();
     }
-    auto vote_chunk = [&](std::size_t begin, std::size_t end, std::size_t chunk) {
-      auto & ratios = gain_ratio_chunks_[chunk];
-      for (auto & r : ratios) {
-        r.clear();
+    for (std::size_t j = begin; j < end; ++j) {
+      const auto & obs = pending_scratch_[j];
+      const auto & page = pages_[obs.index / kPageSize];
+      if (!page) {
+        continue;
       }
-      for (std::size_t j = begin; j < end; ++j) {
-        const auto & obs = pending_scratch_[j];
-        const auto & page = pages_[obs.index / kPageSize];
-        if (!page) {
-          continue;
-        }
-        const std::size_t offset = obs.index % kPageSize;
-        const std::size_t stored = std::min<std::size_t>(page->seen[offset], kMaxObservations);
-        if (stored < config_.gain_min_prior_obs) {
-          continue;
-        }
-        std::array<double, 3> mean{0.0, 0.0, 0.0};
-        std::array<double, 3> cmin{255.0, 255.0, 255.0};
-        std::array<double, 3> cmax{0.0, 0.0, 0.0};
-        for (std::size_t s = 0; s < stored; ++s) {
-          const std::uint32_t packed = page->slots[offset][s];
-          const std::array<double, 3> value{
-            static_cast<double>((packed >> 16) & 0xFFU), static_cast<double>((packed >> 8) & 0xFFU),
-            static_cast<double>(packed & 0xFFU)};
-          for (std::size_t c = 0; c < 3; ++c) {
-            mean[c] += value[c];
-            cmin[c] = std::min(cmin[c], value[c]);
-            cmax[c] = std::max(cmax[c], value[c]);
-          }
-        }
-        const std::array<double, 3> current{obs.r, obs.g, obs.b};
-        bool usable = true;
+      const std::size_t offset = obs.index % kPageSize;
+      const std::size_t stored = std::min<std::size_t>(page->seen[offset], kMaxObservations);
+      if (stored < config_.gain_min_prior_obs) {
+        continue;
+      }
+      std::array<double, 3> mean{0.0, 0.0, 0.0};
+      std::array<double, 3> cmin{255.0, 255.0, 255.0};
+      std::array<double, 3> cmax{0.0, 0.0, 0.0};
+      for (std::size_t s = 0; s < stored; ++s) {
+        const std::uint32_t packed = page->slots[offset][s];
+        const std::array<double, 3> value{
+          static_cast<double>((packed >> 16) & 0xFFU), static_cast<double>((packed >> 8) & 0xFFU),
+          static_cast<double>(packed & 0xFFU)};
         for (std::size_t c = 0; c < 3; ++c) {
-          mean[c] /= static_cast<double>(stored);
-          // Appearance-unstable reservoirs abstain (see kGainVoteStableRange);
-          // near-black channels make the ratio numerically meaningless.
-          usable = usable && cmax[c] - cmin[c] <= kGainVoteStableRange && mean[c] >= 8.0 &&
-                   current[c] >= 8.0;
-        }
-        if (!usable) {
-          continue;
-        }
-        for (std::size_t c = 0; c < 3; ++c) {
-          ratios[c].push_back(mean[c] / current[c]);
+          mean[c] += value[c];
+          cmin[c] = std::min(cmin[c], value[c]);
+          cmax[c] = std::max(cmax[c], value[c]);
         }
       }
-    };
-    run_parallel(num_threads, pending_scratch_.size(), vote_chunk);
-    for (auto & ratios : gain_ratio_scratch_) {
-      ratios.clear();
-    }
-    for (const auto & chunk : gain_ratio_chunks_) {
+      const std::array<double, 3> current{obs.r, obs.g, obs.b};
+      bool usable = true;
       for (std::size_t c = 0; c < 3; ++c) {
-        gain_ratio_scratch_[c].insert(
-          gain_ratio_scratch_[c].end(), chunk[c].begin(), chunk[c].end());
+        mean[c] /= static_cast<double>(stored);
+        // Appearance-unstable reservoirs abstain (see kGainVoteStableRange);
+        // near-black channels make the ratio numerically meaningless.
+        usable = usable && cmax[c] - cmin[c] <= kGainVoteStableRange && mean[c] >= 8.0 &&
+                 current[c] >= 8.0;
+      }
+      if (!usable) {
+        continue;
+      }
+      for (std::size_t c = 0; c < 3; ++c) {
+        ratios[c].push_back(mean[c] / current[c]);
       }
     }
-    if (gain_ratio_scratch_[0].size() >= config_.gain_min_samples) {
-      for (std::size_t c = 0; c < 3; ++c) {
-        gain[c] = std::clamp(median_of(gain_ratio_scratch_[c]), kGainImageMin, kGainImageMax);
-      }
+  };
+  run_parallel(num_threads, pending_scratch_.size(), vote_chunk);
+  for (auto & ratios : gain_ratio_scratch_) {
+    ratios.clear();
+  }
+  for (const auto & chunk : gain_ratio_chunks_) {
+    for (std::size_t c = 0; c < 3; ++c) {
+      gain_ratio_scratch_[c].insert(gain_ratio_scratch_[c].end(), chunk[c].begin(), chunk[c].end());
     }
   }
+  if (gain_ratio_scratch_[0].size() >= config_.gain_min_samples) {
+    for (std::size_t c = 0; c < 3; ++c) {
+      gain[c] = std::clamp(median_of(gain_ratio_scratch_[c]), kGainImageMin, kGainImageMax);
+    }
+  }
+  return gain;
+}
 
+void MapColorizer::reservoir_add_all(const std::array<double, 3> & gain)
+{
   // Reservoir pages are allocated lazily on a point's first observation;
   // the parallel pass below must not race the allocation, so ensure every
   // pending point's page exists first (pointer checks only, cheap).
@@ -455,8 +446,25 @@ bool MapColorizer::add_image(
       reservoir_add(obs.index, (w_q << 24) | (r << 16) | (g << 8) | b);
     }
   };
-  run_parallel(num_threads, pending_scratch_.size(), add_chunk);
+  run_parallel(num_sweep_threads(), pending_scratch_.size(), add_chunk);
+}
 
+bool MapColorizer::add_image(
+  std::int64_t stamp_ns, std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height,
+  std::span<const std::array<float, 3>> dynamic_points)
+{
+  const auto resolved = resolve_colorize_view(stamp_ns, bgr, width, height, dynamic_points);
+  if (!resolved) {
+    ++images_skipped_;
+    return false;
+  }
+  // The per-image sweeps are independent per point, so each runs over
+  // num_sweep_threads() chunks (merged in chunk order, keeping the result
+  // deterministic for any thread count): weight + sample, gain vote, then
+  // gain-apply + reservoir-add.
+  weight_and_sample(bgr, width, height, resolved->cam_center);
+  const std::array<double, 3> gain = estimate_image_gain();
+  reservoir_add_all(gain);
   ++images_used_;
   return true;
 }
