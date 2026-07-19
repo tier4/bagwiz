@@ -282,6 +282,16 @@ are allowed.
 - The package DAG is enforced by colcon's topological build: a
   dependency cycle fails the build, so no separate cycle check is
   needed.
+- The layering rule constrains what a package's _libraries_ link. A
+  test executable may additionally compile a single `.cpp` from
+  another package directly, as an extra translation unit, when the
+  code it must assert on sits in a package that already depends on
+  this one — linking that package would close a cycle the DAG
+  forbids. `bagwiz_msg`'s `geo_pose_convert_test` does this with
+  `bagwiz_tf`'s `tf_value_extract.cpp` (`bagwiz_tf` depends on
+  `bagwiz_msg`). Keep such cases rare and comment the CMake block with
+  the cycle it avoids; when the assertions are really about the other
+  package's own behavior, put the test there instead.
 
 ## Maintaining These Guidelines
 
