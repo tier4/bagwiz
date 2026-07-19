@@ -59,6 +59,7 @@ add_library(bagwiz_tf
   src/core/tf/tf_merge_check.cpp
   src/core/tf/tf_message_wire.cpp
   src/core/tf/tf_topics.cpp
+  src/core/tf/tf_trajectory_sample.cpp
   src/core/tf/tf_transform_format.cpp
   src/core/tf/tf_value_extract.cpp
   src/core/tf/tf_walk_timeline.cpp
@@ -161,6 +162,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_tf_topics_test test/core/tf/tf_topics_test.cpp)
   target_link_libraries(bagwiz_tf_topics_test bagwiz_tf)
+
+  ament_add_gtest(bagwiz_tf_trajectory_sample_test test/core/tf/tf_trajectory_sample_test.cpp)
+  target_link_libraries(bagwiz_tf_trajectory_sample_test bagwiz_tf)
 
   ament_add_gtest(bagwiz_tf_message_wire_test test/core/tf/tf_message_wire_test.cpp)
   target_link_libraries(bagwiz_tf_message_wire_test bagwiz_tf)
