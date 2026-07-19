@@ -23,8 +23,10 @@
 #include "bagwiz/core/slam/lidar_scan.hpp"
 #include "bagwiz/core/slam/map_colorizer.hpp"
 #include "bagwiz/core/slam/map_viewer.hpp"
-#include "bagwiz/core/slam/point_cloud_io.hpp"
 #include "bagwiz/core/slam/progress_bar.hpp"
+#include "bagwiz/core/slam/propagation_radius.hpp"
+#include "bagwiz/core/slam/scan_image_pairer.hpp"
+#include "bagwiz/core/slam/scan_to_world.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
 #include "bagwiz/core/tf/tf_chain.hpp"
 #include "bagwiz/core/tf/tf_topics.hpp"
@@ -32,6 +34,8 @@
 #include "bagwiz/core/tf/trajectory.hpp"
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/bag_open.hpp"
+#include "map_slam_colorize.hpp"  // NOLINT(build/include_subdir) src-local shared header
+#include "map_slam_mapping.hpp"   // NOLINT(build/include_subdir) src-local shared header
 
 #include <tf2/buffer_core.hpp>
 #include <tf2/time.hpp>
@@ -39,27 +43,20 @@
 #include <geometry_msgs/msg/pose.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
-#include <fmt/core.h>
 #include <unistd.h>
 
-#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cinttypes>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
-#include <deque>
 #include <exception>
 #include <filesystem>
-#include <fstream>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -76,30 +73,6 @@ constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
 // Static transforms are timeless; a year-long cache dwarfs any bag and matches
 // `tf walk` / `tf static calc` buffer sizing.
 constexpr std::chrono::hours kTfBufferCacheTime{24 * 365};
-
-// Clamp an explicit --threads value to the host's hardware concurrency so the
-// user cannot oversubscribe the machine. A value <= 0 or a concurrency that
-// cannot be queried leaves the argument unchanged (the caller applies defaults).
-int cap_threads_at_hardware_limit(int num_threads)
-{
-  if (num_threads <= 0) {
-    return num_threads;
-  }
-  const unsigned int hardware = std::thread::hardware_concurrency();
-  if (hardware == 0) {
-    return num_threads;
-  }
-  return std::min(num_threads, static_cast<int>(hardware));
-}
-
-// Quaternion (x, y, z, w) to a row-major 3x3 rotation, for transforming the
-// colorization pass's occluder scans into the world frame.
-std::array<double, 9> quat_to_rot(double x, double y, double z, double w)
-{
-  return {1 - 2 * (y * y + z * z), 2 * (x * y - w * z),     2 * (x * z + w * y),
-          2 * (x * y + w * z),     1 - 2 * (x * x + z * z), 2 * (y * z - w * x),
-          2 * (x * z - w * y),     2 * (y * z + w * x),     1 - 2 * (x * x + y * y)};
-}
 
 // tf2's lookupTransform(target=cloud, source=imu) yields p_cloud = T * p_imu,
 // which is exactly GLIM's T_lidar_imu (p_lidar = T_lidar_imu * p_imu).
@@ -832,22 +805,6 @@ private:
     return true;
   }
 
-  // Write `poses` as TUM to output_path_. Returns false on failure (logged).
-  bool write_trajectory(const std::vector<core::TrajectoryPose> & poses)
-  {
-    std::ofstream out(output_path_, std::ios::binary);
-    if (!out) {
-      BAGWIZ_LOG_ERROR(kLogger, "could not open %s for writing", output_path_.c_str());
-      return false;
-    }
-    core::write_tum(out, poses);
-    if (!out.good()) {
-      BAGWIZ_LOG_ERROR(kLogger, "write failed: %s", output_path_.c_str());
-      return false;
-    }
-    return true;
-  }
-
   // Convert a TrajectoryPose to the geometry_msgs Pose representation used by
   // core::compose_trajectory_pose.
   static geometry_msgs::msg::Pose to_geometry_pose(const core::TrajectoryPose & p)
@@ -1001,27 +958,15 @@ private:
   int run_mapping(
     io::BagReader & reader, const std::optional<core::slam::SensorTransform> & t_lidar_imu)
   {
-    core::slam::CloudMapperConfig config;
-    config.input_resolution = args_.input_resolution;
-    config.range_min = args_.range_min;
-    config.range_max = args_.range_max;
-    config.fill_min_inlier_fraction = args_.fill_min_inlier_fraction;
-    config.submap_max_keyframes = args_.submap_max_keyframes;
-    config.t_lidar_imu = t_lidar_imu;
-    config.num_threads = cap_threads_at_hardware_limit(args_.num_threads);
-    config.enable_gnss = !args_.gnss_topic.empty();
-    config.use_gpu = use_gpu_;
-    // The fill scan-matches the window scans against the optimized map, so it runs
-    // in LiDAR-only mode too; --imu only adds the IMU init/fallback path inside the
-    // mapper. Gated solely on the fill toggles, not on the IMU topic.
-    config.fill_start = args_.fill_start;
-    config.fill_end = args_.fill_end;
     // Resolve the antenna lever-arm (T_cloud_gnss) from static TF so the GNSS prior
     // constrains the sensor origin, not the antenna. Non-fatal: a missing TF leaves
     // the offset zero (raw-antenna behavior) with a warning.
-    if (config.enable_gnss) {
-      config.gnss_antenna_offset = resolve_gnss_offset();
+    std::array<double, 3> gnss_antenna_offset{0.0, 0.0, 0.0};
+    if (!args_.gnss_topic.empty()) {
+      gnss_antenna_offset = resolve_gnss_offset();
     }
+    const core::slam::CloudMapperConfig config =
+      build_mapper_config(args_, t_lidar_imu, use_gpu_, gnss_antenna_offset);
 
     // Resolve the optional --frame remapping up front. The trajectory is expressed
     // in the PointCloud2 frame_id by default; a requested --frame is resolved
@@ -1050,31 +995,10 @@ private:
       mapper.insert_gnss(point);
     };
 
-    // Live progress bar (stderr) for the long read+feed phase. Auto-suppressed
-    // off a TTY / under NO_COLOR / with --no-progress (progress_enabled), so it
-    // never spams a pipe or log. The total is the number of messages the read
-    // loop will stream; a stats failure only forfeits the determinate bar.
-    const bool progress_on = core::slam::progress_enabled(
-      ::isatty(STDERR_FILENO) != 0, std::getenv("NO_COLOR") != nullptr, args_.no_progress);
-    std::int64_t progress_total_msgs = 0;
-    if (progress_on) {
-      std::vector<std::string> progress_topics{args_.cloud_topic};
-      if (!args_.imu_topic.empty()) {
-        progress_topics.push_back(args_.imu_topic);
-      }
-      if (!args_.gnss_topic.empty()) {
-        progress_topics.push_back(args_.gnss_topic);
-      }
-      try {
-        const auto topic_counts = reader.compute_topic_counts(progress_topics);
-        progress_total_msgs = core::slam::progress_total(topic_counts, progress_topics);
-      } catch (const std::exception & e) {
-        BAGWIZ_LOG_WARN(
-          kLogger, "Could not read bag stats for the progress bar (%s); using an indeterminate bar",
-          e.what());
-      }
-    }
-    core::slam::ScanProgress progress(progress_total_msgs, progress_on);
+    const auto progress_setup =
+      resolve_scan_progress(reader, args_, ::isatty(STDERR_FILENO) != 0, kLogger);
+    const bool progress_on = progress_setup.enabled;
+    core::slam::ScanProgress progress(progress_setup.total_msgs, progress_on);
 
     std::int64_t scans = 0;
     std::int64_t skipped = 0;
@@ -1088,26 +1012,8 @@ private:
     }
     progress.done();
 
-    // finish() runs the blocking finalization (global optimization + endpoint
-    // window fill + map export) with no per-step progress; animate an indeterminate
-    // spinner on a worker thread until it returns.
-    core::slam::CloudMap map;
-    const auto finalize_start = std::chrono::steady_clock::now();
-    {
-      core::slam::FinalizeSpinner spinner("Finalizing map", progress_on);
-      map = mapper.finish();
-    }
-    const double finalize_seconds =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - finalize_start).count();
-    // Log the breakdown, not just the total: the endpoint fill (up to a full
-    // odometry smoother window of scan registrations), not the iSAM2 update,
-    // dominates finalization on LiDAR-only runs, and a bare total reads as
-    // "the optimizer is slow".
-    BAGWIZ_LOG_INFO(
-      kLogger,
-      "Finalization took %.1fs (global optimization %.1fs, endpoint fill %.1fs, "
-      "map export %.1fs)",
-      finalize_seconds, map.optimize_seconds, map.window_fill_seconds, map.export_seconds);
+    auto finalized = finalize_with_spinner(mapper, progress_on, kLogger);
+    core::slam::CloudMap map = std::move(finalized.map);
 
     if (map.trajectory.empty()) {
       BAGWIZ_LOG_ERROR(
@@ -1130,87 +1036,16 @@ private:
       transform_trajectory_to_frame(map.trajectory, *output_body_to);
     }
 
-    // Open the map stream before committing the trajectory so an unwritable
-    // --map path fails before either file is touched (rather than leaving an
-    // orphaned trajectory behind).
-    std::ofstream map_out(map_path_, std::ios::binary);
-    if (!map_out) {
-      BAGWIZ_LOG_ERROR(kLogger, "could not open %s for writing", map_path_.c_str());
-      return 1;
-    }
-    if (!write_trajectory(map.trajectory)) {
-      return 1;
-    }
-    core::slam::write_pcd(map_out, map.points, map.intensities, map_colors);
-    // Flush and close before the good() check and before --viewer serves the file.
-    // An open ofstream keeps the final partial (<8 KiB) block in its user-space
-    // buffer, so until the stream is destroyed the on-disk file is short of its
-    // own header's vertex count. serve_map_viewer() (below) blocks while map_out
-    // is still in scope, so without this close it would read a too-small
-    // file_size, send a truncated body, and the browser's PCD loader would fail
-    // with "Offset is outside the bounds of the DataView". close() also surfaces
-    // a flush failure (e.g. disk full) through good() below, which the prior
-    // mid-write good() check could not see.
-    map_out.close();
-    if (!map_out.good()) {
-      BAGWIZ_LOG_ERROR(kLogger, "write failed: %s", map_path_.c_str());
+    // Write the trajectory and the map; the map stream is flushed and closed
+    // inside so the --viewer serve below reads a complete file.
+    if (!write_map_outputs(
+          output_path_, map_path_, map.trajectory, map.points, map.intensities, map_colors,
+          kLogger)) {
       return 1;
     }
 
-    BAGWIZ_LOG_INFO(
-      kLogger,
-      "Wrote %zu optimized trajectory poses and a %zu-point map from %zu scans%s (%zu skipped) "
-      "to %s and %s",
-      map.trajectory.size(), map.points.size(), scans, imu_suffix(imu_count).c_str(), skipped,
-      output_path_.string().c_str(), map_path_.string().c_str());
-
-    if (args_.fill_start) {
-      if (map.filled_start_pose_count > 0) {
-        BAGWIZ_LOG_INFO(
-          kLogger, "Filled %zu initialization-window pose(s) by scan-matching",
-          map.filled_start_pose_count);
-      } else if (map.warmup_overflowed) {
-        BAGWIZ_LOG_INFO(
-          kLogger,
-          "Initialization-window fill abandoned: the pre-init scan buffer overflowed before "
-          "odometry converged (a very long static/slow start)");
-      } else {
-        BAGWIZ_LOG_INFO(
-          kLogger,
-          "No initialization-window poses filled (odometry started immediately, or no "
-          "pre-init scans)");
-      }
-    }
-
-    if (args_.fill_end) {
-      if (map.filled_end_pose_count > 0) {
-        BAGWIZ_LOG_INFO(
-          kLogger, "Filled %zu cooldown-window pose(s) by scan-matching",
-          map.filled_end_pose_count);
-      } else {
-        BAGWIZ_LOG_INFO(
-          kLogger,
-          "No cooldown-window poses filled (no trailing scans past the last estimated "
-          "frame)");
-      }
-    }
-
-    if (!args_.gnss_topic.empty()) {
-      if (map.gnss_factor_count > 0) {
-        BAGWIZ_LOG_INFO(
-          kLogger, "Applied %zu GNSS constraint(s) from %" PRId64 " fix(es) on '%s'",
-          map.gnss_factor_count, gnss_count, args_.gnss_topic.c_str());
-      } else {
-        // GNSS was requested but the alignment could not initialize: the map is
-        // still valid, just unconstrained by GNSS. Warn rather than fail.
-        BAGWIZ_LOG_WARN(
-          kLogger,
-          "GNSS topic '%s' yielded no constraints (%s fix(es) read); the global optimization ran "
-          "without GNSS. Likely too little motion (baseline) or no temporal overlap between GNSS "
-          "and the submaps.",
-          args_.gnss_topic.c_str(), std::to_string(gnss_count).c_str());
-      }
-    }
+    log_mapping_summary(
+      map, args_, scans, skipped, imu_count, gnss_count, output_path_, map_path_, kLogger);
 
     // --viewer: serve the map.pcd just written and open the browser. This blocks
     // until the user interrupts the viewer.
@@ -1239,30 +1074,14 @@ private:
     const core::slam::CloudMap & map, std::vector<std::array<std::uint8_t, 3>> & colors)
   {
     const std::size_t cam_count = args_.image_topics.size();
-    const int capped = cap_threads_at_hardware_limit(args_.num_threads);
-    const int threads = capped > 0 ? capped : 4;
+    const int threads = colorize_thread_count(args_.num_threads);
 
     // The geometry pre-pass (kd-tree, normals, spacings) is camera
     // independent and the kd-tree build is the expensive part, so build it
-    // once and share it between every camera's MapColorizer. The neighbor
-    // count is the MapColorizerConfig default.
-    const core::slam::MapColorizerConfig default_config;
-    auto geometry = std::make_shared<const core::slam::ColorizeGeometry>(
-      core::slam::build_colorize_geometry(map.points, default_config.geometry_neighbors, threads));
-
-    std::vector<std::unique_ptr<core::slam::MapColorizer>> colorizers;
-    colorizers.reserve(cam_count);
-    for (std::size_t cam = 0; cam < cam_count; ++cam) {
-      core::slam::MapColorizerConfig config;
-      config.camera = camera_infos_[cam];
-      config.t_cloud_cam = t_cloud_cams_[cam];
-      // Reuse the SLAM range crop: geometry farther than --max-range from any
-      // single viewpoint was never captured in one scan either.
-      config.rasterizer.max_range = args_.range_max;
-      config.rasterizer.num_threads = threads;
-      colorizers.push_back(
-        std::make_unique<core::slam::MapColorizer>(config, geometry, map.points, map.trajectory));
-    }
+    // once and share it between every camera's MapColorizer.
+    const auto geometry = build_shared_colorize_geometry(map.points, threads);
+    auto colorizers = build_camera_colorizers(
+      camera_infos_, t_cloud_cams_, args_.range_max, threads, geometry, map.points, map.trajectory);
 
     std::unique_ptr<io::BagReader> reader;
     try {
@@ -1286,40 +1105,12 @@ private:
     std::vector<std::int64_t> decode_failures(cam_count, 0);
     // Images are paired with their temporally NEAREST scan, not the latest
     // one: the scan is the visibility oracle for moving traffic, so the
-    // pairing must be tight. The recording pipeline publishes scans and
-    // images tens to a hundred milliseconds after capture, so an image
-    // usually reaches this loop before the scan captured nearest to it;
-    // images wait in a short pending queue until the scans bracketing their
-    // stamp have arrived.
-    constexpr std::int64_t kScanPairWindowNs = 150'000'000;
-    struct PendingImage
-    {
-      std::size_t cam = 0;
-      std::int64_t stamp_ns = 0;
-      std::string type;
-      std::vector<std::byte> payload;
-    };
-    struct ScanSlot
-    {
-      std::int64_t stamp_ns = 0;
-      std::vector<std::array<float, 3>> world_points;
-    };
-    std::deque<PendingImage> pending_images;
-    std::deque<ScanSlot> scans;  // the latest few, in arrival (stamp) order
+    // pairing must be tight (see ScanImagePairer for the queuing rule).
+    core::slam::ScanImagePairer pairer;
 
-    auto feed_image = [&](const PendingImage & img) {
-      const ScanSlot * best = nullptr;
-      for (const auto & slot : scans) {
-        if (
-          best == nullptr ||
-          std::abs(slot.stamp_ns - img.stamp_ns) < std::abs(best->stamp_ns - img.stamp_ns)) {
-          best = &slot;
-        }
-      }
-      std::span<const std::array<float, 3>> dynamic;
-      if (best != nullptr && std::abs(best->stamp_ns - img.stamp_ns) <= kScanPairWindowNs) {
-        dynamic = best->world_points;
-      }
+    auto feed_image = [&](
+                        const core::slam::ScanImagePairer::PendingImage & img,
+                        std::span<const std::array<float, 3>> dynamic) {
       const auto decoded = core::image::to_packed_raster(img.type, img.payload);
       if (!decoded.ok()) {
         ++decode_failures[img.cam];
@@ -1332,16 +1123,11 @@ private:
         raster.header_stamp_ns != 0 ? raster.header_stamp_ns : img.stamp_ns;
       colorizers[img.cam]->add_image(stamp, raster.bgr, raster.width, raster.height, dynamic);
     };
-    // Flush every pending image whose nearest scan is known: once a scan with
-    // a stamp at or beyond the image's has arrived, no closer scan can still
-    // come (scans arrive in stamp order).
-    auto flush_decidable_images = [&]() {
-      while (!pending_images.empty() &&
-             std::any_of(scans.begin(), scans.end(), [&](const ScanSlot & s) {
-               return s.stamp_ns >= pending_images.front().stamp_ns;
-             })) {
-        feed_image(pending_images.front());
-        pending_images.pop_front();
+    // Feed every pending image whose nearest scan is known.
+    auto drain_pairer = [&]() {
+      while (pairer.has_decidable()) {
+        const auto decision = pairer.decide_front();
+        feed_image(decision.image, decision.dynamic_points);
       }
     };
 
@@ -1349,9 +1135,6 @@ private:
     try {
       while (reader->next(raw)) {
         if (raw.topic->name == args_.cloud_topic) {
-          if (map.trajectory.empty()) {
-            continue;
-          }
           const auto parsed = core::pointcloud::parse_pointcloud2(raw.payload);
           if (!parsed.ok()) {
             continue;
@@ -1360,32 +1143,12 @@ private:
           if (!extracted.ok()) {
             continue;
           }
-          const auto & scan = *extracted.scan;
-          // Same span rule as the colorizer's images: a clamped pose would
-          // place the occluders somewhere the platform never was.
-          if (
-            scan.stamp_ns < map.trajectory.front().timestamp_ns ||
-            scan.stamp_ns > map.trajectory.back().timestamp_ns) {
+          auto world = core::slam::scan_to_world_points(*extracted.scan, map.trajectory);
+          if (!world.has_value()) {
             continue;
           }
-          const auto pose = core::lookup_pose(scan.stamp_ns, map.trajectory);
-          if (!pose) {
-            continue;
-          }
-          const std::array<double, 9> r = quat_to_rot(pose->qx, pose->qy, pose->qz, pose->qw);
-          std::vector<std::array<float, 3>> scan_world;
-          scan_world.reserve(scan.points.size());
-          for (const auto & p : scan.points) {
-            scan_world.push_back(
-              {static_cast<float>(r[0] * p[0] + r[1] * p[1] + r[2] * p[2] + pose->tx),
-               static_cast<float>(r[3] * p[0] + r[4] * p[1] + r[5] * p[2] + pose->ty),
-               static_cast<float>(r[6] * p[0] + r[7] * p[1] + r[8] * p[2] + pose->tz)});
-          }
-          scans.push_back(ScanSlot{scan.stamp_ns, std::move(scan_world)});
-          while (scans.size() > 4) {
-            scans.pop_front();
-          }
-          flush_decidable_images();
+          pairer.push_scan(extracted.scan->stamp_ns, std::move(*world));
+          drain_pairer();
           continue;
         }
         // One filtered pass over the bag; each message belongs to exactly one
@@ -1400,18 +1163,16 @@ private:
         if (cam == cam_count) {
           continue;
         }
-        pending_images.push_back(
-          PendingImage{
+        pairer.push_image(
+          core::slam::ScanImagePairer::PendingImage{
             cam,
             core::image::image_capture_stamp_ns(raw.topic->type, raw.payload, raw.timestamp_ns),
             raw.topic->type, std::vector<std::byte>(raw.payload.begin(), raw.payload.end())});
-        flush_decidable_images();
+        drain_pairer();
       }
       // End of stream: no closer scan can still arrive; flush the rest.
-      while (!pending_images.empty()) {
-        feed_image(pending_images.front());
-        pending_images.pop_front();
-      }
+      pairer.finish();
+      drain_pairer();
     } catch (const std::exception & e) {
       BAGWIZ_LOG_WARN(
         kLogger,
@@ -1451,19 +1212,13 @@ private:
     // non-finite or zero median) skip the propagation.
     std::size_t propagated = 0;
     if (args_.color_propagate && merged.colored_points > 0) {
-      std::vector<float> scratch(geometry->spacings.begin(), geometry->spacings.end());
-      if (!scratch.empty()) {
-        const auto mid = scratch.begin() + static_cast<std::ptrdiff_t>(scratch.size() / 2);
-        std::nth_element(scratch.begin(), mid, scratch.end());
-        const double median = static_cast<double>(*mid);
-        if (std::isfinite(median) && median > 0.0) {
-          const double radius = std::clamp(4.0 * median, 0.05, 5.0);
-          propagated = core::pointcloud::propagate_uncolored(
-            map.points, geometry->tree, merged.colors, merged.observed, radius, threads);
-          BAGWIZ_LOG_INFO(
-            kLogger, "Propagated colors to %zu unobserved map points (radius %.3f m)", propagated,
-            radius);
-        }
+      const auto radius = core::slam::propagation_radius_from_spacings(geometry->spacings);
+      if (radius.has_value()) {
+        propagated = core::pointcloud::propagate_uncolored(
+          map.points, geometry->tree, merged.colors, merged.observed, *radius, threads);
+        BAGWIZ_LOG_INFO(
+          kLogger, "Propagated colors to %zu unobserved map points (radius %.3f m)", propagated,
+          *radius);
       }
     }
 
@@ -1483,15 +1238,6 @@ private:
         merged.colored_points, map.points.size(), cam_count, colorize_seconds,
         map.points.size() - merged.colored_points);
     }
-  }
-
-  // " + N IMU samples" when IMU mode ran, otherwise empty.
-  std::string imu_suffix(std::int64_t imu_count) const
-  {
-    if (args_.imu_topic.empty()) {
-      return "";
-    }
-    return fmt::format(" + {} IMU samples", imu_count);
   }
 
   const MapSlamArgs & args_;
