@@ -82,9 +82,12 @@ public:
   }
 
 private:
-  int in_pipe_[2];
-  int out_pipe_[2];
-  int err_pipe_[2];
+  // Initialized to -1 so that if a pipe() call in the constructor fails, the
+  // destructor's dup2/close calls hit only invalid fds (harmless EBADF
+  // no-ops) instead of indeterminate ones.
+  int in_pipe_[2] = {-1, -1};
+  int out_pipe_[2] = {-1, -1};
+  int err_pipe_[2] = {-1, -1};
   int saved_stdin_ = -1;
   int saved_stdout_ = -1;
   int saved_stderr_ = -1;
