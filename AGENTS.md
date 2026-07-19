@@ -185,11 +185,11 @@ govern source code or CLI behavior.
 ### 2. bagwiz CLI
 
 Applies only to the `bagwiz` executable and the subcommands defined
-under `src/commands/`. The rules below govern the user-facing CLI
+under `bagwiz/src/commands/`. The rules below govern the user-facing CLI
 surface — argument naming, ordering, help text, and similar concerns
-— and do not apply to internal C++ APIs, library headers under
-`include/`, build scripts, tests, or any other code that is not
-part of the CLI itself.
+— and do not apply to internal C++ APIs, library headers under the
+packages' `include/` directories, build scripts, tests, or any other
+code that is not part of the CLI itself.
 
 - Order positional arguments on every `bagwiz` subcommand to follow
   common Unix utility conventions: read-side / source operands come
@@ -244,8 +244,8 @@ in-terminal progress bar, spinner, or similar progress UI.
   rather than hand-rolling terminal control sequences or introducing a
   second progress-bar dependency. indicators is already pulled in via
   `FetchContent` and wrapped by the SLAM progress reporter
-  (`include/bagwiz/core/slam/progress_bar.hpp`,
-  `src/core/slam/progress_bar.cpp`); reuse that library, and the
+  (`bagwiz_slam/include/bagwiz/core/slam/progress_bar.hpp`,
+  `bagwiz_slam/src/core/slam/progress_bar.cpp`); reuse that library, and the
   existing wrapper where it fits, so progress output stays visually
   consistent across commands and the build depends on a single,
   well-tested implementation.
@@ -262,6 +262,26 @@ which part of the repository the change touches.
   every affected `bagwiz` command. Fix each inconsistency you find as
   part of the same change so these descriptions never drift from the
   actual behavior.
+
+### 5. Module Layout
+
+Applies to the C++ source tree: which package a new source file,
+header, or dependency belongs in, and which include/link directions
+are allowed.
+
+- The workspace consists of 11 ament_cmake packages, one per repo-root
+  directory, each with its own `package.xml` and `CMakeLists.txt`: the
+  libraries `bagwiz_base`, `bagwiz_io`, `bagwiz_msg`, `bagwiz_image`,
+  `bagwiz_video`, `bagwiz_tf`, `bagwiz_pointcloud`, `bagwiz_tui`,
+  `bagwiz_bag`, `bagwiz_slam`, and the `bagwiz` package (the CLI
+  executable and its command implementations).
+- Layering is one-way: a package may include and link only packages
+  below it in the stack — base → io → msg → image/tf/bag →
+  pointcloud/tui → slam → CLI. `bagwiz_video` sits outside the stack:
+  it depends on no other bagwiz library and only the CLI links it.
+- The package DAG is enforced by colcon's topological build: a
+  dependency cycle fails the build, so no separate cycle check is
+  needed.
 
 ## Maintaining These Guidelines
 
