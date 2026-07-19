@@ -80,8 +80,12 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_bag_inplace_test test/core/bag/bag_inplace_test.cpp)
   target_link_libraries(bagwiz_bag_inplace_test bagwiz_bag)
 
+  # mcap is a private dep of bagwiz_io, so this test re-links it explicitly to
+  # read the produced MCAP's chunk compression (<mcap/reader.hpp>) — the same
+  # pattern bagwiz_io's own MCAP-fixture tests use.
+  find_package(mcap_vendor REQUIRED)
   ament_add_gtest(bagwiz_rewrite_test test/core/bag/rewrite_test.cpp)
-  target_link_libraries(bagwiz_rewrite_test bagwiz_bag)
+  target_link_libraries(bagwiz_rewrite_test bagwiz_bag ${mcap_vendor_TARGETS})
 
   ament_add_gtest(bagwiz_bag_topic_plan_test test/core/bag/bag_topic_plan_test.cpp)
   target_link_libraries(bagwiz_bag_topic_plan_test bagwiz_bag)

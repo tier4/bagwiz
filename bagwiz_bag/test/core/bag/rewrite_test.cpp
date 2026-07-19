@@ -10,6 +10,8 @@
 
 #include "bagwiz/io/bag_io.hpp"
 
+#include <mcap/reader.hpp>
+
 #include <gtest/gtest.h>
 
 #include <array>
@@ -19,10 +21,12 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <vector>
 
 namespace
 {
@@ -77,6 +81,40 @@ std::string read_file_bytes(const std::filesystem::path & path)
 {
   std::ifstream in(path, std::ios::binary);
   return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+// A pass writing a payload big and repetitive enough that zstd actually
+// shrinks it. libmcap stores a chunk uncompressed when compression would not
+// pay for itself, so the few-byte payload the other tests use would report
+// "no compression" even with zstd correctly requested.
+int write_compressible_replacement_pass(const bagwiz::io::WriterFactory & open_writer)
+{
+  const std::vector<std::byte> big(64 * 1024, std::byte{0xAB});
+  auto writer = open_writer();
+  writer->declare_topic(make_topic("/rewritten"));
+  writer->write("/rewritten", 2'000'000'000LL, {big.data(), big.size()});
+  writer->close();
+  return 0;
+}
+
+// The compression recorded on each chunk of an MCAP file, deduplicated. An
+// empty string is mcap::Compression::None — that is what the writer emits when
+// CreateOptions::mcap_compression is "none", so it is the value a
+// disable_mcap_compression rewrite must produce.
+std::set<std::string> mcap_chunk_compressions(const std::filesystem::path & path)
+{
+  mcap::McapReader reader;
+  const auto open_status = reader.open(path.string());
+  EXPECT_TRUE(open_status.ok()) << open_status.message;
+  const auto summary_status = reader.readSummary(mcap::ReadSummaryMethod::AllowFallbackScan);
+  EXPECT_TRUE(summary_status.ok()) << summary_status.message;
+
+  std::set<std::string> compressions;
+  for (const auto & index : reader.chunkIndexes()) {
+    compressions.insert(index.compression);
+  }
+  reader.close();
+  return compressions;
 }
 
 bool tmp_leftover_in(const std::filesystem::path & dir)
@@ -310,4 +348,84 @@ TEST_F(RewriteTest, InPlaceFormatAutoGuardRejectsNonBag)
   EXPECT_EQ(pass_calls, 0);
   EXPECT_EQ(read_file_bytes(input), "this is not a bag");
   EXPECT_FALSE(tmp_leftover_in(tmp_dir_));
+}
+
+// ---------------------------------------------------------------------------
+// MCAP compression wiring.
+//
+// Every rewrite command drives the writer through run_bag_rewrite, and all of
+// them but one take the default disable_mcap_compression = true, which pins
+// mcap_compression to "none". `pcd undistort` is the sole opt-out: it sets the
+// flag false so the writer keeps its zstd default. The option is easy to flip
+// by accident and the effect is invisible in a bag's topics/messages, so these
+// tests read the produced MCAP's chunk compression directly.
+// ---------------------------------------------------------------------------
+
+TEST(BagRewriteOptionsDefaults, DisableMcapCompressionDefaultsToTrue)
+{
+  // Every rewrite command except `pcd undistort` relies on this default, so a
+  // new command that never touches the field still writes uncompressed.
+  EXPECT_TRUE(bagwiz::core::BagRewriteOptions{}.disable_mcap_compression);
+}
+
+TEST_F(RewriteTest, OutputModeDisablingCompressionWritesUncompressedChunks)
+{
+  const auto input = tmp_dir_ / "input.mcap";
+  const auto output = tmp_dir_ / "output.mcap";
+  seed_bag(input, bagwiz::io::Format::Mcap, bagwiz::io::Layout::SingleFile);
+  ASSERT_TRUE(options_.disable_mcap_compression);
+
+  ASSERT_EQ(
+    bagwiz::core::run_bag_rewrite(
+      input, output, /*overwrite=*/false, options_, write_compressible_replacement_pass),
+    0);
+
+  EXPECT_EQ(mcap_chunk_compressions(output), (std::set<std::string>{""}));
+}
+
+TEST_F(RewriteTest, OutputModeKeepingCompressionWritesZstdChunks)
+{
+  const auto input = tmp_dir_ / "input.mcap";
+  const auto output = tmp_dir_ / "output.mcap";
+  seed_bag(input, bagwiz::io::Format::Mcap, bagwiz::io::Layout::SingleFile);
+  // The `pcd undistort` configuration: leave the writer's zstd default alone.
+  options_.disable_mcap_compression = false;
+
+  ASSERT_EQ(
+    bagwiz::core::run_bag_rewrite(
+      input, output, /*overwrite=*/false, options_, write_compressible_replacement_pass),
+    0);
+
+  EXPECT_EQ(mcap_chunk_compressions(output), (std::set<std::string>{"zstd"}));
+}
+
+TEST_F(RewriteTest, InPlaceDisablingCompressionWritesUncompressedChunks)
+{
+  const auto input = tmp_dir_ / "input.mcap";
+  seed_bag(input, bagwiz::io::Format::Mcap, bagwiz::io::Layout::SingleFile);
+  ASSERT_TRUE(options_.disable_mcap_compression);
+
+  ASSERT_EQ(
+    bagwiz::core::run_bag_rewrite(
+      input, std::nullopt, /*overwrite=*/false, options_, write_compressible_replacement_pass),
+    0);
+
+  EXPECT_EQ(mcap_chunk_compressions(input), (std::set<std::string>{""}));
+}
+
+TEST_F(RewriteTest, InPlaceKeepingCompressionWritesZstdChunks)
+{
+  const auto input = tmp_dir_ / "input.mcap";
+  seed_bag(input, bagwiz::io::Format::Mcap, bagwiz::io::Layout::SingleFile);
+  options_.disable_mcap_compression = false;
+
+  ASSERT_EQ(
+    bagwiz::core::run_bag_rewrite(
+      input, std::nullopt, /*overwrite=*/false, options_, write_compressible_replacement_pass),
+    0);
+
+  // create_options_preserving_storage pins format/layout but leaves
+  // mcap_compression at the CreateOptions default, so the in-place path keeps
+  // zstd exactly like the -o path.
+  EXPECT_EQ(mcap_chunk_compressions(input), (std::set<std::string>{"zstd"}));
 }
