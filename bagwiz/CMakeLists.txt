@@ -255,6 +255,8 @@ if(BAGWIZ_WITH_SLAM)
   target_sources(bagwiz PRIVATE
     src/commands/map.cpp
     src/commands/map_slam.cpp
+    src/commands/map_slam_colorize.cpp
+    src/commands/map_slam_mapping.cpp
     src/commands/map_viewer.cpp)
   target_link_libraries(bagwiz PRIVATE
     bagwiz_slam::bagwiz_slam_glim
@@ -521,6 +523,35 @@ if(BUILD_TESTING)
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
   target_link_libraries(
     bagwiz_walk_test ${bagwiz_test_libs} CLI11::CLI11 fmt::fmt ${OpenCV_LIBS} ${tf2_TARGETS})
+
+  # The map_slam_* units only build under BAGWIZ_WITH_SLAM (with map_slam.cpp),
+  # so their tests are gated the same way. The map_slam_* headers live in
+  # src/commands (CLI-internal, not installed), so the tests add src/commands
+  # to their include path (pcd_concat_common idiom). map_slam_mapping.cpp
+  # drives CloudMapper::finish, so the tests link the GLIM-bearing library
+  # like the executable does.
+  if(BAGWIZ_WITH_SLAM)
+    ament_add_gtest(bagwiz_map_slam_mapping_test
+      test/commands/map_slam_mapping_test.cpp
+      src/commands/map_slam_mapping.cpp)
+    target_include_directories(bagwiz_map_slam_mapping_test
+      PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
+    target_link_libraries(bagwiz_map_slam_mapping_test
+      ${bagwiz_test_libs} fmt::fmt
+      bagwiz_slam::bagwiz_slam_glim glim::glim gtsam_points::gtsam_points gtsam)
+
+    # map_slam_colorize.cpp reuses cap_threads_at_hardware_limit from
+    # map_slam_mapping.cpp, so the test compiles both units.
+    ament_add_gtest(bagwiz_map_slam_colorize_test
+      test/commands/map_slam_colorize_test.cpp
+      src/commands/map_slam_colorize.cpp
+      src/commands/map_slam_mapping.cpp)
+    target_include_directories(bagwiz_map_slam_colorize_test
+      PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
+    target_link_libraries(bagwiz_map_slam_colorize_test
+      ${bagwiz_test_libs} fmt::fmt
+      bagwiz_slam::bagwiz_slam_glim glim::glim gtsam_points::gtsam_points gtsam)
+  endif()
 endif()
 
 ament_package()
