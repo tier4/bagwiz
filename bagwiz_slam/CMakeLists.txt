@@ -125,6 +125,9 @@ add_library(bagwiz_slam
   src/core/slam/map_colorizer.cpp
   src/core/slam/map_viewer_open.cpp
   src/core/slam/point_cloud_io.cpp
+  src/core/slam/propagation_radius.cpp
+  src/core/slam/scan_image_pairer.cpp
+  src/core/slam/scan_to_world.cpp
 )
 target_include_directories(bagwiz_slam
   PUBLIC
@@ -386,6 +389,15 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_slam_map_colorizer_test test/core/slam/map_colorizer_test.cpp)
   target_link_libraries(bagwiz_slam_map_colorizer_test bagwiz_slam)
+
+  ament_add_gtest(bagwiz_slam_scan_to_world_test test/core/slam/scan_to_world_test.cpp)
+  target_link_libraries(bagwiz_slam_scan_to_world_test bagwiz_slam)
+
+  ament_add_gtest(bagwiz_slam_scan_image_pairer_test test/core/slam/scan_image_pairer_test.cpp)
+  target_link_libraries(bagwiz_slam_scan_image_pairer_test bagwiz_slam)
+
+  ament_add_gtest(bagwiz_slam_propagation_radius_test test/core/slam/propagation_radius_test.cpp)
+  target_link_libraries(bagwiz_slam_propagation_radius_test bagwiz_slam)
 
   ament_add_gtest(bagwiz_slam_cloud_filters_test test/core/slam/cloud_filters_test.cpp)
   target_link_libraries(bagwiz_slam_cloud_filters_test bagwiz_slam)
