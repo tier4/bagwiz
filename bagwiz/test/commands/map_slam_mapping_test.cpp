@@ -39,6 +39,44 @@ using bagwiz::core::TrajectoryPose;
 
 constexpr const char * kLogger = "bagwiz.test.map_slam_mapping";
 
+// RAII guard for one environment variable: applies the requested state (a
+// value to set, or std::nullopt to unset) for the scope and restores the
+// previous state on destruction, so a test neither depends on nor leaks the
+// ambient environment.
+class EnvVarGuard
+{
+public:
+  EnvVarGuard(const char * name, const std::optional<std::string> & value) : name_(name)
+  {
+    if (const char * previous = ::getenv(name); previous != nullptr) {
+      previous_value_ = previous;
+    }
+    if (value.has_value()) {
+      ::setenv(name, value->c_str(), 1);
+    } else {
+      ::unsetenv(name);
+    }
+  }
+
+  EnvVarGuard(const EnvVarGuard &) = delete;
+  EnvVarGuard & operator=(const EnvVarGuard &) = delete;
+  EnvVarGuard(EnvVarGuard &&) = delete;
+  EnvVarGuard & operator=(EnvVarGuard &&) = delete;
+
+  ~EnvVarGuard()
+  {
+    if (previous_value_.has_value()) {
+      ::setenv(name_.c_str(), previous_value_->c_str(), 1);
+    } else {
+      ::unsetenv(name_.c_str());
+    }
+  }
+
+private:
+  std::string name_;
+  std::optional<std::string> previous_value_;
+};
+
 MapSlamArgs make_args()
 {
   MapSlamArgs args;
@@ -172,11 +210,10 @@ TEST(ResolveScanProgress, DisabledByTheFlagSkipsTheStatsRead)
 
 TEST(ResolveScanProgress, DisabledByNoColor)
 {
+  const EnvVarGuard no_color("NO_COLOR", "1");
   auto args = make_args();
-  ::setenv("NO_COLOR", "1", 1);
   CountsReader reader({{"/points", 10}});
   const auto setup = resolve_scan_progress(reader, args, true, kLogger);
-  ::unsetenv("NO_COLOR");
   EXPECT_FALSE(setup.enabled);
   EXPECT_EQ(setup.total_msgs, 0);
   EXPECT_EQ(reader.calls, 0);
@@ -184,6 +221,7 @@ TEST(ResolveScanProgress, DisabledByNoColor)
 
 TEST(ResolveScanProgress, SumsTheStreamedTopicCounts)
 {
+  const EnvVarGuard no_color("NO_COLOR", std::nullopt);
   const auto args = make_args();
   CountsReader reader({{"/points", 10}, {"/imu", 90}, {"/fix", 5}, {"/other", 1000}});
   const auto setup = resolve_scan_progress(reader, args, true, kLogger);
@@ -193,6 +231,7 @@ TEST(ResolveScanProgress, SumsTheStreamedTopicCounts)
 
 TEST(ResolveScanProgress, LidarOnlyCountsOnlyTheCloudTopic)
 {
+  const EnvVarGuard no_color("NO_COLOR", std::nullopt);
   auto args = make_args();
   args.imu_topic.clear();
   args.gnss_topic.clear();
@@ -204,6 +243,7 @@ TEST(ResolveScanProgress, LidarOnlyCountsOnlyTheCloudTopic)
 
 TEST(ResolveScanProgress, StatsFailureFallsBackToAnIndeterminateBar)
 {
+  const EnvVarGuard no_color("NO_COLOR", std::nullopt);
   const auto args = make_args();
   ThrowingCountReader reader;
   const auto setup = resolve_scan_progress(reader, args, true, kLogger);
