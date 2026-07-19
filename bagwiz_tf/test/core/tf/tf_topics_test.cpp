@@ -81,9 +81,9 @@ TEST(IsStaticTfTopic, NonStaticNames)
 {
   EXPECT_FALSE(is_static_tf_topic("/tf"));
   EXPECT_FALSE(is_static_tf_topic(""));
-  EXPECT_FALSE(is_static_tf_topic("/tf_stati"));
+  EXPECT_FALSE(is_static_tf_topic("/tf_stat"));
   EXPECT_FALSE(is_static_tf_topic("/tf_static2"));
-  EXPECT_FALSE(is_static_tf_topic("tf_stati"));
+  EXPECT_FALSE(is_static_tf_topic("tf_stat"));
 }
 
 TEST(CollectTfTopics, PicksTfTopicsWithStaticFlag)
