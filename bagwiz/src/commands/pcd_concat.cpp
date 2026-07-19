@@ -59,9 +59,7 @@ core::pointcloud::RigidTransform to_rigid(const geometry_msgs::msg::TransformSta
   const double z = ts.transform.rotation.z;
   const double w = ts.transform.rotation.w;
   core::pointcloud::RigidTransform out;
-  out.rotation = {1 - 2 * (y * y + z * z), 2 * (x * y - w * z),     2 * (x * z + w * y),
-                  2 * (x * y + w * z),     1 - 2 * (x * x + z * z), 2 * (y * z - w * x),
-                  2 * (x * z - w * y),     2 * (y * z + w * x),     1 - 2 * (x * x + y * y)};
+  out.rotation = core::pointcloud::quat_to_rotation_matrix(x, y, z, w);
   out.translation = {
     ts.transform.translation.x, ts.transform.translation.y, ts.transform.translation.z};
   return out;

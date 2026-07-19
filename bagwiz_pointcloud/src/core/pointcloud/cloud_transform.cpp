@@ -79,6 +79,13 @@ bool RigidTransform::is_identity() const
   return translation[0] == 0.0 && translation[1] == 0.0 && translation[2] == 0.0;
 }
 
+std::array<double, 9> quat_to_rotation_matrix(double x, double y, double z, double w)
+{
+  return {1 - 2 * (y * y + z * z), 2 * (x * y - w * z),     2 * (x * z + w * y),
+          2 * (x * y + w * z),     1 - 2 * (x * x + z * z), 2 * (y * z - w * x),
+          2 * (x * z - w * y),     2 * (y * z + w * x),     1 - 2 * (x * x + y * y)};
+}
+
 CloudTransformResult transform_cloud_xyz(PointCloud2 & cloud, const RigidTransform & tf)
 {
   CloudTransformResult result;

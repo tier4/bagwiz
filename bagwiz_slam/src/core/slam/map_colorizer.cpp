@@ -9,6 +9,7 @@
 #include "bagwiz/core/slam/map_colorizer.hpp"
 
 #include "bagwiz/core/image/sampling.hpp"
+#include "bagwiz/core/pointcloud/cloud_transform.hpp"
 #include "bagwiz/core/pointcloud/normals.hpp"
 #include "bagwiz/core/slam/colorize_weight.hpp"
 
@@ -64,21 +65,15 @@ constexpr double kGainImageMax = 2.0;
 // trustworthy exposure ratio, so only they vote.
 constexpr double kGainVoteStableRange = 32.0;
 
-// A rigid transform with a row-major 3x3 rotation, p' = R * p + t. Mirrors
-// pcd_concat's quaternion-to-matrix conversion; kept local so the header
-// stays free of matrix types.
+// A rigid transform with a row-major 3x3 rotation, p' = R * p + t. Same
+// convention as pointcloud::RigidTransform (whose quat_to_rotation_matrix
+// builds the rotation below), but kept local for the `compose` chaining this
+// pass needs and so the header stays free of matrix types.
 struct Rigid
 {
   std::array<double, 9> r{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
   std::array<double, 3> t{0.0, 0.0, 0.0};
 };
-
-std::array<double, 9> quat_to_rot(double x, double y, double z, double w)
-{
-  return {1 - 2 * (y * y + z * z), 2 * (x * y - w * z),     2 * (x * z + w * y),
-          2 * (x * y + w * z),     1 - 2 * (x * x + z * z), 2 * (y * z - w * x),
-          2 * (x * z - w * y),     2 * (y * z + w * x),     1 - 2 * (x * x + y * y)};
-}
 
 Rigid compose(const Rigid & a, const Rigid & b)
 {
@@ -261,10 +256,10 @@ std::optional<MapColorizer::ResolvedView> MapColorizer::resolve_colorize_view(
   // Camera pose in the world: T_world_cam = T_world_cloud * T_cloud_cam, then
   // inverted once so each point costs one rotate+translate.
   Rigid t_world_cloud;
-  t_world_cloud.r = quat_to_rot(pose->qx, pose->qy, pose->qz, pose->qw);
+  t_world_cloud.r = pointcloud::quat_to_rotation_matrix(pose->qx, pose->qy, pose->qz, pose->qw);
   t_world_cloud.t = {pose->tx, pose->ty, pose->tz};
   Rigid t_cloud_cam;
-  t_cloud_cam.r = quat_to_rot(
+  t_cloud_cam.r = pointcloud::quat_to_rotation_matrix(
     config_.t_cloud_cam.rotation_xyzw[0], config_.t_cloud_cam.rotation_xyzw[1],
     config_.t_cloud_cam.rotation_xyzw[2], config_.t_cloud_cam.rotation_xyzw[3]);
   t_cloud_cam.t = config_.t_cloud_cam.translation;

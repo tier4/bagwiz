@@ -8,24 +8,13 @@
 
 #include "bagwiz/core/slam/scan_to_world.hpp"
 
+#include "bagwiz/core/pointcloud/cloud_transform.hpp"
+
 #include <cstddef>
 #include <vector>
 
 namespace bagwiz::core::slam
 {
-namespace
-{
-
-// Quaternion (x, y, z, w) to a row-major 3x3 rotation, for transforming the
-// colorization pass's occluder scans into the world frame.
-std::array<double, 9> quat_to_rot(double x, double y, double z, double w)
-{
-  return {1 - 2 * (y * y + z * z), 2 * (x * y - w * z),     2 * (x * z + w * y),
-          2 * (x * y + w * z),     1 - 2 * (x * x + z * z), 2 * (y * z - w * x),
-          2 * (x * z - w * y),     2 * (y * z + w * x),     1 - 2 * (x * x + y * y)};
-}
-
-}  // namespace
 
 std::optional<std::vector<std::array<float, 3>>> scan_to_world_points(
   const LidarScan & scan, std::span<const core::TrajectoryPose> trajectory)
@@ -42,7 +31,10 @@ std::optional<std::vector<std::array<float, 3>>> scan_to_world_points(
   if (!pose) {
     return std::nullopt;
   }
-  const std::array<double, 9> r = quat_to_rot(pose->qx, pose->qy, pose->qz, pose->qw);
+  // Row-major 3x3 rotation, for transforming the colorization pass's occluder
+  // scans into the world frame.
+  const std::array<double, 9> r =
+    pointcloud::quat_to_rotation_matrix(pose->qx, pose->qy, pose->qz, pose->qw);
   std::vector<std::array<float, 3>> world;
   world.reserve(scan.points.size());
   for (const auto & p : scan.points) {

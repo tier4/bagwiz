@@ -22,6 +22,7 @@ namespace
 
 using bagwiz::core::pointcloud::PointCloud2;
 using bagwiz::core::pointcloud::PointFieldType;
+using bagwiz::core::pointcloud::quat_to_rotation_matrix;
 using bagwiz::core::pointcloud::RigidTransform;
 using bagwiz::core::pointcloud::transform_cloud_xyz;
 
@@ -196,4 +197,53 @@ TEST(CloudTransform, MissingXyzIsError)
   const auto result = transform_cloud_xyz(c, RigidTransform{});
   EXPECT_FALSE(result.ok);
   EXPECT_FALSE(result.error.empty());
+}
+
+// quat_to_rotation_matrix — the shared quaternion->rotation conversion that the
+// SLAM colorization/scan passes and `pcd concat` all build their rotations with.
+
+TEST(QuatToRotationMatrix, IdentityQuaternionIsIdentityMatrix)
+{
+  const auto r = quat_to_rotation_matrix(0.0, 0.0, 0.0, 1.0);
+  const std::array<double, 9> id{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  for (std::size_t i = 0; i < 9; ++i) {
+    EXPECT_DOUBLE_EQ(r[i], id[i]) << "element " << i;
+  }
+}
+
+TEST(QuatToRotationMatrix, NinetyDegreesAboutZMapsXToY)
+{
+  // qz = qw = sin/cos(45 deg) -> +90 deg about +Z: (1,0,0) -> (0,1,0). With a
+  // row-major R, R * (1,0,0) is the first COLUMN: elements 0, 3, 6.
+  const double h = std::sqrt(0.5);
+  const auto r = quat_to_rotation_matrix(0.0, 0.0, h, h);
+  EXPECT_NEAR(r[0], 0.0, 1e-12);
+  EXPECT_NEAR(r[3], 1.0, 1e-12);
+  EXPECT_NEAR(r[6], 0.0, 1e-12);
+}
+
+TEST(QuatToRotationMatrix, MatchesRigidTransformRowMajorConvention)
+{
+  // Feeding the result through transform_cloud_xyz must rotate points the same
+  // way, pinning the row-major layout the RigidTransform contract expects.
+  const double h = std::sqrt(0.5);
+  RigidTransform tf;
+  tf.rotation = quat_to_rotation_matrix(0.0, 0.0, h, h);
+  PointCloud2 c = make_cloud_f32({{1.0F, 0.0F, 0.0F}}, 7);
+  const auto result = transform_cloud_xyz(c, tf);
+  ASSERT_TRUE(result.ok) << result.error;
+  const auto p = point_at(c, 0);
+  EXPECT_NEAR(p[0], 0.0F, 1e-6);
+  EXPECT_NEAR(p[1], 1.0F, 1e-6);
+  EXPECT_NEAR(p[2], 0.0F, 1e-6);
+}
+
+TEST(QuatToRotationMatrix, NonUnitQuaternionIsNotNormalised)
+{
+  // Documented behavior: the formula assumes a unit quaternion. A scaled input
+  // yields a scaled (non-orthonormal) matrix rather than a renormalised one.
+  const auto r = quat_to_rotation_matrix(0.0, 0.0, 0.0, 2.0);
+  EXPECT_DOUBLE_EQ(r[0], 1.0);
+  EXPECT_DOUBLE_EQ(r[4], 1.0);
+  EXPECT_DOUBLE_EQ(r[8], 1.0);
 }

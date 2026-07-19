@@ -49,6 +49,13 @@ struct CloudTransformResult
 // up to the point of failure (failures are detected before the sweep begins).
 CloudTransformResult transform_cloud_xyz(PointCloud2 & cloud, const RigidTransform & tf);
 
+// Quaternion (x, y, z, w) -> the row-major 3x3 rotation of `RigidTransform`,
+// in the ROS / Hamilton convention. Assumes a unit quaternion and does NOT
+// normalise: a non-unit input yields a scaled (non-orthonormal) matrix, which
+// matches what every caller's upstream (tf2, or a bag's TF tree) already
+// guarantees.
+[[nodiscard]] std::array<double, 9> quat_to_rotation_matrix(double x, double y, double z, double w);
+
 }  // namespace bagwiz::core::pointcloud
 
 #endif  // BAGWIZ__CORE__POINTCLOUD__CLOUD_TRANSFORM_HPP_
