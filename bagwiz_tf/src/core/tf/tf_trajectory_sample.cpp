@@ -8,6 +8,10 @@
 
 #include "bagwiz/core/tf/tf_trajectory_sample.hpp"
 
+#include "bagwiz/core/decoder/decoder.hpp"
+#include "bagwiz/core/tf/tf_chain.hpp"
+#include "bagwiz/core/tf/tf_value_extract.hpp"
+
 #include <tf2/exceptions.hpp>
 #include <tf2/time.hpp>
 
@@ -15,8 +19,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <exception>
+#include <memory>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace bagwiz::core
@@ -106,6 +113,89 @@ TrajectoryPose compose_tf_bridged_sample(
   p.qz = out_pose.orientation.z;
   p.qw = out_pose.orientation.w;
   return p;
+}
+
+TfMessageTrajectoryResult sample_tf_message_trajectory(
+  const std::filesystem::path & input_path, const io::TopicInfo & topic,
+  const std::string & ref_frame, const std::string & of_frame, tf2::BufferCore & buffer)
+{
+  using Failure = TfMessageTrajectoryResult::Failure;
+  TfMessageTrajectoryResult out;
+
+  std::unique_ptr<io::BagReader> reader;
+  try {
+    reader = io::open_read(input_path);
+  } catch (const std::exception & e) {
+    out.failure = Failure::kOpenBag;
+    out.failure_detail = e.what();
+    return out;
+  }
+  reader->populate_schemas();
+  io::ReadFilter filter;
+  filter.topics = {topic.name};
+  reader->set_filter(filter);
+
+  auto open = decoder::open_decoder(topic);
+  if (!open.ok()) {
+    out.failure = Failure::kOpenDecoder;
+    out.failure_detail = open.error;
+    return out;
+  }
+
+  std::vector<TfInputEdge> input_edges;
+  io::RawMessage raw;
+  try {
+    while (reader->next(raw)) {
+      if (raw.topic->name != topic.name) {
+        continue;
+      }
+      const auto decoded = open.decoder->decode(raw.payload);
+      if (!decoded.ok()) {
+        out.failure = Failure::kDecode;
+        out.failure_detail = decoded.error;
+        return out;
+      }
+      for (const auto & t : extract_tf_message(*decoded.value)) {
+        buffer.setTransform(t, "bagwiz", /*is_static=*/false);
+        const std::int64_t ns = static_cast<std::int64_t>(t.header.stamp.sec) * 1'000'000'000LL +
+                                static_cast<std::int64_t>(t.header.stamp.nanosec);
+        input_edges.push_back({t.header.frame_id, t.child_frame_id, ns});
+      }
+    }
+  } catch (const std::exception & e) {
+    out.failure = Failure::kRead;
+    out.failure_detail = e.what();
+    return out;
+  }
+
+  if (input_edges.empty()) {
+    out.failure = Failure::kNoTransforms;
+    return out;
+  }
+
+  // Resolve the chain using the first published edge's stamp: parent/child
+  // linkage in tf2 is fixed for a frame's whole life, so any populated stamp
+  // works — this just needs to land inside what was just set above.
+  const tf2::TimePoint resolve_tp{std::chrono::nanoseconds(input_edges.front().stamp_ns)};
+  const auto chain = resolve_chain(buffer, of_frame, ref_frame, resolve_tp);
+  if (chain.empty()) {
+    out.failure = Failure::kNoPath;
+    return out;
+  }
+  const auto path_edges = chain_to_edges(buffer, chain, resolve_tp);
+  const std::vector<std::int64_t> sample_stamps =
+    collect_path_sample_stamps(input_edges, path_edges);
+  if (sample_stamps.empty()) {
+    out.failure = Failure::kNoPathStamps;
+    return out;
+  }
+
+  const auto lookup = lookup_trajectory_at_stamps(buffer, ref_frame, of_frame, sample_stamps);
+  out.poses = std::move(lookup.poses);
+  out.skipped = lookup.skipped;
+  out.last_skip_reason = std::move(lookup.last_skip_reason);
+  out.sample_stamps = sample_stamps.size();
+  return out;
 }
 
 }  // namespace bagwiz::core

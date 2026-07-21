@@ -17,6 +17,7 @@
 #include <geometry_msgs/msg/pose.hpp>
 
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <string>
@@ -79,6 +80,44 @@ struct TrajectoryLookupResult
   const tf2::BufferCore & buffer, const std::string & ref_frame, const std::string & header_frame,
   const std::optional<std::string> & of_frame, const std::string & child_frame,
   const geometry_msgs::msg::Pose & body_pose, std::int64_t stamp_ns);
+
+// Outcome of sample_tf_message_trajectory(). Failures are reported as a
+// structured `failure` + `failure_detail` pair rather than a prose error
+// string, so each caller keeps its own command-level wording (flag names,
+// topic context) while the replay/lookup logic stays shared.
+struct TfMessageTrajectoryResult
+{
+  // Stage the scan reached before it failed; kNone on success.
+  enum class Failure {
+    kNone,
+    kOpenBag,       // the bag could not be reopened
+    kOpenDecoder,   // no decoder could be created for the topic
+    kDecode,        // a message on the topic failed to decode
+    kRead,          // storage-level read error
+    kNoTransforms,  // the topic carried no TransformStamped entries
+    kNoPath,        // no TF path from of_frame to ref_frame
+    kNoPathStamps,  // the path resolves via static TF only: none of its edges
+                    // is published on the topic, so there is no time axis
+  };
+
+  std::vector<TrajectoryPose> poses;  // resolved samples, in input-stamp order
+  std::int64_t skipped = 0;           // sample stamps whose lookup threw
+  std::string last_skip_reason;       // the last skip's exception what()
+  std::size_t sample_stamps = 0;      // stamps considered (poses + skipped)
+  Failure failure = Failure::kNone;
+  std::string failure_detail;  // exception / decoder message behind `failure`
+};
+
+// Build the of_frame -> ref_frame trajectory from a TFMessage pose topic:
+// replay the topic's transforms into `buffer` as dynamic edges (the caller
+// has pre-loaded the bag's static TF), resolve the chain, sample it at the
+// stamps the chain's edges are actually published on this topic, and look up
+// each sample. Stamps whose lookup throws are skipped and counted; whether an
+// empty `poses` is fatal is the caller's decision (see `sample_stamps` /
+// `last_skip_reason`).
+[[nodiscard]] TfMessageTrajectoryResult sample_tf_message_trajectory(
+  const std::filesystem::path & input_path, const io::TopicInfo & topic,
+  const std::string & ref_frame, const std::string & of_frame, tf2::BufferCore & buffer);
 
 }  // namespace bagwiz::core
 

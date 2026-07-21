@@ -13,18 +13,12 @@
 #include "bagwiz/core/pointcloud/point_time.hpp"
 #include "bagwiz/core/pointcloud/static_extrinsic.hpp"
 #include "bagwiz/core/tf/tf_buffer_loader.hpp"
-#include "bagwiz/core/tf/tf_chain.hpp"
+#include "bagwiz/core/tf/tf_trajectory_sample.hpp"
 #include "bagwiz/core/tf/tf_value_extract.hpp"
 #include "bagwiz/io/bag_open.hpp"
 #include "bagwiz/io/topics.hpp"
 
-#include <tf2/exceptions.hpp>
-#include <tf2/time.hpp>
-
-#include <geometry_msgs/msg/transform_stamped.hpp>
-
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <memory>
@@ -47,138 +41,58 @@ constexpr const char * kPoseStampedType = "geometry_msgs/msg/PoseStamped";
 constexpr const char * kPoseWithCovarianceStampedType =
   "geometry_msgs/msg/PoseWithCovarianceStamped";
 
-// One edge decoded from a TFMessage pose topic, kept alongside the dynamic
-// buffer so the sample stamps actually published on `pose_topic` can be told
-// apart from edges that only live in tf_static.
-struct TfEdge
-{
-  std::string frame_id;
-  std::string child_frame_id;
-  std::int64_t stamp_ns = 0;
-};
-
-std::string edge_key(const std::string & parent, const std::string & child)
-{
-  return parent + '\0' + child;
-}
-
-// TFMessage pose topic: feed every transform it carries into `buffer` as
-// dynamic edges (tf_static is already loaded there), resolve the --ref ->
-// --of chain, and sample it at every stamp the chain's edges are actually
-// published on `pose_topic` — mirrors `traj dump`'s TFMessage path
-// (traj.cpp's run_dump_tf_message), but scoped to this one topic since pcd
-// undistort never reads a bag's dynamic /tf.
+// TFMessage pose topic: delegate to the shared bagwiz_tf sampler
+// (core::sample_tf_message_trajectory), which replays the topic's transforms
+// into `buffer` as dynamic edges (tf_static is already loaded there),
+// resolves the --ref -> --of chain, and samples it at every stamp the chain's
+// edges are actually published on `pose_topic`. The switch below only maps
+// the sampler's structured failure onto this command's wording, so log texts
+// and exit behavior stay unchanged.
 TrajectoryBuildResult build_trajectory_from_tf_message(
   const std::filesystem::path & input_path, const io::TopicInfo & pose_ti, const std::string & ref,
   const std::string & of, tf2::BufferCore & buffer)
 {
   TrajectoryBuildResult out;
-  std::unique_ptr<io::BagReader> reader;
-  try {
-    reader = io::open_read(input_path);
-  } catch (const std::exception & e) {
-    out.error = std::string("failed to reopen bag for pose topic: ") + e.what();
-    return out;
-  }
-  reader->populate_schemas();
-  io::ReadFilter filter;
-  filter.topics = {pose_ti.name};
-  reader->set_filter(filter);
-
-  auto open = core::decoder::open_decoder(pose_ti);
-  if (!open.ok()) {
-    out.error = "could not open decoder for pose topic '" + pose_ti.name + "': " + open.error;
-    return out;
-  }
-
-  std::vector<TfEdge> input_edges;
-  io::RawMessage raw;
-  try {
-    while (reader->next(raw)) {
-      if (raw.topic->name != pose_ti.name) {
-        continue;
-      }
-      const auto decoded = open.decoder->decode(raw.payload);
-      if (!decoded.ok()) {
-        out.error = "failed to decode message on '" + pose_ti.name + "': " + decoded.error;
-        return out;
-      }
-      for (const auto & t : core::extract_tf_message(*decoded.value)) {
-        buffer.setTransform(t, "bagwiz", /*is_static=*/false);
-        const std::int64_t ns = static_cast<std::int64_t>(t.header.stamp.sec) * 1'000'000'000LL +
-                                static_cast<std::int64_t>(t.header.stamp.nanosec);
-        input_edges.push_back({t.header.frame_id, t.child_frame_id, ns});
-      }
-    }
-  } catch (const std::exception & e) {
-    out.error = "error reading pose topic '" + pose_ti.name + "': " + e.what();
-    return out;
+  const auto sampled = core::sample_tf_message_trajectory(input_path, pose_ti, ref, of, buffer);
+  using Failure = core::TfMessageTrajectoryResult::Failure;
+  switch (sampled.failure) {
+    case Failure::kNone:
+      break;
+    case Failure::kOpenBag:
+      out.error = "failed to reopen bag for pose topic: " + sampled.failure_detail;
+      return out;
+    case Failure::kOpenDecoder:
+      out.error =
+        "could not open decoder for pose topic '" + pose_ti.name + "': " + sampled.failure_detail;
+      return out;
+    case Failure::kDecode:
+      out.error = "failed to decode message on '" + pose_ti.name + "': " + sampled.failure_detail;
+      return out;
+    case Failure::kRead:
+      out.error = "error reading pose topic '" + pose_ti.name + "': " + sampled.failure_detail;
+      return out;
+    case Failure::kNoTransforms:
+      out.error = "pose topic '" + pose_ti.name + "' carried no TransformStamped entries";
+      return out;
+    case Failure::kNoPath:
+      out.error = "no TF path from --of '" + of + "' to --ref '" + ref + "' (checked '" +
+                  pose_ti.name + "' + the bag's static TF)";
+      return out;
+    case Failure::kNoPathStamps:
+      out.error = "--of '" + of + "' -> --ref '" + ref +
+                  "' resolves via static TF, but none of the edges on that path are published on "
+                  "pose topic '" +
+                  pose_ti.name + "'";
+      return out;
   }
 
-  if (input_edges.empty()) {
-    out.error = "pose topic '" + pose_ti.name + "' carried no TransformStamped entries";
-    return out;
-  }
-
-  // Resolve the chain using the first published edge's stamp: parent/child
-  // linkage in tf2 is fixed for a frame's whole life, so any populated stamp
-  // works — this just needs to land inside what was just set above.
-  const tf2::TimePoint resolve_tp{std::chrono::nanoseconds(input_edges.front().stamp_ns)};
-  const auto chain = core::resolve_chain(buffer, of, ref, resolve_tp);
-  if (chain.empty()) {
-    out.error = "no TF path from --of '" + of + "' to --ref '" + ref + "' (checked '" +
-                pose_ti.name + "' + the bag's static TF)";
-    return out;
-  }
-  const auto path_edges = core::chain_to_edges(buffer, chain, resolve_tp);
-  std::unordered_set<std::string> path_edge_set;
-  path_edge_set.reserve(path_edges.size());
-  for (const auto & e : path_edges) {
-    path_edge_set.insert(edge_key(e.first, e.second));
-  }
-
-  std::vector<std::int64_t> sample_stamps;
-  for (const auto & ie : input_edges) {
-    if (path_edge_set.count(edge_key(ie.frame_id, ie.child_frame_id)) != 0) {
-      sample_stamps.push_back(ie.stamp_ns);
-    }
-  }
-  if (sample_stamps.empty()) {
-    out.error = "--of '" + of + "' -> --ref '" + ref +
-                "' resolves via static TF, but none of the edges on that path are published on "
-                "pose topic '" +
-                pose_ti.name + "'";
-    return out;
-  }
-  std::sort(sample_stamps.begin(), sample_stamps.end());
-  sample_stamps.erase(std::unique(sample_stamps.begin(), sample_stamps.end()), sample_stamps.end());
-
-  std::int64_t skipped = 0;
-  std::string last_skip_reason;
-  for (const std::int64_t ns : sample_stamps) {
-    const tf2::TimePoint tp{std::chrono::nanoseconds(ns)};
-    try {
-      const auto tf = buffer.lookupTransform(ref, of, tp);
-      core::TrajectoryPose p;
-      p.timestamp_ns = ns;
-      p.tx = tf.transform.translation.x;
-      p.ty = tf.transform.translation.y;
-      p.tz = tf.transform.translation.z;
-      p.qx = tf.transform.rotation.x;
-      p.qy = tf.transform.rotation.y;
-      p.qz = tf.transform.rotation.z;
-      p.qw = tf.transform.rotation.w;
-      out.trajectory.push_back(p);
-    } catch (const tf2::TransformException & e) {
-      ++skipped;
-      last_skip_reason = e.what();
-    }
-  }
-  if (out.trajectory.empty()) {
-    out.error = "all " + std::to_string(sample_stamps.size()) +
+  if (sampled.poses.empty()) {
+    out.error = "all " + std::to_string(sampled.sample_stamps) +
                 " sample stamp(s) failed to resolve via lookupTransform; last reason: " +
-                (last_skip_reason.empty() ? "(none)" : last_skip_reason);
+                (sampled.last_skip_reason.empty() ? "(none)" : sampled.last_skip_reason);
+    return out;
   }
+  out.trajectory = std::move(sampled.poses);
   return out;
 }
 

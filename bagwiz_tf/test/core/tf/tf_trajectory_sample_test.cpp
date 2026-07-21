@@ -8,6 +8,9 @@
 
 #include "bagwiz/core/tf/tf_trajectory_sample.hpp"
 
+#include "bagwiz/core/tf/tf_message_wire.hpp"
+#include "bagwiz/io/bag_io.hpp"
+
 #include <tf2/buffer_core.hpp>
 #include <tf2/exceptions.hpp>
 #include <tf2/time.hpp>
@@ -17,9 +20,13 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -356,6 +363,175 @@ TEST(ComposeTfBridgedSample, UnresolvableBridgeThrows)
     bagwiz::core::compose_tf_bridged_sample(
       buffer, "odom", "odom", of, "base_link", make_pose(0.0, 0.0, 0.0), 0),
     tf2::TransformException);
+}
+
+// ---------------------------------------------------------------------------
+// sample_tf_message_trajectory
+// ---------------------------------------------------------------------------
+
+using Failure = bagwiz::core::TfMessageTrajectoryResult::Failure;
+
+bagwiz::io::CreateOptions mcap_file_options()
+{
+  bagwiz::io::CreateOptions o;
+  o.format = bagwiz::io::Format::Mcap;
+  o.layout = bagwiz::io::Layout::SingleFile;
+  o.mcap_compression = "none";
+  return o;
+}
+
+void write_tf_payload(
+  bagwiz::io::BagWriter & w, const std::string & topic, std::int64_t record_ns,
+  std::span<const geometry_msgs::msg::TransformStamped> edges)
+{
+  const auto payload = bagwiz::core::serialize_tf_message(edges);
+  w.write(topic, record_ns, std::span<const std::byte>(payload.data(), payload.size()));
+}
+
+// /tf_static: map -> odom (tx=1, static); /pose_tf: odom -> base_link at 10s
+// (tx=2) and 20s (tx=4). The caller-side contract pre-loads the static side
+// via load_static_tf_buffer.
+std::filesystem::path write_sample_bag(const std::filesystem::path & path)
+{
+  std::filesystem::remove(path);
+  auto w = bagwiz::io::open_write(path, mcap_file_options());
+  w->declare_topic(bagwiz::core::make_tf_message_topic_info("/tf_static"));
+  w->declare_topic(bagwiz::core::make_tf_message_topic_info("/pose_tf"));
+  write_tf_payload(*w, "/tf_static", 0, std::vector{make_tf("map", "odom", 0, 1.0)});
+  write_tf_payload(
+    *w, "/pose_tf", 10 * kSec, std::vector{make_tf("odom", "base_link", 10 * kSec, 2.0)});
+  write_tf_payload(
+    *w, "/pose_tf", 20 * kSec, std::vector{make_tf("odom", "base_link", 20 * kSec, 4.0)});
+  w->close();
+  return path;
+}
+
+TEST(SampleTfMessageTrajectory, ResolvesSamplesThroughStaticAndDynamicEdges)
+{
+  const auto bag =
+    write_sample_bag(std::filesystem::temp_directory_path() / "bagwiz_tf_sample_traj_ok.mcap");
+  tf2::BufferCore buffer{std::chrono::hours(24 * 365)};
+  ASSERT_FALSE(bagwiz::core::load_static_tf_buffer(bag, buffer).has_value());
+
+  const auto topic = bagwiz::core::make_tf_message_topic_info("/pose_tf");
+  const auto r = bagwiz::core::sample_tf_message_trajectory(bag, topic, "map", "base_link", buffer);
+
+  EXPECT_EQ(r.failure, Failure::kNone) << r.failure_detail;
+  EXPECT_EQ(r.sample_stamps, 2u);
+  EXPECT_EQ(r.skipped, 0);
+  ASSERT_EQ(r.poses.size(), 2u);
+  // Pose of base_link expressed in map: 1 (static) + 2 = 3 at 10s, 1 + 4 = 5 at 20s.
+  EXPECT_EQ(r.poses[0].timestamp_ns, 10 * kSec);
+  EXPECT_DOUBLE_EQ(r.poses[0].tx, 3.0);
+  EXPECT_EQ(r.poses[1].timestamp_ns, 20 * kSec);
+  EXPECT_DOUBLE_EQ(r.poses[1].tx, 5.0);
+
+  std::filesystem::remove(bag);
+}
+
+TEST(SampleTfMessageTrajectory, OpenBagFailureIsStructured)
+{
+  tf2::BufferCore buffer{std::chrono::seconds(60)};
+  const auto topic = bagwiz::core::make_tf_message_topic_info("/pose_tf");
+  const auto missing =
+    std::filesystem::temp_directory_path() / "bagwiz_tf_sample_traj_missing.mcap";
+  std::filesystem::remove(missing);
+
+  const auto r =
+    bagwiz::core::sample_tf_message_trajectory(missing, topic, "map", "base_link", buffer);
+
+  EXPECT_EQ(r.failure, Failure::kOpenBag);
+  EXPECT_FALSE(r.failure_detail.empty());
+}
+
+TEST(SampleTfMessageTrajectory, DecodeFailureIsStructured)
+{
+  const auto bag = std::filesystem::temp_directory_path() / "bagwiz_tf_sample_traj_decode.mcap";
+  std::filesystem::remove(bag);
+  {
+    auto w = bagwiz::io::open_write(bag, mcap_file_options());
+    w->declare_topic(bagwiz::core::make_tf_message_topic_info("/pose_tf"));
+    const std::array<std::byte, 4> garbage{
+      std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}};
+    w->write("/pose_tf", 10 * kSec, std::span<const std::byte>(garbage.data(), garbage.size()));
+    w->close();
+  }
+
+  tf2::BufferCore buffer{std::chrono::seconds(60)};
+  const auto topic = bagwiz::core::make_tf_message_topic_info("/pose_tf");
+  const auto r = bagwiz::core::sample_tf_message_trajectory(bag, topic, "map", "base_link", buffer);
+
+  EXPECT_EQ(r.failure, Failure::kDecode);
+  EXPECT_FALSE(r.failure_detail.empty());
+
+  std::filesystem::remove(bag);
+}
+
+TEST(SampleTfMessageTrajectory, TopicWithoutTransformsIsStructured)
+{
+  const auto bag = std::filesystem::temp_directory_path() / "bagwiz_tf_sample_traj_empty.mcap";
+  std::filesystem::remove(bag);
+  {
+    auto w = bagwiz::io::open_write(bag, mcap_file_options());
+    w->declare_topic(bagwiz::core::make_tf_message_topic_info("/tf_static"));
+    w->declare_topic(bagwiz::core::make_tf_message_topic_info("/pose_tf"));
+    // One message whose TFMessage carries zero TransformStamped entries.
+    write_tf_payload(*w, "/tf_static", 0, std::vector{make_tf("map", "odom", 0, 1.0)});
+    write_tf_payload(
+      *w, "/pose_tf", 10 * kSec, std::span<const geometry_msgs::msg::TransformStamped>{});
+    w->close();
+  }
+
+  tf2::BufferCore buffer{std::chrono::hours(24 * 365)};
+  ASSERT_FALSE(bagwiz::core::load_static_tf_buffer(bag, buffer).has_value());
+  const auto topic = bagwiz::core::make_tf_message_topic_info("/pose_tf");
+  const auto r = bagwiz::core::sample_tf_message_trajectory(bag, topic, "map", "base_link", buffer);
+
+  EXPECT_EQ(r.failure, Failure::kNoTransforms);
+
+  std::filesystem::remove(bag);
+}
+
+TEST(SampleTfMessageTrajectory, MissingPathIsStructured)
+{
+  const auto bag =
+    write_sample_bag(std::filesystem::temp_directory_path() / "bagwiz_tf_sample_traj_nopath.mcap");
+  tf2::BufferCore buffer{std::chrono::hours(24 * 365)};
+  ASSERT_FALSE(bagwiz::core::load_static_tf_buffer(bag, buffer).has_value());
+
+  const auto topic = bagwiz::core::make_tf_message_topic_info("/pose_tf");
+  const auto r = bagwiz::core::sample_tf_message_trajectory(bag, topic, "map", "ghost", buffer);
+
+  EXPECT_EQ(r.failure, Failure::kNoPath);
+
+  std::filesystem::remove(bag);
+}
+
+TEST(SampleTfMessageTrajectory, StaticOnlyPathIsStructured)
+{
+  // The of -> ref path resolves purely through /tf_static (map -> base_link);
+  // /pose_tf publishes an unrelated dynamic edge, so no chain edge carries a
+  // stamp on the topic.
+  const auto bag = std::filesystem::temp_directory_path() / "bagwiz_tf_sample_traj_staticonly.mcap";
+  std::filesystem::remove(bag);
+  {
+    auto w = bagwiz::io::open_write(bag, mcap_file_options());
+    w->declare_topic(bagwiz::core::make_tf_message_topic_info("/tf_static"));
+    w->declare_topic(bagwiz::core::make_tf_message_topic_info("/pose_tf"));
+    write_tf_payload(*w, "/tf_static", 0, std::vector{make_tf("map", "base_link", 0, 1.0)});
+    write_tf_payload(
+      *w, "/pose_tf", 10 * kSec, std::vector{make_tf("odom", "wheel", 10 * kSec, 2.0)});
+    w->close();
+  }
+
+  tf2::BufferCore buffer{std::chrono::hours(24 * 365)};
+  ASSERT_FALSE(bagwiz::core::load_static_tf_buffer(bag, buffer).has_value());
+  const auto topic = bagwiz::core::make_tf_message_topic_info("/pose_tf");
+  const auto r = bagwiz::core::sample_tf_message_trajectory(bag, topic, "map", "base_link", buffer);
+
+  EXPECT_EQ(r.failure, Failure::kNoPathStamps);
+
+  std::filesystem::remove(bag);
 }
 
 }  // namespace
