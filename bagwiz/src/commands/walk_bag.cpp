@@ -8,12 +8,10 @@
 
 #include "walk_bag.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
-#include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/image/camera_info_resolver.hpp"
 #include "bagwiz/io/bag_open.hpp"
 #include "bagwiz/io/topics.hpp"
 
-#include <exception>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,31 +40,12 @@ std::optional<OpenedBag> open_bag_and_find_topic(
   return OpenedBag{std::move(reader), topic_info};
 }
 
-std::vector<std::string> collect_nonempty_pcd_topics(io::BagReader & reader, const char * logger)
+std::vector<std::string> collect_pcd_topics(const io::BagReader & reader)
 {
   std::vector<std::string> pcd_topics;
-  // Collect every PointCloud2 topic, then drop the ones the bag records
-  // with zero messages: an empty topic cannot project anything, so it only
-  // clutters the picker. If counting fails, fall back to listing them all.
-  std::vector<std::string> pcd_candidates;
   for (const auto & t : reader.topics()) {
     if (t.type == kPointCloudType) {
-      pcd_candidates.push_back(t.name);
-    }
-  }
-  if (!pcd_candidates.empty()) {
-    try {
-      const auto pcd_counts = reader.compute_topic_counts(pcd_candidates);
-      for (auto & candidate : pcd_candidates) {
-        const auto it = pcd_counts.find(candidate);
-        if (it != pcd_counts.end() && it->second > 0) {
-          pcd_topics.push_back(std::move(candidate));
-        }
-      }
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_WARN(
-        logger, "Could not read PointCloud2 message counts (%s); listing all topics", e.what());
-      pcd_topics = std::move(pcd_candidates);
+      pcd_topics.push_back(t.name);
     }
   }
   return pcd_topics;

@@ -18,16 +18,14 @@
 #include <filesystem>
 #include <optional>
 #include <span>
-#include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
 namespace
 {
 
-using bagwiz::commands::collect_nonempty_pcd_topics;
+using bagwiz::commands::collect_pcd_topics;
 using bagwiz::commands::open_bag_and_find_topic;
 using bagwiz::commands::resolve_walk_camera_info;
 
@@ -81,31 +79,6 @@ std::filesystem::path build_bag(const std::filesystem::path & dir)
   return path;
 }
 
-// Reader stub whose compute_topic_counts always throws, exercising the
-// fallback that lists every PointCloud2 candidate.
-class ThrowingCountReader : public bagwiz::io::BagReader
-{
-public:
-  explicit ThrowingCountReader(std::vector<bagwiz::io::TopicInfo> topics)
-  : topics_(std::move(topics))
-  {
-  }
-
-  std::span<const bagwiz::io::TopicInfo> topics() const override { return topics_; }
-  void set_filter(const bagwiz::io::ReadFilter &) override {}
-  bool next(bagwiz::io::RawMessage &) override { return false; }
-  Stats compute_stats() override { return {}; }
-  TimeExtent compute_time_extent() override { return {}; }
-  std::unordered_map<std::string, std::int64_t> compute_topic_counts(
-    std::span<const std::string>) override
-  {
-    throw std::runtime_error("counts unavailable");
-  }
-
-private:
-  std::vector<bagwiz::io::TopicInfo> topics_;
-};
-
 class WalkBagTest : public ::testing::Test
 {
 protected:
@@ -152,14 +125,16 @@ TEST_F(WalkBagTest, OpenBagAndFindTopicMissingBagFails)
   EXPECT_EQ(open_bag_and_find_topic(tmp_dir_ / "nope", "/points_a", kLogger), std::nullopt);
 }
 
-TEST_F(WalkBagTest, CollectNonemptyPcdTopicsDropsZeroMessageTopics)
+TEST_F(WalkBagTest, CollectPcdTopicsListsAllPointCloud2Topics)
 {
   const auto bag = build_bag(tmp_dir_);
   auto reader = bagwiz::io::open_read(bag);
-  EXPECT_EQ(collect_nonempty_pcd_topics(*reader, kLogger), std::vector<std::string>{"/points_a"});
+  // Empty topics stay in the list: collect_pcd_topics never counts messages
+  // (the count can require a full bag scan), so /points_empty appears too.
+  EXPECT_EQ(collect_pcd_topics(*reader), (std::vector<std::string>{"/points_a", "/points_empty"}));
 }
 
-TEST_F(WalkBagTest, CollectNonemptyPcdTopicsWithoutCandidatesYieldsEmpty)
+TEST_F(WalkBagTest, CollectPcdTopicsWithoutCandidatesYieldsEmpty)
 {
   const auto path = tmp_dir_ / "no_pcd";
   auto writer = bagwiz::io::open_write(path, mcap_dir_opts());
@@ -168,21 +143,7 @@ TEST_F(WalkBagTest, CollectNonemptyPcdTopicsWithoutCandidatesYieldsEmpty)
   writer->close();
 
   auto reader = bagwiz::io::open_read(path);
-  EXPECT_TRUE(collect_nonempty_pcd_topics(*reader, kLogger).empty());
-}
-
-TEST(WalkCollectNonemptyPcdTopics, CountFailureFallsBackToAllCandidates)
-{
-  ThrowingCountReader reader(
-    {make_topic("/p1", "sensor_msgs/msg/PointCloud2"), make_topic("/img", "sensor_msgs/msg/Image"),
-     make_topic("/p2", "sensor_msgs/msg/PointCloud2")});
-  EXPECT_EQ(collect_nonempty_pcd_topics(reader, kLogger), (std::vector<std::string>{"/p1", "/p2"}));
-}
-
-TEST(WalkCollectNonemptyPcdTopics, NoCandidatesSkipsCounting)
-{
-  ThrowingCountReader reader({make_topic("/img", "sensor_msgs/msg/Image")});
-  EXPECT_TRUE(collect_nonempty_pcd_topics(reader, kLogger).empty());
+  EXPECT_TRUE(collect_pcd_topics(*reader).empty());
 }
 
 TEST_F(WalkBagTest, ResolveWalkCameraInfoReportsMissingDerivedTopic)

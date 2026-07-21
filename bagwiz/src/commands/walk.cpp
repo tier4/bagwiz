@@ -109,7 +109,7 @@ public:
     }
     auto & reader = *opened->reader;
 
-    const std::vector<std::string> pcd_topics = collect_nonempty_pcd_topics(reader, kLogger);
+    const std::vector<std::string> pcd_topics = collect_pcd_topics(reader);
 
     const auto camera =
       resolve_walk_camera_info(input_path_, topic_, camera_info_topic_, reader.topics());

@@ -42,11 +42,13 @@ struct OpenedBag
 [[nodiscard]] std::optional<OpenedBag> open_bag_and_find_topic(
   const std::filesystem::path & path, const std::string & topic, const char * logger);
 
-// Collect the bag's PointCloud2 topics that carry at least one message: an
-// empty topic cannot project anything, so it only clutters the picker. If
-// counting fails, fall back to listing every PointCloud2 topic.
-[[nodiscard]] std::vector<std::string> collect_nonempty_pcd_topics(
-  io::BagReader & reader, const char * logger);
+// List the bag's PointCloud2 topics (the overlay picker's candidates). This
+// deliberately does NOT count messages to filter out empty topics: on a
+// sqlite3 bag without a topic_id index the count requires a full messages
+// table scan, which stalls walk's startup on multi-GB bags for a topic the
+// user may never open. An empty topic picked in the overlay fails at
+// initialization with a "has no messages" status instead.
+[[nodiscard]] std::vector<std::string> collect_pcd_topics(const io::BagReader & reader);
 
 // Outcome of resolve_walk_camera_info(). `error` is empty on success; it
 // carries the resolution/validation/loading reason otherwise (walk surfaces
