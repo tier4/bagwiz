@@ -49,8 +49,8 @@ bagwiz::core::image::CameraInfo make_pinhole()
 
 TEST(ColorizeThreadCount, NonPositiveFallsBackToTheDefault)
 {
-  EXPECT_EQ(colorize_thread_count(0), 4);
-  EXPECT_EQ(colorize_thread_count(-3), 4);
+  EXPECT_EQ(colorize_thread_count(0), 8);
+  EXPECT_EQ(colorize_thread_count(-3), 8);
 }
 
 TEST(ColorizeThreadCount, PositivePassesThroughTheHardwareCap)

@@ -19,7 +19,7 @@ namespace bagwiz::commands
 int colorize_thread_count(int num_threads)
 {
   const int capped = cap_threads_at_hardware_limit(num_threads);
-  return capped > 0 ? capped : 4;
+  return capped > 0 ? capped : 8;
 }
 
 std::shared_ptr<const core::slam::ColorizeGeometry> build_shared_colorize_geometry(

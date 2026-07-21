@@ -117,7 +117,7 @@ struct MapSlamArgs
   // Number of CPU threads for GLIM and trajectory endpoint (warmup/cooldown)
   // fill. A non-positive value falls back to each stage's default (GLIM
   // preprocessor 4; fill 1).
-  int num_threads = 4;
+  int num_threads = 8;
 
   // SLAM backend selection: "auto" (default), "cpu", or "cuda".
   //  - auto: use the CUDA GPU backend when this binary was built with
