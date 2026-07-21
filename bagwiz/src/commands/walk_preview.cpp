@@ -281,12 +281,45 @@ void ImagePreviewSession::run()
   std::ostream & out = std::cout;
   bool running = true;
   bool needs_render = true;
+  // True while an overlay initialization is (or may be) unfinished on its
+  // worker thread: the loop then reads keys with a timeout so the status row
+  // keeps animating the load's progress and the finished result is applied.
+  bool load_in_flight = overlay_.is_loading();
   while (running) {
     if (needs_render) {
       render(out, core::tui::query_terminal_size());
       needs_render = false;
     }
-    switch (core::read_key_event()) {
+
+    core::KeyEvent ev = core::KeyEvent::kUnknown;
+    if (load_in_flight) {
+      // The progress text rides the pager's normal status row instead of an
+      // indicators-library bar: that library does its own cursor control on
+      // std::cout, which fights the pager's alternate-screen / synchronized
+      // update rendering.
+      const auto maybe_ev = core::read_key_event(100);
+      const auto init_state = overlay_.poll_initialize();
+      if (init_state == PcdOverlayController::InitState::kRunning) {
+        const std::string msg = fmt::format("loading pcd overlay ... {}%", overlay_.load_percent());
+        if (msg != status_) {
+          status_ = msg;
+          needs_render = true;
+        }
+      } else {
+        // kSucceeded / kFailed: poll_initialize() applied the result (or the
+        // error) to the overlay state and status row.
+        load_in_flight = false;
+        needs_render = true;
+      }
+      if (!maybe_ev.has_value()) {
+        continue;
+      }
+      ev = *maybe_ev;
+    } else {
+      ev = core::read_key_event();
+    }
+
+    switch (ev) {
       case core::KeyEvent::kNext:
         // Re-decode only when the cursor actually moved; otherwise the frame
         // is unchanged and a full decode + scale would be wasted.
@@ -338,12 +371,12 @@ void ImagePreviewSession::run()
       case core::KeyEvent::kToggleProjectPcd:
         if (!camera_info.has_value()) {
           status_ = camera_info_error.empty() ? "pcd: no camera_info" : "pcd: " + camera_info_error;
+        } else if (load_in_flight) {
+          status_ = "pcd overlay still loading ...";
         } else if (pcd.topics.empty()) {
           if (auto topics = overlay_.prompt_for_topics(image_caps.backend);
               topics.has_value() && !topics->empty()) {
-            if (overlay_.initialize(*topics)) {
-              pcd.enabled = true;
-            }
+            load_in_flight = overlay_.start_initialize(*topics);
           }
         } else {
           pcd.enabled = !pcd.enabled;
@@ -352,11 +385,14 @@ void ImagePreviewSession::run()
         break;
       case core::KeyEvent::kSelectPcdTopic:
         if (camera_info.has_value()) {
-          if (auto topics = overlay_.prompt_for_topics(image_caps.backend); topics.has_value()) {
+          if (load_in_flight) {
+            status_ = "pcd overlay still loading ...";
+          } else if (auto topics = overlay_.prompt_for_topics(image_caps.backend);
+                     topics.has_value()) {
             if (topics->empty()) {
               pcd.enabled = false;
-            } else if (overlay_.initialize(*topics)) {
-              pcd.enabled = true;
+            } else {
+              load_in_flight = overlay_.start_initialize(*topics);
             }
           }
         } else {

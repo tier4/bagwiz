@@ -16,6 +16,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <optional>
 #include <string_view>
 
 namespace bagwiz::core
@@ -268,6 +269,37 @@ KeyEvent read_key_event()
   }
   const char seq[3] = {'\x1B', follow[0], follow[1]};
   return classify_key(std::string_view(seq, 3));
+}
+
+std::optional<KeyEvent> read_key_event(int timeout_ms)
+{
+  // Surface a resize that arrived while the caller was busy (e.g. rendering)
+  // before going to sleep, so the repaint is not delayed by the full timeout.
+  if (consume_resize_flag()) {
+    return KeyEvent::kResize;
+  }
+  for (;;) {
+    pollfd pfd{};
+    pfd.fd = STDIN_FILENO;
+    pfd.events = POLLIN;
+    const int r = ::poll(&pfd, 1, timeout_ms);
+    if (r > 0) {
+      break;  // input ready: fall through to the blocking reader
+    }
+    if (r == 0) {
+      return std::nullopt;  // timeout
+    }
+    if (errno == EINTR) {
+      // A signal (typically SIGWINCH) interrupted the wait: report a pending
+      // resize, otherwise keep waiting inside the caller's budget.
+      if (consume_resize_flag()) {
+        return KeyEvent::kResize;
+      }
+      continue;
+    }
+    return KeyEvent::kQuit;  // genuine poll error, same as a read failure
+  }
+  return read_key_event();
 }
 
 }  // namespace bagwiz::core

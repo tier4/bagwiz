@@ -18,22 +18,25 @@
 #include "bagwiz/core/tui/image/terminal_image_caps.hpp"
 #include "bagwiz/core/tui/pager.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "walk_overlay_scan.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
-#include <tf2/buffer_core.hpp>
-
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
 // Point-cloud projection overlay of `bagwiz walk`'s image preview: the
-// overlay state, the interactive topic picker, the one-shot initialization
-// (TF buffer + per-topic scans), and the per-frame projection. Moved out of
-// walk.cpp verbatim; the interactive parts stay TTY-coupled by design.
+// overlay state, the interactive topic picker, the background initialization
+// (one combined bag scan on a worker thread), and the per-frame projection.
+// Moved out of walk.cpp verbatim; the interactive parts stay TTY-coupled by
+// design.
 // CLI-internal: this header lives with the command sources and is not
 // installed.
 namespace bagwiz::commands
@@ -55,9 +58,10 @@ struct PcdOverlayState
   double computed_min = 0.0;
   double computed_max = 1.0;
   bool has_intensity = false;
-  // Min/max of every colour property, captured once when the topics are
-  // selected. Switching the active property then reuses these instead of
-  // re-scanning the bag, so [f] is instant even with auto range on.
+  // Running min/max of every colour property, expanded from each cloud as it
+  // is first displayed. Computing these up front would require parsing every
+  // cloud in the bag; the running variant converges after the first frames
+  // and keeps [f] property switches free of bag re-reads.
   core::pointcloud::PropertyRanges ranges;
 };
 
@@ -74,9 +78,15 @@ public:
   using EnsureUndistortHelper =
     std::function<core::image::UndistortHelper *(std::uint32_t, std::uint32_t)>;
 
-  // `pcd_topics` are the bag's non-empty PointCloud2 topics (the picker
-  // candidates). `status` is the shared UI status row: picker cancellations,
-  // initialization failures, and projection errors are reported there.
+  // Progress of a start_initialize() worker.
+  enum class InitState { kIdle, kRunning, kSucceeded, kFailed };
+
+  // `pcd_topics` are the bag's PointCloud2 topics (the picker candidates).
+  // They are not pre-filtered by message count — that count can require a
+  // full bag scan — so an empty topic fails the initialization scan with a
+  // "has no messages" status instead. `status` is the shared UI status row:
+  // picker cancellations, initialization failures, and projection errors are
+  // reported there.
   PcdOverlayController(
     std::filesystem::path input_path, const io::BagReader & reader,
     std::vector<std::string> pcd_topics, std::string & status)
@@ -86,6 +96,14 @@ public:
     status_(status)
   {
   }
+
+  // Cancels and joins any in-flight initialization worker.
+  ~PcdOverlayController();
+
+  PcdOverlayController(const PcdOverlayController &) = delete;
+  PcdOverlayController & operator=(const PcdOverlayController &) = delete;
+  PcdOverlayController(PcdOverlayController &&) = delete;
+  PcdOverlayController & operator=(PcdOverlayController &&) = delete;
 
   [[nodiscard]] PcdOverlayState & state() noexcept { return pcd_; }
   [[nodiscard]] const PcdOverlayState & state() const noexcept { return pcd_; }
@@ -97,16 +115,33 @@ public:
   [[nodiscard]] std::optional<std::vector<std::string>> prompt_for_topics(
     core::tui::image::ImageBackend backend);
 
-  // One-shot initialization for a picked topic set: loads the TF buffer
-  // (once) and scans every topic for timestamps and per-property ranges.
-  // On failure sets `status` and returns false, leaving the previous
-  // overlay state untouched.
-  bool initialize(const std::vector<std::string> & topics);
+  // Start the overlay initialization on a worker thread: one combined bag
+  // scan that decodes the TF topics and collects the selected topics' cloud
+  // timestamps (see walk_overlay_scan). Returns false synchronously — with
+  // `status` set — when a selected topic is not PointCloud2 or the bag has
+  // no TF topic; otherwise returns true and the load proceeds in the
+  // background. An in-flight load is cancelled and replaced.
+  bool start_initialize(const std::vector<std::string> & topics);
+
+  // True while a start_initialize() worker is in flight.
+  [[nodiscard]] bool is_loading() const
+  {
+    return state_.load(std::memory_order_acquire) == InitState::kRunning;
+  }
+  // Whole-percent progress of the in-flight load (0 while idle).
+  [[nodiscard]] int load_percent() const { return percent_.load(std::memory_order_relaxed); }
+
+  // Reap a finished worker. kRunning: still in flight. kSucceeded: results
+  // are applied — fetchers and TF buffer installed, the overlay enabled —
+  // and the state returns to kIdle. kFailed: `status` carries the reason.
+  // kIdle: no load is active.
+  InitState poll_initialize();
 
   // Project the fetched point clouds onto `raster` when the overlay is
   // enabled and initialized. `record_stamp_ns` is the walked message's bag
-  // record time (the frame-match clock for topics without header stamps);
-  // `undistort_enabled` selects projection onto the rectified vs raw image.
+  // record time (the frame-match clock; clouds are matched by bag record
+  // time). `undistort_enabled` selects projection onto the rectified vs raw
+  // image.
   void maybe_overlay(
     core::image::PackedRaster * raster, std::int64_t record_stamp_ns,
     const std::optional<core::image::CameraInfo> & camera_info,
@@ -125,12 +160,27 @@ private:
   std::vector<std::string> pcd_topics_;
   std::string & status_;
   PcdOverlayState pcd_;
-  std::optional<tf2::BufferCore> tf_buffer_;
   std::vector<core::pointcloud::PointCloudFetcher> pcd_fetchers_;
-  // Parallel to pcd_fetchers_: whether each topic can be matched by capture
-  // time (every cloud carried a header.stamp). Topics that can't are matched
-  // by record time on both sides so the overlay stays in one clock.
-  std::vector<bool> pcd_topic_has_stamps_;
+  // Parallel to pcd_fetchers_: the last cloud of each fetcher already folded
+  // into pcd_.ranges (identified by its cache address, which is stable until
+  // the fetcher's next load), so repeated display of the same cloud does not
+  // re-accumulate.
+  std::vector<const core::pointcloud::PointCloud2 *> ranged_clouds_;
+
+  // Initialization worker state. Results are heap-allocated because
+  // tf2::BufferCore is immovable: the worker writes scan_result_ while
+  // active_scan_ keeps serving the currently enabled overlay; on success the
+  // pointers swap roles (move-assign), on failure scan_result_ is dropped
+  // and the previous overlay stays intact. The UI thread consumes results
+  // only after the worker reports a terminal state (the acquire/release
+  // pairing on state_ orders the handoff).
+  std::thread worker_;
+  std::unique_ptr<OverlayScanResult> scan_result_;
+  std::unique_ptr<OverlayScanResult> active_scan_;
+  std::vector<std::string> pcd_topics_selected_;
+  std::atomic<InitState> state_{InitState::kIdle};
+  std::atomic<bool> cancel_{false};
+  std::atomic<int> percent_{0};
 };
 
 }  // namespace bagwiz::commands

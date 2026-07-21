@@ -26,6 +26,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -98,8 +99,6 @@ public:
 
       const int64_t topic_id = sqlite3_column_int64(read_stmt_.get(), 0);
       const int64_t timestamp = sqlite3_column_int64(read_stmt_.get(), 1);
-      const void * data = sqlite3_column_blob(read_stmt_.get(), 2);
-      const int data_size = sqlite3_column_bytes(read_stmt_.get(), 2);
 
       auto idx_it = topic_id_to_idx_.find(topic_id);
       if (idx_it == topic_id_to_idx_.end()) {
@@ -109,6 +108,17 @@ public:
 
       out.topic = &topics_[idx_it->second];
       out.timestamp_ns = timestamp;
+
+      // Payload-skipped row (see ReadFilter::payload_topics): don't touch the
+      // data column at all, so SQLite never reads the message's overflow
+      // pages — the whole point of the flag on multi-GB message payloads.
+      if (!payload_topic_ids_.empty() && payload_topic_ids_.count(topic_id) == 0) {
+        out.payload = {};
+        return true;
+      }
+
+      const void * data = sqlite3_column_blob(read_stmt_.get(), 2);
+      const int data_size = sqlite3_column_bytes(read_stmt_.get(), 2);
       const auto src = std::span<const std::byte>(
         reinterpret_cast<const std::byte *>(data), static_cast<std::size_t>(data_size));
       // For uncompressed bags `data` points into SQLite's row buffer, which
@@ -380,6 +390,18 @@ private:
       where.push_back("timestamp <= " + std::to_string(*filter_.end_ns));
     }
 
+    // Resolve the payload allow-list (ReadFilter::payload_topics) to topic
+    // IDs. An empty allow-list means every row materializes its payload.
+    payload_topic_ids_.clear();
+    for (const auto & name : filter_.payload_topics) {
+      for (const auto & [tid, idx] : topic_id_to_idx_) {
+        if (topics_[idx].name == name) {
+          payload_topic_ids_.insert(tid);
+          break;
+        }
+      }
+    }
+
     if (!where.empty()) {
       sql += " WHERE ";
       for (std::size_t i = 0; i < where.size(); ++i) {
@@ -400,6 +422,7 @@ private:
   SqliteStmtPtr read_stmt_;
   std::vector<TopicInfo> topics_;
   std::unordered_map<int64_t, std::size_t> topic_id_to_idx_;
+  std::unordered_set<int64_t> payload_topic_ids_;
   ReadFilter filter_;
   bool iteration_started_ = false;
   std::shared_ptr<MessageDecompressor> decompressor_;

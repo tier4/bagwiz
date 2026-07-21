@@ -126,6 +126,22 @@ confirm. You can select any number of topics; their projected points are
 drawn together. Press `q` or `Esc` to cancel without changing the current
 selection. The selected topics are remembered for the rest of the walk session.
 
+After the selection is confirmed, bagwiz initializes the overlay in the
+background: a single pass over the bag decodes the TF topics and collects the
+selected topics' cloud timestamps (cloud payloads are not read). While that
+pass runs, the preview stays fully usable and the status line shows
+`loading pcd overlay ... N%`; the overlay switches on automatically when the
+pass finishes. A topic with no messages fails the initialization and is
+reported on the status line.
+
+Clouds are matched to frames by bag record time (the scan does not read cloud
+payloads, so header stamps are unknown at match time) and transformed with TF
+evaluated at that time. In automatic range mode the min/max of the active
+property is computed from the clouds actually displayed so far — parsing
+every cloud in the bag up front would make initialization expensive — so the
+colors can shift during the first frames and then stabilize; `r` pins a
+manual range at any time.
+
 | Key       | Action                                                                                                                      |
 | --------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `p`       | Toggle the point-cloud overlay on/off. Points project onto the raw or rectified image to match the current undistort state. |

@@ -201,6 +201,7 @@ add_executable(bagwiz
   src/commands/walk_cursor.cpp
   src/commands/walk_frame.cpp
   src/commands/walk_overlay.cpp
+  src/commands/walk_overlay_scan.cpp
   src/commands/walk_preview.cpp
   src/commands/walk_save.cpp
   src/commands/traj.cpp
@@ -527,6 +528,7 @@ if(BUILD_TESTING)
     src/commands/walk_cursor.cpp
     src/commands/walk_frame.cpp
     src/commands/walk_overlay.cpp
+    src/commands/walk_overlay_scan.cpp
     src/commands/walk_preview.cpp
     src/commands/walk_save.cpp
     src/commands/registry.cpp)
@@ -534,6 +536,14 @@ if(BUILD_TESTING)
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
   target_link_libraries(
     bagwiz_walk_test ${bagwiz_test_libs} CLI11::CLI11 fmt::fmt ${OpenCV_LIBS} ${tf2_TARGETS})
+
+  ament_add_gtest(bagwiz_walk_overlay_scan_test
+    test/commands/walk_overlay_scan_test.cpp
+    src/commands/walk_overlay_scan.cpp)
+  target_include_directories(bagwiz_walk_overlay_scan_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
+  target_link_libraries(
+    bagwiz_walk_overlay_scan_test ${bagwiz_test_libs} fmt::fmt ${tf2_TARGETS})
 
   # The map_slam_* headers live in src/commands (CLI-internal, not installed),
   # so these tests add src/commands to their include path (pcd_concat_common

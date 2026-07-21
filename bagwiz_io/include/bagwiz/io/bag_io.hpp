@@ -70,6 +70,17 @@ struct ReadFilter
   std::vector<std::string> topics;  // empty = all topics
   std::optional<int64_t> start_ns;
   std::optional<int64_t> end_ns;
+
+  // When non-empty, only these topics' messages are guaranteed to carry their
+  // payload; messages of other topics passed by `topics` may come back with an
+  // empty payload span. This lets the storage layer skip BLOB materialization
+  // for rows the caller only needs timestamps from (SQLite3 avoids reading the
+  // overflow pages of large messages, which is the dominant I/O cost when
+  // collecting timestamps of multi-GB point-cloud topics). MCAP exposes
+  // payloads unconditionally (chunks are decompressed wholesale), which the
+  // contract permits: callers must treat the payload of a non-listed topic as
+  // unconditionally absent, never as an empty message.
+  std::vector<std::string> payload_topics;
 };
 
 // Read-only bag interface. Opening is cheap: implementations must never

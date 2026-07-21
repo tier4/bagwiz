@@ -12,7 +12,6 @@
 #include "bagwiz/core/pointcloud/overlay.hpp"
 #include "bagwiz/core/pointcloud/projector.hpp"
 #include "bagwiz/core/pointcloud/projector_helpers.hpp"
-#include "bagwiz/core/tf/tf_buffer_loader.hpp"
 #include "bagwiz/core/tui/image/terminal_image_renderer.hpp"
 #include "bagwiz/core/tui/layout.hpp"
 #include "bagwiz/core/tui/renderer.hpp"
@@ -23,6 +22,7 @@
 #include <algorithm>
 #include <iostream>
 #include <istream>
+#include <memory>
 #include <ostream>
 #include <string>
 #include <utility>
@@ -35,6 +35,7 @@ namespace
 {
 
 constexpr const char * kPointCloudType = "sensor_msgs/msg/PointCloud2";
+constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
 
 }  // namespace
 
@@ -80,7 +81,7 @@ std::optional<std::vector<std::string>> PcdOverlayController::prompt_for_topics(
   core::tui::image::ImageBackend backend)
 {
   if (pcd_topics_.empty()) {
-    status_ = "no non-empty PointCloud2 topics in bag";
+    status_ = "no PointCloud2 topics in bag";
     return std::nullopt;
   }
 
@@ -170,7 +171,15 @@ std::optional<std::vector<std::string>> PcdOverlayController::prompt_for_topics(
   return selected;
 }
 
-bool PcdOverlayController::initialize(const std::vector<std::string> & topics)
+PcdOverlayController::~PcdOverlayController()
+{
+  if (worker_.joinable()) {
+    cancel_.store(true, std::memory_order_relaxed);
+    worker_.join();
+  }
+}
+
+bool PcdOverlayController::start_initialize(const std::vector<std::string> & topics)
 {
   for (const auto & topic : topics) {
     bool valid = false;
@@ -186,44 +195,89 @@ bool PcdOverlayController::initialize(const std::vector<std::string> & topics)
     }
   }
 
-  if (!tf_buffer_.has_value()) {
-    tf_buffer_.emplace();
-    if (const auto err = core::load_tf_buffer(input_path_, *tf_buffer_); err.has_value()) {
-      status_ = *err;
-      tf_buffer_.reset();
-      return false;
+  // Cheap pre-check: the projection needs TF, so fail before launching the
+  // scan when the bag has none.
+  bool has_tf = false;
+  for (const auto & t : reader_.topics()) {
+    if (t.type == kTfMessageType) {
+      has_tf = true;
+      break;
     }
   }
-
-  // One pass per topic captures the timestamps *and* the min/max of every
-  // colour property, so later property switches ([f]) never touch the bag.
-  core::pointcloud::PropertyRanges merged_ranges;
-  std::vector<std::string> initialized_topics;
-  std::vector<core::pointcloud::PointCloudFetcher> new_fetchers;
-  std::vector<bool> new_topic_has_stamps;
-
-  for (const auto & topic : topics) {
-    std::string error;
-    auto scan = core::pointcloud::scan_point_cloud(input_path_, topic, error);
-    if (!scan.has_value()) {
-      status_ = error;
-      return false;
-    }
-    merged_ranges.merge(scan->ranges);
-    new_topic_has_stamps.push_back(scan->header_stamps_present);
-    initialized_topics.push_back(topic);
-    new_fetchers.emplace_back(input_path_, topic, std::move(scan->entries));
+  if (!has_tf) {
+    status_ = "no tf2_msgs/msg/TFMessage topics found; cannot resolve point-cloud transform";
+    return false;
   }
 
-  const auto range = merged_ranges.resolve(pcd_.property);
-  pcd_.topics = std::move(initialized_topics);
-  pcd_.has_intensity = merged_ranges.has_intensity;
-  pcd_.ranges = merged_ranges;
+  // Replace any in-flight or finished-but-unreaped load.
+  if (worker_.joinable()) {
+    cancel_.store(true, std::memory_order_relaxed);
+    worker_.join();
+  }
+
+  cancel_.store(false, std::memory_order_relaxed);
+  percent_.store(0, std::memory_order_relaxed);
+  scan_result_ = std::make_unique<OverlayScanResult>();
+  pcd_topics_selected_ = topics;
+  state_.store(InitState::kRunning, std::memory_order_release);
+  worker_ = std::thread([this, topics_copy = topics] {
+    scan_overlay_inputs(
+      input_path_, topics_copy, cancel_,
+      [this](double fraction) {
+        percent_.store(static_cast<int>(fraction * 100.0), std::memory_order_relaxed);
+      },
+      *scan_result_);
+    if (cancel_.load(std::memory_order_relaxed)) {
+      // Cancelled by a newer start_initialize() or the destructor; the result
+      // is discarded, so just return to idle.
+      state_.store(InitState::kIdle, std::memory_order_release);
+      return;
+    }
+    state_.store(
+      scan_result_->error.empty() ? InitState::kSucceeded : InitState::kFailed,
+      std::memory_order_release);
+  });
+  status_ = "loading pcd overlay ... 0%";
+  return true;
+}
+
+PcdOverlayController::InitState PcdOverlayController::poll_initialize()
+{
+  const InitState s = state_.load(std::memory_order_acquire);
+  if (s == InitState::kIdle || s == InitState::kRunning) {
+    return s;
+  }
+  // Terminal state: the worker has published its result and is joinable.
+  worker_.join();
+
+  if (s == InitState::kFailed) {
+    status_ = scan_result_->error;
+    scan_result_.reset();
+    state_.store(InitState::kIdle, std::memory_order_release);
+    return s;
+  }
+
+  std::vector<core::pointcloud::PointCloudFetcher> fetchers;
+  fetchers.reserve(scan_result_->entries.size());
+  for (std::size_t i = 0; i < scan_result_->entries.size(); ++i) {
+    fetchers.emplace_back(
+      input_path_, pcd_topics_selected_[i], std::move(scan_result_->entries[i]));
+  }
+  pcd_fetchers_ = std::move(fetchers);
+  ranged_clouds_.assign(pcd_fetchers_.size(), nullptr);
+  active_scan_ = std::move(scan_result_);
+
+  pcd_.topics = pcd_topics_selected_;
+  pcd_.has_intensity = false;
+  pcd_.ranges = core::pointcloud::PropertyRanges{};
+  const auto range = pcd_.ranges.resolve(pcd_.property);
   pcd_.computed_min = range.first;
   pcd_.computed_max = range.second;
-  pcd_fetchers_ = std::move(new_fetchers);
-  pcd_topic_has_stamps_ = std::move(new_topic_has_stamps);
-  return true;
+  pcd_.enabled = true;
+
+  state_.store(InitState::kIdle, std::memory_order_release);
+  status_ = "pcd overlay ready";
+  return s;
 }
 
 void PcdOverlayController::maybe_overlay(
@@ -231,7 +285,9 @@ void PcdOverlayController::maybe_overlay(
   const std::optional<core::image::CameraInfo> & camera_info,
   const EnsureUndistortHelper & ensure_helper, bool undistort_enabled)
 {
-  if (raster == nullptr || !pcd_.enabled || pcd_.topics.empty() || pcd_fetchers_.empty()) {
+  if (
+    raster == nullptr || !pcd_.enabled || pcd_.topics.empty() || pcd_fetchers_.empty() ||
+    active_scan_ == nullptr) {
     return;
   }
   if (!camera_info.has_value()) {
@@ -250,11 +306,13 @@ void PcdOverlayController::maybe_overlay(
   std::vector<core::pointcloud::ProjectedPoint> all_points;
   std::string last_error;
   for (std::size_t i = 0; i < pcd_fetchers_.size(); ++i) {
-    // Pair the frame with the point cloud nearest in time (see
-    // core::pointcloud::choose_frame_match for the clock rule). The chosen
+    // Pair the frame with the point cloud nearest in bag record time (see
+    // core::pointcloud::choose_frame_match for the clock rule): cloud header
+    // stamps are unknown because the initialization scan never reads cloud
+    // payloads, so record time is the one clock both sides share. The chosen
     // target is also the TF-lookup time.
-    const auto match = core::pointcloud::choose_frame_match(
-      img.header_stamp_ns, record_stamp_ns, pcd_topic_has_stamps_[i]);
+    const auto match =
+      core::pointcloud::choose_frame_match(img.header_stamp_ns, record_stamp_ns, false);
     const std::int64_t match_ns = match.target_ns;
 
     std::string error;
@@ -264,8 +322,24 @@ void PcdOverlayController::maybe_overlay(
       continue;
     }
 
+    // Fold newly displayed clouds into the running colour ranges (once per
+    // cloud; the fetcher's cache address identifies it), then refresh the
+    // active property's auto range. This replaces the up-front full-bag
+    // min/max parse the overlay used to run at initialization.
+    if (ranged_clouds_[i] != cloud) {
+      if (core::pointcloud::accumulate_property_ranges(*cloud, pcd_.ranges, error)) {
+        ranged_clouds_[i] = cloud;
+        pcd_.has_intensity = pcd_.ranges.has_intensity;
+        const auto range = pcd_.ranges.resolve(pcd_.property);
+        pcd_.computed_min = range.first;
+        pcd_.computed_max = range.second;
+      } else {
+        last_error = std::move(error);
+      }
+    }
+
     const auto projected = core::pointcloud::project_cloud_for_frame(
-      *cloud, effective_ci, *tf_buffer_, img.width, img.height, pcd_.property,
+      *cloud, effective_ci, active_scan_->tf_buffer, img.width, img.height, pcd_.property,
       /*use_rectified=*/undistort_enabled, match_ns);
     if (!projected.ok()) {
       last_error = std::move(projected.error);
@@ -311,8 +385,9 @@ void PcdOverlayController::cycle_property()
     return Property::kDistance;
   };
   pcd_.property = next(pcd_.property);
-  // Auto range reuses the extent captured up front, so switching property is
-  // O(1) and never re-reads the bag (the timestamps/fetchers are unchanged).
+  // Auto range reuses the running extent accumulated from displayed clouds,
+  // so switching property is O(1) and never re-reads the bag (an unobserved
+  // property resolves to a neutral [0, 1] until its first cloud is shown).
   if (pcd_.auto_range) {
     const auto range = pcd_.ranges.resolve(pcd_.property);
     pcd_.computed_min = range.first;

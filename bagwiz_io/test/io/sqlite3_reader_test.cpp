@@ -488,6 +488,50 @@ TEST_F(Sqlite3ReaderTest, DirectoryTopicCountsServedFromMetadataWithoutOpeningSh
   EXPECT_EQ(counts.at("/bar"), 2);
 }
 
+TEST_F(Sqlite3ReaderTest, PayloadTopicsSkipsPayloadForOtherTopics)
+{
+  const auto path = write_fixture_db3(tmp_dir_ / "payload_topics");
+
+  auto reader = bagwiz::io::open_read(path);
+  bagwiz::io::ReadFilter f;
+  f.topics = {"/foo", "/bar"};
+  f.payload_topics = {"/foo"};
+  reader->set_filter(f);
+
+  int foo_count = 0;
+  int bar_count = 0;
+  bagwiz::io::RawMessage msg;
+  while (reader->next(msg)) {
+    if (msg.topic->name == "/foo") {
+      EXPECT_EQ(msg.payload.size(), 4U);
+      ++foo_count;
+    } else {
+      EXPECT_TRUE(msg.payload.empty());
+      ++bar_count;
+    }
+  }
+  EXPECT_EQ(foo_count, 3);
+  EXPECT_EQ(bar_count, 2);
+}
+
+TEST_F(Sqlite3ReaderTest, NoPayloadTopicsKeepsAllPayloads)
+{
+  const auto path = write_fixture_db3(tmp_dir_ / "payload_topics_default");
+
+  auto reader = bagwiz::io::open_read(path);
+  bagwiz::io::ReadFilter f;
+  f.topics = {"/foo", "/bar"};
+  reader->set_filter(f);
+
+  int count = 0;
+  bagwiz::io::RawMessage msg;
+  while (reader->next(msg)) {
+    EXPECT_EQ(msg.payload.size(), 4U);
+    ++count;
+  }
+  EXPECT_EQ(count, 5);
+}
+
 TEST_F(Sqlite3ReaderTest, TimeExtent)
 {
   const auto path = write_fixture_db3(tmp_dir_ / "time_extent");

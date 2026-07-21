@@ -11,6 +11,7 @@
 
 #include <termios.h>
 
+#include <optional>
 #include <string_view>
 
 namespace bagwiz::core
@@ -106,6 +107,14 @@ private:
 // Returns kQuit when the read is interrupted (e.g. SIGINT) or on EOF.
 // Undefined unless stdin is a TTY.
 KeyEvent read_key_event();
+
+// Bounded-wait variant of read_key_event(): waits at most `timeout_ms` for
+// the first input byte and returns std::nullopt when none arrives in time
+// (a pending resize is still surfaced as kResize). Once a byte arrives the
+// call behaves exactly like read_key_event(). Lets interactive loops refresh
+// on-screen progress while waiting for keys.
+// Undefined unless stdin is a TTY.
+std::optional<KeyEvent> read_key_event(int timeout_ms);
 
 }  // namespace bagwiz::core
 
