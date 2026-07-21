@@ -45,18 +45,23 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cinttypes>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <exception>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -86,6 +91,70 @@ core::slam::SensorTransform to_sensor_transform(const geometry_msgs::msg::Transf
     ts.transform.rotation.w};
   return out;
 }
+
+// One camera image dispatched to a colorize worker thread: the undecoded
+// message plus the world points of its paired scan. The scan points are OWNED
+// here (copied out of the pairer's decision), because the pairer recycles its
+// scan slot storage on the next push_scan while the worker may still be
+// queued behind earlier images.
+struct ColorizeWorkItem
+{
+  std::int64_t stamp_ns = 0;
+  std::string type;
+  std::vector<std::byte> payload;
+  std::vector<std::array<float, 3>> dynamic_points;
+};
+
+// Bounded blocking queue for the camera-parallel colorize pipeline: push()
+// blocks while `capacity` items are outstanding (backpressure toward the bag
+// reader, so a slow camera cannot balloon memory), and close() lets consumers
+// drain what remains — pop() returns false only once the queue is closed AND
+// empty.
+class ColorizeWorkQueue
+{
+public:
+  explicit ColorizeWorkQueue(std::size_t capacity) : capacity_(capacity) {}
+
+  void push(ColorizeWorkItem item)
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+    not_full_.wait(lock, [&]() { return closed_ || items_.size() < capacity_; });
+    if (closed_) {
+      return;
+    }
+    items_.push_back(std::move(item));
+    not_empty_.notify_one();
+  }
+
+  bool pop(ColorizeWorkItem & item)
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+    not_empty_.wait(lock, [&]() { return closed_ || !items_.empty(); });
+    if (items_.empty()) {
+      return false;
+    }
+    item = std::move(items_.front());
+    items_.pop_front();
+    not_full_.notify_one();
+    return true;
+  }
+
+  void close()
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    closed_ = true;
+    not_full_.notify_all();
+    not_empty_.notify_all();
+  }
+
+private:
+  std::size_t capacity_;
+  std::mutex mutex_;
+  std::condition_variable not_full_;
+  std::condition_variable not_empty_;
+  std::deque<ColorizeWorkItem> items_;
+  bool closed_ = false;
+};
 
 // Drives a single `bagwiz map slam` invocation. Holds the parsed arguments plus
 // the output paths derived from output_root, and owns the bag reading + GLIM
@@ -1075,13 +1144,21 @@ private:
   {
     const std::size_t cam_count = args_.image_topics.size();
     const int threads = colorize_thread_count(args_.num_threads);
+    // With several cameras the per-image work (decode + add_image) is
+    // parallelized across one worker thread per camera below, so each camera's
+    // MapColorizer gets only its share of the thread budget for its internal
+    // sweeps. One camera keeps the whole budget on the serial path.
+    const bool parallel = cam_count > 1;
+    const int sweep_threads =
+      parallel ? std::max(1, threads / static_cast<int>(cam_count)) : threads;
 
     // The geometry pre-pass (kd-tree, normals, spacings) is camera
     // independent and the kd-tree build is the expensive part, so build it
     // once and share it between every camera's MapColorizer.
     const auto geometry = build_shared_colorize_geometry(map.points, threads);
     auto colorizers = build_camera_colorizers(
-      camera_infos_, t_cloud_cams_, args_.range_max, threads, geometry, map.points, map.trajectory);
+      camera_infos_, t_cloud_cams_, args_.range_max, sweep_threads, geometry, map.points,
+      map.trajectory);
 
     std::unique_ptr<io::BagReader> reader;
     try {
@@ -1108,9 +1185,57 @@ private:
     // pairing must be tight (see ScanImagePairer for the queuing rule).
     core::slam::ScanImagePairer pairer;
 
+    // Camera-parallel pipeline: the reader loop below stays single-threaded
+    // and hands each decided image to its camera's worker via a bounded
+    // queue. A MapColorizer is touched only by its own worker, and the worker
+    // consumes the queue in FIFO order, so each camera's add_image sequence —
+    // and therefore the colorize result — is identical to the serial run.
+    constexpr std::size_t kWorkQueueCapacity = 4;
+    std::vector<std::unique_ptr<ColorizeWorkQueue>> work_queues;
+    std::vector<std::thread> workers;
+    if (parallel) {
+      work_queues.reserve(cam_count);
+      workers.reserve(cam_count);
+      for (std::size_t cam = 0; cam < cam_count; ++cam) {
+        work_queues.push_back(std::make_unique<ColorizeWorkQueue>(kWorkQueueCapacity));
+      }
+      for (std::size_t cam = 0; cam < cam_count; ++cam) {
+        workers.emplace_back([&, cam]() {
+          std::int64_t failures = 0;
+          ColorizeWorkItem item;
+          while (work_queues[cam]->pop(item)) {
+            try {
+              const auto decoded = core::image::to_packed_raster(item.type, item.payload);
+              if (!decoded.ok()) {
+                ++failures;
+                continue;
+              }
+              const auto & raster = *decoded.raster;
+              // Prefer the capture stamp; fall back to the queue stamp (the
+              // bag record time) when the publisher left header.stamp unset.
+              const std::int64_t stamp =
+                raster.header_stamp_ns != 0 ? raster.header_stamp_ns : item.stamp_ns;
+              colorizers[cam]->add_image(
+                stamp, raster.bgr, raster.width, raster.height, item.dynamic_points);
+            } catch (const std::exception &) {
+              ++failures;
+            }
+          }
+          decode_failures[cam] = failures;
+        });
+      }
+    }
+
     auto feed_image = [&](
-                        const core::slam::ScanImagePairer::PendingImage & img,
+                        core::slam::ScanImagePairer::PendingImage & img,
                         std::span<const std::array<float, 3>> dynamic) {
+      if (parallel) {
+        work_queues[img.cam]->push(
+          ColorizeWorkItem{
+            img.stamp_ns, std::move(img.type), std::move(img.payload),
+            std::vector<std::array<float, 3>>(dynamic.begin(), dynamic.end())});
+        return;
+      }
       const auto decoded = core::image::to_packed_raster(img.type, img.payload);
       if (!decoded.ok()) {
         ++decode_failures[img.cam];
@@ -1126,7 +1251,7 @@ private:
     // Feed every pending image whose nearest scan is known.
     auto drain_pairer = [&]() {
       while (pairer.has_decidable()) {
-        const auto decision = pairer.decide_front();
+        auto decision = pairer.decide_front();
         feed_image(decision.image, decision.dynamic_points);
       }
     };
@@ -1179,6 +1304,14 @@ private:
         "Error reading the --cam topic(s) for colorization (%s); continuing with the images "
         "read so far.",
         e.what());
+    }
+
+    // Stop accepting work and let the camera workers drain their queues.
+    for (auto & queue : work_queues) {
+      queue->close();
+    }
+    for (auto & worker : workers) {
+      worker.join();
     }
 
     std::vector<core::slam::MapColorizeResult> results;

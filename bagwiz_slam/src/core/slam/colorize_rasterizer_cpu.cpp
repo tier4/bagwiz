@@ -134,16 +134,24 @@ public:
       if (x * x + y * y + z * z > max_range_sq) {
         return std::nullopt;
       }
-      double nx = x / z;
-      double ny = y / z;
+      const double nx = x / z;
+      const double ny = y / z;
       if (apply_distortion) {
-        const auto distorted =
-          image::distort_for_raw_image(nx, ny, distortion_model, cam.d, fx, fy);
-        if (!distorted) {
+        const auto distorted = image::distort_normalized(nx, ny, distortion_model, cam.d);
+        const double u = fx * distorted.x + cx;
+        const double v = fy * distorted.y + cy;
+        if (u < 0.0 || u >= view.width || v < 0.0 || v >= view.height) {
           return std::nullopt;
         }
-        nx = distorted->x;
-        ny = distorted->y;
+        // The fold-back round trip costs several times the forward distortion,
+        // so it runs only for points landing inside the image — the only place
+        // a folded ray can be mistaken for a real projection. Out-of-image
+        // points are rejected either way, so the visible set is unchanged.
+        if (image::distortion_round_trip_fails(
+              nx, ny, distorted, distortion_model, cam.d, fx, fy)) {
+          return std::nullopt;
+        }
+        return std::array<double, 3>{u, v, z};
       }
       const double u = fx * nx + cx;
       const double v = fy * ny + cy;

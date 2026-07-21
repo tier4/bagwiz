@@ -167,6 +167,13 @@ bool is_foldback(
 
 }  // namespace
 
+bool distortion_round_trip_fails(
+  double a, double b, const NormalizedPoint & distorted, DistortionModel model,
+  const std::vector<double> & d, double fx, double fy)
+{
+  return is_foldback(a, b, distorted, model, d, fx, fy);
+}
+
 DistortionModel select_distortion_model(const std::string & name)
 {
   if (name == "equidistant" || name == "fisheye") {
@@ -209,7 +216,7 @@ std::optional<NormalizedPoint> distort_for_raw_image(
   double a, double b, DistortionModel model, const std::vector<double> & d, double fx, double fy)
 {
   const auto distorted = distort_normalized(a, b, model, d);
-  if (is_foldback(a, b, distorted, model, d, fx, fy)) {
+  if (distortion_round_trip_fails(a, b, distorted, model, d, fx, fy)) {
     return std::nullopt;
   }
   return distorted;

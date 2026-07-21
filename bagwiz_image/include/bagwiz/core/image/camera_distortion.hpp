@@ -49,12 +49,22 @@ struct NormalizedPoint
 [[nodiscard]] NormalizedPoint undistort_normalized(
   double xd, double yd, DistortionModel model, const std::vector<double> & d);
 
+// True when the distorted image of the normalized ray (a, b) is a fold-back
+// artifact that must not be used: outside the model's valid domain the forward
+// map is non-injective, so points beyond the camera FOV fold back into the
+// image. Detected by the forward-then-inverse round trip missing the original
+// ray by more than a pixel (fx/fy convert the normalized error to pixels).
+// `distorted` must be distort_normalized(a, b, ...) of the same ray. The round
+// trip is several times the forward distortion's cost, so callers projecting
+// many points should run this only on rays whose distorted projection they
+// will actually use (e.g. those landing inside the image) — the artifact
+// matters nowhere else.
+[[nodiscard]] bool distortion_round_trip_fails(
+  double a, double b, const NormalizedPoint & distorted, DistortionModel model,
+  const std::vector<double> & d, double fx, double fy);
+
 // Distort a normalized ray (a, b) for the raw (unrectified) image, or return
-// nullopt when it is a fold-back artifact that must not be used: outside the
-// model's valid domain the forward map is non-injective, so points beyond the
-// camera FOV fold back into the image. Detected by the forward-then-inverse
-// round trip missing the original ray by more than a pixel (fx/fy convert the
-// normalized error to pixels).
+// nullopt when it is a fold-back artifact (see distortion_round_trip_fails).
 [[nodiscard]] std::optional<NormalizedPoint> distort_for_raw_image(
   double a, double b, DistortionModel model, const std::vector<double> & d, double fx, double fy);
 
