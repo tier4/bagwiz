@@ -190,6 +190,15 @@ TEST(BuildMapperConfig, CapsThreadsAtTheHardwareLimit)
   }
 }
 
+TEST(BuildMapperConfig, ZeroThreadsResolvesToTheHardwareConcurrency)
+{
+  auto args = make_args();
+  args.num_threads = 0;
+  const auto config = build_mapper_config(args, std::nullopt, false, {0.0, 0.0, 0.0});
+  const unsigned int hardware = std::thread::hardware_concurrency();
+  EXPECT_EQ(config.num_threads, hardware > 0 ? static_cast<int>(hardware) : 1);
+}
+
 TEST(ResolveScanProgress, DisabledByTheFlagSkipsTheStatsRead)
 {
   auto args = make_args();

@@ -50,7 +50,7 @@ core::slam::CloudMapperConfig build_mapper_config(
   config.fill_min_inlier_fraction = args.fill_min_inlier_fraction;
   config.submap_max_keyframes = args.submap_max_keyframes;
   config.t_lidar_imu = t_lidar_imu;
-  config.num_threads = cap_threads_at_hardware_limit(args.num_threads);
+  config.num_threads = resolve_threads(args.num_threads);
   config.enable_gnss = !args.gnss_topic.empty();
   config.use_gpu = use_gpu;
   // The fill scan-matches the window scans against the optimized map, so it runs

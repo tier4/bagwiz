@@ -106,7 +106,7 @@ bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
 | `--of <frame>`        | `base_link`  | Tracked body frame. The trajectory is obtained as `T_ref_of` (e.g. `T_map_base_link`).                                                                                               |
 | `-o, --output <path>` | _(unset)_    | Output bag. When omitted, `<input>` is rewritten in place (atomic tmp swap).                                                                                                         |
 | `-w, --overwrite`     | `false`      | Replace `-o/--output` if it already exists. Has no effect in in-place mode.                                                                                                          |
-| `-j, --threads <N>`   | `0`          | Number of worker threads for Pass 2. `0` (or omitted) uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; larger values are capped at hardware concurrency. |
+| `-j, --threads <N>`   | `8`          | Number of worker threads for Pass 2. `0` uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; larger values are capped at hardware concurrency. |
 
 > **Renamed in this release.** `--from` is now `--ref` and `--to` is now `--of`;
 > the values and results are unchanged. Note the mapping is **crossed** —

@@ -14,16 +14,14 @@
 namespace bagwiz::commands
 {
 
-int cap_threads_at_hardware_limit(int num_threads)
+int resolve_threads(const int num_threads)
 {
-  if (num_threads <= 0) {
-    return num_threads;
-  }
   const unsigned int hardware = std::thread::hardware_concurrency();
-  if (hardware == 0) {
-    return num_threads;
+  const int limit = hardware > 0 ? static_cast<int>(hardware) : 1;
+  if (num_threads <= 0) {
+    return limit;
   }
-  return std::min(num_threads, static_cast<int>(hardware));
+  return std::min(num_threads, limit);
 }
 
 }  // namespace bagwiz::commands

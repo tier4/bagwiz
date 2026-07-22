@@ -470,7 +470,7 @@ int run_pcd_undistort(const PcdUndistortArgs & args)
   const std::unordered_set<std::string> pcd_set(args.pcd_topics.begin(), args.pcd_topics.end());
   std::uint64_t total_clouds = 0;
   const int num_threads =
-    resolve_num_threads(args.threads.value_or(0), std::thread::hardware_concurrency());
+    resolve_num_threads(args.threads.value_or(8), std::thread::hardware_concurrency());
   const int status = dispatch_undistort_pass(
     args, *reader, pcd_set, *extrinsics, trajectory, num_threads, total_clouds);
   if (status != 0) {

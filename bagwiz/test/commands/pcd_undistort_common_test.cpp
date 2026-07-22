@@ -268,7 +268,7 @@ TEST_F(PcdUndistortCommonTest, PoseComposeKindMapping)
 
 TEST_F(PcdUndistortCommonTest, ResolveNumThreadsDefaultsAndClamp)
 {
-  EXPECT_EQ(bagwiz::commands::resolve_num_threads(0, 8), 8);   // unset -> hardware
+  EXPECT_EQ(bagwiz::commands::resolve_num_threads(0, 8), 8);   // auto (0) -> hardware
   EXPECT_EQ(bagwiz::commands::resolve_num_threads(-1, 8), 8);  // non-positive -> hardware
   EXPECT_EQ(bagwiz::commands::resolve_num_threads(0, 0), 1);   // unknown hardware -> 1
   EXPECT_EQ(bagwiz::commands::resolve_num_threads(2, 8), 2);   // explicit, under the cap

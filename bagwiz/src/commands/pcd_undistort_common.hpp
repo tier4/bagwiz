@@ -132,8 +132,9 @@ using ExtrinsicMap = std::unordered_map<std::string, std::optional<geometry_msgs
   const std::unordered_map<std::string, PcdTopicState> & states, const char * logger);
 
 // Worker count for the parallel pass: --threads, clamped to the hardware
-// concurrency when that is known, and defaulting to it (1 when unknown) when
-// --threads is unset or non-positive.
+// concurrency when that is known. A non-positive value (0 = "auto") resolves
+// to the hardware concurrency (1 when unknown); the CLI default of 8 is
+// applied by the caller before this function sees the value.
 [[nodiscard]] int resolve_num_threads(int requested, unsigned int hardware);
 
 }  // namespace bagwiz::commands

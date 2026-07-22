@@ -220,15 +220,15 @@ void register_gpu_linearization_hook_once()
 }
 #endif
 
-// Build preprocessor params. A non-positive num_threads falls back to the
-// default (4) so both stages share the same baseline; otherwise they share
-// the requested thread budget because they run sequentially. input_resolution
-// and the range crop are written onto GLIM's stock preprocess fields (which
-// bagwiz otherwise leaves at their defaults, running GLIM with no config dir).
+// Build preprocessor params. Preprocessing and odometry share the run's
+// thread budget (CloudMapperConfig::num_threads) because they run sequentially.
+// input_resolution and the range crop are written onto GLIM's stock preprocess
+// fields (which bagwiz otherwise leaves at their defaults, running GLIM with no
+// config dir).
 glim::CloudPreprocessorParams make_preprocessor_params(const CloudMapperConfig & cfg)
 {
   glim::CloudPreprocessorParams params;
-  params.num_threads = cfg.num_threads > 0 ? cfg.num_threads : 4;
+  params.num_threads = cfg.num_threads;
   params.downsample_resolution = cfg.input_resolution;
   params.distance_near_thresh = cfg.range_min;
   params.distance_far_thresh = cfg.range_max;
@@ -248,7 +248,7 @@ ScanMatchParams make_window_fill_params(const CloudMapperConfig & cfg)
   // Without this the end-window fill — up to a full odometry smoother
   // window of scans (~50 at 10 Hz), registered sequentially — dominates
   // finish() on LiDAR-only runs (measured 61 s -> 6.9 s at --threads 16).
-  params.num_threads = cfg.num_threads > 0 ? cfg.num_threads : 1;
+  params.num_threads = cfg.num_threads;
   return params;
 }
 

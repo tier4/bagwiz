@@ -26,9 +26,9 @@
 namespace bagwiz::commands
 {
 
-// Effective thread count for the colorize pass: --threads capped at the
-// host's hardware concurrency, falling back to a default when the argument is
-// not positive.
+// Effective thread count for the colorize pass: --threads resolved the same
+// way as the mapping run (0 = hardware concurrency, positive values capped at
+// it).
 [[nodiscard]] int colorize_thread_count(int num_threads);
 
 // The camera-independent geometry pre-pass (kd-tree, normals, spacings),

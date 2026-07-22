@@ -23,8 +23,8 @@ namespace
 {
 using bagwiz::commands::build_camera_colorizers;
 using bagwiz::commands::build_shared_colorize_geometry;
-using bagwiz::commands::cap_threads_at_hardware_limit;
 using bagwiz::commands::colorize_thread_count;
+using bagwiz::commands::resolve_threads;
 using bagwiz::core::TrajectoryPose;
 
 TrajectoryPose make_pose(std::int64_t stamp_ns)
@@ -47,12 +47,6 @@ bagwiz::core::image::CameraInfo make_pinhole()
   return info;
 }
 
-TEST(ColorizeThreadCount, NonPositiveFallsBackToTheDefault)
-{
-  EXPECT_EQ(colorize_thread_count(0), 8);
-  EXPECT_EQ(colorize_thread_count(-3), 8);
-}
-
 TEST(ColorizeThreadCount, PositivePassesThroughTheHardwareCap)
 {
   EXPECT_EQ(colorize_thread_count(1), 1);
@@ -62,10 +56,21 @@ TEST(ColorizeThreadCount, PositivePassesThroughTheHardwareCap)
   }
 }
 
-TEST(CapThreads, NonPositiveValuesPassThrough)
+TEST(ResolveThreads, ZeroResolvesToTheHardwareConcurrency)
 {
-  EXPECT_EQ(cap_threads_at_hardware_limit(0), 0);
-  EXPECT_EQ(cap_threads_at_hardware_limit(-3), -3);
+  const unsigned int hardware = std::thread::hardware_concurrency();
+  const int expected = hardware > 0 ? static_cast<int>(hardware) : 1;
+  EXPECT_EQ(resolve_threads(0), expected);
+  EXPECT_EQ(resolve_threads(-3), expected);
+}
+
+TEST(ResolveThreads, PositiveValuesPassThroughUnderTheCap)
+{
+  EXPECT_EQ(resolve_threads(1), 1);
+  const unsigned int hardware = std::thread::hardware_concurrency();
+  if (hardware > 1) {
+    EXPECT_EQ(resolve_threads(static_cast<int>(hardware) + 1), static_cast<int>(hardware));
+  }
 }
 
 TEST(BuildSharedColorizeGeometry, CoversEveryPoint)

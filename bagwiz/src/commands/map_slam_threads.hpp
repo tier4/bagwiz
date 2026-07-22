@@ -17,11 +17,11 @@
 namespace bagwiz::commands
 {
 
-// Clamp an explicit --threads value to the host's hardware concurrency so the
-// user cannot oversubscribe the machine. A value <= 0 or a concurrency that
-// cannot be queried leaves the argument unchanged (the caller applies
-// defaults).
-[[nodiscard]] int cap_threads_at_hardware_limit(int num_threads);
+// Resolve --threads to an effective worker count. 0 means "auto": the host's
+// hardware concurrency (1 when it cannot be queried). A positive value is
+// clamped to the hardware concurrency so the user cannot oversubscribe the
+// machine.
+[[nodiscard]] int resolve_threads(int num_threads);
 
 }  // namespace bagwiz::commands
 

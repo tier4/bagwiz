@@ -137,8 +137,8 @@ private:
     sub
       ->add_option(
         "-j,--threads", undistort_args_.threads,
-        "Number of worker threads for deskew (0=default, 1=sync, default: hardware concurrency). "
-        "Values above hardware concurrency are capped.")
+        "Number of worker threads for deskew (default: 8; 0 = hardware concurrency, "
+        "1 = sync). Values above hardware concurrency are capped.")
       ->check(CLI::Range(0, 256));
     sub->callback([this]() { selected_ = Subcommand::kUndistort; });
   }

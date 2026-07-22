@@ -115,8 +115,7 @@ struct MapSlamArgs
   bool fill_end = true;
 
   // Number of CPU threads for GLIM and trajectory endpoint (warmup/cooldown)
-  // fill. A non-positive value falls back to each stage's default (GLIM
-  // preprocessor 4; fill 1).
+  // fill. 0 resolves to the host's hardware concurrency.
   int num_threads = 8;
 
   // SLAM backend selection: "auto" (default), "cpu", or "cuda".

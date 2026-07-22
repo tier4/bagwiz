@@ -56,7 +56,7 @@ inline Eigen::Isometry3d to_isometry(const SensorTransform & t)
 
 // Build the odometry backend, returned as the common base so callers stay
 // backend-agnostic (insert_frame / insert_imu / get_remaining_frames are virtual).
-// A non-positive num_threads falls back to the default (4).
+// num_threads must be positive.
 //
 // Selection: with an extrinsic -> LiDAR-IMU (GPU when use_gpu, else CPU); without
 // one -> LiDAR-only CT (GLIM has no GPU LiDAR-only backend, so use_gpu changes
@@ -67,14 +67,12 @@ inline Eigen::Isometry3d to_isometry(const SensorTransform & t)
 inline std::unique_ptr<glim::OdometryEstimationBase> make_odometry_estimator(
   const std::optional<SensorTransform> & t_lidar_imu, int num_threads = 4, bool use_gpu = false)
 {
-  const int threads = num_threads > 0 ? num_threads : 4;
-
   if (use_gpu) {
 #ifdef BAGWIZ_WITH_SLAM_CUDA
     if (t_lidar_imu.has_value()) {
       glim::OdometryEstimationGPUParams params;
       params.T_lidar_imu = to_isometry(*t_lidar_imu);
-      params.num_threads = threads;
+      params.num_threads = num_threads;
       return std::make_unique<glim::OdometryEstimationGPU>(params);
     }
     // --backend cuda without --imu: GLIM has no GPU LiDAR-only odometry, so odometry
@@ -90,12 +88,12 @@ inline std::unique_ptr<glim::OdometryEstimationBase> make_odometry_estimator(
   if (t_lidar_imu.has_value()) {
     glim::OdometryEstimationCPUParams params;
     params.T_lidar_imu = to_isometry(*t_lidar_imu);
-    params.num_threads = threads;
+    params.num_threads = num_threads;
     return std::make_unique<glim::OdometryEstimationCPU>(params);
   }
 
   glim::OdometryEstimationCTParams params;
-  params.num_threads = threads;
+  params.num_threads = num_threads;
   return std::make_unique<glim::OdometryEstimationCT>(params);
 }
 
