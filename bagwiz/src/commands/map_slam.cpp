@@ -1097,7 +1097,7 @@ private:
     std::vector<std::array<std::uint8_t, 3>> map_colors;
     if (!args_.image_topics.empty()) {
       core::slam::FinalizeSpinner spinner("Colorizing map", progress_on);
-      colorize_map(map, map_colors);
+      colorize_map(map, map_colors, use_gpu_);
     }
 
     // Apply the optional --frame remapping before writing.
@@ -1140,7 +1140,8 @@ private:
   // (map.pcd is then written without an rgb field) rather than discarding a
   // finished SLAM run.
   void colorize_map(
-    const core::slam::CloudMap & map, std::vector<std::array<std::uint8_t, 3>> & colors)
+    const core::slam::CloudMap & map, std::vector<std::array<std::uint8_t, 3>> & colors,
+    bool use_gpu)
   {
     const std::size_t cam_count = args_.image_topics.size();
     const int threads = colorize_thread_count(args_.num_threads);
@@ -1157,7 +1158,7 @@ private:
     // once and share it between every camera's MapColorizer.
     const auto geometry = build_shared_colorize_geometry(map.points, threads);
     auto colorizers = build_camera_colorizers(
-      camera_infos_, t_cloud_cams_, args_.range_max, sweep_threads, geometry, map.points,
+      camera_infos_, t_cloud_cams_, args_.range_max, sweep_threads, use_gpu, geometry, map.points,
       map.trajectory);
 
     std::unique_ptr<io::BagReader> reader;

@@ -235,8 +235,13 @@ if(BAGWIZ_WITH_SLAM)
     endif()
     enable_language(CUDA)
     find_package(CUDAToolkit REQUIRED)
-    target_sources(bagwiz_slam_glim PRIVATE src/core/slam/cloud_voxelize_gpu.cu)
-    set_source_files_properties(src/core/slam/cloud_voxelize_gpu.cu PROPERTIES LANGUAGE CUDA)
+    target_sources(bagwiz_slam_glim PRIVATE
+      src/core/slam/cloud_voxelize_gpu.cu
+      src/core/slam/colorize_rasterizer_gpu.cu)
+    set_source_files_properties(
+      src/core/slam/cloud_voxelize_gpu.cu
+      src/core/slam/colorize_rasterizer_gpu.cu
+      PROPERTIES LANGUAGE CUDA)
     target_link_libraries(bagwiz_slam_glim PUBLIC CUDA::cudart)
     target_compile_definitions(bagwiz_slam_glim PUBLIC BAGWIZ_WITH_SLAM_CUDA)
     # CUDA::cudart is an imported target this static archive references from
@@ -470,6 +475,12 @@ if(BUILD_TESTING)
       ament_add_gtest(bagwiz_slam_cloud_mapper_gpu_test test/core/slam/cloud_mapper_gpu_test.cpp)
       target_link_libraries(bagwiz_slam_cloud_mapper_gpu_test bagwiz_slam_glim CUDA::cudart)
       target_compile_definitions(bagwiz_slam_cloud_mapper_gpu_test PRIVATE
+        BAGWIZ_WITH_SLAM BAGWIZ_WITH_SLAM_CUDA)
+
+      ament_add_gtest(bagwiz_slam_colorize_rasterizer_gpu_test
+        test/core/slam/colorize_rasterizer_gpu_test.cpp)
+      target_link_libraries(bagwiz_slam_colorize_rasterizer_gpu_test bagwiz_slam_glim CUDA::cudart)
+      target_compile_definitions(bagwiz_slam_colorize_rasterizer_gpu_test PRIVATE
         BAGWIZ_WITH_SLAM BAGWIZ_WITH_SLAM_CUDA)
     endif()
 

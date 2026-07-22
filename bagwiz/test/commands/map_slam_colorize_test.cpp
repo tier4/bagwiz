@@ -91,8 +91,8 @@ TEST(BuildCameraColorizers, BuildsOneWorkingColorizerPerCamera)
   const std::vector<TrajectoryPose> trajectory = {make_pose(0), make_pose(1'000'000'000)};
   const auto geometry = build_shared_colorize_geometry(points, 1);
 
-  auto colorizers =
-    build_camera_colorizers(camera_infos, t_cloud_cams, 100.0, 1, geometry, points, trajectory);
+  auto colorizers = build_camera_colorizers(
+    camera_infos, t_cloud_cams, 100.0, 1, false, geometry, points, trajectory);
   ASSERT_EQ(colorizers.size(), 2U);
 
   // Wiring smoke: an in-span, correctly-sized image is accepted and reduces.

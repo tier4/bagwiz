@@ -44,10 +44,14 @@ namespace bagwiz::commands
 // geometry farther than --max-range from any single viewpoint was never
 // captured in one scan either. `points` / `trajectory` must outlive the
 // returned colorizers.
+//
+// When `use_gpu` is true and this binary was built with BAGWIZ_WITH_SLAM_CUDA,
+// a CUDA ColorizeRasterizer is injected into each MapColorizer; otherwise the
+// CPU rasterizer is used.
 [[nodiscard]] std::vector<std::unique_ptr<core::slam::MapColorizer>> build_camera_colorizers(
   std::span<const core::image::CameraInfo> camera_infos,
   std::span<const core::slam::SensorTransform> t_cloud_cams, double range_max, int threads,
-  std::shared_ptr<const core::slam::ColorizeGeometry> geometry,
+  bool use_gpu, std::shared_ptr<const core::slam::ColorizeGeometry> geometry,
   std::span<const std::array<float, 3>> points, std::span<const core::TrajectoryPose> trajectory);
 
 }  // namespace bagwiz::commands

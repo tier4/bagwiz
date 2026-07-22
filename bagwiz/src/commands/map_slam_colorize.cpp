@@ -10,6 +10,12 @@
 
 #include "map_slam_threads.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
+#include "bagwiz/core/slam/colorize_rasterizer.hpp"
+
+#ifdef BAGWIZ_WITH_SLAM_CUDA
+#include "bagwiz/core/slam/colorize_rasterizer_gpu.hpp"
+#endif
+
 #include <memory>
 #include <vector>
 
@@ -32,7 +38,7 @@ std::shared_ptr<const core::slam::ColorizeGeometry> build_shared_colorize_geomet
 std::vector<std::unique_ptr<core::slam::MapColorizer>> build_camera_colorizers(
   std::span<const core::image::CameraInfo> camera_infos,
   std::span<const core::slam::SensorTransform> t_cloud_cams, double range_max, int threads,
-  std::shared_ptr<const core::slam::ColorizeGeometry> geometry,
+  bool use_gpu, std::shared_ptr<const core::slam::ColorizeGeometry> geometry,
   std::span<const std::array<float, 3>> points, std::span<const core::TrajectoryPose> trajectory)
 {
   std::vector<std::unique_ptr<core::slam::MapColorizer>> colorizers;
@@ -45,8 +51,20 @@ std::vector<std::unique_ptr<core::slam::MapColorizer>> build_camera_colorizers(
     // single viewpoint was never captured in one scan either.
     config.rasterizer.max_range = range_max;
     config.rasterizer.num_threads = threads;
+
+    std::unique_ptr<core::slam::ColorizeRasterizer> rasterizer;
+    // In non-CUDA builds use_gpu is ignored (CPU rasterizer is the only option).
+    (void)use_gpu;
+#ifdef BAGWIZ_WITH_SLAM_CUDA
+    if (use_gpu) {
+      rasterizer = core::slam::make_gpu_colorize_rasterizer(
+        points,
+        geometry ? std::span<const float>(geometry->spacings) : std::span<const float>{}, config.rasterizer,
+        geometry ? &geometry->tree : nullptr);
+    }
+#endif
     colorizers.push_back(
-      std::make_unique<core::slam::MapColorizer>(config, geometry, points, trajectory));
+      std::make_unique<core::slam::MapColorizer>(config, geometry, points, trajectory, std::move(rasterizer)));
   }
   return colorizers;
 }
