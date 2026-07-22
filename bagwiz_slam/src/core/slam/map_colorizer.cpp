@@ -236,6 +236,7 @@ std::optional<MapColorizer::ResolvedView> MapColorizer::resolve_colorize_view(
   std::int64_t stamp_ns, std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height,
   std::span<const std::array<float, 3>> dynamic_points)
 {
+  (void)dynamic_points;
   if (points_.empty() || trajectory_.empty()) {
     return std::nullopt;
   }
@@ -290,7 +291,6 @@ std::optional<MapColorizer::ResolvedView> MapColorizer::resolve_colorize_view(
   resolved.view.t_cam_world = t_cam_world.t;
   resolved.view.width = width;
   resolved.view.height = height;
-  rasterizer_->visible_points(resolved.view, dynamic_points, visible_scratch_);
   return resolved;
 }
 
@@ -298,7 +298,7 @@ int MapColorizer::num_sweep_threads() const
 {
   return std::clamp(
     config_.rasterizer.num_threads, 1,
-    static_cast<int>(std::max<std::size_t>(1, visible_scratch_.size())));
+    static_cast<int>(std::max<std::size_t>(1, pending_scratch_.size())));
 }
 
 void MapColorizer::weight_and_sample(
@@ -453,11 +453,31 @@ bool MapColorizer::add_image(
     ++images_skipped_;
     return false;
   }
-  // The per-image sweeps are independent per point, so each runs over
-  // num_sweep_threads() chunks (merged in chunk order, keeping the result
-  // deterministic for any thread count): weight + sample, gain vote, then
-  // gain-apply + reservoir-add.
-  weight_and_sample(bgr, width, height, resolved->cam_center);
+
+  // The rasterizer either performs weighting + sampling on the device
+  // (avoiding a CPU round-trip of the visible point list) or returns the
+  // visible points for a CPU weight-and-sample pass.
+  if (rasterizer_->can_sample()) {
+    const ObservationWeightParams weight_params{
+      config_.weight_distance_ref, config_.weight_sharpness_g0, config_.weight_border_margin_px};
+    const std::span<const std::array<float, 3>> normals =
+      geometry_ ? std::span<const std::array<float, 3>>(geometry_->normals)
+                : std::span<const std::array<float, 3>>{};
+    rasterizer_->sample_observations(
+      resolved->view, bgr, dynamic_points, resolved->cam_center, normals, config_.use_weights,
+      weight_params, config_.weight_min, observations_scratch_);
+    pending_scratch_.resize(observations_scratch_.size());
+    for (std::size_t i = 0; i < observations_scratch_.size(); ++i) {
+      const auto & o = observations_scratch_[i];
+      pending_scratch_[i] = PendingObservation{o.index, o.r, o.g, o.b, o.weight};
+    }
+  } else {
+    rasterizer_->visible_points(resolved->view, dynamic_points, visible_scratch_);
+    weight_and_sample(bgr, width, height, resolved->cam_center);
+  }
+
+  // Gain compensation and reservoir accumulation are backend-independent and
+  // run over pending_scratch_.
   const std::array<double, 3> gain = estimate_image_gain();
   reservoir_add_all(gain);
   ++images_used_;

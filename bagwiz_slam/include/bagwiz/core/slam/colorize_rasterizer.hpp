@@ -29,6 +29,10 @@
 namespace bagwiz::core::slam
 {
 
+// Weight parameters used by ColorizeRasterizer::sample_observations(). Defined
+// in colorize_weight.hpp; forward-declared here to avoid a circular include.
+struct ObservationWeightParams;
+
 // One camera view to rasterize: the world->camera rigid transform and the
 // intrinsics of the RAW (unrectified) image, already rescaled to the
 // delivered image resolution.
@@ -50,6 +54,19 @@ struct VisiblePoint
   double u = 0.0;
   double v = 0.0;
   float depth = 0.0F;
+};
+
+// One weighted color observation produced by a rasterizer that implements the
+// optional sample_observations() fast path. Colors are in RGB order and
+// weights are the product of the distance, incidence, sharpness and border
+// terms (or 1.0 when weighting is disabled).
+struct ColorizeObservation
+{
+  std::uint32_t index = 0;  // into the map points span
+  double r = 0.0;
+  double g = 0.0;
+  double b = 0.0;
+  double weight = 0.0;
 };
 
 struct ColorizeRasterizerConfig
@@ -138,6 +155,38 @@ public:
   virtual void visible_points(
     const ColorizeView & view, std::span<const std::array<float, 3>> dynamic_points,
     std::vector<VisiblePoint> & out) = 0;
+
+  // Optional fast path: true when this rasterizer can also weight and sample
+  // the image on the device. When true, MapColorizer calls
+  // sample_observations() instead of visible_points() + weight_and_sample(),
+  // avoiding a CPU round-trip of the visible point list.
+  [[nodiscard]] virtual bool can_sample() const { return false; }
+
+  // Produce weighted, sampled observations directly. Called only when
+  // can_sample() returns true. `bgr` is the delivered image raster,
+  // `dynamic_points` the occluder scan, `cam_center` the camera center in the
+  // world frame, and `normals` the per-point geometry normals (may be empty).
+  // `use_weights` selects whether the weight product is computed or forced to
+  // 1.0. Observations whose weight is below `weight_min` are dropped. `out` is
+  // cleared first.
+  virtual void sample_observations(
+    const ColorizeView & view, std::span<const std::byte> bgr,
+    std::span<const std::array<float, 3>> dynamic_points,
+    const std::array<double, 3> & cam_center,
+    std::span<const std::array<float, 3>> normals, bool use_weights,
+    const ObservationWeightParams & params, double weight_min,
+    std::vector<ColorizeObservation> & out)
+  {
+    (void)view;
+    (void)bgr;
+    (void)dynamic_points;
+    (void)cam_center;
+    (void)normals;
+    (void)use_weights;
+    (void)params;
+    (void)weight_min;
+    (void)out;
+  }
 };
 
 // CPU ColorizeRasterizer, always available. `points` and `spacings` are

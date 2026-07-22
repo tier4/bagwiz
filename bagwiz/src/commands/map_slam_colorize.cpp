@@ -59,8 +59,10 @@ std::vector<std::unique_ptr<core::slam::MapColorizer>> build_camera_colorizers(
     if (use_gpu) {
       rasterizer = core::slam::make_gpu_colorize_rasterizer(
         points,
-        geometry ? std::span<const float>(geometry->spacings) : std::span<const float>{}, config.rasterizer,
-        geometry ? &geometry->tree : nullptr);
+        geometry ? std::span<const float>(geometry->spacings) : std::span<const float>{},
+        geometry ? std::span<const std::array<float, 3>>(geometry->normals)
+                 : std::span<const std::array<float, 3>>{},
+        config.rasterizer, geometry ? &geometry->tree : nullptr);
     }
 #endif
     colorizers.push_back(

@@ -6,8 +6,10 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
+#include "bagwiz/core/image/sampling.hpp"
 #include "bagwiz/core/slam/colorize_rasterizer.hpp"
 #include "bagwiz/core/slam/colorize_rasterizer_gpu.hpp"
+#include "bagwiz/core/slam/colorize_weight.hpp"
 
 #include <cuda_runtime_api.h>
 #include <gtest/gtest.h>
@@ -78,7 +80,7 @@ TEST_F(ColorizeRasterizerGpuTest, SingleCenterPointMatchesCpu)
   config.splat = false;
 
   auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, config);
-  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, config);
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, {}, config);
   ASSERT_NE(gpu, nullptr);
 
   std::vector<slam::VisiblePoint> cpu_visible;
@@ -110,7 +112,7 @@ TEST_F(ColorizeRasterizerGpuTest, OcclusionMatchesCpu)
   config.splat = false;
 
   auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, config);
-  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, config);
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, {}, config);
   ASSERT_NE(gpu, nullptr);
 
   std::vector<slam::VisiblePoint> cpu_visible;
@@ -141,7 +143,7 @@ TEST_F(ColorizeRasterizerGpuTest, SplatClosesHolesBetweenSparseOccluders)
     slam::ColorizeRasterizerConfig config;
     config.splat = splat;
     auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, config);
-    auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, config);
+    auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, {}, config);
     EXPECT_NE(gpu, nullptr);
     std::vector<slam::VisiblePoint> cpu_visible;
     std::vector<slam::VisiblePoint> gpu_visible;
@@ -171,7 +173,7 @@ TEST_F(ColorizeRasterizerGpuTest, DynamicOccluderRejectsFarPoint)
   config.splat = false;
 
   auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, config);
-  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, config);
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, {}, config);
   ASSERT_NE(gpu, nullptr);
 
   std::vector<slam::VisiblePoint> cpu_visible;
@@ -191,13 +193,107 @@ TEST_F(ColorizeRasterizerGpuTest, DynamicReturnOnSameSurfaceKeepsPoint)
   slam::ColorizeRasterizerConfig config;
   config.splat = false;
 
-  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, config);
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, {}, config);
   ASSERT_NE(gpu, nullptr);
 
   std::vector<slam::VisiblePoint> gpu_visible;
   gpu->visible_points(make_center_view(), dynamic, gpu_visible);
   ASSERT_EQ(gpu_visible.size(), 1U);
   EXPECT_EQ(gpu_visible[0].index, 0U);
+}
+
+// Builds a 4x4 red+green checkerboard BGR24 raster centered at (50, 50).
+std::vector<std::byte> make_checkerboard_raster()
+{
+  constexpr std::uint32_t width = 100;
+  constexpr std::uint32_t height = 100;
+  std::vector<std::byte> raster(static_cast<std::size_t>(width) * height * 3);
+  for (std::uint32_t row = 0; row < height; ++row) {
+    for (std::uint32_t col = 0; col < width; ++col) {
+      const std::size_t idx = (static_cast<std::size_t>(row) * width + col) * 3;
+      const bool red = (col / 4 + row / 4) % 2 == 0;
+      raster[idx + 0] = static_cast<std::byte>(0);      // b
+      raster[idx + 1] = static_cast<std::byte>(red ? 0 : 255);  // g
+      raster[idx + 2] = static_cast<std::byte>(red ? 255 : 0);  // r
+    }
+  }
+  return raster;
+}
+
+TEST_F(ColorizeRasterizerGpuTest, SampleObservationsMatchCpu)
+{
+  const std::vector<std::array<float, 3>> points = {
+    {-0.05F, -0.05F, 5.0F},
+    {0.05F, -0.05F, 5.0F},
+    {-0.05F, 0.05F, 5.0F},
+    {0.05F, 0.05F, 5.0F}};
+  const std::vector<float> spacings(points.size(), 0.05F);
+  const std::vector<std::array<float, 3>> normals(points.size(), {0.0F, 0.0F, 1.0F});
+  slam::ColorizeRasterizerConfig config;
+  config.splat = false;
+
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, normals, config);
+  ASSERT_NE(gpu, nullptr);
+  EXPECT_TRUE(gpu->can_sample());
+
+  const auto raster = make_checkerboard_raster();
+  const slam::ObservationWeightParams params{15.0, 10.0, 16.0};
+  std::vector<slam::ColorizeObservation> gpu_obs;
+  gpu->sample_observations(
+    make_center_view(), std::span<const std::byte>(raster), {}, {0.0, 0.0, 0.0}, normals, true,
+    params, 1e-3, gpu_obs);
+
+  // CPU reference: visible_points + weight_and_sample equivalent.
+  auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, config);
+  std::vector<slam::VisiblePoint> cpu_visible;
+  cpu->visible_points(make_center_view(), {}, cpu_visible);
+
+  auto by_index = [](const slam::ColorizeObservation & a, const slam::ColorizeObservation & b) {
+    return a.index < b.index;
+  };
+  std::sort(gpu_obs.begin(), gpu_obs.end(), by_index);
+
+  ASSERT_EQ(gpu_obs.size(), cpu_visible.size());
+  for (std::size_t i = 0; i < cpu_visible.size(); ++i) {
+    const auto & vp = cpu_visible[i];
+    const auto it = std::lower_bound(
+      gpu_obs.begin(), gpu_obs.end(), slam::ColorizeObservation{vp.index, 0, 0, 0, 0}, by_index);
+    ASSERT_NE(it, gpu_obs.end());
+    ASSERT_EQ(it->index, vp.index);
+
+    const auto sample = bagwiz::core::image::bilinear_sample_bgr(
+      std::span<const std::byte>(raster), make_center_view().width, make_center_view().height, vp.u,
+      vp.v);
+    EXPECT_NEAR(it->r, sample[2], 1e-3);
+    EXPECT_NEAR(it->g, sample[1], 1e-3);
+    EXPECT_NEAR(it->b, sample[0], 1e-3);
+
+    const double w = bagwiz::core::slam::compute_observation_weight(
+      vp, points, normals, {0.0, 0.0, 0.0}, std::span<const std::byte>(raster),
+      make_center_view().width, make_center_view().height, params);
+    EXPECT_NEAR(it->weight, w, 1e-3);
+  }
+}
+
+TEST_F(ColorizeRasterizerGpuTest, SampleObservationsNoWeights)
+{
+  const std::vector<std::array<float, 3>> points = {{0.0F, 0.0F, 5.0F}};
+  const std::vector<float> spacings = {0.05F};
+  slam::ColorizeRasterizerConfig config;
+  config.splat = false;
+
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, {}, config);
+  ASSERT_NE(gpu, nullptr);
+
+  const auto raster = make_checkerboard_raster();
+  const slam::ObservationWeightParams params{15.0, 10.0, 16.0};
+  std::vector<slam::ColorizeObservation> gpu_obs;
+  gpu->sample_observations(
+    make_center_view(), std::span<const std::byte>(raster), {}, {0.0, 0.0, 0.0}, {}, false, params,
+    1e-3, gpu_obs);
+
+  ASSERT_EQ(gpu_obs.size(), 1U);
+  EXPECT_EQ(gpu_obs[0].weight, 1.0);
 }
 
 }  // namespace

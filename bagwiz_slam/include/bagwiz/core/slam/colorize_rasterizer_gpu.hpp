@@ -28,10 +28,12 @@ namespace bagwiz::core::slam
 // construction time, so the caller can fall back to the CPU rasterizer.
 // `tree` is accepted for API symmetry with the CPU factory but is unused: the
 // GPU path projects the full point span and relies on the per-point max_range
-// cull in the kernel.
+// cull in the kernel. `normals` is uploaded once and reused for every image's
+// incidence-weight computation.
 [[nodiscard]] std::unique_ptr<ColorizeRasterizer> make_gpu_colorize_rasterizer(
   std::span<const std::array<float, 3>> points, std::span<const float> spacings,
-  const ColorizeRasterizerConfig & config, const pointcloud::KdTree * tree = nullptr);
+  std::span<const std::array<float, 3>> normals, const ColorizeRasterizerConfig & config,
+  const pointcloud::KdTree * tree = nullptr);
 
 }  // namespace bagwiz::core::slam
 
