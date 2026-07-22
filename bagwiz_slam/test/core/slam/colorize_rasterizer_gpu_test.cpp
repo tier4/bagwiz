@@ -6,8 +6,9 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/core/slam/colorize_rasterizer.hpp"
 #include "bagwiz/core/slam/colorize_rasterizer_gpu.hpp"
+
+#include "bagwiz/core/slam/colorize_rasterizer.hpp"
 
 #include <cuda_runtime_api.h>
 #include <gtest/gtest.h>
@@ -17,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace

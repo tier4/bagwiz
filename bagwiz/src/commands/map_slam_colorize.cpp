@@ -8,15 +8,15 @@
 
 #include "map_slam_colorize.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
-#include "map_slam_threads.hpp"  // NOLINT(build/include_subdir) src-local shared header
-
 #include "bagwiz/core/slam/colorize_rasterizer.hpp"
+#include "map_slam_threads.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #ifdef BAGWIZ_WITH_SLAM_CUDA
 #include "bagwiz/core/slam/colorize_rasterizer_gpu.hpp"
 #endif
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace bagwiz::commands
@@ -58,13 +58,13 @@ std::vector<std::unique_ptr<core::slam::MapColorizer>> build_camera_colorizers(
 #ifdef BAGWIZ_WITH_SLAM_CUDA
     if (use_gpu) {
       rasterizer = core::slam::make_gpu_colorize_rasterizer(
-        points,
-        geometry ? std::span<const float>(geometry->spacings) : std::span<const float>{}, config.rasterizer,
-        geometry ? &geometry->tree : nullptr);
+        points, geometry ? std::span<const float>(geometry->spacings) : std::span<const float>{},
+        config.rasterizer, geometry ? &geometry->tree : nullptr);
     }
 #endif
     colorizers.push_back(
-      std::make_unique<core::slam::MapColorizer>(config, geometry, points, trajectory, std::move(rasterizer)));
+      std::make_unique<core::slam::MapColorizer>(
+        config, geometry, points, trajectory, std::move(rasterizer)));
   }
   return colorizers;
 }

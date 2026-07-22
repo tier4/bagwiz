@@ -6,9 +6,8 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "bagwiz/core/slam/colorize_rasterizer_gpu.hpp"
-
 #include "bagwiz/core/image/camera_distortion.hpp"
+#include "bagwiz/core/slam/colorize_rasterizer_gpu.hpp"
 
 #include <cuda_runtime_api.h>
 #include <thrust/copy.h>
@@ -38,8 +37,7 @@ namespace
 constexpr std::uint32_t kInfinityBits = 0x7F800000U;
 
 // Distortion model ids for device code (mirror image::DistortionModel).
-enum class GpuDistortionModel : int
-{
+enum class GpuDistortionModel : int {
   kNone = 0,
   kPlumbBob = 1,
   kEquidistant = 2,
@@ -116,8 +114,7 @@ __device__ void device_distort_plumb_bob(
   const double r2 = a * a + b * b;
   const double r4 = r2 * r2;
   const double r6 = r4 * r2;
-  const double radial = (1.0 + k1 * r2 + k2 * r4 + k3 * r6) /
-                        (1.0 + k4 * r2 + k5 * r4 + k6 * r6);
+  const double radial = (1.0 + k1 * r2 + k2 * r4 + k3 * r6) / (1.0 + k4 * r2 + k5 * r4 + k6 * r6);
   out_x = a * radial + 2.0 * p1 * a * b + p2 * (r2 + 2.0 * a * a);
   out_y = b * radial + p1 * (r2 + 2.0 * b * b) + 2.0 * p2 * a * b;
 }
@@ -182,8 +179,7 @@ __device__ void device_undistort_plumb_bob(
     const double r2 = x * x + y * y;
     const double r4 = r2 * r2;
     const double r6 = r4 * r2;
-    const double icd = (1.0 + k4 * r2 + k5 * r4 + k6 * r6) /
-                       (1.0 + k1 * r2 + k2 * r4 + k3 * r6);
+    const double icd = (1.0 + k4 * r2 + k5 * r4 + k6 * r6) / (1.0 + k1 * r2 + k2 * r4 + k3 * r6);
     const double dx = 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x);
     const double dy = p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y;
     const double x_next = (xd - dx) * icd;
@@ -276,11 +272,9 @@ __device__ void device_splat_depth(
     return;
   }
   const int u_min = max(0, static_cast<int>(ceil(u - radius_px)));
-  const int u_max = min(
-    static_cast<int>(width) - 1, static_cast<int>(floor(u + radius_px)));
+  const int u_max = min(static_cast<int>(width) - 1, static_cast<int>(floor(u + radius_px)));
   const int v_min = max(0, static_cast<int>(ceil(v - radius_px)));
-  const int v_max = min(
-    static_cast<int>(height) - 1, static_cast<int>(floor(v + radius_px)));
+  const int v_max = min(static_cast<int>(height) - 1, static_cast<int>(floor(v + radius_px)));
   const double radius_sq = radius_px * radius_px;
   for (int py = v_min; py <= v_max; ++py) {
     const double dy = static_cast<double>(py) - v;
@@ -299,8 +293,8 @@ __device__ void device_splat_depth(
 // radius_px) when the point lands inside the image and passes the distortion
 // round-trip check.
 __device__ bool device_project_point(
-  float3 p, const GpuColorizeView & view, double max_range_sq, double f_avg,
-  double & out_u, double & out_v, float & out_depth, double & out_radius)
+  float3 p, const GpuColorizeView & view, double max_range_sq, double f_avg, double & out_u,
+  double & out_v, float & out_depth, double & out_radius)
 {
   const double x = view.r[0] * p.x + view.r[1] * p.y + view.r[2] * p.z + view.t[0];
   const double y = view.r[3] * p.x + view.r[4] * p.y + view.r[5] * p.z + view.t[1];
@@ -317,8 +311,9 @@ __device__ bool device_project_point(
   device_distort_normalized(nx, ny, view, dx, dy);
   const double u = view.fx * dx + view.cx;
   const double v = view.fy * dy + view.cy;
-  if (u < 0.0 || u >= static_cast<double>(view.width) || v < 0.0 ||
-      v >= static_cast<double>(view.height)) {
+  if (
+    u < 0.0 || u >= static_cast<double>(view.width) || v < 0.0 ||
+    v >= static_cast<double>(view.height)) {
     return false;
   }
   if (device_distortion_round_trip_fails(nx, ny, dx, dy, view)) {
@@ -332,8 +327,8 @@ __device__ bool device_project_point(
 }
 
 __global__ void project_and_splat_kernel(
-  const float3 * points, const float * spacings, std::size_t num_points,
-  GpuColorizeView view, double max_range_sq, bool splat, double splat_radius_max_px, double f_avg,
+  const float3 * points, const float * spacings, std::size_t num_points, GpuColorizeView view,
+  double max_range_sq, bool splat, double splat_radius_max_px, double f_avg,
   std::uint32_t * depth_buffer, GpuVisiblePoint * candidates, std::uint32_t * candidate_count,
   std::uint32_t candidate_capacity)
 {
@@ -356,8 +351,7 @@ __global__ void project_and_splat_kernel(
 
   const std::uint32_t slot = atomicAdd(candidate_count, 1U);
   if (slot < candidate_capacity) {
-    candidates[slot] = GpuVisiblePoint{
-      static_cast<std::uint32_t>(i), u, v, depth};
+    candidates[slot] = GpuVisiblePoint{static_cast<std::uint32_t>(i), u, v, depth};
   }
 }
 
@@ -396,9 +390,8 @@ struct KeepVisible
 
   __device__ bool operator()(const GpuVisiblePoint & c) const
   {
-    const std::size_t pixel =
-      static_cast<std::size_t>(static_cast<std::uint32_t>(c.v)) * width +
-      static_cast<std::uint32_t>(c.u);
+    const std::size_t pixel = static_cast<std::size_t>(static_cast<std::uint32_t>(c.v)) * width +
+                              static_cast<std::uint32_t>(c.u);
     const std::uint32_t dyn_bits = has_dynamic ? dynamic_buffer[pixel] : inf_bits;
     if (dyn_bits != inf_bits) {
       const float dzbuf = __uint_as_float(dyn_bits);
@@ -458,16 +451,14 @@ public:
     }
 
     const GpuColorizeView gpu_view = to_gpu_view(view);
-    const double max_range_sq = config_.max_range > 0.0
-                                  ? config_.max_range * config_.max_range
-                                  : std::numeric_limits<double>::infinity();
+    const double max_range_sq = config_.max_range > 0.0 ? config_.max_range * config_.max_range
+                                                        : std::numeric_limits<double>::infinity();
     const double f_avg = 0.5 * (gpu_view.fx + gpu_view.fy);
 
     d_candidates_.resize(d_points_.size());
     thrust::device_vector<std::uint32_t> d_candidate_count(1, 0U);
 
-    const std::size_t num_blocks =
-      (d_points_.size() + kThreadsPerBlock - 1) / kThreadsPerBlock;
+    const std::size_t num_blocks = (d_points_.size() + kThreadsPerBlock - 1) / kThreadsPerBlock;
     const float * d_spacings_ptr = d_spacings_.empty() ? nullptr : d_spacings_.data().get();
     project_and_splat_kernel<<<static_cast<int>(num_blocks), kThreadsPerBlock>>>(
       d_points_.data().get(), d_spacings_ptr, d_points_.size(), gpu_view, max_range_sq,
@@ -479,8 +470,7 @@ public:
       std::vector<float3> host_dyn(dynamic_points.size());
       std::memcpy(host_dyn.data(), dynamic_points.data(), dynamic_points.size() * sizeof(float3));
       thrust::device_vector<float3> d_dyn(host_dyn.begin(), host_dyn.end());
-      const std::size_t dyn_blocks =
-        (d_dyn.size() + kThreadsPerBlock - 1) / kThreadsPerBlock;
+      const std::size_t dyn_blocks = (d_dyn.size() + kThreadsPerBlock - 1) / kThreadsPerBlock;
       project_and_splat_dynamic_kernel<<<static_cast<int>(dyn_blocks), kThreadsPerBlock>>>(
         d_dyn.data().get(), d_dyn.size(), gpu_view, max_range_sq, config_.dynamic_splat_spacing,
         config_.dynamic_splat_radius_min_px, config_.dynamic_splat_radius_max_px, f_avg,
@@ -516,13 +506,15 @@ public:
     cudaError_t err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
       cudaGetLastError();
-      throw std::runtime_error(std::string("GPU colorize rasterizer failed: ") + cudaGetErrorString(err));
+      throw std::runtime_error(
+        std::string("GPU colorize rasterizer failed: ") + cudaGetErrorString(err));
     }
 
     if (visible_count == 0) {
       return;
     }
-    thrust::host_vector<GpuVisiblePoint> h_visible(d_visible_.begin(), d_visible_.begin() + visible_count);
+    thrust::host_vector<GpuVisiblePoint> h_visible(
+      d_visible_.begin(), d_visible_.begin() + visible_count);
     out.reserve(visible_count);
     for (const auto & c : h_visible) {
       out.push_back(VisiblePoint{c.index, c.u, c.v, c.depth});
