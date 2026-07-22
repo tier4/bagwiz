@@ -9,7 +9,6 @@
 #include "bagwiz/core/slam/colorize_rasterizer_gpu.hpp"
 
 #include "bagwiz/core/image/camera_distortion.hpp"
-#include "bagwiz/core/slam/colorize_weight.hpp"
 
 #include <cuda_runtime_api.h>
 #include <thrust/copy.h>
@@ -414,198 +413,13 @@ constexpr int kThreadsPerBlock = 256;
 
 }  // namespace
 
-// Weighted observation in device memory. Mirrors ColorizeObservation layout
-// but uses plain types suitable for __device__ code and cudaMemcpy.
-struct GpuColorizeObservation
-{
-  std::uint32_t index;
-  double r;
-  double g;
-  double b;
-  double weight;
-};
-
-// Parameters for device-side weight computation, copied out of
-// ObservationWeightParams so the kernel does not touch host data.
-struct GpuWeightParams
-{
-  double distance_ref;
-  double sharpness_g0;
-  double border_margin_px;
-};
-
-__device__ double device_bilerp(const float * map, std::uint32_t width, std::uint32_t height, double u, double v)
-{
-  const double cu = fmin(fmax(u, 0.0), static_cast<double>(width - 1));
-  const double cv = fmin(fmax(v, 0.0), static_cast<double>(height - 1));
-  const std::uint32_t u0 = static_cast<std::uint32_t>(cu);
-  const std::uint32_t v0 = static_cast<std::uint32_t>(cv);
-  const std::uint32_t u1 = min(u0 + 1, width - 1);
-  const std::uint32_t v1 = min(v0 + 1, height - 1);
-  const double fu = cu - static_cast<double>(u0);
-  const double fv = cv - static_cast<double>(v0);
-  const double m00 = map[static_cast<std::size_t>(v0) * width + u0];
-  const double m01 = map[static_cast<std::size_t>(v0) * width + u1];
-  const double m10 = map[static_cast<std::size_t>(v1) * width + u0];
-  const double m11 = map[static_cast<std::size_t>(v1) * width + u1];
-  return (1.0 - fu) * (1.0 - fv) * m00 + fu * (1.0 - fv) * m01 + (1.0 - fu) * fv * m10 +
-         fu * fv * m11;
-}
-
-__device__ void device_bilinear_sample_bgr(
-  const std::byte * bgr, std::uint32_t width, std::uint32_t height, double u, double v, double out[3])
-{
-  const double cu = fmin(fmax(u, 0.0), static_cast<double>(width - 1));
-  const double cv = fmin(fmax(v, 0.0), static_cast<double>(height - 1));
-  const std::uint32_t u0 = static_cast<std::uint32_t>(cu);
-  const std::uint32_t v0 = static_cast<std::uint32_t>(cv);
-  const std::uint32_t u1 = min(u0 + 1, width - 1);
-  const std::uint32_t v1 = min(v0 + 1, height - 1);
-  const double fu = cu - static_cast<double>(u0);
-  const double fv = cv - static_cast<double>(v0);
-  const std::size_t row_stride = static_cast<std::size_t>(width) * 3;
-
-  auto pixel_at = [&](std::uint32_t col, std::uint32_t row, std::size_t channel) -> double {
-    return static_cast<double>(
-      bgr[row * row_stride + col * 3 + channel]);
-  };
-
-  for (std::size_t c = 0; c < 3; ++c) {
-    const double p00 = pixel_at(u0, v0, c);
-    const double p10 = pixel_at(u1, v0, c);
-    const double p01 = pixel_at(u0, v1, c);
-    const double p11 = pixel_at(u1, v1, c);
-    out[c] =
-      (1.0 - fu) * (1.0 - fv) * p00 + fu * (1.0 - fv) * p10 + (1.0 - fu) * fv * p01 + fu * fv * p11;
-  }
-}
-
-__device__ double device_distance_weight(float depth, double distance_ref)
-{
-  const double ref_over_z = distance_ref / static_cast<double>(depth);
-  const double w = ref_over_z * ref_over_z;
-  return fmin(fmax(w, 0.0), 1.0);
-}
-
-__device__ double device_incidence_weight(
-  float3 normal, float3 point, const double cam_center[3])
-{
-  const double nn = static_cast<double>(normal.x) * normal.x +
-                    static_cast<double>(normal.y) * normal.y +
-                    static_cast<double>(normal.z) * normal.z;
-  if (nn > 0.0) {
-    const double dx = static_cast<double>(point.x) - cam_center[0];
-    const double dy = static_cast<double>(point.y) - cam_center[1];
-    const double dz = static_cast<double>(point.z) - cam_center[2];
-    const double len = sqrt(dx * dx + dy * dy + dz * dz);
-    if (len > 0.0) {
-      return fabs(
-               static_cast<double>(normal.x) * dx + static_cast<double>(normal.y) * dy +
-               static_cast<double>(normal.z) * dz) /
-             (sqrt(nn) * len);
-    }
-  }
-  return 1.0;
-}
-
-__device__ double device_sharpness_weight(float g, double sharpness_g0)
-{
-  return sharpness_g0 > 0.0 ? static_cast<double>(g) / (static_cast<double>(g) + sharpness_g0) : 1.0;
-}
-
-__device__ double device_border_weight(
-  double u, double v, std::uint32_t width, std::uint32_t height, double border_margin_px)
-{
-  if (border_margin_px <= 0.0) {
-    return 1.0;
-  }
-  const double edge = fmin(fmin(u, v), fmin(static_cast<double>(width - 1) - u, static_cast<double>(height - 1) - v));
-  return fmin(fmax(edge / border_margin_px, 0.0), 1.0);
-}
-
-__global__ void sobel_gradient_kernel(
-  const std::byte * bgr, std::uint32_t width, std::uint32_t height, float * magnitude)
-{
-  const std::uint32_t col = blockIdx.x * blockDim.x + threadIdx.x;
-  const std::uint32_t row = blockIdx.y * blockDim.y + threadIdx.y;
-  if (col >= width || row >= height) {
-    return;
-  }
-  const std::size_t pixel = static_cast<std::size_t>(row) * width + col;
-  if (width < 3 || height < 3) {
-    magnitude[pixel] = 0.0F;
-    return;
-  }
-
-  auto luma = [&](std::uint32_t c, std::uint32_t r) -> float {
-    const std::size_t idx = static_cast<std::size_t>(r) * width + c;
-    const double b = static_cast<double>(bgr[idx * 3 + 0]);
-    const double g = static_cast<double>(bgr[idx * 3 + 1]);
-    const double r_ = static_cast<double>(bgr[idx * 3 + 2]);
-    return static_cast<float>(0.114 * b + 0.587 * g + 0.299 * r_);
-  };
-
-  const std::uint32_t c0 = max(1U, min(col, width - 2));
-  const std::uint32_t r0 = max(1U, min(row, height - 2));
-  const float gx =
-    (luma(c0 + 1, r0 - 1) + 2.0F * luma(c0 + 1, r0) + luma(c0 + 1, r0 + 1)) -
-    (luma(c0 - 1, r0 - 1) + 2.0F * luma(c0 - 1, r0) + luma(c0 - 1, r0 + 1));
-  const float gy =
-    (luma(c0 - 1, r0 + 1) + 2.0F * luma(c0, r0 + 1) + luma(c0 + 1, r0 + 1)) -
-    (luma(c0 - 1, r0 - 1) + 2.0F * luma(c0, r0 - 1) + luma(c0 + 1, r0 - 1));
-  magnitude[pixel] = fabsf(gx) + fabsf(gy);
-}
-
-__global__ void sample_observations_kernel(
-  const GpuVisiblePoint * visible, std::size_t visible_count, const float3 * points,
-  const float3 * normals, bool has_normals, const double cam_center[3], const std::byte * bgr,
-  std::uint32_t width, std::uint32_t height, const float * gradient, GpuWeightParams params,
-  bool use_weights, double weight_min, GpuColorizeObservation * out,
-  std::uint32_t * out_count, std::uint32_t out_capacity)
-{
-  const std::size_t i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-  if (i >= visible_count) {
-    return;
-  }
-  const GpuVisiblePoint & vp = visible[i];
-
-  double weight = 1.0;
-  if (use_weights) {
-    const double w_dist = device_distance_weight(vp.depth, params.distance_ref);
-    double w_inc = 1.0;
-    if (has_normals && vp.index < static_cast<std::uint32_t>(-1)) {
-      w_inc = device_incidence_weight(normals[vp.index], points[vp.index], cam_center);
-    }
-    const double g = device_bilerp(gradient, width, height, vp.u, vp.v);
-    const double w_sharp = device_sharpness_weight(static_cast<float>(g), params.sharpness_g0);
-    const double w_border = device_border_weight(vp.u, vp.v, width, height, params.border_margin_px);
-    weight = w_dist * w_inc * w_sharp * w_border;
-    if (weight < weight_min) {
-      return;
-    }
-  }
-
-  double rgb[3];
-  device_bilinear_sample_bgr(bgr, width, height, vp.u, vp.v, rgb);
-
-  const std::uint32_t slot = atomicAdd(out_count, 1U);
-  if (slot < out_capacity) {
-    // BGR -> RGB.
-    out[slot] = GpuColorizeObservation{vp.index, rgb[2], rgb[1], rgb[0], weight};
-  }
-}
-
 class GpuColorizeRasterizer : public ColorizeRasterizer
 {
 public:
   GpuColorizeRasterizer(
     std::span<const std::array<float, 3>> points, std::span<const float> spacings,
-    std::span<const std::array<float, 3>> normals, const ColorizeRasterizerConfig & config,
-    const pointcloud::KdTree * /*tree*/)
-  : config_(config),
-    d_points_(points.size()),
-    d_spacings_(points.size()),
-    d_normals_(normals.empty() ? 0 : points.size())
+    const ColorizeRasterizerConfig & config, const pointcloud::KdTree * /*tree*/)
+  : config_(config), d_points_(points.size()), d_spacings_(points.size())
   {
     if (!points.empty()) {
       static_assert(sizeof(std::array<float, 3>) == sizeof(float3), "float3 size mismatch");
@@ -616,106 +430,32 @@ public:
     if (spacings.size() == points.size()) {
       thrust::copy(spacings.begin(), spacings.end(), d_spacings_.begin());
     } else {
+      // Empty or mismatched spacings disable the data-driven splat radius; the
+      // kernel will splat only the center pixel.
       d_spacings_.clear();
       d_spacings_.shrink_to_fit();
     }
-    if (normals.size() == points.size()) {
-      std::vector<float3> host_normals(normals.size());
-      std::memcpy(host_normals.data(), normals.data(), normals.size() * sizeof(float3));
-      thrust::copy(host_normals.begin(), host_normals.end(), d_normals_.begin());
-      has_normals_ = true;
-    }
   }
-
-  [[nodiscard]] bool can_sample() const override { return true; }
 
   void visible_points(
     const ColorizeView & view, std::span<const std::array<float, 3>> dynamic_points,
     std::vector<VisiblePoint> & out) override
   {
     out.clear();
-    project_and_filter(view, dynamic_points);
-    if (d_visible_.empty()) {
-      return;
-    }
-    thrust::host_vector<GpuVisiblePoint> h_visible(d_visible_);
-    out.reserve(h_visible.size());
-    for (const auto & c : h_visible) {
-      out.push_back(VisiblePoint{c.index, c.u, c.v, c.depth});
-    }
-  }
-
-  void sample_observations(
-    const ColorizeView & view, std::span<const std::byte> bgr,
-    std::span<const std::array<float, 3>> dynamic_points,
-    const std::array<double, 3> & cam_center, std::span<const std::array<float, 3>> /*normals*/,
-    bool use_weights, const ObservationWeightParams & params, double weight_min,
-    std::vector<ColorizeObservation> & out) override
-  {
-    out.clear();
-    project_and_filter(view, dynamic_points);
-    if (d_visible_.empty() || bgr.size() != static_cast<std::size_t>(view.width) * view.height * 3) {
+    if (d_points_.empty() || view.width == 0 || view.height == 0) {
       return;
     }
 
-    upload_image(bgr, view.width, view.height);
-    compute_gradient(view.width, view.height);
-
-    d_observations_.resize(d_visible_.size());
-    thrust::device_vector<std::uint32_t> d_out_count(1, 0U);
-
-    GpuWeightParams gpu_params{
-      params.distance_ref, params.sharpness_g0, params.border_margin_px};
-    const double cam_center_arr[3] = {cam_center[0], cam_center[1], cam_center[2]};
-    thrust::device_vector<double> d_cam_center(cam_center_arr, cam_center_arr + 3);
-
-    const std::size_t num_blocks =
-      (d_visible_.size() + kThreadsPerBlock - 1) / kThreadsPerBlock;
-    sample_observations_kernel<<<static_cast<int>(num_blocks), kThreadsPerBlock>>>(
-      d_visible_.data().get(), d_visible_.size(), d_points_.data().get(), d_normals_.data().get(),
-      has_normals_, d_cam_center.data().get(), d_bgr_.data().get(), view.width, view.height,
-      d_gradient_.data().get(), gpu_params, use_weights, weight_min, d_observations_.data().get(),
-      d_out_count.data().get(), static_cast<std::uint32_t>(d_observations_.size()));
-
-    cudaError_t err = cudaDeviceSynchronize();
-    if (err != cudaSuccess) {
-      cudaGetLastError();
-      throw std::runtime_error(std::string("GPU colorize sample failed: ") + cudaGetErrorString(err));
-    }
-
-    std::uint32_t out_count = d_out_count[0];
-    if (out_count > d_observations_.size()) {
-      out_count = static_cast<std::uint32_t>(d_observations_.size());
-    }
-    thrust::host_vector<GpuColorizeObservation> h_obs(d_observations_.begin(), d_observations_.begin() + out_count);
-    out.reserve(h_obs.size());
-    for (const auto & o : h_obs) {
-      out.push_back(ColorizeObservation{o.index, o.r, o.g, o.b, o.weight});
-    }
-  }
-
-private:
-  void ensure_depth_buffers(std::uint32_t width, std::uint32_t height)
-  {
-    const std::size_t num_pixels = static_cast<std::size_t>(width) * height;
-    if (width != depth_width_ || height != depth_height_) {
-      depth_width_ = width;
-      depth_height_ = height;
+    const std::size_t num_pixels = static_cast<std::size_t>(view.width) * view.height;
+    if (view.width != depth_width_ || view.height != depth_height_) {
+      depth_width_ = view.width;
+      depth_height_ = view.height;
       d_depth_buffer_.assign(num_pixels, kInfinityBits);
       d_dynamic_buffer_.assign(num_pixels, kInfinityBits);
     } else {
       thrust::fill(d_depth_buffer_.begin(), d_depth_buffer_.end(), kInfinityBits);
       thrust::fill(d_dynamic_buffer_.begin(), d_dynamic_buffer_.end(), kInfinityBits);
     }
-  }
-
-  void project_and_filter(const ColorizeView & view, std::span<const std::array<float, 3>> dynamic_points)
-  {
-    if (d_points_.empty() || view.width == 0 || view.height == 0) {
-      d_visible_.clear();
-      return;
-    }
-    ensure_depth_buffers(view.width, view.height);
 
     const GpuColorizeView gpu_view = to_gpu_view(view);
     const double max_range_sq = config_.max_range > 0.0
@@ -749,6 +489,10 @@ private:
 
     std::uint32_t candidate_count = d_candidate_count[0];
     if (candidate_count > d_candidates_.size()) {
+      // Atomic counter overflowed the preallocated buffer (extremely unlikely
+      // unless every point projected in-bounds). Clamp and proceed; the overflow
+      // slots are simply lost, matching the CPU rasterizer's behavior for a
+      // degenerate all-visible scenario.
       candidate_count = static_cast<std::uint32_t>(d_candidates_.size());
     }
 
@@ -766,58 +510,40 @@ private:
     auto end_it = thrust::copy_if(
       thrust::device, d_candidates_.begin(), d_candidates_.begin() + candidate_count,
       d_visible_.begin(), predicate);
-    d_visible_.resize(static_cast<std::size_t>(end_it - d_visible_.begin()));
+    const std::size_t visible_count = static_cast<std::size_t>(end_it - d_visible_.begin());
 
+    // Synchronize before reading back; any kernel/launch error surfaces here.
     cudaError_t err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
       cudaGetLastError();
       throw std::runtime_error(std::string("GPU colorize rasterizer failed: ") + cudaGetErrorString(err));
     }
-  }
 
-  void upload_image(std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height)
-  {
-    const std::size_t num_bytes = static_cast<std::size_t>(width) * height * 3;
-    if (d_bgr_.size() != num_bytes) {
-      d_bgr_.resize(num_bytes);
+    if (visible_count == 0) {
+      return;
     }
-    cudaMemcpy(d_bgr_.data().get(), bgr.data(), num_bytes, cudaMemcpyHostToDevice);
-  }
-
-  void compute_gradient(std::uint32_t width, std::uint32_t height)
-  {
-    const std::size_t num_pixels = static_cast<std::size_t>(width) * height;
-    if (d_gradient_.size() != num_pixels) {
-      d_gradient_.resize(num_pixels);
+    thrust::host_vector<GpuVisiblePoint> h_visible(d_visible_.begin(), d_visible_.begin() + visible_count);
+    out.reserve(visible_count);
+    for (const auto & c : h_visible) {
+      out.push_back(VisiblePoint{c.index, c.u, c.v, c.depth});
     }
-    constexpr int kGradBlock = 16;
-    const dim3 block(kGradBlock, kGradBlock);
-    const dim3 grid(
-      (width + kGradBlock - 1) / kGradBlock, (height + kGradBlock - 1) / kGradBlock);
-    sobel_gradient_kernel<<<grid, block>>>(
-      d_bgr_.data().get(), width, height, d_gradient_.data().get());
   }
 
+private:
   ColorizeRasterizerConfig config_;
   thrust::device_vector<float3> d_points_;
   thrust::device_vector<float> d_spacings_;
-  thrust::device_vector<float3> d_normals_;
-  bool has_normals_ = false;
   thrust::device_vector<std::uint32_t> d_depth_buffer_;
   thrust::device_vector<std::uint32_t> d_dynamic_buffer_;
   thrust::device_vector<GpuVisiblePoint> d_candidates_;
   thrust::device_vector<GpuVisiblePoint> d_visible_;
-  thrust::device_vector<std::byte> d_bgr_;
-  thrust::device_vector<float> d_gradient_;
-  thrust::device_vector<GpuColorizeObservation> d_observations_;
   std::uint32_t depth_width_ = 0;
   std::uint32_t depth_height_ = 0;
 };
 
 std::unique_ptr<ColorizeRasterizer> make_gpu_colorize_rasterizer(
   std::span<const std::array<float, 3>> points, std::span<const float> spacings,
-  std::span<const std::array<float, 3>> normals, const ColorizeRasterizerConfig & config,
-  const pointcloud::KdTree * tree)
+  const ColorizeRasterizerConfig & config, const pointcloud::KdTree * tree)
 {
   int device_count = 0;
   if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count <= 0) {
@@ -825,7 +551,7 @@ std::unique_ptr<ColorizeRasterizer> make_gpu_colorize_rasterizer(
     return nullptr;
   }
   try {
-    return std::make_unique<GpuColorizeRasterizer>(points, spacings, normals, config, tree);
+    return std::make_unique<GpuColorizeRasterizer>(points, spacings, config, tree);
   } catch (...) {
     cudaGetLastError();
     return nullptr;

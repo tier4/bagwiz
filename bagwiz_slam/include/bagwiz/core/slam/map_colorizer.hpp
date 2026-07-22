@@ -310,7 +310,6 @@ private:
   };
   std::vector<PendingObservation> pending_scratch_;
   std::vector<std::vector<PendingObservation>> pending_chunks_;  // per worker, merged in order
-  std::vector<ColorizeObservation> observations_scratch_;        // GPU sample_observations() output
   std::array<std::vector<double>, 3> gain_ratio_scratch_;
   std::vector<std::array<std::vector<double>, 3>> gain_ratio_chunks_;  // per worker
 
