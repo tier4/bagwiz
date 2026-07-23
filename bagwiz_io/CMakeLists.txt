@@ -53,6 +53,8 @@ add_library(bagwiz_io
   src/io/bag_factory.cpp
   src/io/bag_open.cpp
   src/io/file_decompressor.cpp
+  src/io/mcap_chunk_prefetch.cpp
+  src/io/mcap_indexed_stream.cpp
   src/io/mcap_reader.cpp
   src/io/mcap_writer.cpp
   src/io/message_decompressor.cpp
@@ -125,6 +127,9 @@ if(BUILD_TESTING)
   # directly (<mcap/writer.hpp>) re-link it explicitly.
   ament_add_gtest(bagwiz_mcap_reader_test test/io/mcap_reader_test.cpp)
   target_link_libraries(bagwiz_mcap_reader_test bagwiz_io ${mcap_vendor_TARGETS})
+
+  ament_add_gtest(bagwiz_mcap_parallel_read_test test/io/mcap_parallel_read_test.cpp)
+  target_link_libraries(bagwiz_mcap_parallel_read_test bagwiz_io ${mcap_vendor_TARGETS})
 
   ament_add_gtest(bagwiz_sqlite3_reader_test test/io/sqlite3_reader_test.cpp)
   target_link_libraries(bagwiz_sqlite3_reader_test bagwiz_io)

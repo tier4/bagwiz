@@ -12,7 +12,8 @@
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/message_decompressor.hpp"
 #include "bagwiz/io/metadata_yaml.hpp"
-#include "shard_multiplexer.hpp"  // NOLINT(build/include_subdir) src-local shared header
+#include "mcap_indexed_stream.hpp"  // NOLINT(build/include_subdir) src-local shared header
+#include "shard_multiplexer.hpp"    // NOLINT(build/include_subdir) src-local shared header
 
 // mcap_vendor ships MCAP as a pre-compiled library, so MCAP_IMPLEMENTATION
 // must NOT be defined here — the symbols are provided via linkage against
@@ -23,6 +24,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -40,6 +42,26 @@ namespace bagwiz::io::detail
 namespace
 {
 constexpr const char * kLogger = "bagwiz.io.mcap";
+
+// Decompress-worker count for the parallel indexed read path. Default 4;
+// BAGWIZ_READ_THREADS overrides it, and 0 or 1 falls back to the synchronous
+// libmcap iteration (the debugging escape hatch).
+int resolve_read_threads()
+{
+  constexpr int kDefault = 4;
+  constexpr int kMax = 16;
+  const char * env = std::getenv("BAGWIZ_READ_THREADS");
+  if (env == nullptr || *env == '\0') {
+    return kDefault;
+  }
+  char * end = nullptr;
+  const long parsed = std::strtol(env, &end, 10);  // NOLINT(runtime/int) strtol API
+  if (end == env || *end != '\0') {
+    BAGWIZ_LOG_WARN(kLogger, "ignoring unparsable BAGWIZ_READ_THREADS='%s'", env);
+    return kDefault;
+  }
+  return static_cast<int>(std::clamp<long>(parsed, 0, kMax));  // NOLINT(runtime/int)
+}
 
 // ---------------------------------------------------------------------------
 // Single .mcap file reader.
@@ -86,6 +108,32 @@ public:
   bool next(RawMessage & out) override
   {
     ensure_iterator();
+    if (parallel_stream_) {
+      ParallelIndexedStream::Message msg;
+      while (parallel_stream_->next(msg)) {
+        auto idx_it = channel_to_topic_idx_.find(msg.channel_id);
+        if (idx_it == channel_to_topic_idx_.end()) {
+          continue;  // channel without a known schema entry, as below
+        }
+        out.topic = &topics_[idx_it->second];
+        out.timestamp_ns = static_cast<int64_t>(msg.log_time);
+        // The stream's payload span stays valid until its next next() call
+        // (the retained chunk buffer is only reused then), which matches the
+        // RawMessage contract — no copy needed on this path.
+        if (decompressor_) {
+          out.payload = decompressor_->decompress(msg.payload);
+        } else {
+          out.payload = msg.payload;
+        }
+        return true;
+      }
+      if (!parallel_stream_->error().empty()) {
+        BAGWIZ_LOG_WARN(
+          kLogger, "parallel mcap read failed for %s: %s", path_.c_str(),
+          parallel_stream_->error().c_str());
+      }
+      return false;
+    }
     if (!it_) {
       return false;
     }
@@ -252,6 +300,26 @@ private:
     // missing (truncated/unchunked bags, or summary-via-fallback-scan
     // recoveries that produced statistics but no ChunkIndex records).
     const bool indexed_ok = reader_.statistics().has_value() && !reader_.chunkIndexes().empty();
+
+    // On the indexed path, serve the same log-time-ordered stream through
+    // ParallelIndexedStream when possible: identical emission order, but the
+    // chunk zstd decompression runs ahead on a small worker pool instead of
+    // stalling the iterating thread — the dominant cost on multi-GB bags.
+    const int read_threads = resolve_read_threads();
+    if (indexed_ok && read_threads > 1 && ParallelIndexedStream::supported(reader_)) {
+      ParallelIndexedStream::Options popts;
+      if (filter_.start_ns) {
+        popts.start_ns = static_cast<std::uint64_t>(*filter_.start_ns);
+      }
+      if (filter_.end_ns) {
+        popts.end_ns = static_cast<std::uint64_t>(*filter_.end_ns);
+      }
+      popts.topic_filter = opts.topicFilter;
+      popts.num_threads = read_threads;
+      parallel_stream_ = std::make_unique<ParallelIndexedStream>(path_, reader_, std::move(popts));
+      return;
+    }
+
     opts.readOrder = indexed_ok ? mcap::ReadMessageOptions::ReadOrder::LogTimeOrder
                                 : mcap::ReadMessageOptions::ReadOrder::FileOrder;
 
@@ -274,6 +342,7 @@ private:
   bool iteration_started_ = false;
   std::unique_ptr<mcap::LinearMessageView> view_;
   std::optional<mcap::LinearMessageView::Iterator> it_;
+  std::unique_ptr<ParallelIndexedStream> parallel_stream_;
   // Stable backing store for the payload returned by next() in the
   // uncompressed path. Lives as long as the reader; each next() overwrites
   // it. Unused when decompressor_ is non-null (the decompressor's own
