@@ -118,6 +118,7 @@ add_library(bagwiz_slam
   src/core/slam/cloud_filters.cpp
   src/core/slam/colorize_rasterizer_cpu.cpp
   src/core/slam/colorize_weight.cpp
+  src/core/slam/dynamic_removal.cpp
   src/core/slam/gnss_alignment.cpp
   src/core/slam/gnss_projector.cpp
   src/core/slam/gnss_sample.cpp
@@ -410,6 +411,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_slam_cloud_filters_test test/core/slam/cloud_filters_test.cpp)
   target_link_libraries(bagwiz_slam_cloud_filters_test bagwiz_slam)
+
+  ament_add_gtest(bagwiz_slam_dynamic_removal_test test/core/slam/dynamic_removal_test.cpp)
+  target_link_libraries(bagwiz_slam_dynamic_removal_test bagwiz_slam)
 
   ament_add_gtest(bagwiz_slam_imu_sample_test test/core/slam/imu_sample_test.cpp)
   target_link_libraries(bagwiz_slam_imu_sample_test bagwiz_slam)

@@ -1080,6 +1080,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //           [--no-progress] [--no-warmup-fill] [--no-cooldown-fill]
 //           [--no-color-propagate] [--fill-min-inliers <f>] [--submap-keyframes <N>]
 //           [--remove-outliers] [--outlier-r <m>] [--outlier-k <N>]
+//           [--remove-dynamic] [--dynamic-res <m>] [--dynamic-ds <m>] [--dynamic-dp <N>]
 //   viewer: `map`(0) `viewer`(1) `<map>`(2)
 //
 // At the action slot (word 1) the candidates are `slam` and `viewer` (or the
@@ -1119,6 +1120,9 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
         {"--backend",
          "--cam",
          "--cam-info",
+         "--dynamic-dp",
+         "--dynamic-ds",
+         "--dynamic-res",
          "--fill-min-inliers",
          "--frame",
          "--gnss",
@@ -1133,6 +1137,7 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
          "--outlier-k",
          "--outlier-r",
          "--overwrite",
+         "--remove-dynamic",
          "--remove-outliers",
          "--submap-keyframes",
          "--threads",

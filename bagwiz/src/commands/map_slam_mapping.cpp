@@ -51,6 +51,10 @@ core::slam::CloudMapperConfig build_mapper_config(
   config.range_max = args.range_max;
   config.fill_min_inlier_fraction = args.fill_min_inlier_fraction;
   config.submap_max_keyframes = args.submap_max_keyframes;
+  config.remove_dynamic_points = args.remove_dynamic;
+  config.dynamic_voxel_size = args.dynamic_resolution;
+  config.dynamic_sensor_offset = args.dynamic_sensor_offset;
+  config.dynamic_neighborhood = args.dynamic_neighborhood;
   config.t_lidar_imu = t_lidar_imu;
   config.num_threads = resolve_threads(args.num_threads);
   config.enable_gnss = !args.gnss_topic.empty();
