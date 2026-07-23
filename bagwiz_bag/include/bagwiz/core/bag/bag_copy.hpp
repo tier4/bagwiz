@@ -13,6 +13,7 @@
 #include "bagwiz/io/bag_io.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -38,9 +39,18 @@ struct BagCopyCounts
   std::uint64_t suppressed = 0;
 };
 
+// Per-message keep decision with access to the full message (see
+// Processor::keep_message). Runs on the reading thread; the RawMessage view is
+// only valid for the duration of the call.
+using MessagePredicate = std::function<bool(const io::RawMessage &)>;
+
 // Iterate `reader` to exhaustion. Messages whose `topic->name` appears
 // in `suppress` are dropped; the rest are forwarded to `writer` with
 // the original `timestamp_ns` and payload preserved.
+//
+// When `keep` is set, it is evaluated for every message before the suppress
+// set; a message it rejects is dropped (counted in `suppressed`). Used by
+// content-dependent filters such as `trim`'s header.stamp window.
 //
 // When `profile_label` is non-empty AND the BAGWIZ_PROFILE environment
 // variable is set, the loop times the read and write stages and logs a
@@ -53,7 +63,8 @@ struct BagCopyCounts
 BagCopyCounts bag_copy_filtered(
   io::BagReader & reader, io::BagWriter & writer, const std::unordered_set<std::string> & suppress,
   std::string_view profile_label = "",
-  pipeline::BackendKind backend = pipeline::BackendKind::Sequential);
+  pipeline::BackendKind backend = pipeline::BackendKind::Sequential,
+  const MessagePredicate & keep = {});
 
 struct BagCopyRenameCounts
 {

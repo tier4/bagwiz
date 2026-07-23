@@ -405,6 +405,48 @@ TEST_F(Sqlite3ReaderTest, FilterByTimeRange)
   EXPECT_EQ(count, 2);
 }
 
+TEST_F(Sqlite3ReaderTest, PayloadTopicsNamingNoTopicSkipsAllPayloads)
+{
+  const auto path = write_fixture_db3(tmp_dir_ / "payload_none");
+
+  auto reader = bagwiz::io::open_read(path);
+  bagwiz::io::ReadFilter f;
+  // A non-empty allow-list that names no topic in the bag: every row comes
+  // back payload-free (the timestamps-only scan idiom from the ReadFilter
+  // contract).
+  f.payload_topics = {""};
+  reader->set_filter(f);
+
+  int count = 0;
+  bagwiz::io::RawMessage msg;
+  while (reader->next(msg)) {
+    EXPECT_TRUE(msg.payload.empty());
+    ++count;
+  }
+  EXPECT_EQ(count, 5);
+}
+
+TEST_F(Sqlite3ReaderTest, TimeFilterEndExclusive)
+{
+  const auto path = write_fixture_db3(tmp_dir_ / "timefilter_end");
+
+  auto reader = bagwiz::io::open_read(path);
+  bagwiz::io::ReadFilter f;
+  // end_ns selects [start, end): the /bar message stamped exactly 2e9 must be
+  // excluded, leaving only the three /foo messages (1e9, 1e9+1, 1e9+2).
+  f.end_ns = 2'000'000'000LL;
+  reader->set_filter(f);
+
+  int count = 0;
+  bagwiz::io::RawMessage msg;
+  while (reader->next(msg)) {
+    EXPECT_EQ(std::string(msg.topic->name), "/foo");
+    EXPECT_LT(msg.timestamp_ns, 2'000'000'000LL);
+    ++count;
+  }
+  EXPECT_EQ(count, 3);
+}
+
 TEST_F(Sqlite3ReaderTest, Stats)
 {
   const auto path = write_fixture_db3(tmp_dir_ / "stats");

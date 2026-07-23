@@ -676,6 +676,24 @@ TEST(FlagCompletionTest, LsDashListsLsFlags)
     run_completion({"bagwiz", "__complete", "2", "bagwiz", "ls", "-"}), "--help\n--long\n-h\n");
 }
 
+// `trim` surfaces its window and output flags plus the implicit help flags,
+// sorted.
+TEST(FlagCompletionTest, TrimDashListsTrimFlags)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "trim", "-"}),
+    "--align\n--both\n--duration\n--end\n--help\n--output\n--overwrite\n--stamp\n--start\n-h\n-o"
+    "\n-w\n");
+}
+
+// The value of `--stamp` completes to its two clock choices.
+TEST(FlagCompletionTest, TrimStampValueCompletes)
+{
+  EXPECT_EQ(
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "trim", "--stamp", ""}),
+    "header\nrecv\n");
+}
+
 // `walk` surfaces its own `--cam-info` flag plus the implicit help flags, sorted.
 // Topic completion is gated off via the `-` prefix, so the binding does
 // not call into the bag reader here.

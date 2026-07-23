@@ -112,7 +112,11 @@ public:
       // Payload-skipped row (see ReadFilter::payload_topics): don't touch the
       // data column at all, so SQLite never reads the message's overflow
       // pages — the whole point of the flag on multi-GB message payloads.
-      if (!payload_topic_ids_.empty() && payload_topic_ids_.count(topic_id) == 0) {
+      // Gate on the caller's name list, not the resolved id set: per the
+      // ReadFilter contract, ANY non-empty allow-list means only the listed
+      // topics carry payload — including a list that names no topic in the
+      // bag, which callers use for timestamps-only scans.
+      if (!filter_.payload_topics.empty() && payload_topic_ids_.count(topic_id) == 0) {
         out.payload = {};
         return true;
       }
@@ -387,7 +391,9 @@ private:
       where.push_back("timestamp >= " + std::to_string(*filter_.start_ns));
     }
     if (filter_.end_ns) {
-      where.push_back("timestamp <= " + std::to_string(*filter_.end_ns));
+      // end_ns is exclusive (ReadFilter selects [start_ns, end_ns)), matching
+      // the MCAP backend's ReadMessageOptions::endTime semantics.
+      where.push_back("timestamp < " + std::to_string(*filter_.end_ns));
     }
 
     // Resolve the payload allow-list (ReadFilter::payload_topics) to topic

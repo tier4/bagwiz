@@ -213,6 +213,8 @@ add_executable(bagwiz
   src/commands/topic_drop.cpp
   src/commands/topic_keep.cpp
   src/commands/topic_rename.cpp
+  src/commands/trim.cpp
+  src/commands/trim_stamp.cpp
 )
 target_include_directories(bagwiz PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # sensor_msgs is needed only by src/commands/cam_info_common.cpp (shared by
@@ -410,6 +412,19 @@ if(BUILD_TESTING)
     src/commands/topic_rename.cpp)
   target_include_directories(bagwiz_topic_rename_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(bagwiz_topic_rename_test ${bagwiz_test_libs} fmt::fmt)
+
+  # trim.cpp is a single TU carrying both run_trim and the TrimCommand
+  # registrar + CLI11 wiring, so the test also compiles registry.cpp and
+  # links CLI11 (completion_test idiom). trim_stamp.hpp is CLI-internal, so
+  # the test adds src/commands to its include path (traj_common idiom).
+  ament_add_gtest(bagwiz_trim_test
+    test/commands/trim_test.cpp
+    src/commands/trim.cpp
+    src/commands/trim_stamp.cpp
+    src/commands/registry.cpp)
+  target_include_directories(bagwiz_trim_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
+  target_link_libraries(bagwiz_trim_test ${bagwiz_test_libs} CLI11::CLI11 fmt::fmt)
 
   # The command test drives the WGS84 projection end to end, so it re-links
   # GeographicLib (a private dep of bagwiz_msg), plus rmw/sensor_msgs for the

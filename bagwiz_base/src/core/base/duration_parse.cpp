@@ -52,7 +52,7 @@ std::int64_t unit_factor_ns(std::string_view unit)
 }  // namespace
 
 // cppcheck-suppress passedByValue  // string_view is the canonical by-value idiom
-std::optional<std::int64_t> parse_duration_ns(std::string_view text)
+std::optional<std::int64_t> parse_duration_ns(std::string_view text, DurationUnitPolicy unit_policy)
 {
   const std::string_view trimmed = trim(text);
   if (trimmed.empty()) {
@@ -69,6 +69,9 @@ std::optional<std::int64_t> parse_duration_ns(std::string_view text)
   }
 
   const std::string_view unit = trim(std::string_view(num_end, buf.c_str() + buf.size() - num_end));
+  if (unit.empty() && unit_policy == DurationUnitPolicy::RequireUnit) {
+    return std::nullopt;  // bare number rejected under RequireUnit
+  }
   const std::int64_t factor = unit_factor_ns(unit);
   if (factor < 0) {
     return std::nullopt;  // unknown unit / trailing garbage

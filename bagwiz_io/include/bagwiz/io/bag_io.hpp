@@ -68,6 +68,9 @@ struct RawMessage
 struct ReadFilter
 {
   std::vector<std::string> topics;  // empty = all topics
+  // Time range as the half-open interval [start_ns, end_ns): start_ns is
+  // inclusive, end_ns is exclusive (matching mcap ReadMessageOptions), on
+  // every backend. Unset bound = unbounded on that side.
   std::optional<int64_t> start_ns;
   std::optional<int64_t> end_ns;
 
@@ -76,10 +79,12 @@ struct ReadFilter
   // empty payload span. This lets the storage layer skip BLOB materialization
   // for rows the caller only needs timestamps from (SQLite3 avoids reading the
   // overflow pages of large messages, which is the dominant I/O cost when
-  // collecting timestamps of multi-GB point-cloud topics). MCAP exposes
-  // payloads unconditionally (chunks are decompressed wholesale), which the
-  // contract permits: callers must treat the payload of a non-listed topic as
-  // unconditionally absent, never as an empty message.
+  // collecting timestamps of multi-GB point-cloud topics). A non-empty list
+  // that names no topic in the bag therefore skips every payload — the
+  // timestamps-only scan idiom. MCAP exposes payloads unconditionally (chunks
+  // are decompressed wholesale), which the contract permits: callers must
+  // treat the payload of a non-listed topic as unconditionally absent, never
+  // as an empty message.
   std::vector<std::string> payload_topics;
 };
 

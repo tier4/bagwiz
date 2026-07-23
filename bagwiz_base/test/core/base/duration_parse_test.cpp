@@ -14,8 +14,9 @@
 
 namespace
 {
+using bagwiz::core::DurationUnitPolicy;
 using bagwiz::core::parse_duration_ns;
-}
+}  // namespace
 
 TEST(ParseDurationNs, UnitSuffixes)
 {
@@ -32,6 +33,30 @@ TEST(ParseDurationNs, NoUnitDefaultsToMilliseconds)
 {
   EXPECT_EQ(parse_duration_ns("50"), 50'000'000);
   EXPECT_EQ(parse_duration_ns("1.5"), 1'500'000);
+}
+
+TEST(ParseDurationNs, RequireUnitRejectsBareNumbers)
+{
+  EXPECT_EQ(parse_duration_ns("50", DurationUnitPolicy::RequireUnit), std::nullopt);
+  EXPECT_EQ(parse_duration_ns("1.5", DurationUnitPolicy::RequireUnit), std::nullopt);
+  EXPECT_EQ(parse_duration_ns(" 5 ", DurationUnitPolicy::RequireUnit), std::nullopt);
+  EXPECT_EQ(parse_duration_ns("-5", DurationUnitPolicy::RequireUnit), std::nullopt);
+}
+
+TEST(ParseDurationNs, RequireUnitAcceptsExplicitUnits)
+{
+  EXPECT_EQ(parse_duration_ns("50ms", DurationUnitPolicy::RequireUnit), 50'000'000);
+  EXPECT_EQ(parse_duration_ns("5s", DurationUnitPolicy::RequireUnit), 5'000'000'000);
+  EXPECT_EQ(parse_duration_ns("3µs", DurationUnitPolicy::RequireUnit), 3'000);
+  EXPECT_EQ(parse_duration_ns("500ns", DurationUnitPolicy::RequireUnit), 500);
+  EXPECT_EQ(parse_duration_ns("0.05s", DurationUnitPolicy::RequireUnit), 50'000'000);
+}
+
+TEST(ParseDurationNs, RequireUnitStillRejectsGarbage)
+{
+  EXPECT_EQ(parse_duration_ns("", DurationUnitPolicy::RequireUnit), std::nullopt);
+  EXPECT_EQ(parse_duration_ns("abc", DurationUnitPolicy::RequireUnit), std::nullopt);
+  EXPECT_EQ(parse_duration_ns("50min", DurationUnitPolicy::RequireUnit), std::nullopt);
 }
 
 TEST(ParseDurationNs, SignedAndFractional)

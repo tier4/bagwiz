@@ -63,6 +63,15 @@ public:
   Processor(Processor &&) noexcept = default;
   Processor & operator=(Processor &&) noexcept = default;
 
+  // Per-message keep decision with access to the full message (timestamp and
+  // payload), evaluated before route(). Default keeps everything — route()
+  // stays the per-topic dispatch; override this only for filters that need
+  // message content, e.g. a time-window predicate on header.stamp. Runs on the
+  // reading thread under every Backend; the same thread-compatibility rules as
+  // route() apply. The RawMessage view is only valid for the duration of the
+  // call.
+  [[nodiscard]] virtual bool keep_message(const io::RawMessage & /*msg*/) const { return true; }
+
   // Decide how to route a message published on `in_topic`. Taken by const
   // reference (not string_view) so set/map lookups stay allocation-free, since
   // the reader hands back the topic name as a std::string.
@@ -91,7 +100,7 @@ public:
 struct RewriteCounts
 {
   std::uint64_t copied = 0;       // messages forwarded to the writer
-  std::uint64_t dropped = 0;      // messages dropped by route() (keep == false)
+  std::uint64_t dropped = 0;      // messages dropped by keep_message() or route() (keep == false)
   std::uint64_t renamed = 0;      // subset of `copied` written under a changed name
   std::uint64_t transformed = 0;  // subset of `copied` whose payload was rewritten
   std::uint64_t skipped = 0;      // messages dropped by transform() (kSkip)

@@ -28,12 +28,41 @@
 namespace bagwiz::core
 {
 
+namespace
+{
+
+// SuppressRouter plus a caller-supplied per-message predicate (see
+// Processor::keep_message). Only instantiated when `keep` is set, so the
+// predicate-free path keeps the plain router's virtual-call profile.
+class PredicateSuppressRouter : public pipeline::SuppressRouter
+{
+public:
+  PredicateSuppressRouter(
+    const std::unordered_set<std::string> & suppress, const MessagePredicate & keep)
+  : pipeline::SuppressRouter(suppress), keep_(keep)
+  {
+  }
+
+  [[nodiscard]] bool keep_message(const io::RawMessage & msg) const override { return keep_(msg); }
+
+private:
+  const MessagePredicate & keep_;
+};
+
+}  // namespace
+
 BagCopyCounts bag_copy_filtered(
   io::BagReader & reader, io::BagWriter & writer, const std::unordered_set<std::string> & suppress,
-  std::string_view profile_label, pipeline::BackendKind backend)
+  std::string_view profile_label, pipeline::BackendKind backend, const MessagePredicate & keep)
 {
-  pipeline::SuppressRouter router(suppress);
   const auto backend_impl = pipeline::make_backend(backend);
+  if (keep) {
+    PredicateSuppressRouter router(suppress, keep);
+    const auto counts =
+      pipeline::run_pipeline(reader, writer, router, *backend_impl, profile_label);
+    return BagCopyCounts{counts.copied, counts.dropped};
+  }
+  pipeline::SuppressRouter router(suppress);
   const auto counts = pipeline::run_pipeline(reader, writer, router, *backend_impl, profile_label);
   return BagCopyCounts{counts.copied, counts.dropped};
 }

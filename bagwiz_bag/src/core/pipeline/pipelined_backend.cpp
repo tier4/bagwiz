@@ -58,6 +58,11 @@ RewriteCounts read_loop(
     // raw.topic is non-null when next() returns true (zero-copy view documented
     // by BagReader::next).
     const auto in_size = static_cast<std::uint64_t>(raw.payload.size());
+    if (!processor.keep_message(raw)) {
+      prof.add_message(in_size, 0);  // read+decompressed but not written
+      ++counts.dropped;
+      continue;
+    }
     const Emit emit = processor.route(raw.topic->name);
     if (!emit.keep) {
       prof.add_message(in_size, 0);  // read+decompressed but not written

@@ -1197,6 +1197,45 @@ std::vector<std::string> complete_ls(const CompletionRequest & request)
   return {};
 }
 
+// `trim <input>` copies only the messages inside a time window. All its flags
+// are surfaced for any `-` word; <input> is a path that falls through to the
+// shell's file completion. The value of `--align` is completed from the bag's
+// topics (any type), mirroring `walk --cam-info`; `--stamp` completes its two
+// clock choices.
+//
+//   trim: `trim`(0) `<input>`(1) [--start <off>] [--end <off>|--duration <len>|--both <off>
+//         |--align <topics>...] [--stamp header|recv] [-o <out>] [-w]
+std::vector<std::string> complete_trim(const CompletionRequest & request)
+{
+  const auto current = current_word(request);
+  if (current.starts_with("-")) {
+    return matching(
+      with_help(
+        {"--align", "--both", "--duration", "--end", "--output", "--overwrite", "--stamp",
+         "--start", "-o", "-w"}),
+      current);
+  }
+
+  if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--stamp") {
+    return matching({"header", "recv"}, current);
+  }
+
+  // Complete the value of `--align` from the bag's topic list. Bail out when
+  // the <input> slot is missing or holds a flag, so we never call the bag
+  // reader on something that is not a bag path.
+  if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--align") {
+    if (request.words.size() <= kFirstCommandArgWord) {
+      return {};
+    }
+    const auto & bag_arg = request.words[kFirstCommandArgWord];
+    if (bag_arg.empty() || bag_arg.starts_with("-")) {
+      return {};
+    }
+    return complete_topics(expand_current_user_home(bag_arg), current, {});
+  }
+  return {};
+}
+
 // `walk <input> <topic>` walks a single topic's messages. Its <topic> positional
 // is completed earlier by try_topic_completion via kTopicBindings (every topic in
 // the bag); <input> is a path that falls through to the shell's file completion.
@@ -1478,6 +1517,9 @@ std::vector<std::string> complete_request(const CompletionRequest & request)
   }
   if (command == "ls") {
     return complete_ls(request);
+  }
+  if (command == "trim") {
+    return complete_trim(request);
   }
   return {};
 }

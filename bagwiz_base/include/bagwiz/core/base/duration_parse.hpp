@@ -16,17 +16,27 @@
 namespace bagwiz::core
 {
 
-// Parse a signed duration with an optional unit suffix into nanoseconds.
+// How parse_duration_ns treats a number without a unit suffix.
+enum class DurationUnitPolicy {
+  DefaultMs,    // bare number is interpreted as milliseconds (historical default)
+  RequireUnit,  // bare number is a parse failure
+};
+
+// Parse a signed duration with a unit suffix into nanoseconds.
 //
 // Grammar:  [+-]? number [unit]
 //   number : a decimal, optionally fractional (e.g. 50, -50, 0.05, 1.5)
-//   unit   : one of "ns", "us", "µs", "ms", "s". NO unit defaults to "ms".
+//   unit   : one of "ns", "us", "µs", "ms", "s". A missing unit follows
+//            `unit_policy`: DefaultMs reads the number as "ms", RequireUnit
+//            rejects it (for options where a bare number would be ambiguous,
+//            e.g. `trim --start`).
 //
 // The value is added to a header.stamp for matching, so the sign is literal:
 // "-50ms" is -50e6 ns, "50ms" is +50e6 ns, "500ns" is 500 ns. Surrounding
 // whitespace is ignored. Returns std::nullopt on any parse failure (missing
-// number, unknown unit, or trailing garbage).
-[[nodiscard]] std::optional<std::int64_t> parse_duration_ns(std::string_view text);
+// number, unknown unit, missing unit under RequireUnit, or trailing garbage).
+[[nodiscard]] std::optional<std::int64_t> parse_duration_ns(
+  std::string_view text, DurationUnitPolicy unit_policy = DurationUnitPolicy::DefaultMs);
 
 }  // namespace bagwiz::core
 
