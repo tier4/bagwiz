@@ -12,6 +12,10 @@
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/pointcloud/cloud_concat.hpp"
 
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -167,6 +171,163 @@ void ConcatAssembler::release(std::size_t group)
     if (ci != cache_.end() && --ci->second.refcount == 0) {
       cache_.erase(ci);
     }
+  }
+}
+
+namespace
+{
+
+// (topic, msg index) cache/dedupe key, same packing as ConcatAssembler's.
+std::uint64_t msg_key(std::size_t topic, std::size_t index)
+{
+  return (static_cast<std::uint64_t>(topic) << 40) | static_cast<std::uint64_t>(index);
+}
+
+}  // namespace
+
+ConcatGroupTracker::ConcatGroupTracker(
+  const std::vector<TopicState> & topics, std::vector<core::pointcloud::SyncGroup> groups)
+: num_topics_(topics.size()), groups_(std::move(groups))
+{
+  refs_.resize(num_topics_);
+  for (std::size_t i = 0; i < num_topics_; ++i) {
+    refs_[i].resize(topics[i].stamps_ns.size());
+  }
+  group_remaining_.assign(groups_.size(), 0);
+  for (std::size_t g = 0; g < groups_.size(); ++g) {
+    for (std::size_t t = 0; t < num_topics_; ++t) {
+      if (groups_[g].picks[t].has_value()) {
+        refs_[t][*groups_[g].picks[t]].push_back(g);
+        ++group_remaining_[g];
+      }
+    }
+  }
+  fired_.assign(groups_.size(), 0);
+}
+
+std::vector<ConcatGroupJob> ConcatGroupTracker::on_message(
+  std::size_t topic, std::size_t index, std::span<const std::byte> payload)
+{
+  std::vector<ConcatGroupJob> jobs;
+  if (index >= refs_[topic].size() || refs_[topic][index].empty()) {
+    return jobs;  // this message is not picked by any group
+  }
+
+  Entry entry;
+  entry.payload = std::make_shared<const std::vector<std::byte>>(payload.begin(), payload.end());
+  entry.refcount = refs_[topic][index].size();
+  cache_.emplace(msg_key(topic, index), std::move(entry));
+
+  for (const std::size_t g : refs_[topic][index]) {
+    if (group_remaining_[g] > 0) {
+      --group_remaining_[g];
+    }
+    if (group_remaining_[g] != 0 || fired_[g] != 0) {
+      continue;
+    }
+    fired_[g] = 1;
+    jobs.push_back(build_job(g));
+  }
+  return jobs;
+}
+
+ConcatGroupJob ConcatGroupTracker::build_job(std::size_t group)
+{
+  ConcatGroupJob job;
+  job.output_stamp_ns = groups_[group].output_stamp_ns;
+  for (std::size_t k = 0; k < num_topics_; ++k) {
+    if (!groups_[group].picks[k].has_value()) {
+      continue;
+    }
+    const std::size_t index = *groups_[group].picks[k];
+    const auto ci = cache_.find(msg_key(k, index));
+    if (ci == cache_.end()) {
+      continue;  // unreachable: a group only fires once every pick arrived
+    }
+    job.picks.push_back({k, index, ci->second.payload});
+    if (--ci->second.refcount == 0) {
+      cache_.erase(ci);
+    }
+  }
+  return job;
+}
+
+ConcatGroupResult process_concat_group(
+  const ConcatGroupJob & job, const std::vector<core::pointcloud::RigidTransform> & extrinsics,
+  const std::string & target_frame, std::size_t num_topics)
+{
+  ConcatGroupResult result;
+  result.stamp_ns = job.output_stamp_ns;
+  // Stable storage for the ConcatInput pointers: reserved upfront so the
+  // vector never reallocates underneath `inputs`.
+  std::vector<core::pointcloud::PointCloud2> clouds;
+  clouds.reserve(job.picks.size());
+  std::vector<core::pointcloud::ConcatInput> inputs;
+  inputs.reserve(job.picks.size());
+
+  for (const auto & pick : job.picks) {
+    ConcatPickOutcome outcome{pick.topic, pick.index, ConcatPickOutcome::Status::kOk};
+    auto parsed = core::pointcloud::parse_pointcloud2(*pick.payload);
+    if (!parsed.ok()) {
+      outcome.status = ConcatPickOutcome::Status::kParseFail;
+      result.picks.push_back(outcome);
+      continue;
+    }
+    auto cloud = std::move(*parsed.cloud);
+    const auto tr = core::pointcloud::transform_cloud_xyz(cloud, extrinsics[pick.topic]);
+    if (!tr.ok) {
+      outcome.status = ConcatPickOutcome::Status::kTransformFail;
+      result.picks.push_back(outcome);
+      continue;
+    }
+    const std::int64_t header_stamp_ns = cloud.timestamp_ns;
+    clouds.push_back(std::move(cloud));
+    inputs.push_back({&clouds.back(), header_stamp_ns});
+    result.picks.push_back(outcome);
+  }
+
+  result.partial = inputs.size() < num_topics;
+  if (!inputs.empty()) {
+    const auto merged = core::pointcloud::concat_clouds(inputs, job.output_stamp_ns, target_frame);
+    if (!merged.ok()) {
+      result.error = merged.error;
+      return result;
+    }
+    result.payload = core::pointcloud::serialize_pointcloud2(*merged.cloud);
+  }
+  return result;
+}
+
+ConcatCounterMerger::ConcatCounterMerger(std::size_t num_topics)
+{
+  counters_.matched.assign(num_topics, 0);
+  counters_.parse_fail.assign(num_topics, 0);
+  counters_.transform_fail.assign(num_topics, 0);
+}
+
+void ConcatCounterMerger::merge(const ConcatGroupResult & result)
+{
+  for (const auto & pick : result.picks) {
+    if (pick.status == ConcatPickOutcome::Status::kOk) {
+      ++counters_.matched[pick.topic];
+      continue;
+    }
+    // The serial pass parses each message once, so a failing pick shared by
+    // several groups must count exactly one failure.
+    if (!failed_seen_.insert(msg_key(pick.topic, pick.index)).second) {
+      continue;
+    }
+    if (pick.status == ConcatPickOutcome::Status::kParseFail) {
+      ++counters_.parse_fail[pick.topic];
+    } else {
+      ++counters_.transform_fail[pick.topic];
+    }
+  }
+  if (result.partial) {
+    ++counters_.partial_groups;
+  }
+  if (!result.payload.empty() && result.error.empty()) {
+    ++counters_.written_groups;
   }
 }
 

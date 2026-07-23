@@ -20,6 +20,7 @@
 #include "bagwiz/io/bag_open.hpp"
 #include "bagwiz/io/topics.hpp"
 #include "pcd_concat_common.hpp"  // NOLINT(build/include_subdir) src-local shared header
+#include "worker_threads.hpp"     // NOLINT(build/include_subdir) src-local shared header
 
 #include <tf2/buffer_core.hpp>
 
@@ -28,13 +29,18 @@
 #include <algorithm>
 #include <chrono>
 #include <cinttypes>
+#include <condition_variable>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <queue>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -411,6 +417,292 @@ int execute_concat_pass(
   return 0;
 }
 
+// One queued work unit of the parallel pass: a fired sync group plus its
+// position in the output order.
+struct GroupWorkItem
+{
+  std::size_t seq = 0;
+  ConcatGroupJob job;
+};
+
+// One output slot in the in-order completion map: either a copy-through
+// message, or (when `group` is set) a processed group destined for the output
+// topic.
+struct ConcatOutputItem
+{
+  std::string topic;
+  std::int64_t timestamp_ns = 0;
+  std::vector<std::byte> payload;
+  std::optional<ConcatGroupResult> group;
+};
+
+// Shared state for the parallel reader / worker pool / collector pipeline
+// (same shape as pcd undistort's ParallelContext).
+struct ConcatParallelContext
+{
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::queue<GroupWorkItem> job_queue;
+  std::map<std::size_t, ConcatOutputItem> completed;
+  std::size_t next_output_seq = 0;
+  std::size_t total_submitted = 0;
+  std::size_t in_flight = 0;
+  std::size_t max_in_flight = 0;
+  bool stop = false;
+  bool reader_done = false;
+};
+
+// Parallel version of Pass B (threads > 1). The reader thread streams the bag
+// and runs the (cheap, arrival-driven) group matching; a fixed-size
+// std::jthread worker pool parses, transforms, concatenates, and serializes
+// each fired group; one collector thread alone calls writer.write(), draining
+// strictly by submission order. Copy-through messages bypass the job queue
+// and go straight into the in-order completion map, so the output message
+// order is identical to the serial pass. On success `counters` holds the
+// serial-identical summary tallies.
+int execute_parallel_concat_pass(
+  const io::WriterFactory & factory, const io::BagReader & reader, const PcdConcatArgs & args,
+  const std::unordered_map<std::string, std::size_t> & topic_index,
+  const std::unordered_set<std::string> & suppress, const io::TopicInfo & out_topic,
+  ConcatGroupTracker & tracker, const std::vector<core::pointcloud::RigidTransform> & extrinsics,
+  const std::string & target_frame, int num_threads, ConcatAssembler::Counters & counters,
+  const char * logger)
+{
+  auto writer = io::open_write_or_log(factory, logger);
+  if (!writer) {
+    return 1;
+  }
+
+  // declare surviving input topics + the new output topic
+  for (const auto & t : reader.topics()) {
+    if (suppress.count(t.name) != 0 || t.name == args.output_topic) {
+      continue;
+    }
+    writer->declare_topic(t);
+  }
+  writer->declare_topic(out_topic);
+
+  std::unique_ptr<io::BagReader> rd;
+  try {
+    rd = io::open_read(args.input_path);
+  } catch (const std::exception & e) {
+    BAGWIZ_LOG_ERROR(logger, "Failed to reopen %s: %s", args.input_path.c_str(), e.what());
+    return 1;
+  }
+  rd->populate_schemas();
+
+  ConcatParallelContext ctx;
+  ctx.max_in_flight = static_cast<std::size_t>(num_threads) * 3;
+
+  ConcatCounterMerger merger(topic_index.size());
+  int collector_status = 0;
+
+  auto worker = [&]() {
+    while (true) {
+      GroupWorkItem item;
+      {
+        std::unique_lock lock(ctx.mutex);
+        ctx.cv.wait(lock, [&] { return ctx.stop || !ctx.job_queue.empty(); });
+        if (ctx.stop && ctx.job_queue.empty()) {
+          return;
+        }
+        item = std::move(ctx.job_queue.front());
+        ctx.job_queue.pop();
+      }
+
+      ConcatOutputItem out;
+      out.group = process_concat_group(item.job, extrinsics, target_frame, topic_index.size());
+      out.timestamp_ns = out.group->stamp_ns;
+
+      {
+        std::lock_guard lock(ctx.mutex);
+        ctx.completed.emplace(item.seq, std::move(out));
+      }
+      ctx.cv.notify_all();
+    }
+  };
+
+  auto collector = [&]() {
+    try {
+      while (true) {
+        ConcatOutputItem item;
+        {
+          std::unique_lock lock(ctx.mutex);
+          ctx.cv.wait(lock, [&] {
+            auto it = ctx.completed.find(ctx.next_output_seq);
+            return (it != ctx.completed.end()) ||
+                   (ctx.reader_done && ctx.next_output_seq == ctx.total_submitted);
+          });
+
+          if (ctx.reader_done && ctx.next_output_seq == ctx.total_submitted) {
+            break;
+          }
+
+          auto it = ctx.completed.find(ctx.next_output_seq);
+          if (it == ctx.completed.end()) {
+            continue;
+          }
+          item = std::move(it->second);
+          ctx.completed.erase(it);
+          ++ctx.next_output_seq;
+          --ctx.in_flight;
+        }
+        ctx.cv.notify_all();
+
+        if (item.group.has_value()) {
+          merger.merge(*item.group);
+          if (!item.group->error.empty()) {
+            BAGWIZ_LOG_ERROR(logger, "concat failed: %s", item.group->error.c_str());
+            collector_status = 1;
+            {
+              std::lock_guard lock(ctx.mutex);
+              ctx.stop = true;
+            }
+            ctx.cv.notify_all();
+            try {
+              writer->close();
+            } catch (...) {
+              // A writer close error is secondary to the concat error already reported.
+            }
+            return;
+          }
+          if (!item.group->payload.empty()) {
+            writer->write(args.output_topic, item.group->stamp_ns, item.group->payload);
+          }
+          continue;
+        }
+        writer->write(item.topic, item.timestamp_ns, item.payload);
+      }
+
+      if (!io::close_writer_or_log(*writer, logger)) {
+        collector_status = 1;
+      }
+    } catch (const std::exception & e) {
+      BAGWIZ_LOG_ERROR(logger, "pcd concat: collector error: %s", e.what());
+      collector_status = 1;
+      {
+        std::lock_guard lock(ctx.mutex);
+        ctx.stop = true;
+      }
+      ctx.cv.notify_all();
+    }
+  };
+
+  std::vector<std::jthread> workers;
+  workers.reserve(num_threads);
+  for (int i = 0; i < num_threads; ++i) {
+    workers.emplace_back(worker);
+  }
+  std::jthread collector_thread(collector);
+
+  // Reserve the next output slot under backpressure; nullopt when the pass is
+  // stopping (collector error).
+  auto reserve_seq = [&ctx](std::unique_lock<std::mutex> & lock) -> std::optional<std::size_t> {
+    ctx.cv.wait(lock, [&ctx] { return ctx.in_flight < ctx.max_in_flight || ctx.stop; });
+    if (ctx.stop) {
+      return std::nullopt;
+    }
+    const std::size_t seq = ctx.total_submitted++;
+    ++ctx.in_flight;
+    return seq;
+  };
+
+  auto submit_passthrough = [&](const io::RawMessage & msg) -> bool {
+    ConcatOutputItem item;
+    item.topic = msg.topic->name;
+    item.timestamp_ns = msg.timestamp_ns;
+    item.payload.assign(msg.payload.begin(), msg.payload.end());
+
+    std::unique_lock lock(ctx.mutex);
+    const auto seq = reserve_seq(lock);
+    if (!seq.has_value()) {
+      return false;
+    }
+    ctx.completed.emplace(*seq, std::move(item));
+    lock.unlock();
+    ctx.cv.notify_all();
+    return true;
+  };
+
+  auto submit_group = [&](ConcatGroupJob job) -> bool {
+    GroupWorkItem item;
+    item.job = std::move(job);
+
+    std::unique_lock lock(ctx.mutex);
+    const auto seq = reserve_seq(lock);
+    if (!seq.has_value()) {
+      return false;
+    }
+    item.seq = *seq;
+    ctx.job_queue.push(std::move(item));
+    lock.unlock();
+    ctx.cv.notify_all();
+    return true;
+  };
+
+  std::vector<std::size_t> seen(topic_index.size(), 0);
+  io::RawMessage raw;
+  try {
+    bool stopping = false;
+    while (!stopping && rd->next(raw)) {
+      const std::string & name = raw.topic->name;
+
+      // copy-through unless suppressed
+      if (suppress.count(name) == 0 && name != args.output_topic) {
+        if (!submit_passthrough(raw)) {
+          break;
+        }
+      }
+
+      const auto ti = topic_index.find(name);
+      if (ti == topic_index.end()) {
+        continue;  // not a pcd input topic
+      }
+      const std::size_t t = ti->second;
+      const std::size_t idx = seen[t]++;
+
+      auto jobs = tracker.on_message(t, idx, raw.payload);
+      for (auto & job : jobs) {
+        if (!submit_group(std::move(job))) {
+          stopping = true;
+          break;
+        }
+      }
+    }
+  } catch (const std::exception & e) {
+    BAGWIZ_LOG_ERROR(logger, "pcd concat: read error: %s", e.what());
+    {
+      std::lock_guard lock(ctx.mutex);
+      ctx.reader_done = true;
+      ctx.stop = true;
+    }
+    ctx.cv.notify_all();
+    for (auto & t : workers) {
+      t.join();
+    }
+    ctx.cv.notify_all();
+    collector_thread.join();
+    return 1;
+  }
+
+  {
+    std::lock_guard lock(ctx.mutex);
+    ctx.reader_done = true;
+    ctx.stop = true;
+  }
+  ctx.cv.notify_all();
+
+  for (auto & t : workers) {
+    t.join();
+  }
+
+  ctx.cv.notify_all();
+  collector_thread.join();
+
+  counters = merger.counters();
+  return collector_status;
+}
+
 // The end-of-run summary: one INFO line for the run, one per topic, then a WARN
 // line per topic with failures or non-monotonic stamps.
 void log_concat_summary(
@@ -491,24 +783,40 @@ int run_pcd_concat(const PcdConcatArgs & args)
   // ---- tolerance + sync plan + streaming pass (-o vs in-place) -------------
   const std::int64_t tolerance_ns =
     effective_tolerance_ns(tolerance_override, (*topics)[ref_idx].stamps_ns);
-  ConcatAssembler assembler(
-    *topics, core::pointcloud::plan_sync(to_sync_topics(*topics), ref_idx, tolerance_ns),
-    target_frame);
+  const auto groups = core::pointcloud::plan_sync(to_sync_topics(*topics), ref_idx, tolerance_ns);
   const std::unordered_set<std::string> suppress =
     build_suppress_set(args, resolved->output_exists);
   io::TopicInfo out_topic = *resolved->info_by_index[ref_idx];
   out_topic.name = args.output_topic;
+  const int num_threads =
+    resolve_num_threads(args.threads.value_or(8), std::thread::hardware_concurrency());
+
+  ConcatAssembler::Counters counters;
   const int status = core::run_bag_rewrite(
     args.input_path, args.output_path, args.overwrite, pcd_concat_rewrite_options(kLogger),
     [&](const io::WriterFactory & factory) {
-      return execute_concat_pass(
-        factory, *reader, args, topic_index, suppress, out_topic, assembler, kLogger);
+      if (num_threads <= 1) {
+        ConcatAssembler assembler(*topics, groups, target_frame);
+        const int pass_status = execute_concat_pass(
+          factory, *reader, args, topic_index, suppress, out_topic, assembler, kLogger);
+        counters = assembler.counters();
+        return pass_status;
+      }
+      ConcatGroupTracker tracker(*topics, groups);
+      std::vector<core::pointcloud::RigidTransform> extrinsics;
+      extrinsics.reserve(topics->size());
+      for (const auto & ts : *topics) {
+        extrinsics.push_back(ts.extrinsic);
+      }
+      return execute_parallel_concat_pass(
+        factory, *reader, args, topic_index, suppress, out_topic, tracker, extrinsics, target_frame,
+        num_threads, counters, kLogger);
     });
   if (status != 0) {
     return status;
   }
 
-  log_concat_summary(*topics, assembler.counters(), tolerance_ns, args.output_topic, kLogger);
+  log_concat_summary(*topics, counters, tolerance_ns, args.output_topic, kLogger);
   return 0;
 }
 

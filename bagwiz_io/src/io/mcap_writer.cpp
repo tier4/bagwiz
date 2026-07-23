@@ -61,6 +61,11 @@ public:
     mcap::McapWriterOptions wopts("ros2");
     wopts.compression = parse_compression(options.mcap_compression);
     wopts.chunkSize = options.mcap_chunk_size;
+    // Chunk CRCs cost a CRC32 pass over every written byte, and the common
+    // readers (libmcap, rosbag2, foxglove) do not validate them on their
+    // default read path — on multi-GB rewrites that is seconds of pure
+    // overhead. Skip them; the end-of-file summary CRC stays on.
+    wopts.noChunkCRC = true;
 
     const auto status = writer_.open(path.string(), wopts);
     if (!status.ok()) {

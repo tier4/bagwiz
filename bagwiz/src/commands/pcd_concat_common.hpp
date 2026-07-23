@@ -15,10 +15,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // Shared internals of `pcd concat`, split out of pcd_concat.cpp so the
@@ -138,6 +140,116 @@ private:
   std::vector<char> fired_;                   // per-group fire-once guard
   std::unordered_map<std::uint64_t, Cached> cache_;
   Counters counters_;
+};
+
+// ---------------------------------------------------------------------------
+// Parallel Pass B building blocks. The reader thread runs ConcatGroupTracker
+// (matching is arrival-driven only, so it needs no parsing); each fired group
+// becomes one self-contained ConcatGroupJob a worker thread turns into a
+// ConcatGroupResult via process_concat_group; the collector thread accumulates
+// the serial-identical counters with ConcatCounterMerger.
+// ---------------------------------------------------------------------------
+
+// One planned pick of a fired group: which input message it is, plus shared
+// ownership of its raw (unparsed) payload.
+struct ConcatPick
+{
+  std::size_t topic = 0;
+  std::size_t index = 0;
+  std::shared_ptr<const std::vector<std::byte>> payload;
+};
+
+// One fired sync group as a self-contained worker job (picks in --pcd order).
+struct ConcatGroupJob
+{
+  std::int64_t output_stamp_ns = 0;
+  std::vector<ConcatPick> picks;
+};
+
+// Matching-only twin of ConcatAssembler for the parallel pass: the same
+// arrival bookkeeping (refs / remaining / fire-once / refcounted cache), but
+// it stores raw payloads and never parses. All calls happen on the reader
+// thread; the returned jobs carry shared payload ownership into the workers.
+class ConcatGroupTracker
+{
+public:
+  // `topics` supplies each input's message count (the stamps_ns size);
+  // `groups` is the plan_sync output for those topics.
+  ConcatGroupTracker(
+    const std::vector<TopicState> & topics, std::vector<core::pointcloud::SyncGroup> groups);
+
+  // Ingest one message of pcd input `topic` (`index` = its 0-based position on
+  // that topic in bag order). Returns one job per group this arrival
+  // completed, in group order — empty when none fired. Unpicked messages are
+  // not even copied, mirroring the serial pass.
+  [[nodiscard]] std::vector<ConcatGroupJob> on_message(
+    std::size_t topic, std::size_t index, std::span<const std::byte> payload);
+
+private:
+  // A raw payload awaiting its referencing groups, with a refcount so the
+  // cache entry is dropped once every referencing group's job took its
+  // shared_ptr.
+  struct Entry
+  {
+    std::shared_ptr<const std::vector<std::byte>> payload;
+    std::size_t refcount = 0;
+  };
+
+  [[nodiscard]] ConcatGroupJob build_job(std::size_t group);
+
+  std::size_t num_topics_;
+  std::vector<core::pointcloud::SyncGroup> groups_;
+  std::vector<std::vector<std::vector<std::size_t>>> refs_;
+  std::vector<std::size_t> group_remaining_;
+  std::vector<char> fired_;
+  std::unordered_map<std::uint64_t, Entry> cache_;
+};
+
+// Per-pick processing outcome, keyed by (topic, index) so the collector can
+// dedupe failures of a pick shared between groups back to once-per-message.
+struct ConcatPickOutcome
+{
+  enum class Status { kOk, kParseFail, kTransformFail };
+  std::size_t topic = 0;
+  std::size_t index = 0;
+  Status status = Status::kOk;
+};
+
+// One processed group: the serialized merged cloud (empty when every pick
+// failed, or on error) plus everything the collector needs to reproduce the
+// serial pass's counters.
+struct ConcatGroupResult
+{
+  std::int64_t stamp_ns = 0;
+  std::vector<std::byte> payload;  // empty => nothing to write
+  bool partial = false;            // fewer surviving picks than input topics
+  std::string error;               // non-empty => concat failed (abort the pass)
+  std::vector<ConcatPickOutcome> picks;
+};
+
+// Parse, transform, and concatenate one fired group. Touches only the job and
+// the read-only extrinsics/target frame, so it is safe on any worker thread.
+// A pick shared between groups is re-parsed per group; parsing is
+// deterministic, so every group sees the identical cloud.
+[[nodiscard]] ConcatGroupResult process_concat_group(
+  const ConcatGroupJob & job, const std::vector<core::pointcloud::RigidTransform> & extrinsics,
+  const std::string & target_frame, std::size_t num_topics);
+
+// Collector-side counter accumulation replicating the serial counters:
+// matched per (group, surviving pick); parse/transform failures once per
+// unique message even when a shared pick was re-processed by several groups.
+class ConcatCounterMerger
+{
+public:
+  explicit ConcatCounterMerger(std::size_t num_topics);
+
+  void merge(const ConcatGroupResult & result);
+
+  [[nodiscard]] const ConcatAssembler::Counters & counters() const { return counters_; }
+
+private:
+  ConcatAssembler::Counters counters_;
+  std::unordered_set<std::uint64_t> failed_seen_;
 };
 
 }  // namespace bagwiz::commands

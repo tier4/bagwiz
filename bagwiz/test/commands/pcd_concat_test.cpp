@@ -72,21 +72,25 @@ std::vector<std::byte> serialize_cloud(std::int64_t stamp_ns, const std::vector<
   return pc::serialize_pointcloud2(c);
 }
 
-// Write /front and /rear, two messages each at 1000/1100 ms (front x=1, rear x=2).
+// Write /front and /rear, two messages each at 1000/1100 ms (front x=1, rear x=2),
+// plus an /other copy-through topic that is not in --pcd (one message per stamp).
 // `add_collision` also writes a /concat topic that the output would collide with.
 void write_input(const std::filesystem::path & path, bool add_collision = false)
 {
   auto w = bagwiz::io::open_write(path, mcap_options());
   w->declare_topic(pcd_topic_info("/front"));
   w->declare_topic(pcd_topic_info("/rear"));
+  w->declare_topic(pcd_topic_info("/other"));
   if (add_collision) {
     w->declare_topic(pcd_topic_info("/concat"));
   }
   for (const std::int64_t stamp : {1000 * kMs, 1100 * kMs}) {
     const auto f = serialize_cloud(stamp, {1.0f});
     const auto r = serialize_cloud(stamp, {2.0f});
+    const auto o = serialize_cloud(stamp, {7.0f});
     w->write("/front", stamp, std::span<const std::byte>(f.data(), f.size()));
     w->write("/rear", stamp, std::span<const std::byte>(r.data(), r.size()));
+    w->write("/other", stamp, std::span<const std::byte>(o.data(), o.size()));
     if (add_collision) {
       const auto x = serialize_cloud(stamp, {9.0f});
       w->write("/concat", stamp, std::span<const std::byte>(x.data(), x.size()));
@@ -102,6 +106,25 @@ struct TopicRead
   std::uint32_t last_width = 0;
   std::string last_frame;
 };
+
+// Every payload of `topic` in bag order, byte-exact.
+std::vector<std::vector<std::byte>> read_raw_payloads(
+  const std::filesystem::path & path, const std::string & topic)
+{
+  std::vector<std::vector<std::byte>> out;
+  auto reader = bagwiz::io::open_read(path);
+  bagwiz::io::ReadFilter filter;
+  filter.topics = {topic};
+  reader->set_filter(filter);
+  bagwiz::io::RawMessage raw;
+  while (reader->next(raw)) {
+    if (raw.topic->name != topic) {
+      continue;
+    }
+    out.emplace_back(raw.payload.begin(), raw.payload.end());
+  }
+  return out;
+}
 
 TopicRead read_topic(const std::filesystem::path & path, const std::string & topic)
 {
@@ -219,4 +242,44 @@ TEST_F(PcdConcatTest, MissingInputTopicIsError)
   auto args = base_args(in, out);
   args.pcd_topics = {"/front", "/nope"};  // /nope is not in the bag
   EXPECT_EQ(run_pcd_concat(args), 1);
+}
+
+// The parallel Pass B (threads > 1) must emit exactly what the serial pass
+// emits: same payload bytes and same in-topic order for the merged topic, the
+// kept inputs, and the copy-through topic.
+TEST_F(PcdConcatTest, SyncAndParallelOutputsAreIdentical)
+{
+  const auto in = tmp_ / "in.mcap";
+  const auto sync_out = tmp_ / "sync.mcap";
+  const auto par_out = tmp_ / "par.mcap";
+  write_input(in);
+
+  auto sync_args = base_args(in, sync_out);
+  sync_args.threads = 1;
+  ASSERT_EQ(run_pcd_concat(sync_args), 0);
+
+  auto par_args = base_args(in, par_out);
+  par_args.threads = 4;
+  ASSERT_EQ(run_pcd_concat(par_args), 0);
+
+  EXPECT_EQ(read_raw_payloads(sync_out, "/concat"), read_raw_payloads(par_out, "/concat"));
+  EXPECT_EQ(read_raw_payloads(sync_out, "/front"), read_raw_payloads(par_out, "/front"));
+  EXPECT_EQ(read_raw_payloads(sync_out, "/rear"), read_raw_payloads(par_out, "/rear"));
+  EXPECT_EQ(read_raw_payloads(sync_out, "/other"), read_raw_payloads(par_out, "/other"));
+}
+
+TEST_F(PcdConcatTest, ParallelDropInputsPreservesCopyThrough)
+{
+  const auto in = tmp_ / "in.mcap";
+  const auto out = tmp_ / "out.mcap";
+  write_input(in);
+  auto args = base_args(in, out);
+  args.drop_inputs = true;
+  args.threads = 4;
+  ASSERT_EQ(run_pcd_concat(args), 0);
+
+  EXPECT_TRUE(read_topic(out, "/concat").present);
+  EXPECT_FALSE(read_topic(out, "/front").present);
+  EXPECT_FALSE(read_topic(out, "/rear").present);
+  EXPECT_EQ(read_raw_payloads(out, "/other"), read_raw_payloads(in, "/other"));
 }

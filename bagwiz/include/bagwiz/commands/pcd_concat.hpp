@@ -32,6 +32,7 @@ struct PcdConcatArgs
   bool drop_inputs = false;                // --drop-inputs (default: keep)
   bool force = false;                      // --force (output topic name collision)
   bool overwrite = false;                  // -w/--overwrite (existing -o path)
+  std::optional<int> threads;              // -j/--threads; empty => default 8
 };
 
 // Execute `bagwiz pcd concat`. Returns a process exit code.

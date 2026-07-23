@@ -442,13 +442,4 @@ std::optional<ExtrinsicMap> resolve_pcd_extrinsics(
   return extrinsics;
 }
 
-int resolve_num_threads(const int requested, const unsigned int hardware)
-{
-  int num_threads = (requested <= 0) ? static_cast<int>(hardware != 0u ? hardware : 1u) : requested;
-  if (hardware > 0 && num_threads > static_cast<int>(hardware)) {
-    num_threads = static_cast<int>(hardware);
-  }
-  return num_threads;
-}
-
 }  // namespace bagwiz::commands

@@ -13,6 +13,7 @@
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
 #include "bagwiz/core/tf/trajectory.hpp"
 #include "bagwiz/io/bag_io.hpp"
+#include "worker_threads.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #include <tf2/buffer_core.hpp>
 
@@ -130,12 +131,6 @@ using ExtrinsicMap = std::unordered_map<std::string, std::optional<geometry_msgs
   const tf2::BufferCore & buffer, const std::string & of,
   const std::vector<std::string> & pcd_topics,
   const std::unordered_map<std::string, PcdTopicState> & states, const char * logger);
-
-// Worker count for the parallel pass: --threads, clamped to the hardware
-// concurrency when that is known. A non-positive value (0 = "auto") resolves
-// to the hardware concurrency (1 when unknown); the CLI default of 8 is
-// applied by the caller before this function sees the value.
-[[nodiscard]] int resolve_num_threads(int requested, unsigned int hardware);
 
 }  // namespace bagwiz::commands
 

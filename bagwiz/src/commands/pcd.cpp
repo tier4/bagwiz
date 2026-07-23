@@ -107,6 +107,12 @@ private:
       "Proceed even if <output_topic> already exists in the bag (replaces that topic).");
     sub->add_flag(
       "-w,--overwrite", concat_args_.overwrite, "Overwrite an existing -o/--output path.");
+    sub
+      ->add_option(
+        "-j,--threads", concat_args_.threads,
+        "Number of worker threads for concat (default: 8; 0 = hardware concurrency, "
+        "1 = sync). Values above hardware concurrency are capped.")
+      ->check(CLI::Range(0, 256));
     sub->callback([this]() { selected_ = Subcommand::kConcat; });
   }
 

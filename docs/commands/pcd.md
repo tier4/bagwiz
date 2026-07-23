@@ -19,7 +19,8 @@ undistort still sees correct absolute times.
 ```text
 bagwiz pcd concat <input> <output_topic_name> --pcd <t1> <t2> [<t3> ...] \
     [--frame <frame>] [-o|--output <path>] [--tolerance <val>] \
-    [--stamp-offset <topic>=<val>]... [--drop-inputs] [--force] [-w|--overwrite]
+    [--stamp-offset <topic>=<val>]... [--drop-inputs] [--force] [-w|--overwrite] \
+    [-j|--threads <N>]
 ```
 
 | Argument / option              | Required | Description                                                                                                                                                                                                                                                                                                   |
@@ -34,6 +35,7 @@ bagwiz pcd concat <input> <output_topic_name> --pcd <t1> <t2> [<t3> ...] \
 | `--drop-inputs`                |          | Drop the source `--pcd` topics from the output (default: keep them).                                                                                                                                                                                                                                          |
 | `--force`                      |          | Proceed even if `<output_topic_name>` already exists in the bag (replaces that topic).                                                                                                                                                                                                                        |
 | `-w, --overwrite`              |          | Overwrite an existing `-o/--output` path.                                                                                                                                                                                                                                                                     |
+| `-j, --threads <N>`            |          | Number of worker threads (default: `8`). `0` uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; larger values are capped at hardware concurrency.                                                                                                                                   |
 
 ### Behaviour notes
 
@@ -51,6 +53,9 @@ bagwiz pcd concat <input> <output_topic_name> --pcd <t1> <t2> [<t3> ...] \
 - **Output header:** `frame_id` = `--frame`, `stamp` = the reference message's
   real stamp. The merged cloud is unorganized (`height = 1`).
 - **Determinism:** CPU-only, no GLIM — deterministic output for a given input.
+  When `--threads` is greater than 1, group assembly runs in parallel but a
+  single collector thread serializes output, so bag message order — and the
+  output itself — is identical to the synchronous path.
 
 ### Example
 

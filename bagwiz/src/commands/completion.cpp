@@ -1352,7 +1352,7 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
       return matching(
         with_help(
           {"--drop-inputs", "--force", "--frame", "--output", "--overwrite", "--pcd",
-           "--stamp-offset", "--tolerance", "-o", "-w"}),
+           "--stamp-offset", "--threads", "--tolerance", "-j", "-o", "-w"}),
         current);
     }
     if (sub == "undistort") {
