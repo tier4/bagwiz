@@ -2,6 +2,7 @@
   "ignorePaths": [".cppcheck_suppressions"],
   "ignoreRegExpList": ["[A-Za-z0-9+/=]{64,}"],
   "words": [
+    "Amanatides",
     "antialias",
     "antigravitycli",
     "asin",
@@ -58,6 +59,8 @@
     "dlopens",
     "dndebug",
     "downsampler",
+    "Duberg",
+    "DUFO",
     "dzbuf",
     "easting",
     "eptr",
