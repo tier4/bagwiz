@@ -102,6 +102,24 @@ struct MapSlamArgs
   // Minimum number of OTHER map points within outlier_radius a point needs to
   // survive remove_outliers.
   int outlier_min_neighbors = 5;
+  // Remove ghost points left by moving objects from the exported map (DUFOMap-
+  // style void-region ray casting): after the global optimization, every scan's
+  // rays mark the voxels they traverse as seen-free, and a scan point falling in
+  // a voxel that was ever seen free is dropped before the map merge. Off by
+  // default. Filters the map only; the trajectory is untouched.
+  bool remove_dynamic = false;
+  // Voxel side in meters of the free-space grid for remove_dynamic. Independent
+  // of input_resolution: coarser costs less memory and absorbs more pose noise;
+  // finer separates ghosts closer to static surfaces.
+  double dynamic_resolution = 0.2;
+  // d_s in meters for remove_dynamic: each ray stops this far short of its hit
+  // so range noise cannot mark the hit surface's neighborhood as free.
+  double dynamic_sensor_offset = 0.15;
+  // d_p in voxels for remove_dynamic: a voxel counts as void only when it and
+  // every voxel within this Chebyshev radius were seen free, so pose error up
+  // to ~d_p * dynamic_resolution cannot delete static points. 0 disables the
+  // guard; higher is more conservative.
+  int dynamic_neighborhood = 1;
   // Overwrite the output file(s) if they already exist.
   bool overwrite = false;
   // After writing map.pcd, serve it over a loopback HTTP server and open the

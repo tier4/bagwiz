@@ -1091,6 +1091,18 @@ private:
       return 1;
     }
 
+    // The dynamic-point removal ran inside finish() (on the per-scan frames,
+    // before the export merge); surface its outcome the way the outlier
+    // removal below logs its own.
+    if (args_.remove_dynamic) {
+      BAGWIZ_LOG_INFO(
+        kLogger,
+        "Dynamic-point removal dropped %zu of %zu scan point(s) in %.1fs (voxel %.2f m, "
+        "d_s %.2f m, d_p %d)",
+        map.dynamic_removed_point_count, map.dynamic_input_point_count, map.dynamic_removal_seconds,
+        args_.dynamic_resolution, args_.dynamic_sensor_offset, args_.dynamic_neighborhood);
+    }
+
     // Radius outlier removal BEFORE colorization, so only the surviving
     // points are colorized and exported (the colorizer builds its kd-tree
     // over the filtered cloud).

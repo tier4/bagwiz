@@ -1142,10 +1142,12 @@ TEST(FlagCompletionTest, MapSlamDashListsSlamFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "map", "slam", "-"}),
-    "--backend\n--cam\n--cam-info\n--fill-min-inliers\n--frame\n--gnss\n--help\n--imu\n"
+    "--backend\n--cam\n--cam-info\n--dynamic-dp\n--dynamic-ds\n--dynamic-res\n"
+    "--fill-min-inliers\n--frame\n--gnss\n--help\n--imu\n"
     "--input-res\n--max-range\n--min-range\n--no-color-propagate\n--no-cooldown-fill\n"
     "--no-progress\n--no-warmup-fill\n--outlier-k\n--outlier-r\n"
-    "--overwrite\n--remove-outliers\n--submap-keyframes\n--threads\n--viewer\n-h\n-j\n-w\n");
+    "--overwrite\n--remove-dynamic\n--remove-outliers\n--submap-keyframes\n--threads\n"
+    "--viewer\n-h\n-j\n-w\n");
 }
 
 // `map slam --backend <TAB>` lists the three backend modes.

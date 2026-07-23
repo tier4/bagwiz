@@ -104,6 +104,29 @@ struct CloudMapperConfig
   // Default 15 == GLIM stock, so the default trajectory is unchanged. Must be > 0.
   int submap_max_keyframes = 15;
 
+  // Remove ghost points left by moving objects from the exported map (DUFOMap-
+  // style void-region ray casting, see core/slam/dynamic_removal.hpp): after the
+  // global optimization, every scan's rays mark the voxels they traverse as
+  // seen-free, and a scan point falling in a voxel that was ever seen free is
+  // dropped before the export voxel merge. Filters the map only; the trajectory
+  // is untouched. Off by default (the exported map is unchanged without it).
+  bool remove_dynamic_points = false;
+
+  // Voxel side [m] of the free-space grid used by remove_dynamic_points.
+  // Independent of input_resolution: coarser costs less memory and absorbs more
+  // pose noise, finer separates ghosts closer to static surfaces. Must be > 0.
+  double dynamic_voxel_size = 0.2;
+
+  // d_s [m] for remove_dynamic_points: each ray stops this far short of its hit
+  // so range noise cannot mark the hit surface's neighborhood as free. >= 0.
+  double dynamic_sensor_offset = 0.15;
+
+  // d_p [voxels] for remove_dynamic_points: a voxel counts as void only when it
+  // and every voxel within this Chebyshev radius were seen free, so a pose
+  // error of up to ~d_p * dynamic_voxel_size cannot delete static points.
+  // 0 disables the guard; higher is more conservative. Must be >= 0.
+  int dynamic_neighborhood = 1;
+
   // GNSS global constraint (ported from glim_ext's gnss_global). When true, GNSS
   // points fed via insert_gnss() add horizontal translation priors on the submap
   // poses during the final global optimization, pinning the world frame to GNSS
@@ -235,6 +258,14 @@ struct CloudMap
   // the caller distinguish "nothing to fill" from "gave up", which have the
   // same filled_start_pose_count of 0.
   bool warmup_overflowed = false;
+
+  // Dynamic-point removal diagnostics (config.remove_dynamic_points): how many
+  // stashed scan points were considered and how many were dropped as dynamic
+  // before the export voxel merge, plus the pass's wall-clock. All zero when
+  // the removal was off.
+  std::size_t dynamic_input_point_count = 0;
+  std::size_t dynamic_removed_point_count = 0;
+  double dynamic_removal_seconds = 0.0;
 
   // Wall-clock breakdown of finish(), for the command layer's log line: the
   // global iSAM2 optimization, the scan-matching endpoint fill (start + end

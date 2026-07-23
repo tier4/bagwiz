@@ -12,6 +12,7 @@
 #ifdef BAGWIZ_WITH_SLAM_CUDA
 #include "bagwiz/core/slam/cloud_voxelize_gpu.hpp"
 #endif
+#include "bagwiz/core/slam/dynamic_removal.hpp"
 #include "bagwiz/core/slam/frame_feed_queue.hpp"
 #include "bagwiz/core/slam/glim_estimator.hpp"
 #include "bagwiz/core/slam/gnss_alignment.hpp"
@@ -1286,10 +1287,173 @@ struct CloudMapper::Impl
     // from "nothing to fill" (warmup_disable() sets this and clears
     // warmup.active).
     result.warmup_overflowed = warmup.overflowed;
+    // Dynamic-point removal runs after the window fills on purpose: the fills
+    // only mutate the trajectory, never `entries`, so the removal still covers
+    // 100% of what fill_map reads while the fills' scan-match targets stay
+    // identical to the historical behavior.
+    if (config.remove_dynamic_points) {
+      const auto dynamic_start = std::chrono::steady_clock::now();
+      remove_dynamic_points(result);
+      result.dynamic_removal_seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - dynamic_start).count();
+    }
     const auto export_start = std::chrono::steady_clock::now();
     fill_map(result);
     result.export_seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - export_start).count();
+  }
+
+  // Drop moving-object ghost points from the stashed frames before fill_map
+  // reads them (config.remove_dynamic_points): carve every frame's rays into a
+  // VoidRegionClassifier, then classify each frame's world points and compact
+  // the survivors in place, so every fill_map variant (streaming / parallel /
+  // GPU) exports the cleaned frames unchanged.
+  void remove_dynamic_points(CloudMap & result)
+  {
+    struct Job
+    {
+      Eigen::Isometry3d T_world_frame;
+      FrameRef * ref;
+    };
+    std::vector<Job> jobs;
+    for (auto & entry : entries) {
+      if (!entry.submap) {
+        continue;
+      }
+      const Eigen::Isometry3d & T_world_origin = entry.submap->T_world_origin;
+      for (auto & ref : entry.frames) {
+        if (ref.points.empty()) {
+          continue;
+        }
+        jobs.push_back({T_world_origin * ref.T_origin_frame, &ref});
+      }
+    }
+    if (jobs.empty()) {
+      return;
+    }
+
+    VoidRegionConfig void_config;
+    void_config.voxel_size = config.dynamic_voxel_size;
+    void_config.sensor_offset = config.dynamic_sensor_offset;
+    void_config.neighborhood = config.dynamic_neighborhood;
+    void_config.max_ray_length = config.range_max;
+    VoidRegionClassifier classifier(void_config);
+
+    // One frame's stashed points, dequantized and placed at the frame's
+    // globally-optimized world pose (the same transform fill_map applies).
+    const auto build_world_buffer = [](
+                                      const Job & job, std::vector<std::array<float, 3>> & buffer) {
+      const FrameRef & ref = *job.ref;
+      buffer.clear();
+      buffer.reserve(ref.points.size());
+      for (std::size_t i = 0; i < ref.points.size(); ++i) {
+        const std::array<float, 3> local = ref.points.at(i);
+        const Eigen::Vector3d world =
+          job.T_world_frame * Eigen::Vector3d(local[0], local[1], local[2]);
+        buffer.push_back(
+          {static_cast<float>(world.x()), static_cast<float>(world.y()),
+           static_cast<float>(world.z())});
+      }
+    };
+
+    const int nthreads =
+      std::max(1, std::min<int>(config.num_threads, static_cast<int>(jobs.size())));
+    std::vector<std::size_t> input_counts(static_cast<std::size_t>(nthreads), 0);
+    std::vector<std::size_t> removed_counts(static_cast<std::size_t>(nthreads), 0);
+
+    // Chunked worker pool with per-thread exception capture, the
+    // fill_map_parallel idiom. Both passes are deterministic for any thread
+    // count: integration is a pure bit-OR, and in the classify pass each worker
+    // owns a disjoint job range, so the FrameRef writes never race.
+    const auto run_pass = [&](const auto & body) {
+      const auto worker = [&](int t) {
+        // Reused across the worker's whole job range so neither the world
+        // points nor the keep mask reallocate per frame.
+        std::vector<std::array<float, 3>> buffer;
+        std::vector<std::uint8_t> keep;
+        const std::size_t lo = jobs.size() * static_cast<std::size_t>(t) / nthreads;
+        const std::size_t hi = jobs.size() * static_cast<std::size_t>(t + 1) / nthreads;
+        for (std::size_t j = lo; j < hi; ++j) {
+          body(jobs[j], buffer, keep, static_cast<std::size_t>(t));
+        }
+      };
+      std::vector<std::exception_ptr> errors(static_cast<std::size_t>(nthreads), nullptr);
+      const auto safe_worker = [&](int t) {
+        try {
+          worker(t);
+        } catch (...) {
+          errors[static_cast<std::size_t>(t)] = std::current_exception();
+        }
+      };
+      {
+        std::vector<std::jthread> pool;
+        pool.reserve(static_cast<std::size_t>(nthreads - 1));
+        for (int t = 1; t < nthreads; ++t) {
+          pool.emplace_back(safe_worker, t);
+        }
+        safe_worker(0);
+      }  // jthread destructors join all background workers here
+      for (const auto & error : errors) {
+        if (error) {
+          std::rethrow_exception(error);
+        }
+      }
+    };
+
+    run_pass([&](
+               const Job & job, std::vector<std::array<float, 3>> & buffer,
+               std::vector<std::uint8_t> &, std::size_t) {
+      build_world_buffer(job, buffer);
+      const Eigen::Vector3d origin = job.T_world_frame.translation();
+      classifier.integrate(buffer, {origin.x(), origin.y(), origin.z()});
+    });
+
+    classifier.finalize(nthreads);
+
+    run_pass([&](
+               const Job & job, std::vector<std::array<float, 3>> & buffer,
+               std::vector<std::uint8_t> & keep, std::size_t t) {
+      build_world_buffer(job, buffer);
+      keep.assign(buffer.size(), 1U);
+      const std::size_t removed = classifier.classify(buffer, keep);
+      input_counts[t] += buffer.size();
+      removed_counts[t] += removed;
+      if (removed != 0) {
+        compact_frame(*job.ref, keep);
+      }
+    });
+
+    for (std::size_t t = 0; t < static_cast<std::size_t>(nthreads); ++t) {
+      result.dynamic_input_point_count += input_counts[t];
+      result.dynamic_removed_point_count += removed_counts[t];
+    }
+  }
+
+  // Stable in-place compaction of one frame's stash to the keep mask: the
+  // float OR quantized coordinates (dequantization is per-point, so a compacted
+  // q stays valid about its original center/scale) plus the parallel
+  // intensities when present.
+  static void compact_frame(FrameRef & ref, const std::vector<std::uint8_t> & keep)
+  {
+    const std::size_t n = ref.points.size();
+    const auto compact = [&keep, n](auto & values) {
+      if (values.size() != n) {
+        return;  // not parallel to the points (the unused f/q, or no intensities)
+      }
+      std::size_t write = 0;
+      for (std::size_t i = 0; i < n; ++i) {
+        if (keep[i] != 0U) {
+          if (write != i) {
+            values[write] = values[i];
+          }
+          ++write;
+        }
+      }
+      values.resize(write);
+    };
+    compact(ref.points.f);
+    compact(ref.points.q);
+    compact(ref.intensities);
   }
 
   // Optimized world pose per frame = T_world_origin * T_origin_frame. Keyed by

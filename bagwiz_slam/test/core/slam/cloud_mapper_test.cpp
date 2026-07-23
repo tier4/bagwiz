@@ -159,6 +159,82 @@ TEST(CloudMapper, StationarySensorYieldsMapAndTrajectory)
   EXPECT_LT(max_z - min_z, 2.0) << "stationary trajectory drifted in z";
 }
 
+// A transient blob hangs in the room's interior for the first quarter of the
+// sequence, then vanishes: with remove_dynamic_points on, the later scans' rays
+// see through its voxels, so its ghost must be gone from the exported map while
+// the room itself survives. A control run without the removal proves the blob
+// otherwise persists (the assertion is not vacuous).
+TEST(CloudMapper, RemoveDynamicPointsDropsATransientBlob)
+{
+  constexpr std::int64_t kDtNs = 100'000'000;  // 10 Hz
+  constexpr double kBlobX = 2.0;
+  constexpr double kBlobY = 0.0;
+  constexpr double kBlobZ = 0.7;
+
+  const auto make_scan = [&](std::int64_t stamp_ns, bool with_blob) {
+    slam::LidarScan scan = make_room_scan(stamp_ns);
+    if (with_blob) {
+      for (int i = -1; i <= 1; ++i) {
+        for (int j = -1; j <= 1; ++j) {
+          for (int k = -1; k <= 1; ++k) {
+            scan.points.push_back({kBlobX + 0.08 * i, kBlobY + 0.08 * j, kBlobZ + 0.08 * k});
+          }
+        }
+      }
+    }
+    return scan;
+  };
+  const auto run_mapping = [&](bool remove_dynamic) {
+    slam::CloudMapperConfig config;
+    config.remove_dynamic_points = remove_dynamic;
+    config.dynamic_voxel_size = 0.5;
+    config.dynamic_sensor_offset = 0.15;
+    config.dynamic_neighborhood = 0;  // the small synthetic room has too little
+                                      // ray coverage for the erosion guard
+    slam::CloudMapper mapper(config);
+    std::int64_t stamp = 1'000'000'000'000'000'000LL;
+    for (int i = 0; i < 120; ++i) {
+      mapper.insert(make_scan(stamp, i < 30));
+      stamp += kDtNs;
+    }
+    return mapper.finish();
+  };
+  const auto points_near_blob = [&](const slam::CloudMap & map) {
+    std::size_t count = 0;
+    for (const auto & p : map.points) {
+      const double dx = p[0] - kBlobX;
+      const double dy = p[1] - kBlobY;
+      const double dz = p[2] - kBlobZ;
+      if (dx * dx + dy * dy + dz * dz < 0.4 * 0.4) {
+        ++count;
+      }
+    }
+    return count;
+  };
+
+  const slam::CloudMap control = run_mapping(false);
+  ASSERT_FALSE(control.points.empty());
+  ASSERT_GT(points_near_blob(control), 0U) << "the blob never reached the control map";
+  EXPECT_EQ(control.dynamic_input_point_count, 0U);
+  EXPECT_EQ(control.dynamic_removed_point_count, 0U);
+
+  const slam::CloudMap cleaned = run_mapping(true);
+  ASSERT_FALSE(cleaned.points.empty());
+  EXPECT_EQ(points_near_blob(cleaned), 0U) << "ghost points survived the removal";
+  EXPECT_GT(cleaned.dynamic_removed_point_count, 0U);
+  EXPECT_GT(cleaned.dynamic_input_point_count, cleaned.dynamic_removed_point_count);
+  EXPECT_GE(cleaned.dynamic_removal_seconds, 0.0);
+  // The room itself survives: the +x wall is still populated.
+  bool wall_present = false;
+  for (const auto & p : cleaned.points) {
+    if (p[0] > 4.5F) {
+      wall_present = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(wall_present);
+}
+
 // IMU specific force for a level, static sensor whose frame is the LiDAR frame
 // rotated 180 deg about X (the real Tamagawa mounting): gravity is "down" =
 // LiDAR -z, so the LiDAR-frame specific force is (0,0,+g); rotating it into the

@@ -167,6 +167,38 @@ private:
         "survive --remove-outliers (default 5). Higher = more aggressive removal.")
       ->check(CLI::PositiveNumber)
       ->needs(remove_outliers_flag);
+    auto * remove_dynamic_flag = sub->add_flag(
+      "--remove-dynamic", slam_args_.remove_dynamic,
+      "Remove ghost points left by moving objects from the finished map (DUFOMap-style "
+      "void-region ray casting): every scan's rays mark the voxels they traverse as "
+      "seen-free, and a scan point falling in a voxel that was ever seen free is dropped "
+      "before the map merge. Off by default (the exported map is unchanged without it). "
+      "Filters the map only; the trajectory is untouched. Runs multithreaded under "
+      "--threads.");
+    sub
+      ->add_option(
+        "--dynamic-res", slam_args_.dynamic_resolution,
+        "Voxel size in meters of the free-space grid for --remove-dynamic (default 0.2). "
+        "Independent of --input-res: coarser costs less memory and absorbs more pose "
+        "noise; finer separates ghosts closer to static surfaces.")
+      ->check(CLI::PositiveNumber)
+      ->needs(remove_dynamic_flag);
+    sub
+      ->add_option(
+        "--dynamic-ds", slam_args_.dynamic_sensor_offset,
+        "Sensor back-off in meters for --remove-dynamic (default 0.15): each ray stops "
+        "this far short of its hit so range noise cannot mark the hit surface's "
+        "neighborhood as free. Raise it if ground or thin structure thins out.")
+      ->check(CLI::NonNegativeNumber)
+      ->needs(remove_dynamic_flag);
+    sub
+      ->add_option(
+        "--dynamic-dp", slam_args_.dynamic_neighborhood,
+        "Pose-error guard in voxels for --remove-dynamic (default 1): a voxel counts as "
+        "void only when it and every voxel within this Chebyshev radius were seen free. "
+        "0 disables the guard; higher is more conservative on static points.")
+      ->check(CLI::Range(0, 8))
+      ->needs(remove_dynamic_flag);
     sub->add_flag(
       "-w,--overwrite", slam_args_.overwrite, "Overwrite the output file(s) if they already exist");
     sub->add_flag(

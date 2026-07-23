@@ -88,6 +88,10 @@ MapSlamArgs make_args()
   args.range_max = 80.0;
   args.fill_min_inlier_fraction = 0.5;
   args.submap_max_keyframes = 7;
+  args.remove_dynamic = true;
+  args.dynamic_resolution = 0.4;
+  args.dynamic_sensor_offset = 0.25;
+  args.dynamic_neighborhood = 2;
   args.fill_start = false;
   args.fill_end = true;
   args.num_threads = 1;
@@ -152,6 +156,10 @@ TEST(BuildMapperConfig, CopiesTheArguments)
   EXPECT_DOUBLE_EQ(config.range_max, 80.0);
   EXPECT_DOUBLE_EQ(config.fill_min_inlier_fraction, 0.5);
   EXPECT_EQ(config.submap_max_keyframes, 7);
+  EXPECT_TRUE(config.remove_dynamic_points);
+  EXPECT_DOUBLE_EQ(config.dynamic_voxel_size, 0.4);
+  EXPECT_DOUBLE_EQ(config.dynamic_sensor_offset, 0.25);
+  EXPECT_EQ(config.dynamic_neighborhood, 2);
   ASSERT_TRUE(config.t_lidar_imu.has_value());
   EXPECT_DOUBLE_EQ(config.t_lidar_imu->translation[1], 2.0);
   EXPECT_DOUBLE_EQ(config.t_lidar_imu->rotation_xyzw[3], 1.0);
