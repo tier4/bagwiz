@@ -48,6 +48,7 @@ add_library(bagwiz_pointcloud
   src/core/pointcloud/fetcher.cpp
   src/core/pointcloud/kdtree.cpp
   src/core/pointcloud/normals.cpp
+  src/core/pointcloud/outlier_removal.cpp
   src/core/pointcloud/overlay.cpp
   src/core/pointcloud/point_time.cpp
   src/core/pointcloud/pointcloud2.cpp
@@ -160,6 +161,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_pointcloud_color_propagation_test test/core/pointcloud/color_propagation_test.cpp)
   target_link_libraries(bagwiz_pointcloud_color_propagation_test bagwiz_pointcloud)
+
+  ament_add_gtest(bagwiz_pointcloud_outlier_removal_test test/core/pointcloud/outlier_removal_test.cpp)
+  target_link_libraries(bagwiz_pointcloud_outlier_removal_test bagwiz_pointcloud)
 endif()
 
 ament_package()

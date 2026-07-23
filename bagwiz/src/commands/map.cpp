@@ -146,6 +146,27 @@ private:
         "sub-mapping work; larger = fewer, larger submaps (cheaper global graph, coarser "
         "correction). Feeds the optimizer, so it also changes the trajectory.")
       ->check(CLI::PositiveNumber);
+    auto * remove_outliers_flag = sub->add_flag(
+      "--remove-outliers", slam_args_.remove_outliers,
+      "Remove isolated points from the finished map before colorization and export: a map "
+      "point is dropped when fewer than --outlier-k other map points lie within "
+      "--outlier-r meters (radius outlier removal). Off by default (the exported map is "
+      "unchanged without it). Filters the map only; the trajectory is untouched.");
+    sub
+      ->add_option(
+        "--outlier-r", slam_args_.outlier_radius,
+        "Neighborhood radius in meters for --remove-outliers (default 0.5). Tune together "
+        "with --input-res: the exported map is voxel-merged at that resolution, so the "
+        "radius should span a few voxels (0.5 ~ 3 voxels at the stock 0.15 resolution).")
+      ->check(CLI::PositiveNumber)
+      ->needs(remove_outliers_flag);
+    sub
+      ->add_option(
+        "--outlier-k", slam_args_.outlier_min_neighbors,
+        "Minimum number of other map points within --outlier-r a point needs to "
+        "survive --remove-outliers (default 5). Higher = more aggressive removal.")
+      ->check(CLI::PositiveNumber)
+      ->needs(remove_outliers_flag);
     sub->add_flag(
       "-w,--overwrite", slam_args_.overwrite, "Overwrite the output file(s) if they already exist");
     sub->add_flag(

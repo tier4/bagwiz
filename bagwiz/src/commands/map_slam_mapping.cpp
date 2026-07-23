@@ -9,6 +9,8 @@
 #include "map_slam_mapping.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #include "bagwiz/core/base/logging.hpp"
+#include "bagwiz/core/pointcloud/kdtree.hpp"
+#include "bagwiz/core/pointcloud/outlier_removal.hpp"
 #include "bagwiz/core/slam/point_cloud_io.hpp"
 #include "bagwiz/core/slam/progress_bar.hpp"
 #include "map_slam_threads.hpp"  // NOLINT(build/include_subdir) src-local shared header
@@ -117,6 +119,44 @@ FinalizeResult finalize_with_spinner(
     result.seconds, result.map.optimize_seconds, result.map.window_fill_seconds,
     result.map.export_seconds);
   return result;
+}
+
+std::size_t remove_isolated_map_points(
+  core::slam::CloudMap & map, double radius, int min_neighbors, int num_threads)
+{
+  if (map.points.empty()) {
+    return 0;
+  }
+  std::vector<std::uint8_t> keep(map.points.size(), 1);
+  std::size_t removed = 0;
+  {
+    // The tree references map.points, so it must be gone before the
+    // compaction below mutates them.
+    const core::pointcloud::KdTree tree(map.points);
+    removed = core::pointcloud::mark_radius_outliers(
+      map.points, tree, radius, min_neighbors, keep, num_threads);
+  }
+  if (removed == 0) {
+    return 0;
+  }
+  // Stable in-place compaction keeps points and intensities parallel.
+  const bool has_intensities = map.intensities.size() == map.points.size();
+  std::size_t write = 0;
+  for (std::size_t i = 0; i < map.points.size(); ++i) {
+    if (keep[i] == 0) {
+      continue;
+    }
+    map.points[write] = map.points[i];
+    if (has_intensities) {
+      map.intensities[write] = map.intensities[i];
+    }
+    ++write;
+  }
+  map.points.resize(write);
+  if (has_intensities) {
+    map.intensities.resize(write);
+  }
+  return removed;
 }
 
 bool write_map_outputs(

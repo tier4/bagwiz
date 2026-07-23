@@ -16,6 +16,7 @@
 #include "bagwiz/io/bag_io.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -65,6 +66,16 @@ struct FinalizeResult
 // spinner, then log the timing breakdown.
 [[nodiscard]] FinalizeResult finalize_with_spinner(
   core::slam::CloudMapper & mapper, bool progress_on, const char * logger);
+
+// Remove isolated points from the finished map in place (radius outlier
+// removal): a point survives when at least `min_neighbors` OTHER map points
+// lie within `radius` meters. map.points and, when present, the parallel
+// map.intensities are compacted together with their order preserved. Returns
+// the number of removed points; radius <= 0 or min_neighbors <= 0 removes
+// nothing (the CLI enforces positive values, this is only the last line of
+// defense).
+[[nodiscard]] std::size_t remove_isolated_map_points(
+  core::slam::CloudMap & map, double radius, int min_neighbors, int num_threads);
 
 // Write traj.tum (`trajectory`) and map.pcd (`points` + `intensities` +
 // `colors`) to their paths. The map stream is opened BEFORE the trajectory

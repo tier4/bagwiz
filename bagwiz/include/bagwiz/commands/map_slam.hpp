@@ -88,6 +88,20 @@ struct MapSlamArgs
   // larger submaps (cheaper global graph, coarser correction). Default 15 == GLIM
   // stock, so the default trajectory is unchanged. Must be > 0.
   int submap_max_keyframes = 15;
+  // Post-process radius outlier removal on the finished map, applied right
+  // before colorization and export: when enabled, a map point is dropped when
+  // fewer than outlier_min_neighbors other map points lie within
+  // outlier_radius meters. Off by default, so the exported map is unchanged
+  // unless requested. Filters the map only; the trajectory is untouched.
+  bool remove_outliers = false;
+  // Neighborhood radius in meters for remove_outliers. Tune together with
+  // input_resolution: the exported map is voxel-merged at that resolution, so
+  // the radius should span a few voxels (default 0.5 ~ 3 voxels at the stock
+  // 0.15 resolution).
+  double outlier_radius = 0.5;
+  // Minimum number of OTHER map points within outlier_radius a point needs to
+  // survive remove_outliers.
+  int outlier_min_neighbors = 5;
   // Overwrite the output file(s) if they already exist.
   bool overwrite = false;
   // After writing map.pcd, serve it over a loopback HTTP server and open the

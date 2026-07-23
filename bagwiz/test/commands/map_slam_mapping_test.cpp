@@ -32,6 +32,7 @@ namespace
 {
 using bagwiz::commands::build_mapper_config;
 using bagwiz::commands::MapSlamArgs;
+using bagwiz::commands::remove_isolated_map_points;
 using bagwiz::commands::resolve_scan_progress;
 using bagwiz::commands::write_map_outputs;
 using bagwiz::core::TrajectoryPose;
@@ -336,6 +337,55 @@ TEST_F(WriteMapOutputsTest, TrajectoryOpenFailureFails)
 
   EXPECT_FALSE(write_map_outputs(traj_path, map_path, poses, points, {}, {}, kLogger));
   EXPECT_FALSE(std::filesystem::exists(traj_path));
+}
+
+TEST(RemoveIsolatedMapPoints, RemovesIsolatedPointsAndCompactsIntensities)
+{
+  bagwiz::core::slam::CloudMap map;
+  map.points = {
+    {0.0F, 0.0F, 0.0F}, {0.1F, 0.0F, 0.0F},    {0.0F, 0.1F, 0.0F},
+    {0.0F, 0.0F, 0.1F}, {10.0F, 10.0F, 10.0F},
+  };
+  map.intensities = {1.0F, 2.0F, 3.0F, 4.0F, 5.0F};
+
+  const std::size_t removed = remove_isolated_map_points(map, 0.5, 3, 1);
+
+  EXPECT_EQ(removed, 1U);
+  EXPECT_EQ(
+    map.points, (std::vector<std::array<float, 3>>{
+                  {0.0F, 0.0F, 0.0F}, {0.1F, 0.0F, 0.0F}, {0.0F, 0.1F, 0.0F}, {0.0F, 0.0F, 0.1F}}));
+  EXPECT_EQ(map.intensities, (std::vector<float>{1.0F, 2.0F, 3.0F, 4.0F}));
+}
+
+TEST(RemoveIsolatedMapPoints, IntensityFreeMapCompactsPointsOnly)
+{
+  bagwiz::core::slam::CloudMap map;
+  map.points = {{0.0F, 0.0F, 0.0F}, {0.1F, 0.0F, 0.0F}, {10.0F, 10.0F, 10.0F}};
+
+  const std::size_t removed = remove_isolated_map_points(map, 0.5, 1, 1);
+
+  EXPECT_EQ(removed, 1U);
+  EXPECT_EQ(map.points.size(), 2U);
+  EXPECT_TRUE(map.intensities.empty());
+}
+
+TEST(RemoveIsolatedMapPoints, DenseMapIsUntouched)
+{
+  bagwiz::core::slam::CloudMap map;
+  map.points = {{0.0F, 0.0F, 0.0F}, {0.1F, 0.0F, 0.0F}, {0.2F, 0.0F, 0.0F}};
+  map.intensities = {1.0F, 2.0F, 3.0F};
+  const auto original_points = map.points;
+
+  EXPECT_EQ(remove_isolated_map_points(map, 0.5, 1, 1), 0U);
+  EXPECT_EQ(map.points, original_points);
+  EXPECT_EQ(map.intensities, (std::vector<float>{1.0F, 2.0F, 3.0F}));
+}
+
+TEST(RemoveIsolatedMapPoints, EmptyMapIsANoOp)
+{
+  bagwiz::core::slam::CloudMap map;
+  EXPECT_EQ(remove_isolated_map_points(map, 0.5, 3, 1), 0U);
+  EXPECT_TRUE(map.points.empty());
 }
 
 }  // namespace

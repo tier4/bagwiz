@@ -36,6 +36,7 @@
 #include "bagwiz/io/bag_open.hpp"
 #include "map_slam_colorize.hpp"  // NOLINT(build/include_subdir) src-local shared header
 #include "map_slam_mapping.hpp"   // NOLINT(build/include_subdir) src-local shared header
+#include "map_slam_threads.hpp"   // NOLINT(build/include_subdir) src-local shared header
 
 #include <tf2/buffer_core.hpp>
 #include <tf2/time.hpp>
@@ -1088,6 +1089,25 @@ private:
       BAGWIZ_LOG_ERROR(
         kLogger, "SLAM produced no trajectory poses from %s scans", std::to_string(scans).c_str());
       return 1;
+    }
+
+    // Radius outlier removal BEFORE colorization, so only the surviving
+    // points are colorized and exported (the colorizer builds its kd-tree
+    // over the filtered cloud).
+    if (args_.remove_outliers) {
+      const std::size_t before = map.points.size();
+      std::size_t removed = 0;
+      {
+        core::slam::FinalizeSpinner spinner("Removing isolated points", progress_on);
+        removed = remove_isolated_map_points(
+          map, args_.outlier_radius, args_.outlier_min_neighbors,
+          resolve_threads(args_.num_threads));
+      }
+      BAGWIZ_LOG_INFO(
+        kLogger,
+        "Outlier removal dropped %zu isolated point(s) (%zu -> %zu): fewer than %d neighbors "
+        "within %.2f m",
+        removed, before, map.points.size(), args_.outlier_min_neighbors, args_.outlier_radius);
     }
 
     // Colorize the map from the camera images BEFORE the optional --frame

@@ -1079,6 +1079,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //           [-j|--threads <N>] [--viewer] [-w|--overwrite]
 //           [--no-progress] [--no-warmup-fill] [--no-cooldown-fill]
 //           [--no-color-propagate] [--fill-min-inliers <f>] [--submap-keyframes <N>]
+//           [--remove-outliers] [--outlier-r <m>] [--outlier-k <N>]
 //   viewer: `map`(0) `viewer`(1) `<map>`(2)
 //
 // At the action slot (word 1) the candidates are `slam` and `viewer` (or the
@@ -1129,7 +1130,10 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
          "--no-cooldown-fill",
          "--no-progress",
          "--no-warmup-fill",
+         "--outlier-k",
+         "--outlier-r",
          "--overwrite",
+         "--remove-outliers",
          "--submap-keyframes",
          "--threads",
          "--viewer",
