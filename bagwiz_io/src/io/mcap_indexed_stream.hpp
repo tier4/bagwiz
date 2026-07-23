@@ -9,9 +9,9 @@
 #ifndef IO__MCAP_INDEXED_STREAM_HPP_
 #define IO__MCAP_INDEXED_STREAM_HPP_
 
-#include "mcap_chunk_prefetch.hpp"  // NOLINT(build/include_subdir) src-local shared header
+#include "mcap_chunk_prefetch.hpp"   // NOLINT(build/include_subdir) src-local shared header
+#include "mcap_read_job_compat.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
-#include <mcap/read_job_queue.hpp>
 #include <mcap/reader.hpp>
 
 #include <cstddef>
@@ -28,7 +28,7 @@
 
 // Src-local parallel replacement for the LogTimeOrder indexed read path:
 // replicates mcap::IndexedMessageReader's emission order exactly (the same
-// mcap::internal::ReadJobQueue discipline over the same job keys) while the
+// mcap_compat::ReadJobQueue discipline over the same job keys) while the
 // chunk decompression itself runs ahead on a ChunkPrefetcher worker pool
 // instead of synchronously on the iterating thread.
 namespace bagwiz::io::detail
@@ -83,12 +83,12 @@ private:
   };
 
   [[nodiscard]] std::size_t find_free_slot();
-  void ingest_chunk(const mcap::internal::DecompressChunkJob & job);
+  void ingest_chunk(const mcap_compat::DecompressChunkJob & job);
 
   Options options_;
   std::unordered_set<std::uint16_t> selected_channels_;  // empty => no filter
   bool has_filter_ = false;
-  mcap::internal::ReadJobQueue queue_{false};
+  mcap_compat::ReadJobQueue queue_{false};
   std::vector<Slot> slots_;
   std::unordered_map<std::uint64_t, std::size_t> schedule_index_by_offset_;
   std::unique_ptr<ChunkPrefetcher> prefetcher_;

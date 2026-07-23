@@ -8,6 +8,8 @@
 
 #include "mcap_indexed_stream.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
+#include "mcap_read_job_compat.hpp"  // NOLINT(build/include_subdir) src-local shared header
+
 #include <algorithm>
 #include <cstring>
 #include <memory>
@@ -111,7 +113,7 @@ ParallelIndexedStream::ParallelIndexedStream(
     schedule.push_back({chunk.chunkStartOffset, chunk.chunkLength});
     schedule_index_by_offset_[chunk.chunkStartOffset] = i;
     queue_.push(
-      mcap::internal::DecompressChunkJob{
+      mcap_compat::DecompressChunkJob{
         chunk.messageStartTime, chunk.messageEndTime, chunk.chunkStartOffset,
         chunk.chunkStartOffset + chunk.chunkLength + chunk.messageIndexLength});
   }
@@ -133,7 +135,7 @@ std::size_t ParallelIndexedStream::find_free_slot()
 // ReadMessageJob per selected message, keyed exactly like the upstream
 // reader: (logTime, RecordOffset{record start within the decompressed blob,
 // chunk file offset}).
-void ParallelIndexedStream::ingest_chunk(const mcap::internal::DecompressChunkJob & job)
+void ParallelIndexedStream::ingest_chunk(const mcap_compat::DecompressChunkJob & job)
 {
   auto pre = prefetcher_->get(schedule_index_by_offset_.at(job.chunkStartOffset));
   if (!pre.error.empty()) {
@@ -166,7 +168,7 @@ void ParallelIndexedStream::ingest_chunk(const mcap::internal::DecompressChunkJo
       const bool channel_ok = !has_filter_ || selected_channels_.count(channel_id) != 0;
       if (channel_ok && log_time >= start_ns && log_time < end_ns) {
         queue_.push(
-          mcap::internal::ReadMessageJob{
+          mcap_compat::ReadMessageJob{
             log_time, mcap::RecordOffset(pos, job.chunkStartOffset), slot_index});
         ++slot.unread;
       }
@@ -182,14 +184,14 @@ bool ParallelIndexedStream::next(Message & out)
   }
   while (queue_.len() > 0) {
     auto job = queue_.pop();
-    if (std::holds_alternative<mcap::internal::DecompressChunkJob>(job)) {
-      ingest_chunk(std::get<mcap::internal::DecompressChunkJob>(job));
+    if (std::holds_alternative<mcap_compat::DecompressChunkJob>(job)) {
+      ingest_chunk(std::get<mcap_compat::DecompressChunkJob>(job));
       if (!error_.empty()) {
         return false;
       }
       continue;
     }
-    const auto & msg = std::get<mcap::internal::ReadMessageJob>(job);
+    const auto & msg = std::get<mcap_compat::ReadMessageJob>(job);
     Slot & slot = slots_[msg.chunkReaderIndex];
     const std::byte * record = slot.records.data() + msg.offset.offset;
     const std::uint64_t length = read_u64(record + 1);
