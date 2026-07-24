@@ -147,12 +147,17 @@ void ParallelIndexedStream::ingest_chunk(const mcap_compat::DecompressChunkJob &
   const std::uint64_t end_ns = options_.end_ns.value_or(mcap::MaxTime);
   const std::size_t slot_index = find_free_slot();
   Slot & slot = slots_[slot_index];
-  slot.records = std::move(pre.records);
+  // Return the evicted chunk's buffer to the prefetcher pool before the new
+  // chunk takes the slot, so workers reuse it instead of allocating afresh.
+  if (slot.chunk.records.capacity() != 0) {
+    prefetcher_->recycle(std::move(slot.chunk.records));
+  }
+  slot.chunk = std::move(pre);
   slot.chunk_start_offset = job.chunkStartOffset;
   slot.unread = 0;
 
-  const std::byte * data = slot.records.data();
-  const std::size_t size = slot.records.size();
+  const std::byte * data = slot.chunk.data();
+  const std::size_t size = slot.chunk.size;
   std::size_t pos = 0;
   while (pos + kRecordHeaderBytes <= size) {
     const auto opcode = std::to_integer<std::uint8_t>(data[pos]);
@@ -193,7 +198,7 @@ bool ParallelIndexedStream::next(Message & out)
     }
     const auto & msg = std::get<mcap_compat::ReadMessageJob>(job);
     Slot & slot = slots_[msg.chunkReaderIndex];
-    const std::byte * record = slot.records.data() + msg.offset.offset;
+    const std::byte * record = slot.chunk.data() + msg.offset.offset;
     const std::uint64_t length = read_u64(record + 1);
     const std::byte * body = record + kRecordHeaderBytes;
     out.channel_id = read_u16(body);
