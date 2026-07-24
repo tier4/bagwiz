@@ -31,8 +31,8 @@ is treated as one rosbag (its shards are not checked individually), and every
 loose `*.mcap` / `*.db3` / `*.db3.zstd` file is treated as one rosbag.
 
 A single file passed directly as `input` is also accepted when its storage
-format is detected from its magic bytes, so an extensionless or renamed bag
-file still works. The `*.mcap` / `*.db3` / `*.db3.zstd` extension rule is what
+format is detected from its magic bytes, so a bag file that has been renamed
+or stripped of its extension still works. The `*.mcap` / `*.db3` / `*.db3.zstd` extension rule is what
 governs files discovered during the recursive directory walk.
 
 ### Options
