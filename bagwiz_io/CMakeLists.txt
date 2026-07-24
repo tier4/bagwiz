@@ -75,6 +75,7 @@ add_library(bagwiz_io
   src/io/bag_factory.cpp
   src/io/bag_open.cpp
   src/io/file_decompressor.cpp
+  src/io/mcap_chunk_codec.cpp
   src/io/mcap_chunk_prefetch.cpp
   src/io/mcap_indexed_stream.cpp
   src/io/mcap_reader.cpp

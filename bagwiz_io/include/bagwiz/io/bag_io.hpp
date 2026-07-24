@@ -223,6 +223,23 @@ std::unique_ptr<BagReader> open_read(const std::filesystem::path & path, OpenOpt
 std::unique_ptr<BagWriter> open_write(
   const std::filesystem::path & path, CreateOptions options = {});
 
+// The concrete storage format and layout open_write() resolves for a given
+// output path and CreateOptions, exposed so callers can inspect the decision
+// without creating a writer (e.g. to pick a format-specific fast path).
+struct ResolvedWriteLayout
+{
+  Format format = Format::Mcap;
+  Layout layout = Layout::Directory;
+};
+
+// Resolve what open_write(path, options) would create: an Auto layout picks
+// SingleFile for a `.mcap` / `.db3` extension (with the matching format when
+// the format is Auto too) and Directory otherwise; a still-unresolved Auto
+// format defaults to Mcap. Never returns Auto in either field; never touches
+// the filesystem and never throws.
+ResolvedWriteLayout resolve_write_layout(
+  const std::filesystem::path & path, const CreateOptions & options) noexcept;
+
 // Identify the storage format of an existing bag without opening a reader.
 //
 // - For directory layouts: parses metadata.yaml's storage_identifier.

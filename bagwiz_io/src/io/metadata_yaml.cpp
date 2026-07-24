@@ -14,6 +14,7 @@
 
 #include <cctype>
 #include <cstdint>
+#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -159,6 +160,76 @@ BagMetadata load_metadata_yaml(const std::filesystem::path & yaml_path)
   }
 
   return md;
+}
+
+void write_metadata_yaml(const std::filesystem::path & dir, const MetadataYamlInfo & info)
+{
+  const int64_t duration_ns =
+    (info.total_messages > 0 && info.end_ns >= info.start_ns) ? (info.end_ns - info.start_ns) : 0;
+  const int64_t starting_ns = info.total_messages > 0 ? info.start_ns : 0;
+  const bool compressed = !(info.compression_format.empty() || info.compression_format == "none");
+
+  YAML::Emitter out;
+  out << YAML::BeginMap;
+  out << YAML::Key << "rosbag2_bagfile_information";
+  out << YAML::Value << YAML::BeginMap;
+
+  // rosbag2_storage::BagMetadata defaults `version` to 5 on humble, and 5 is
+  // the minimum version where rosbag2 considers `files:` part of the schema.
+  // Lower versions (1-4) still parse but lose per-file timing; humble's
+  // writer emits 5 by default so we match that.
+  out << YAML::Key << "version" << YAML::Value << 5;
+  out << YAML::Key << "storage_identifier" << YAML::Value << info.storage_identifier;
+  out << YAML::Key << "duration" << YAML::Value << YAML::BeginMap << YAML::Key << "nanoseconds"
+      << YAML::Value << duration_ns << YAML::EndMap;
+  out << YAML::Key << "starting_time" << YAML::Value << YAML::BeginMap << YAML::Key
+      << "nanoseconds_since_epoch" << YAML::Value << starting_ns << YAML::EndMap;
+  out << YAML::Key << "message_count" << YAML::Value << info.total_messages;
+
+  out << YAML::Key << "topics_with_message_count" << YAML::Value << YAML::BeginSeq;
+  for (const auto & t : info.topics) {
+    const auto count_it = info.per_topic_counts.find(t.name);
+    const int64_t count = count_it != info.per_topic_counts.end() ? count_it->second : 0;
+    out << YAML::BeginMap;
+    out << YAML::Key << "topic_metadata" << YAML::Value << YAML::BeginMap;
+    out << YAML::Key << "name" << YAML::Value << t.name;
+    out << YAML::Key << "type" << YAML::Value << t.type;
+    out << YAML::Key << "serialization_format" << YAML::Value << t.serialization_format;
+    out << YAML::Key << "offered_qos_profiles" << YAML::Value << t.offered_qos_profiles;
+    out << YAML::EndMap;
+    out << YAML::Key << "message_count" << YAML::Value << count;
+    out << YAML::EndMap;
+  }
+  out << YAML::EndSeq;
+
+  out << YAML::Key << "compression_format" << YAML::Value << info.compression_format;
+  out << YAML::Key << "compression_mode" << YAML::Value << (compressed ? "file" : "");
+  out << YAML::Key << "relative_file_paths" << YAML::Value << YAML::BeginSeq;
+  out << info.shard_relative_path;
+  out << YAML::EndSeq;
+
+  // `files:` is required for metadata version >= 5; rosbag2's reader throws
+  // "invalid node; first invalid key: \"files\"" without it. Single shard,
+  // so the per-file timing equals the bag-level summary.
+  out << YAML::Key << "files" << YAML::Value << YAML::BeginSeq;
+  out << YAML::BeginMap;
+  out << YAML::Key << "path" << YAML::Value << info.shard_relative_path;
+  out << YAML::Key << "starting_time" << YAML::Value << YAML::BeginMap << YAML::Key
+      << "nanoseconds_since_epoch" << YAML::Value << starting_ns << YAML::EndMap;
+  out << YAML::Key << "duration" << YAML::Value << YAML::BeginMap << YAML::Key << "nanoseconds"
+      << YAML::Value << duration_ns << YAML::EndMap;
+  out << YAML::Key << "message_count" << YAML::Value << info.total_messages;
+  out << YAML::EndMap;
+  out << YAML::EndSeq;
+
+  out << YAML::EndMap;
+  out << YAML::EndMap;
+
+  std::ofstream f(dir / "metadata.yaml");
+  if (!f) {
+    throw std::runtime_error("failed to open metadata.yaml for writing in " + dir.string());
+  }
+  f << out.c_str() << '\n';
 }
 
 }  // namespace bagwiz::io

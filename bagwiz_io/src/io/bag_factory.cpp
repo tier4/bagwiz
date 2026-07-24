@@ -317,7 +317,8 @@ std::unique_ptr<BagReader> open_read(const std::filesystem::path & path, OpenOpt
   throw std::runtime_error("unreachable: unhandled Format");
 }
 
-std::unique_ptr<BagWriter> open_write(const std::filesystem::path & path, CreateOptions options)
+ResolvedWriteLayout resolve_write_layout(
+  const std::filesystem::path & path, const CreateOptions & options) noexcept
 {
   // Layout selection: if caller asked Auto, pick by whether the path looks
   // like a single .mcap/.db3 file (use SingleFile + matching format) or
@@ -343,21 +344,27 @@ std::unique_ptr<BagWriter> open_write(const std::filesystem::path & path, Create
   if (format == Format::Auto) {
     format = Format::Mcap;
   }
+  return ResolvedWriteLayout{format, layout};
+}
 
-  if (layout == Layout::Directory) {
-    if (format == Format::Mcap) {
+std::unique_ptr<BagWriter> open_write(const std::filesystem::path & path, CreateOptions options)
+{
+  const auto resolved = resolve_write_layout(path, options);
+
+  if (resolved.layout == Layout::Directory) {
+    if (resolved.format == Format::Mcap) {
       return detail::create_mcap_directory(path, options);
     }
-    if (format == Format::Sqlite3) {
+    if (resolved.format == Format::Sqlite3) {
       return detail::create_sqlite3_directory(path, options);
     }
     throw std::runtime_error("unsupported format for directory writer");
   }
 
-  if (format == Format::Mcap) {
+  if (resolved.format == Format::Mcap) {
     return detail::create_mcap_file(path, options);
   }
-  if (format == Format::Sqlite3) {
+  if (resolved.format == Format::Sqlite3) {
     return detail::create_sqlite3_file(path, options);
   }
   throw std::runtime_error("unsupported format for single-file writer");
