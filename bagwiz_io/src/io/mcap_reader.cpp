@@ -31,6 +31,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -43,22 +44,29 @@ namespace
 {
 constexpr const char * kLogger = "bagwiz.io.mcap";
 
-// Decompress-worker count for the parallel indexed read path. Default 4;
-// BAGWIZ_READ_THREADS overrides it, and 0 or 1 falls back to the synchronous
-// libmcap iteration (the debugging escape hatch).
+// Decompress-worker count for the parallel indexed read path. Defaults to 8,
+// capped at the host's hardware concurrency so low-core machines keep a
+// smaller worker count (docs/benchmarks/mcap-read-threads.md has the sweep the
+// default is based on). BAGWIZ_READ_THREADS overrides the default, and 0 or 1
+// falls back to the synchronous libmcap iteration (the debugging escape
+// hatch).
 int resolve_read_threads()
 {
-  constexpr int kDefault = 4;
+  constexpr int kDefault = 8;
   constexpr int kMax = 16;
+  const auto default_threads = [&] {
+    const unsigned int hw = std::thread::hardware_concurrency();
+    return hw == 0 ? kDefault : std::min<int>(kDefault, static_cast<int>(hw));
+  };
   const char * env = std::getenv("BAGWIZ_READ_THREADS");
   if (env == nullptr || *env == '\0') {
-    return kDefault;
+    return default_threads();
   }
   char * end = nullptr;
   const long parsed = std::strtol(env, &end, 10);  // NOLINT(runtime/int) strtol API
   if (end == env || *end != '\0') {
     BAGWIZ_LOG_WARN(kLogger, "ignoring unparsable BAGWIZ_READ_THREADS='%s'", env);
-    return kDefault;
+    return default_threads();
   }
   return static_cast<int>(std::clamp<long>(parsed, 0, kMax));  // NOLINT(runtime/int)
 }

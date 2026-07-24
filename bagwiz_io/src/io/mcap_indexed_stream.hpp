@@ -42,7 +42,7 @@ public:
     std::optional<std::uint64_t> start_ns;  // inclusive, like ReadMessageOptions::startTime
     std::optional<std::uint64_t> end_ns;    // exclusive, like ReadMessageOptions::endTime
     std::function<bool(std::string_view)> topic_filter;  // null => all topics
-    int num_threads = 4;                                 // decompress workers
+    int num_threads = 8;                                 // decompress workers
   };
 
   // One emitted message. `payload` points into the retained decompressed
