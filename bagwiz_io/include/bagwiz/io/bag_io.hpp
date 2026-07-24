@@ -208,7 +208,13 @@ struct CreateOptions
 
   // MCAP-specific
   std::string mcap_compression = "zstd";  // "", "lz4", "zstd"
-  uint32_t mcap_chunk_size = 4 * 1024 * 1024;
+  // 1 MiB keeps libmcap's chunk staging buffer L2-resident: every payload is
+  // memcpy'd into that buffer and read back by the chunk flush, and once the
+  // buffer outgrows the per-core cache both passes round-trip DRAM instead
+  // (a 4 MiB buffer measured ~9% slower, 64 MiB ~26% slower, on a 4.7 GB
+  // uncompressed rewrite). Upstream mcap defaults to 768 KiB for the same
+  // regime; 512 KiB measured no faster than 1 MiB.
+  uint32_t mcap_chunk_size = 1024 * 1024;
 };
 
 // Factory functions. Format/layout are auto-detected from magic bytes and
