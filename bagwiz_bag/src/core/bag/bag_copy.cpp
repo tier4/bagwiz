@@ -13,10 +13,14 @@
 #include "bagwiz/core/pipeline/topic_router.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
+#include <cstdint>
+#include <exception>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 // bag_copy_filtered / bag_copy_renamed are thin adapters over the shared
 // pipeline seam: they build the matching pure-copy Processor, run it on the
@@ -65,6 +69,25 @@ BagCopyCounts bag_copy_filtered(
   pipeline::SuppressRouter router(suppress);
   const auto counts = pipeline::run_pipeline(reader, writer, router, *backend_impl, profile_label);
   return BagCopyCounts{counts.copied, counts.dropped};
+}
+
+std::optional<std::int64_t> count_topic_messages(
+  io::BagReader & reader, const std::unordered_set<std::string> & topics)
+{
+  if (topics.empty()) {
+    return 0;
+  }
+  const std::vector<std::string> names(topics.begin(), topics.end());
+  std::int64_t total = 0;
+  try {
+    // cppcheck-suppress unassignedVariable
+    for (const auto & [name, count] : reader.compute_topic_counts(names)) {
+      total += count;
+    }
+  } catch (const std::exception &) {
+    return std::nullopt;
+  }
+  return total;
 }
 
 BagCopyRenameCounts bag_copy_renamed(

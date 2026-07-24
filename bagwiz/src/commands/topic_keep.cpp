@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <exception>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -73,6 +74,27 @@ int execute_keep_pass(
     }
   }
 
+  // Push the keep set down to the reader before the copy starts: the indexed
+  // MCAP path prunes whole chunks that carry no kept topic (and the SQLite
+  // backend filters in SQL), so a sparse keep no longer reads and decompresses
+  // the entire bag. The push-down stays at the command level on purpose:
+  // bag_copy_filtered must not install reader filters itself, because callers
+  // like `trim` set a time-range filter on the reader first and set_filter
+  // replaces the whole ReadFilter.
+  io::ReadFilter filter;
+  filter.topics.assign(keep.begin(), keep.end());
+  reader->set_filter(filter);
+
+  // The reader never surfaces the suppressed messages now, so the copy loop
+  // cannot count them; report the suppressed total from the bag's statistics
+  // instead (0, after the backend's own warning, when the input carries none).
+  const auto suppressed = core::count_topic_messages(*reader, suppress);
+  if (!suppressed.has_value()) {
+    BAGWIZ_LOG_WARN(
+      kLogger, "Could not compute the suppressed message count for %s; reporting 0.",
+      args.input_path.c_str());
+  }
+
   core::BagCopyCounts counts;
   try {
     counts = core::bag_copy_filtered(
@@ -88,9 +110,9 @@ int execute_keep_pass(
 
   BAGWIZ_LOG_INFO(
     kLogger,
-    "topic keep: kept %zu topic(s), dropped %zu; copied %" PRIu64 " message(s), suppressed %" PRIu64
+    "topic keep: kept %zu topic(s), dropped %zu; copied %" PRIu64 " message(s), suppressed %" PRId64
     ".",
-    kept, suppress.size(), counts.copied, counts.suppressed);
+    kept, suppress.size(), counts.copied, suppressed.value_or(0));
   return 0;
 }
 

@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -65,6 +66,17 @@ BagCopyCounts bag_copy_filtered(
   std::string_view profile_label = "",
   pipeline::BackendKind backend = pipeline::BackendKind::Sequential,
   const MessagePredicate & keep = {});
+
+// Sum the input's per-topic message counts for `topics` from the bag's
+// statistics/summary — the bag is NOT scanned. Lets a caller that pushed a
+// topic filter down to the reader (so the copy loop never sees the excluded
+// messages) still report how many messages that filter suppressed.
+//
+// Returns std::nullopt when the counts could not be computed (the underlying
+// query threw). A bag without statistics is not an error: the backend logs its
+// own warning, omits the topics, and the sum comes back 0.
+std::optional<std::int64_t> count_topic_messages(
+  io::BagReader & reader, const std::unordered_set<std::string> & topics);
 
 struct BagCopyRenameCounts
 {

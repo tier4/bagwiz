@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <exception>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -70,6 +71,33 @@ int execute_drop_pass(
     }
   }
 
+  // Push the surviving topics down to the reader: the indexed MCAP path can
+  // then prune chunks whose messages all belong to dropped topics (and the
+  // SQLite backend filters in SQL). Command-level for the same reason as
+  // `topic keep`: bag_copy_filtered must not install reader filters itself.
+  // When every topic is dropped the survivor list is empty, which ReadFilter
+  // treats as "all topics" — skip the push-down and let the suppress set do
+  // the (correct) work alone.
+  io::ReadFilter filter;
+  for (const auto & t : reader->topics()) {
+    if (drop.count(t.name) == 0) {
+      filter.topics.push_back(t.name);
+    }
+  }
+  if (!filter.topics.empty()) {
+    reader->set_filter(filter);
+  }
+
+  // The reader never surfaces the suppressed messages now, so the copy loop
+  // cannot count them; report the suppressed total from the bag's statistics
+  // instead (0, after the backend's own warning, when the input carries none).
+  const auto suppressed = core::count_topic_messages(*reader, drop);
+  if (!suppressed.has_value()) {
+    BAGWIZ_LOG_WARN(
+      kLogger, "Could not compute the suppressed message count for %s; reporting 0.",
+      args.input_path.c_str());
+  }
+
   core::BagCopyCounts counts;
   try {
     counts = core::bag_copy_filtered(
@@ -85,9 +113,9 @@ int execute_drop_pass(
 
   BAGWIZ_LOG_INFO(
     kLogger,
-    "topic drop: kept %zu topic(s), dropped %zu; copied %" PRIu64 " message(s), suppressed %" PRIu64
+    "topic drop: kept %zu topic(s), dropped %zu; copied %" PRIu64 " message(s), suppressed %" PRId64
     ".",
-    kept, drop.size(), counts.copied, counts.suppressed);
+    kept, drop.size(), counts.copied, suppressed.value_or(0));
   return 0;
 }
 
