@@ -669,11 +669,12 @@ TEST(FlagCompletionTest, TopLevelDashListsHelpAndVersion)
     run_completion({"bagwiz", "__complete", "1", "bagwiz", "-"}), "--help\n--version\n-h\n");
 }
 
-// `ls` surfaces its own `--long` flag plus the implicit help flags, sorted.
+// `ls` surfaces its own `-l`/`--long` flag plus the implicit help flags,
+// sorted.
 TEST(FlagCompletionTest, LsDashListsLsFlags)
 {
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "2", "bagwiz", "ls", "-"}), "--help\n--long\n-h\n");
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "ls", "-"}), "--help\n--long\n-h\n-l\n");
 }
 
 // `trim` surfaces its window and output flags plus the implicit help flags,
