@@ -78,6 +78,7 @@ add_library(bagwiz_io
   src/io/mcap_chunk_codec.cpp
   src/io/mcap_chunk_prefetch.cpp
   src/io/mcap_indexed_stream.cpp
+  src/io/mcap_parallel_chunk_writer.cpp
   src/io/mcap_passthrough.cpp
   src/io/mcap_reader.cpp
   src/io/mcap_writer.cpp
@@ -160,6 +161,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_mcap_passthrough_test test/io/mcap_passthrough_test.cpp)
   target_link_libraries(bagwiz_mcap_passthrough_test bagwiz_io ${mcap_vendor_TARGETS})
+
+  ament_add_gtest(bagwiz_mcap_parallel_write_test test/io/mcap_parallel_write_test.cpp)
+  target_link_libraries(bagwiz_mcap_parallel_write_test bagwiz_io ${mcap_vendor_TARGETS})
 
   ament_add_gtest(bagwiz_sqlite3_reader_test test/io/sqlite3_reader_test.cpp)
   target_link_libraries(bagwiz_sqlite3_reader_test bagwiz_io)

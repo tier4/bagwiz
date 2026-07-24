@@ -11,6 +11,7 @@
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/metadata_yaml.hpp"
+#include "mcap_parallel_chunk_writer.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #include <mcap/writer.hpp>
 
@@ -56,8 +57,20 @@ class McapFileWriter : public BagWriter
 public:
   McapFileWriter(const std::filesystem::path & path, const CreateOptions & options)
   {
+    const auto compression = parse_compression(options.mcap_compression);
+    // Compressed output goes through the parallel chunk writer when write
+    // threads are available: chunk compression is the write path's CPU
+    // bottleneck and parallelizes across chunks. Uncompressed output has no
+    // chunk encode to parallelize and stays on the serial libmcap writer.
+    if (compression != mcap::Compression::None && resolve_write_threads() > 1) {
+      parallel_ = std::make_unique<ParallelChunkMcapWriter>(
+        path, compression == mcap::Compression::Zstd ? "zstd" : "lz4", options.mcap_chunk_size,
+        resolve_write_threads());
+      return;
+    }
+
     mcap::McapWriterOptions wopts("ros2");
-    wopts.compression = parse_compression(options.mcap_compression);
+    wopts.compression = compression;
     wopts.chunkSize = options.mcap_chunk_size;
     // Chunk CRCs cost a CRC32 pass over every written byte, and the common
     // readers (libmcap, rosbag2, foxglove) do not validate them on their
@@ -76,7 +89,11 @@ public:
   {
     if (!closed_) {
       try {
-        writer_.close();
+        if (parallel_) {
+          parallel_->close();
+        } else {
+          writer_.close();
+        }
       } catch (...) {
         // Destructors must not throw; mcap::close itself can't throw either
         // but a user subclass or future revision might. Swallow silently.
@@ -114,7 +131,14 @@ public:
         has_text ? (topic.schema_encoding.empty() ? std::string("ros2msg") : topic.schema_encoding)
                  : std::string{};
       mcap::Schema schema(topic.type, encoding, topic.schema_text);
-      writer_.addSchema(schema);
+      if (parallel_) {
+        // The parallel writer serializes records verbatim, so ids are
+        // assigned here — same order libmcap would: sequential from 1.
+        schema.id = next_schema_id_++;
+        parallel_->write_schema(schema);
+      } else {
+        writer_.addSchema(schema);
+      }
       schema_id = schema.id;
       type_to_schema_[topic.type] = schema_id;
     }
@@ -123,7 +147,12 @@ public:
     if (!topic.offered_qos_profiles.empty()) {
       channel.metadata["offered_qos_profiles"] = topic.offered_qos_profiles;
     }
-    writer_.addChannel(channel);
+    if (parallel_) {
+      channel.id = next_channel_id_++;
+      parallel_->write_channel(channel);
+    } else {
+      writer_.addChannel(channel);
+    }
     topic_to_channel_[topic.name] = channel.id;
   }
 
@@ -143,6 +172,10 @@ public:
     msg.data = reinterpret_cast<const std::byte *>(payload.data());
     msg.dataSize = payload.size();
 
+    if (parallel_) {
+      parallel_->write_message(msg);
+      return;
+    }
     const auto status = writer_.write(msg);
     if (!status.ok()) {
       throw std::runtime_error("mcap write failed: " + status.message);
@@ -154,12 +187,19 @@ public:
     if (closed_) {
       return;
     }
-    writer_.close();
+    if (parallel_) {
+      parallel_->close();
+    } else {
+      writer_.close();
+    }
     closed_ = true;
   }
 
 private:
   mcap::McapWriter writer_;
+  std::unique_ptr<ParallelChunkMcapWriter> parallel_;
+  mcap::SchemaId next_schema_id_ = 1;
+  mcap::ChannelId next_channel_id_ = 1;
   std::unordered_map<std::string, mcap::ChannelId> topic_to_channel_;
   std::unordered_map<std::string, mcap::SchemaId> type_to_schema_;
   bool closed_ = false;
