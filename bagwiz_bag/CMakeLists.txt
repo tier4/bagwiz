@@ -40,6 +40,7 @@ find_package(Threads REQUIRED)
 add_library(bagwiz_bag
   src/core/bag/bag_copy.cpp
   src/core/bag/bag_inplace.cpp
+  src/core/bag/bag_passthrough.cpp
   src/core/bag/bag_topic_plan.cpp
   src/core/bag/broken_bag.cpp
   src/core/bag/rewrite.cpp
@@ -79,6 +80,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_bag_inplace_test test/core/bag/bag_inplace_test.cpp)
   target_link_libraries(bagwiz_bag_inplace_test bagwiz_bag)
+
+  ament_add_gtest(bagwiz_bag_passthrough_test test/core/bag/bag_passthrough_test.cpp)
+  target_link_libraries(bagwiz_bag_passthrough_test bagwiz_bag)
 
   # mcap is a private dep of bagwiz_io, so this test re-links it explicitly to
   # read the produced MCAP's chunk compression (<mcap/reader.hpp>) — the same
