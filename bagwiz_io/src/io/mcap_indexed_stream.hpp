@@ -74,10 +74,11 @@ public:
 private:
   // One retained decompressed chunk; reused once all its messages were
   // consumed AND a later chunk claims the slot (so the last emitted payload
-  // stays valid until the next next() call, per the contract).
+  // stays valid until the next next() call, per the contract). The evicted
+  // buffer is recycled back to the prefetcher's pool at that point.
   struct Slot
   {
-    std::vector<std::byte> records;
+    PrefetchedChunk chunk;
     std::uint64_t chunk_start_offset = 0;
     std::size_t unread = 0;
   };

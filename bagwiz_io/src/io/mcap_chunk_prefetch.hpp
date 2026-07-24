@@ -32,11 +32,18 @@ struct ChunkRef
   std::uint64_t length = 0;        // full record length (opcode + len + body)
 };
 
-// One decompressed chunk, ready for record iteration.
+// One decompressed chunk, ready for record iteration. The records blob
+// starts `offset` bytes into `records` (non-zero when the buffer is the raw
+// chunk record handed over without a copy for an uncompressed chunk).
+// `data()`/`size` are only meaningful when `error` is empty.
 struct PrefetchedChunk
 {
-  std::vector<std::byte> records;  // the chunk's decompressed records blob
+  std::vector<std::byte> records;  // backing buffer holding the records blob
+  std::size_t offset = 0;          // blob start within `records`
+  std::size_t size = 0;            // blob size in bytes
   std::string error;               // non-empty => read/decompress failed
+
+  [[nodiscard]] const std::byte * data() const { return records.data() + offset; }
 };
 
 // Decompresses `schedule`'s chunks on `num_threads` workers, each with its own
@@ -61,7 +68,15 @@ public:
   // ascending indexes (0, 1, ...), each exactly once.
   [[nodiscard]] PrefetchedChunk get(std::size_t index);
 
+  // Return a consumed chunk's backing buffer for reuse by the workers. Keeps
+  // the steady state free of large allocations (and of the page faults +
+  // zero-fill that come with fresh multi-MB buffers).
+  void recycle(std::vector<std::byte> && buf);
+
 private:
+  // Pop a pooled buffer (empty vector when the pool is dry).
+  [[nodiscard]] std::vector<std::byte> take_pooled_buffer();
+
   void worker_loop();
 
   const std::filesystem::path path_;
@@ -73,7 +88,9 @@ private:
   std::size_t next_claim_ = 0;  // next schedule index a worker may take
   std::size_t consumed_ = 0;    // entries already handed to the consumer
   bool cancel_ = false;
+  std::string worker_fatal_error_;  // non-empty => a worker failed to start
   std::map<std::size_t, PrefetchedChunk> ready_;
+  std::vector<std::vector<std::byte>> buffer_pool_;
 
   std::vector<std::jthread> workers_;
 };
