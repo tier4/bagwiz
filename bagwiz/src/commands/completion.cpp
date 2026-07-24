@@ -1190,14 +1190,14 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
 
 // `ls <input>` lists topics. Its only flag is `-l/--long` (per-topic COUNT and
 // HZ); <input> is a path that falls through to the shell's file completion. We
-// surface `--long` plus the implicit help flags for any `-` word.
+// surface `-l`/`--long` plus the implicit help flags for any `-` word.
 //
 //   ls: `ls`(0) `<input>`(1) [-l|--long]
 std::vector<std::string> complete_ls(const CompletionRequest & request)
 {
   const auto current = current_word(request);
   if (current.starts_with("-")) {
-    return matching(with_help({"--long"}), current);
+    return matching(with_help({"--long", "-l"}), current);
   }
   return {};
 }
@@ -1372,7 +1372,7 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
 //   concat: `pcd`(0) `concat`(1) `<input>`(2) `<output_topic>`(3)
 //           --pcd <t...> [--frame <f>] [--tolerance <val>]
 //           [--stamp-offset <t=v>]... [-o <out>] [--drop-inputs] [--force]
-//           [-w|--overwrite]
+//           [-j|--threads <N>] [-w|--overwrite]
 //
 // For `undistort`, `<pose_topic>` is a free-form topic name (accepted types are
 // TFMessage / Odometry / PoseStamped / PoseWithCovarianceStamped) with nothing
