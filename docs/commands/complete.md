@@ -138,10 +138,11 @@ source ~/.config/fish/completions/bagwiz.fish
   `-<TAB>` also surfaces `--version`. The covered positions are:
   - `bagwiz -<TAB>` → `--help`, `--version`, `-h`
   - `bagwiz <cmd> -<TAB>` for every command (`cam-info`, `check`, `complete`,
-    `convert`, `generate`, `ls`, `map`, `pcd`, `tf`, `topic`, `traj`, `walk`);
+    `convert`, `generate`, `ls`, `map`, `pcd`, `tf`, `topic`, `traj`, `trim`, `walk`);
     `walk -<TAB>` also surfaces `--cam-info`
   - `bagwiz <cmd> <subcommand> -<TAB>` for every nested subcommand
-    (`cam-info replace`, `check broken`, `convert format`, `convert msg`,
+    (`cam-info replace`, `cam-info recompute-p`, `cam-info dump`, `check broken`,
+    `convert format`, `convert msg`,
     `convert msg geo`, `generate video`, `map slam`, `map viewer`,
     `pcd concat`, `pcd undistort`, `tf static calc`, `tf static cp`,
     `tf tree`, `tf walk`, `topic drop`, `topic keep`, `topic rename`,
@@ -150,15 +151,16 @@ source ~/.config/fish/completions/bagwiz.fish
     `--topics`/`-t`, and `-w`/`--overwrite`; `check broken -<TAB>` surfaces
     `--rm` and `--deep`; `topic drop -<TAB>` / `topic keep -<TAB>` surface
     `--output`/`-o`, `--overwrite`/`-w`, and `--topics`/`-t` (`topic rename
--<TAB>` does not, since its `<src_topic>`/`<dst_topic>` are positional);
+-<TAB>` surfaces `--output`/`-o` and `--overwrite`/`-w` but not `--topics`/`-t`,
+    since its `<src_topic>`/`<dst_topic>` are positional);
     `tf tree -<TAB>` surfaces `--topics`/`-t` (the flag is optional there —
     omitting it merges every TF topic); `tf static calc -<TAB>` also surfaces
-    `--json`, and `tf static cp -<TAB>` surfaces `--output`/`-o` and
+    `--json`, `--of`, `--ref`, and `tf static cp -<TAB>` surfaces `--output`/`-o` and
     `-w`/`--overwrite`.
     `tf static` is itself a command group, so `tf static <TAB>` completes its
     actions (`calc`, `cp`) and `tf static -<TAB>` lists just the help flags.
     `cam-info`, `check`, `generate`, `map`, `pcd`, and `topic` are likewise
-    command groups: `cam-info <TAB>` completes `replace`, `check <TAB>`
+    command groups: `cam-info <TAB>` completes `replace`, `recompute-p`, `dump`, `check <TAB>`
     completes `broken`, `generate <TAB>` completes `video`, `map <TAB>`
     completes `slam`, `viewer`, `pcd <TAB>` completes `concat`, `undistort`,
     and `topic <TAB>` completes `drop`, `keep`, `rename`
@@ -169,6 +171,9 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz generate video <input> ... --cam-info <topic>` — `sensor_msgs/msg/CameraInfo` topics
   - `bagwiz generate video <input> ... --pcd <topic>` — `sensor_msgs/msg/PointCloud2` topics
   - `bagwiz map slam <input> ... --imu <topic>` — `sensor_msgs/msg/Imu` topics
+  - `bagwiz map slam <input> ... --cam <topic>` — `sensor_msgs/msg/Image` or
+    `sensor_msgs/msg/CompressedImage` topics
+  - `bagwiz map slam <input> ... --cam-info <topic>` — `sensor_msgs/msg/CameraInfo` topics
   - `bagwiz walk <input> <topic> --cam-info <topic>` — `sensor_msgs/msg/CameraInfo` topics
   - `bagwiz pcd concat <input> ... --pcd <topic>...` —
     `sensor_msgs/msg/PointCloud2` topics, offered at every value of the variadic
@@ -177,9 +182,15 @@ source ~/.config/fish/completions/bagwiz.fish
     half is completed to the same `sensor_msgs/msg/PointCloud2` topics (as
     `<topic>=`) until the value word contains `=`; the `<val>` duration has
     nothing to suggest
+  - `bagwiz pcd undistort <input> ... --pcd <topic>...` —
+    `sensor_msgs/msg/PointCloud2` topics, offered at every value of the variadic
+    run
   - `bagwiz cam-info replace <input> <calib_yaml> -t/--topics <topic>...` —
     `sensor_msgs/msg/CameraInfo` topics (the only type `cam-info replace`
     rewrites), offered at every value of the variadic run
+  - `bagwiz cam-info recompute-p <input> ... -t/--topics <topic>...` —
+    `sensor_msgs/msg/CameraInfo` topics, offered at every value of the variadic
+    run
   - `bagwiz topic drop <input> -t/--topics <selector>...` / `bagwiz topic keep
 <input> -t/--topics <selector>...` — every topic in the bag (no type
     filter — these take selectors, which may be globs), offered at every value

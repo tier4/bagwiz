@@ -48,7 +48,7 @@ topic.
 | Name         | Description                                                                         |
 | ------------ | ----------------------------------------------------------------------------------- |
 | `input`      | Input ROS 2 rosbag (directory or single-file). Must exist.                          |
-| `calib_yaml` | Camera calibration YAML in the `camera_calibration` / `camera_info_manager` format. |
+| `calib_yaml` | Camera calibration YAML in the `camera_calibration` / `camera_info_manager` format. Must exist (a regular file). |
 
 ### Options
 

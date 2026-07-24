@@ -27,7 +27,7 @@ bagwiz walk <input> <topic> [--cam-info <cam-info-topic>]
 
 | Flag         | Description                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--cam-info` | Explicit `sensor_msgs/msg/CameraInfo` topic for the preview undistort toggle. When omitted, bagwiz auto-resolves it from `<topic>` using the rules documented for `bagwiz generate video --cam-info`. |
+| `--cam-info` | Explicit `sensor_msgs/msg/CameraInfo` topic for the preview's undistort toggle and the PointCloud2 projection overlay. When omitted, bagwiz auto-resolves it from `<topic>` using the rules documented for `bagwiz generate video --cam-info`. |
 
 ## Behavior
 
@@ -49,8 +49,8 @@ bagwiz walk <input> <topic> [--cam-info <cam-info-topic>]
   line to write under the process current working directory using the name
   `<topic>_<index>.yaml`, where `<topic>` is the ROS topic with each `/`
   replaced by `__`, and `<index>` is the same **zero-based** message index
-  as the first number in the header line `[<index> / <last>[+]]` (see the
-  Header section for `<last>`).
+  as the first number in the footer line `[<index> / <last>[+]]` (see the
+  Footer section for `<last>`).
 - By default, primitive arrays with more than 32 elements (e.g. the byte
   buffer behind `sensor_msgs/Image.data` or `sensor_msgs/PointCloud2.data`)
   are summarized as `[<N items>]` to keep the pager view scannable. Pressing

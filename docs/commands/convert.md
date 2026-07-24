@@ -21,8 +21,7 @@ conversions lives under its own leaf (today: `geo` for position-related types).
 - Any pre-existing entry at `<output>` (file or directory) stops the
   run with a clear log line. Pass `-w`/`--overwrite` to replace it instead.
   The flag is supported by every `bagwiz` subcommand that writes a
-  file or directory output (`convert format`, `convert msg geo -o`, `traj dump`,
-  `traj join -o`).
+  file or directory output.
 - `mcap` outputs are written without chunk compression. Re-compress
   afterwards with `ros2 bag convert` if needed.
 

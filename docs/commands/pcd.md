@@ -35,7 +35,7 @@ bagwiz pcd concat <input> <output_topic_name> --pcd <t1> <t2> [<t3> ...] \
 | `--drop-inputs`                |          | Drop the source `--pcd` topics from the output (default: keep them).                                                                                                                                                                                                                                          |
 | `--force`                      |          | Proceed even if `<output_topic_name>` already exists in the bag (replaces that topic).                                                                                                                                                                                                                        |
 | `-w, --overwrite`              |          | Overwrite an existing `-o/--output` path.                                                                                                                                                                                                                                                                     |
-| `-j, --threads <N>`            |          | Number of worker threads (default: `8`). `0` uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; larger values are capped at hardware concurrency.                                                                                                                                   |
+| `-j, --threads <N>`            |          | Number of worker threads (default: `8`). Accepts `0`–`256`; `0` uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; in-range values above hardware concurrency are capped to it.                                                                                                     |
 
 ### Behaviour notes
 
@@ -104,14 +104,14 @@ bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
 
 ### Options
 
-| Flag                  | Default      | Description                                                                                                                                                                      |
-| --------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--pcd <topic>`       | _(required)_ | PointCloud2 topic to deskew. Repeatable — pass `--pcd` once per topic (e.g. `--pcd /a --pcd /b`) to deskew several topics against the same trajectory. At least one is required. |
-| `--ref <frame>`       | `map`        | Reference frame the trajectory is resolved in (same convention as `traj dump`).                                                                                                  |
-| `--of <frame>`        | `base_link`  | Tracked body frame. The trajectory is obtained as `T_ref_of` (e.g. `T_map_base_link`).                                                                                           |
-| `-o, --output <path>` | _(unset)_    | Output bag. When omitted, `<input>` is rewritten in place (atomic tmp swap).                                                                                                     |
-| `-w, --overwrite`     | `false`      | Replace `-o/--output` if it already exists. Has no effect in in-place mode.                                                                                                      |
-| `-j, --threads <N>`   | `8`          | Number of worker threads for Pass 2. `0` uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; larger values are capped at hardware concurrency.          |
+| Flag                  | Default      | Description                                                                                                                                                                                           |
+| --------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--pcd <topic>`       | _(required)_ | PointCloud2 topic to deskew. Repeatable — pass `--pcd` once per topic (e.g. `--pcd /a --pcd /b`) to deskew several topics against the same trajectory. At least one is required.                      |
+| `--ref <frame>`       | `map`        | Reference frame the trajectory is resolved in (same convention as `traj dump`).                                                                                                                       |
+| `--of <frame>`        | `base_link`  | Tracked body frame. The trajectory is obtained as `T_ref_of` (e.g. `T_map_base_link`).                                                                                                                |
+| `-o, --output <path>` | _(unset)_    | Output bag. When omitted, `<input>` is rewritten in place (atomic tmp swap).                                                                                                                          |
+| `-w, --overwrite`     | `false`      | Replace `-o/--output` if it already exists. Has no effect in in-place mode.                                                                                                                           |
+| `-j, --threads <N>`   | `8`          | Number of worker threads for Pass 2. Accepts `0`–`256`; `0` uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; in-range values above hardware concurrency are capped to it. |
 
 > **Renamed in this release.** `--from` is now `--ref` and `--to` is now `--of`;
 > the values and results are unchanged. Note the mapping is **crossed** —

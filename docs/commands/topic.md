@@ -222,7 +222,8 @@ bagwiz topic rename [OPTIONS] <input> <src_topic> <dst_topic>
   - `<src_topic>` matches no topic in the bag (catches a typo'd source);
   - `<dst_topic>` already names a topic in the bag — renaming onto it would
     collide two distinct declarations onto one name (and a topic may have only
-    one type); or
+    one type);
+  - either `<src_topic>` or `<dst_topic>` is empty (both must be non-empty); or
   - `<src_topic>` and `<dst_topic>` are identical (a no-op).
 - In-place vs `-o`, embedded-schema preservation, and `compression=none` output
   all behave exactly as documented for [`drop`](#bagwiz-topic-drop) above.
@@ -245,4 +246,4 @@ bagwiz topic rename drive_dir/ /camera/image_raw /camera/front/image_raw
 | Code | Meaning                                                                                                                                                                                                                                                                                                                                                       |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | The bag was rewritten successfully, including the all-topics-matched edge case for `drop`/`keep` (an empty bag for `drop`, an unchanged topic set for `keep`), which logs a warning.                                                                                                                                                                          |
-| `1`  | The input could not be opened; a `drop`/`keep` selector matched no topic; `rename`'s `<src_topic>` was not found, its `<dst_topic>` already existed, or its two names were identical; the `-o` output path collided without `-w`/`--overwrite`; the input storage format could not be detected for an in-place rewrite; or a read/write/close error occurred. |
+| `1`  | The input could not be opened; a `drop`/`keep` selector matched no topic; `rename`'s `<src_topic>` was not found, its `<dst_topic>` already existed, either name was empty, or its two names were identical; the `-o` output path collided without `-w`/`--overwrite`; the input storage format could not be detected for an in-place rewrite; or a read/write/close error occurred. |

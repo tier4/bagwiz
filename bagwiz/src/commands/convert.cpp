@@ -82,7 +82,7 @@ public:
   [[nodiscard]] std::string_view name() const override { return "convert"; }
   [[nodiscard]] std::string_view description() const override
   {
-    return "Convert between bag formats";
+    return "Convert bag storage formats or topic message types";
   }
 
   void configure(CLI::App & app) override

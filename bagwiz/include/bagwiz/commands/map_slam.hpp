@@ -157,8 +157,9 @@ struct MapSlamArgs
   //  - cuda: force the CUDA GPU backend; error on a non-CUDA build or no device.
   // The GPU backend = GLIM's GPU LiDAR-IMU odometry (with --imu; CT without it,
   // since GLIM has no GPU LiDAR-only backend), GPU VGICP registration in
-  // sub/global mapping, and GPU export-map voxelization. It is OUTSIDE the CPU
-  // reproducibility guarantee. The effective choice is resolved in run_map_slam.
+  // sub/global mapping, GPU export-map voxelization, and GPU --cam colorization
+  // (the CUDA colorize rasterizer). It is OUTSIDE the CPU reproducibility
+  // guarantee. The effective choice is resolved in run_map_slam.
   std::string backend = "auto";
 };
 

@@ -110,7 +110,7 @@ struct VideoInputScan
 
 // ---- pass-2 geometry ---------------------------------------------------------
 
-// The camera info (already scaled by --resize-scale) and TF buffer the encode
+// The camera info (already scaled by --resize) and TF buffer the encode
 // loop needs for --undistort / --pcd, loaded up front so a failure aborts
 // before the encode. camera_info is set iff `camera_info_topic` was resolved;
 // the TF buffer iff point-cloud topics are present. Filled via an out

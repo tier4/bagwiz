@@ -458,7 +458,7 @@ class TfCommand : public Command
 {
 public:
   [[nodiscard]] std::string_view name() const override { return "tf"; }
-  [[nodiscard]] std::string_view description() const override { return "TF inspection"; }
+  [[nodiscard]] std::string_view description() const override { return "Inspect and edit TF"; }
 
   void configure(CLI::App & app) override
   {

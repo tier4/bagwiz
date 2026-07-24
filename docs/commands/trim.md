@@ -100,8 +100,11 @@ even when pipeline latency pushed its record time outside it.
   verbatim, so a topic whose messages all fall outside the window is still
   declared (with zero messages) in the output. A window that contains no
   messages at all still produces a valid, empty bag, after a warning.
-- The time range is pushed down into the storage layer (MCAP chunk index /
-  SQLite `WHERE`), so out-of-range data is skipped, not read and discarded.
+- Under `--stamp recv`, the time range is pushed down into the storage layer
+  (MCAP chunk index / SQLite `WHERE`), so out-of-range data is skipped rather
+  than read and discarded. Under the default `--stamp header`, stamps live in
+  the message payloads, so the whole bag is scanned and filtered with a
+  per-message keep predicate (see Reference clock above).
 - Bags whose storage carries no time information (an empty bag, or an MCAP
   without a summary index) cannot anchor relative offsets; the run stops with
   an error.

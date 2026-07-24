@@ -641,8 +641,9 @@ int run_trim(const TrimArgs & args)
     });
 }
 
-// `bagwiz trim` cuts a bag down to a time window given as offsets from the
-// bag's start time.
+// `bagwiz trim` cuts a bag down to a time window given as time offsets from the
+// bag start, as message counts (`msg`), or as the common time span of selected
+// topics (`--align`).
 class TrimCommand : public Command
 {
 public:

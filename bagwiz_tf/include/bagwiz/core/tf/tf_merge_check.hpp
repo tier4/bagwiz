@@ -17,7 +17,8 @@ namespace bagwiz::core
 {
 
 // Detects conflicts while several TF topics (static + dynamic) are merged into
-// one buffer for `bagwiz traj`. Fed one `(parent, child)` edge at a time as the
+// one buffer or edge set — by `bagwiz traj`, `tf tree`, and `tf static calc`.
+// Fed one `(parent, child)` edge at a time as the
 // bag is streamed; `add` returns a human-readable description the first time an
 // edge would conflict with what was already registered, or std::nullopt
 // otherwise.

@@ -85,7 +85,8 @@ When it contains **both** static and dynamic edges it writes:
 - The `[S]` / `[D]` tags always print in a mixed tree, so the category stays
   identifiable under `NO_COLOR` or when piped to a file.
 - `├──` / `└──` / `│` box drawing is the default. Set `BAGWIZ_TF_TREE_ASCII=1`
-  to use `|--` / `` `-- `` / `|` instead (see [Environment](#environment)).
+  to use `|--` / `` `-- `` / `|` instead, and to drop the `●` root prefix so each
+  root line prints as the bare frame name (see [Environment](#environment)).
 
 ### Environment
 
@@ -298,11 +299,28 @@ consumers should not rely on key ordering:
 {
   "of": "base_link",
   "ref": "lidar",
-  "translation": { "x": 0.0, "y": 1.0, "z": -0.5 },
   "rotation": {
-    "quaternion": { "x": 0.0, "y": 0.0, "z": -0.7071067811865475, "w": 0.7071067811865476 },
-    "rpy_rad": { "roll": 0.0, "pitch": 0.0, "yaw": -1.5707963267948963 },
-    "rpy_deg": { "roll": 0.0, "pitch": 0.0, "yaw": -89.99999999999999 }
+    "quaternion": {
+      "w": 0.7071067811865476,
+      "x": 0.0,
+      "y": 0.0,
+      "z": -0.7071067811865475
+    },
+    "rpy_deg": {
+      "pitch": 0.0,
+      "roll": 0.0,
+      "yaw": -89.99999999999999
+    },
+    "rpy_rad": {
+      "pitch": 0.0,
+      "roll": 0.0,
+      "yaw": -1.5707963267948963
+    }
+  },
+  "translation": {
+    "x": 0.0,
+    "y": 1.0,
+    "z": -0.5
   }
 }
 ```

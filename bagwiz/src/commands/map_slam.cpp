@@ -196,7 +196,8 @@ public:
       BAGWIZ_LOG_INFO(
         kLogger,
         "GPU backend without --imu: odometry runs on CPU (CT; GLIM has no GPU LiDAR-only "
-        "backend); GPU acceleration applies to mapping registration and export voxelization.");
+        "backend); GPU acceleration applies to mapping registration, export voxelization, and "
+        "--cam colorization.");
     }
 
     auto reader = io::open_read_or_log(args_.input_path, kLogger);

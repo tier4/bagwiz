@@ -25,11 +25,15 @@ struct TrimArgs
 {
   std::filesystem::path input_path;
   // Window bounds as offsets from the bag's start time, kept as the raw CLI
-  // strings; run_trim parses them with core::parse_duration_ns under
-  // DurationUnitPolicy::RequireUnit (a bare number is rejected). `end` and
-  // `duration` are mutually exclusive, and `both` — shorthand for trimming the
-  // same offset from each end of the bag — excludes the other three. At least
-  // one of the four must be set.
+  // strings. `start`, `end`, and `both` are parsed with parse_bound_or_log: a
+  // value carrying the `msg` unit is a message count (parsed to an integer via
+  // std::from_chars), otherwise it is a duration parsed with
+  // core::parse_duration_ns under DurationUnitPolicy::RequireUnit (a bare number
+  // is rejected). `duration` is time-only, parsed with core::parse_duration_ns.
+  // `end` and `duration` are mutually exclusive, and `both` — shorthand for
+  // trimming the same offset from each end of the bag — excludes the other
+  // three. At least one window input must be set (start, end, duration, both,
+  // or align).
   std::optional<std::string> start;
   std::optional<std::string> end;
   std::optional<std::string> duration;

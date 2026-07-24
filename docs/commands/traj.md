@@ -184,7 +184,7 @@ bagwiz traj dump [OPTIONS] <input> <topic> <output>
 | `-f`, `--format <F>` | _(empty)_    | Output format id (`tum`). When omitted, the format is inferred from the output path extension (for example `*.tum` → `tum`). If you pass `-f`, it overrides the extension.                                                                                                        |
 | `-w`, `--overwrite`  | `false`      | Replace `<output>` if it already exists. Without this flag, an existing output path stops the run.                                                                                                                                                                                |
 
-> **Renamed in this release.** `--from` is now `--ref` and `--to` is now `--of`;
+> **Flag rename (migrating from `--from`/`--to`).** `--from` is now `--ref` and `--to` is now `--of`;
 > the values and results are unchanged. Note the mapping is **crossed** —
 > `--from` becomes `--ref`, **not** `--of`. `--ref` is the reference frame the
 > trajectory is expressed in; `--of` is the tracked frame it is written for.
@@ -315,7 +315,7 @@ bagwiz traj join [OPTIONS] <input> <traj_file> <topic>
 | `--force`              | `false`                          | Allow overwriting an existing `<topic>` in `<input>`: existing messages are dropped from the output and replaced with the trajectory.          |
 | `-w`, `--overwrite`    | `false`                          | Replace `-o/--output` if it already exists. Has no effect in in-place mode (when `-o` is omitted, `<input>` is replaced atomically by design). |
 
-> **Renamed in this release.** `--from` is now `--ref` and `--to` is now `--of`;
+> **Flag rename (migrating from `--from`/`--to`).** `--from` is now `--ref` and `--to` is now `--of`;
 > the values and results are unchanged. Note the mapping is **crossed** —
 > `--from` becomes `--ref`, **not** `--of`. `--ref` is the reference frame the
 > trajectory is expressed in; `--of` is the tracked frame it is written for.
