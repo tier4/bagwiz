@@ -9,6 +9,7 @@
 #include "bagwiz/commands/trim.hpp"
 
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/metadata_yaml.hpp"
 #include "trim_stamp.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #include <gtest/gtest.h>
@@ -16,6 +17,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <map>
 #include <span>
@@ -997,6 +999,55 @@ TEST_F(TrimTest, Sqlite3EndExclusive)
   const auto out = collect(out_path);
   EXPECT_EQ(out.at("/fast"), (std::vector<std::int64_t>{kT0 + kSecond, kT0 + 2 * kSecond}));
   EXPECT_EQ(out.at("/slow"), (std::vector<std::int64_t>{kT0 + 2 * kSecond + kSecond / 2}));
+}
+
+// The default path (chunk pass-through) and the decoded pipeline
+// (BAGWIZ_PASSTHROUGH=off) must produce the same bag content — and only the
+// pass-through preserves the input's chunk compression.
+TEST_F(TrimTest, PassthroughMatchesPipelineAndPreservesCompression)
+{
+  const auto in_path = tmp_dir_ / "input_zstd";
+  {
+    auto opts = mcap_dir_opts();
+    opts.mcap_compression = "zstd";
+    auto writer = bagwiz::io::open_write(in_path, opts);
+    // Same timestamps as write_fixture_messages, but with large compressible
+    // payloads: libmcap silently stores chunks whose payload does not shrink
+    // as uncompressed, which would defeat the compression-preservation
+    // assertion below.
+    const std::vector<std::byte> big(2048, std::byte{0x42});
+    const std::span<const std::byte> big_view(big.data(), big.size());
+    writer->declare_topic(make_topic("/fast", "std_msgs/msg/String"));
+    writer->declare_topic(make_topic("/slow", "std_msgs/msg/String"));
+    for (int i = 0; i <= 4; ++i) {
+      writer->write("/fast", kT0 + i * kSecond, big_view);
+    }
+    writer->write("/slow", kT0 + kSecond / 2, big_view);
+    writer->write("/slow", kT0 + 2 * kSecond + kSecond / 2, big_view);
+    writer->close();
+  }
+
+  bagwiz::commands::TrimArgs args;
+  args.input_path = in_path;
+  args.start = "1s";
+  args.end = "3s";
+  args.stamp = "recv";
+
+  ::setenv("BAGWIZ_PASSTHROUGH", "off", 1);
+  args.output_path = tmp_dir_ / "ref";
+  ASSERT_EQ(bagwiz::commands::run_trim(args), 0);
+  ::unsetenv("BAGWIZ_PASSTHROUGH");
+  args.output_path = tmp_dir_ / "out";
+  ASSERT_EQ(bagwiz::commands::run_trim(args), 0);
+
+  EXPECT_EQ(collect(tmp_dir_ / "ref"), collect(tmp_dir_ / "out"));
+
+  // The decoded pipeline still forces compression off; the pass-through
+  // keeps the input's zstd chunks (visible in the directory metadata).
+  EXPECT_EQ(
+    bagwiz::io::load_metadata_yaml(tmp_dir_ / "ref" / "metadata.yaml").compression_format, "none");
+  EXPECT_EQ(
+    bagwiz::io::load_metadata_yaml(tmp_dir_ / "out" / "metadata.yaml").compression_format, "zstd");
 }
 
 }  // namespace

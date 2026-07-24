@@ -9,6 +9,7 @@
 #include "bagwiz/commands/topic_keep.hpp"
 
 #include "bagwiz/core/bag/bag_copy.hpp"
+#include "bagwiz/core/bag/bag_passthrough.hpp"
 #include "bagwiz/core/bag/rewrite.hpp"
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/base/topic_match.hpp"
@@ -40,12 +41,50 @@ constexpr const char * kLogger = "bagwiz.cmd.topic";
 // can supply a tmp path. Returns a process exit code.
 int execute_keep_pass(
   const TopicKeepArgs & args, const std::unordered_set<std::string> & keep,
-  const io::WriterFactory & open_writer)
+  const io::WriterFactory & open_writer, const core::RewriteTarget & target)
 {
   auto reader = io::open_read_or_log(args.input_path, kLogger);
   if (!reader) {
     return 1;
   }
+
+  // The suppress set is the complement of `keep` over the bag's topics.
+  std::unordered_set<std::string> suppress;
+  for (const auto & t : reader->topics()) {
+    if (keep.count(t.name) == 0) {
+      suppress.insert(t.name);
+    }
+  }
+
+  // Neither path surfaces the suppressed messages (the pass-through never
+  // reads them, the filtered reader never yields them), so report the
+  // suppressed total from the bag's statistics instead (0, after the
+  // backend's own warning, when the input carries none).
+  const auto suppressed = core::count_topic_messages(*reader, suppress);
+  if (!suppressed.has_value()) {
+    BAGWIZ_LOG_WARN(
+      kLogger, "Could not compute the suppressed message count for %s; reporting 0.",
+      args.input_path.c_str());
+  }
+
+  // Chunk pass-through fast path: mcap chunks carrying only kept topics are
+  // copied byte-for-byte, preserving the input's chunk compression. Falls
+  // back to the decoded stream copy below whenever the input, the target, or
+  // the edit is ineligible.
+  {
+    core::PassthroughEdit edit;
+    edit.suppress_topics = suppress;
+    if (const auto pt = core::try_bag_passthrough_rewrite(args.input_path, target, edit, kLogger)) {
+      const std::size_t kept = reader->topics().size() - suppress.size();
+      BAGWIZ_LOG_INFO(
+        kLogger,
+        "topic keep: kept %zu topic(s), dropped %zu; copied %" PRIu64
+        " message(s), suppressed %" PRId64 ".",
+        kept, suppress.size(), pt->copied, suppressed.value_or(0));
+      return 0;
+    }
+  }
+
   // Backfill embedded schemas so MCAP outputs keep self-description for the
   // surviving topics (no-op for single-file readers and SQLite3 inputs).
   reader->populate_schemas();
@@ -56,13 +95,10 @@ int execute_keep_pass(
   }
 
   // A topic outside `keep` disappears entirely from the output: it is neither
-  // declared nor carries any message. Every kept topic is declared verbatim,
-  // and the rest are gathered into the suppress set for the stream copy.
-  std::unordered_set<std::string> suppress;
+  // declared nor carries any message. Every kept topic is declared verbatim.
   std::size_t kept = 0;
   for (const auto & t : reader->topics()) {
     if (keep.count(t.name) == 0) {
-      suppress.insert(t.name);
       continue;
     }
     try {
@@ -84,16 +120,6 @@ int execute_keep_pass(
   io::ReadFilter filter;
   filter.topics.assign(keep.begin(), keep.end());
   reader->set_filter(filter);
-
-  // The reader never surfaces the suppressed messages now, so the copy loop
-  // cannot count them; report the suppressed total from the bag's statistics
-  // instead (0, after the backend's own warning, when the input carries none).
-  const auto suppressed = core::count_topic_messages(*reader, suppress);
-  if (!suppressed.has_value()) {
-    BAGWIZ_LOG_WARN(
-      kLogger, "Could not compute the suppressed message count for %s; reporting 0.",
-      args.input_path.c_str());
-  }
 
   core::BagCopyCounts counts;
   try {
@@ -172,8 +198,8 @@ int run_topic_keep(const TopicKeepArgs & args)
   rewrite_opts.inherit_output_format = true;
   return core::run_bag_rewrite(
     args.input_path, args.output_path, args.overwrite, rewrite_opts,
-    [&](const io::WriterFactory & open_writer) {
-      return execute_keep_pass(args, keep, open_writer);
+    [&](const io::WriterFactory & open_writer, const core::RewriteTarget & target) {
+      return execute_keep_pass(args, keep, open_writer, target);
     });
 }
 

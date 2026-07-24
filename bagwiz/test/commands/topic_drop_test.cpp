@@ -9,18 +9,21 @@
 #include "bagwiz/commands/topic_drop.hpp"
 
 #include "bagwiz/io/bag_io.hpp"
+#include "bagwiz/io/metadata_yaml.hpp"
 
 #include <gtest/gtest.h>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <map>
 #include <span>
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -278,6 +281,50 @@ TEST_F(TopicDropTest, OverwriteReplacesExistingOutput)
   const auto out = collect(out_path);
   EXPECT_EQ(out.count("/sensing/lidar"), 0U);
   EXPECT_EQ(out.at("/sensing/camera"), 2);
+}
+
+// The default path (chunk pass-through) and the decoded pipeline
+// (BAGWIZ_PASSTHROUGH=off) must produce the same bag content — and only the
+// pass-through preserves the input's chunk compression.
+TEST_F(TopicDropTest, PassthroughMatchesPipelineAndPreservesCompression)
+{
+  const auto in_path = tmp_dir_ / "input_zstd";
+  {
+    auto opts = mcap_dir_opts();
+    opts.mcap_compression = "zstd";
+    auto writer = bagwiz::io::open_write(in_path, opts);
+    writer->declare_topic(make_topic("/sensing/camera", "sensor_msgs/msg/Image"));
+    writer->declare_topic(make_topic("/sensing/lidar", "sensor_msgs/msg/PointCloud2"));
+    // Large compressible payloads: libmcap silently stores chunks whose
+    // payload does not shrink as uncompressed, which would defeat the
+    // compression-preservation assertion below.
+    const std::vector<std::byte> big(2048, std::byte{0x42});
+    const std::span<const std::byte> big_view(big.data(), big.size());
+    writer->write("/sensing/camera", 1'000'000'000LL, big_view);
+    writer->write("/sensing/lidar", 2'000'000'000LL, big_view);
+    writer->write("/sensing/camera", 3'000'000'000LL, big_view);
+    writer->close();
+  }
+
+  bagwiz::commands::TopicDropArgs args;
+  args.input_path = in_path;
+  args.topics = {"/sensing/lidar"};
+
+  ::setenv("BAGWIZ_PASSTHROUGH", "off", 1);
+  args.output_path = tmp_dir_ / "ref";
+  ASSERT_EQ(bagwiz::commands::run_topic_drop(args), 0);
+  ::unsetenv("BAGWIZ_PASSTHROUGH");
+  args.output_path = tmp_dir_ / "out";
+  ASSERT_EQ(bagwiz::commands::run_topic_drop(args), 0);
+
+  EXPECT_EQ(collect(tmp_dir_ / "ref"), collect(tmp_dir_ / "out"));
+
+  // The decoded pipeline still forces compression off; the pass-through
+  // keeps the input's zstd chunks (visible in the directory metadata).
+  EXPECT_EQ(
+    bagwiz::io::load_metadata_yaml(tmp_dir_ / "ref" / "metadata.yaml").compression_format, "none");
+  EXPECT_EQ(
+    bagwiz::io::load_metadata_yaml(tmp_dir_ / "out" / "metadata.yaml").compression_format, "zstd");
 }
 
 }  // namespace

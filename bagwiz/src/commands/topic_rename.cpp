@@ -9,6 +9,7 @@
 #include "bagwiz/commands/topic_rename.hpp"
 
 #include "bagwiz/core/bag/bag_copy.hpp"
+#include "bagwiz/core/bag/bag_passthrough.hpp"
 #include "bagwiz/core/bag/rewrite.hpp"
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/io/bag_io.hpp"
@@ -37,8 +38,26 @@ constexpr const char * kLogger = "bagwiz.cmd.topic";
 // bag, remapping `src`'s messages onto `dst`. Shared by the in-place and -o
 // modes; the writer factory is injected so the rewrite dispatch
 // (core::run_bag_rewrite) can supply a tmp path. Returns a process exit code.
-int execute_rename_pass(const TopicRenameArgs & args, const io::WriterFactory & open_writer)
+int execute_rename_pass(
+  const TopicRenameArgs & args, const io::WriterFactory & open_writer,
+  const core::RewriteTarget & target)
 {
+  // Chunk pass-through fast path: chunk bytes reference channels by numeric
+  // id only, so a rename rewrites the Channel record while chunks without
+  // the renamed channel copy byte-for-byte, preserving the input's chunk
+  // compression. Falls back to the decoded stream copy below whenever the
+  // input, the target, or the edit is ineligible.
+  {
+    core::PassthroughEdit edit;
+    edit.rename = {{args.src_topic, args.dst_topic}};
+    if (const auto pt = core::try_bag_passthrough_rewrite(args.input_path, target, edit, kLogger)) {
+      BAGWIZ_LOG_INFO(
+        kLogger, "topic rename: '%s' -> '%s'; copied %" PRIu64 " message(s) (%" PRIu64 " renamed).",
+        args.src_topic.c_str(), args.dst_topic.c_str(), pt->copied, pt->renamed);
+      return 0;
+    }
+  }
+
   auto reader = io::open_read_or_log(args.input_path, kLogger);
   if (!reader) {
     return 1;
@@ -155,7 +174,9 @@ int run_topic_rename(const TopicRenameArgs & args)
   rewrite_opts.inherit_output_format = true;
   return core::run_bag_rewrite(
     args.input_path, args.output_path, args.overwrite, rewrite_opts,
-    [&](const io::WriterFactory & open_writer) { return execute_rename_pass(args, open_writer); });
+    [&](const io::WriterFactory & open_writer, const core::RewriteTarget & target) {
+      return execute_rename_pass(args, open_writer, target);
+    });
 }
 
 }  // namespace bagwiz::commands

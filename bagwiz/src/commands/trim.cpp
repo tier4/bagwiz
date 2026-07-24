@@ -11,6 +11,7 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/core/bag/bag_copy.hpp"
+#include "bagwiz/core/bag/bag_passthrough.hpp"
 #include "bagwiz/core/bag/rewrite.hpp"
 #include "bagwiz/core/base/duration_parse.hpp"
 #include "bagwiz/core/base/logging.hpp"
@@ -311,12 +312,37 @@ bool resolve_align_window(
 int execute_trim_pass(
   const TrimArgs & args, std::int64_t abs_start_ns, std::optional<std::int64_t> abs_end_ns,
   bool use_header_stamp, const std::unordered_set<std::string> & headered,
-  const io::WriterFactory & open_writer)
+  const io::WriterFactory & open_writer, const core::RewriteTarget & target)
 {
   auto reader = io::open_read_or_log(args.input_path, kLogger);
   if (!reader) {
     return 1;
   }
+
+  // Chunk pass-through fast path (recv stamps only — header stamps live in
+  // the payloads, which the record-level engine never decodes): mcap chunks
+  // fully inside the window are copied byte-for-byte, preserving the input's
+  // chunk compression, and only boundary-straddling chunks are re-encoded.
+  // Falls back to the decoded stream copy below whenever the input, the
+  // target, or the edit is ineligible.
+  if (!use_header_stamp) {
+    core::PassthroughEdit edit;
+    edit.start_ns = abs_start_ns;
+    edit.end_ns = abs_end_ns;
+    if (const auto pt = core::try_bag_passthrough_rewrite(args.input_path, target, edit, kLogger)) {
+      if (pt->copied == 0) {
+        BAGWIZ_LOG_WARN(kLogger, "trim: the window contains no messages; the output bag is empty.");
+      }
+      const std::string window_end =
+        abs_end_ns ? core::format_timestamp(*abs_end_ns) : std::string("bag end");
+      BAGWIZ_LOG_INFO(
+        kLogger, "trim: copied %" PRIu64 " message(s) across %zu topic(s); window %s .. %s.",
+        pt->copied, reader->topics().size(), core::format_timestamp(abs_start_ns).c_str(),
+        window_end.c_str());
+      return 0;
+    }
+  }
+
   // Backfill embedded schemas so MCAP outputs keep self-description (no-op
   // for single-file readers and SQLite3 inputs).
   reader->populate_schemas();
@@ -635,9 +661,9 @@ int run_trim(const TrimArgs & args)
   rewrite_opts.inherit_output_format = true;
   return core::run_bag_rewrite(
     args.input_path, args.output_path, args.overwrite, rewrite_opts,
-    [&](const io::WriterFactory & open_writer) {
+    [&](const io::WriterFactory & open_writer, const core::RewriteTarget & target) {
       return execute_trim_pass(
-        args, abs_start_ns, abs_end_ns, use_header_stamp, headered, open_writer);
+        args, abs_start_ns, abs_end_ns, use_header_stamp, headered, open_writer, target);
     });
 }
 
