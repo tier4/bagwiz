@@ -73,8 +73,13 @@ Because `*` spans `/`, `/sensing/*` removes the entire `/sensing` subtree.
   output, inherits the input bag's storage backend.
 - Embedded message schemas are preserved for the surviving topics so MCAP
   outputs stay self-describing.
-- The output MCAP is written with `compression=none`. Re-compress afterwards
-  with `ros2 bag convert` if needed.
+- When both the input and the output are MCAP, chunks the edit does not touch
+  are copied byte-for-byte, preserving the input's chunk compression; only
+  chunks containing a removed topic are re-encoded (with the same codec).
+  When this fast path cannot apply — non-MCAP storage, multi-shard inputs,
+  and a few other layouts — the bag is re-encoded and the output MCAP is
+  written with `compression=none`; re-compress afterwards with
+  `ros2 bag convert` if needed.
 
 ### Example
 
@@ -142,8 +147,8 @@ the entire `/sensing` subtree and drops all other topics.
   silently producing a near-empty bag.
 - When the selectors together match every topic, the run still succeeds and
   keeps every topic (nothing is removed), after logging a warning.
-- In-place vs `-o`, embedded-schema preservation, and `compression=none` output
-  all behave exactly as documented for `drop` above.
+- In-place vs `-o`, embedded-schema preservation, and output compression all
+  behave exactly as documented for `drop` above.
 
 ### Example
 
@@ -225,8 +230,8 @@ bagwiz topic rename [OPTIONS] <input> <src_topic> <dst_topic>
     one type);
   - either `<src_topic>` or `<dst_topic>` is empty (both must be non-empty); or
   - `<src_topic>` and `<dst_topic>` are identical (a no-op).
-- In-place vs `-o`, embedded-schema preservation, and `compression=none` output
-  all behave exactly as documented for [`drop`](#bagwiz-topic-drop) above.
+- In-place vs `-o`, embedded-schema preservation, and output compression all
+  behave exactly as documented for [`drop`](#bagwiz-topic-drop) above.
 
 ### Example
 

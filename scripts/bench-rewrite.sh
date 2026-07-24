@@ -110,30 +110,36 @@ echo "===== [A] READ+DECOMPRESS only  (check broken --deep) ====="
 A=$(median_wall "$BIN check broken --deep '$BAG'")
 echo "  median wall: ${A}s"
 
-# [B] full rewrite (pure copy): drop a tiny latched topic -> near-full passthrough.
+# [B] full rewrite (pure copy) on the decoded pipeline: drop a tiny latched
+# topic with the chunk pass-through disabled, so this stays the pipeline
+# baseline (the default path is measured separately in [B''] below).
 DROP_OUT="$OUTDIR/drop.mcap"
 echo
-echo "===== [B] FULL REWRITE  (topic drop $TOPIC -o) ====="
-B=$(median_wall "$BIN topic drop '$BAG' -t '$TOPIC' -o '$DROP_OUT' --overwrite")
+echo "===== [B] FULL REWRITE  (decoded pipeline: topic drop $TOPIC -o) ====="
+B=$(median_wall "env BAGWIZ_PASSTHROUGH=off $BIN topic drop '$BAG' -t '$TOPIC' -o '$DROP_OUT' --overwrite")
 echo "  median wall: ${B}s"
-profile_run "$BIN topic drop '$BAG' -t '$TOPIC' -o '$DROP_OUT' --overwrite"
-resource_run "$BIN topic drop '$BAG' -t '$TOPIC' -o '$DROP_OUT' --overwrite"
+profile_run "env BAGWIZ_PASSTHROUGH=off $BIN topic drop '$BAG' -t '$TOPIC' -o '$DROP_OUT' --overwrite"
+resource_run "env BAGWIZ_PASSTHROUGH=off $BIN topic drop '$BAG' -t '$TOPIC' -o '$DROP_OUT' --overwrite"
 outbytes=$(stat -c %s "$DROP_OUT" 2>/dev/null || echo 0)
 echo "  output: $(du -h "$DROP_OUT" 2>/dev/null | cut -f1) ($outbytes bytes, uncompressed)  expansion=$(awk -v i="$inbytes" -v o="$outbytes" 'BEGIN{if(i>0)printf "%.2fx",o/i; else print "n/a"}')"
 
 # [B'] backend comparison: the same full rewrite under each selectable backend
-# (BAGWIZ_BACKEND). Proves the threaded PipelinedBackend's output is byte
-# -identical to the SequentialBackend oracle (md5) and quantifies the speedup.
+# (BAGWIZ_BACKEND), with the chunk pass-through disabled so the decoded
+# pipeline actually runs. Proves the threaded PipelinedBackend's output is
+# byte-identical to the SequentialBackend oracle (md5) and quantifies the
+# speedup. The pass-through's own output is deliberately NOT byte-identical
+# to the pipeline's (different chunking and compression), so its correctness
+# is asserted by the decoded-stream gtest comparisons, never by md5.
 echo
-echo "===== [B'] BACKEND COMPARISON  (full rewrite per BAGWIZ_BACKEND) ====="
+echo "===== [B'] BACKEND COMPARISON  (decoded pipeline per BAGWIZ_BACKEND) ====="
 declare -A BK_WALL BK_MD5
 for bk in sequential pipelined; do
     BK_OUT="$OUTDIR/drop.$bk.mcap"
-    BK_WALL[$bk]=$(median_wall "env BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' -t '$TOPIC' -o '$BK_OUT' --overwrite")
+    BK_WALL[$bk]=$(median_wall "env BAGWIZ_PASSTHROUGH=off BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' -t '$TOPIC' -o '$BK_OUT' --overwrite")
     BK_MD5[$bk]=$(md5sum "$BK_OUT" 2>/dev/null | awk '{print $1}')
     echo "  --- $bk: median wall ${BK_WALL[$bk]}s   md5 ${BK_MD5[$bk]}"
-    profile_run "env BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' -t '$TOPIC' -o '$BK_OUT' --overwrite"
-    resource_run "env BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' -t '$TOPIC' -o '$BK_OUT' --overwrite"
+    profile_run "env BAGWIZ_PASSTHROUGH=off BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' -t '$TOPIC' -o '$BK_OUT' --overwrite"
+    resource_run "env BAGWIZ_PASSTHROUGH=off BAGWIZ_BACKEND=$bk $BIN topic drop '$BAG' -t '$TOPIC' -o '$BK_OUT' --overwrite"
 done
 if [ -n "${BK_MD5[sequential]}" ] && [ "${BK_MD5[sequential]}" = "${BK_MD5[pipelined]}" ]; then
     echo "  byte-identical output across backends (md5 match): OK"
@@ -143,6 +149,22 @@ fi
 awk -v s="${BK_WALL[sequential]}" -v p="${BK_WALL[pipelined]}" \
     'BEGIN{ if(p>0) printf "  speedup (sequential/pipelined): %.2fx\n", s/p }'
 rm -f "$OUTDIR/drop.sequential.mcap" "$OUTDIR/drop.pipelined.mcap"
+
+# [B''] chunk pass-through vs decoded pipeline: the same full rewrite on the
+# default path (untouched chunks copied verbatim) against the forced decoded
+# pipeline of [B], plus a raw `cp` of the input as the disk-speed floor.
+echo
+echo "===== [B''] CHUNK PASS-THROUGH  (default vs BAGWIZ_PASSTHROUGH=off) ====="
+PT_OUT="$OUTDIR/drop.passthrough.mcap"
+PT_WALL=$(median_wall "$BIN topic drop '$BAG' -t '$TOPIC' -o '$PT_OUT' --overwrite")
+echo "  --- pass-through: median wall ${PT_WALL}s"
+CP_WALL=$(median_wall "cp '$BAG' '$OUTDIR/drop.cp-floor.mcap'")
+echo "  --- raw cp floor: median wall ${CP_WALL}s"
+awk -v d="${BK_WALL[pipelined]:-0}" -v p="$PT_WALL" -v c="$CP_WALL" \
+    'BEGIN{ if(p>0 && c>0) printf "  speedup (decoded/pass-through): %.2fx   pass-through vs cp: %.2fx\n", d/p, p/c }'
+ptbytes=$(stat -c %s "$PT_OUT" 2>/dev/null || echo 0)
+echo "  output: $(du -h "$PT_OUT" 2>/dev/null | cut -f1) ($ptbytes bytes, input compression preserved)"
+rm -f "$PT_OUT" "$OUTDIR/drop.cp-floor.mcap"
 
 # [C] sparse extraction: keep only the tiny latched topic -> read-bound floor.
 KEEP_OUT="$OUTDIR/keep.mcap"

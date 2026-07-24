@@ -63,7 +63,9 @@ struct BagRewriteOptions
   // Force mcap_compression = "none" on the writer options (both modes).
   // Rewrite commands disable compression so a bag that is rewritten often
   // does not pay the (de)compression cost each time; commands that want the
-  // storage default set this to false.
+  // storage default set this to false. This flag governs only the decoded
+  // rewrite pipeline: the chunk pass-through never opens a writer through
+  // these options and preserves the input's chunk compression instead.
   bool disable_mcap_compression = true;
 };
 

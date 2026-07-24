@@ -115,8 +115,13 @@ even when pipeline latency pushed its record time outside it.
   backend) or, for a directory output, inherits the input bag's storage
   backend.
 - Embedded message schemas are preserved so MCAP outputs stay self-describing.
-- The output MCAP is written with `compression=none`. Re-compress afterwards
-  with `ros2 bag convert` if needed.
+- Under `--stamp recv`, when both the input and the output are MCAP, chunks
+  fully inside the window are copied byte-for-byte, preserving the input's
+  chunk compression; only chunks straddling a window boundary are re-encoded
+  (with the same codec). When this fast path cannot apply — `--stamp header`,
+  non-MCAP storage, multi-shard inputs, and a few other layouts — the bag is
+  re-encoded and the output MCAP is written with `compression=none`;
+  re-compress afterwards with `ros2 bag convert` if needed.
 
 ## Example
 

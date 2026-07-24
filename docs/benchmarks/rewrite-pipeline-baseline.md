@@ -5,6 +5,15 @@ on the current `main`, plus the per-command acceleration plan it justifies. It i
 the reference the pipeline acceleration backends (PRD Milestones #2–#3) are
 benchmarked against.
 
+> Since the mcap chunk pass-through landed, this decoded pipeline is the
+> fallback path for the pure-copy rewrites (`topic drop`/`keep`/`rename`,
+> `trim --stamp recv`): eligible mcap→mcap rewrites copy untouched chunks
+> byte-for-byte instead of re-encoding every message, bounded by disk copy
+> speed and preserving the input's chunk compression. The numbers below
+> describe the pipeline itself, measured with `BAGWIZ_PASSTHROUGH=off`
+> (which `scripts/bench-rewrite.sh` now sets on its pipeline legs); the
+> pass-through is measured separately in the script's `[B'']` section.
+
 Reproduce with [`scripts/bench-rewrite.sh`](../../scripts/bench-rewrite.sh). The
 per-stage read/write split comes from the env-gated `BAGWIZ_PROFILE` instrumentation
 (`BAGWIZ_PROFILE=1 bagwiz topic drop …`); CPU% and RSS from `/usr/bin/time -v`.
