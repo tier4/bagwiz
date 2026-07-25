@@ -13,6 +13,7 @@
 #include "bagwiz/io/message_decompressor.hpp"
 #include "bagwiz/io/metadata_yaml.hpp"
 #include "mcap_indexed_stream.hpp"  // NOLINT(build/include_subdir) src-local shared header
+#include "read_tuning.hpp"          // NOLINT(build/include_subdir) src-local shared header
 #include "shard_multiplexer.hpp"    // NOLINT(build/include_subdir) src-local shared header
 
 // mcap_vendor ships MCAP as a pre-compiled library, so MCAP_IMPLEMENTATION
@@ -24,14 +25,12 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -43,33 +42,6 @@ namespace bagwiz::io::detail
 namespace
 {
 constexpr const char * kLogger = "bagwiz.io.mcap";
-
-// Decompress-worker count for the parallel indexed read path. Defaults to 8,
-// capped at the host's hardware concurrency so low-core machines keep a
-// smaller worker count (docs/benchmarks/mcap-read-threads.md has the sweep the
-// default is based on). BAGWIZ_READ_THREADS overrides the default, and 0 or 1
-// falls back to the synchronous libmcap iteration (the debugging escape
-// hatch).
-int resolve_read_threads()
-{
-  constexpr int kDefault = 8;
-  constexpr int kMax = 16;
-  const auto default_threads = [&] {
-    const unsigned int hw = std::thread::hardware_concurrency();
-    return hw == 0 ? kDefault : std::min<int>(kDefault, static_cast<int>(hw));
-  };
-  const char * env = std::getenv("BAGWIZ_READ_THREADS");
-  if (env == nullptr || *env == '\0') {
-    return default_threads();
-  }
-  char * end = nullptr;
-  const long parsed = std::strtol(env, &end, 10);  // NOLINT(runtime/int) strtol API
-  if (end == env || *end != '\0') {
-    BAGWIZ_LOG_WARN(kLogger, "ignoring unparsable BAGWIZ_READ_THREADS='%s'", env);
-    return default_threads();
-  }
-  return static_cast<int>(std::clamp<long>(parsed, 0, kMax));  // NOLINT(runtime/int)
-}
 
 // ---------------------------------------------------------------------------
 // Single .mcap file reader.
@@ -313,7 +285,7 @@ private:
     // ParallelIndexedStream when possible: identical emission order, but the
     // chunk zstd decompression runs ahead on a small worker pool instead of
     // stalling the iterating thread — the dominant cost on multi-GB bags.
-    const int read_threads = resolve_read_threads();
+    const int read_threads = resolve_read_threads(kLogger);
     if (indexed_ok && read_threads > 1 && ParallelIndexedStream::supported(reader_)) {
       ParallelIndexedStream::Options popts;
       if (filter_.start_ns) {
