@@ -89,6 +89,75 @@ std::filesystem::path write_fixture_db3(const std::filesystem::path & dir)
   return path;
 }
 
+// `write_fixture_db3` plus the `topic_timestamp_idx` that
+// SqliteFileWriter::close() adds. That index is what routes a topic-filtered
+// read onto the per-topic merge, so these fixtures cover the merge path while
+// the plain `write_fixture_db3` ones keep covering the single-statement path
+// used for rosbag2-written bags.
+std::filesystem::path write_fixture_db3_indexed(const std::filesystem::path & dir)
+{
+  const auto path = write_fixture_db3(dir);
+
+  sqlite3 * db = nullptr;
+  EXPECT_EQ(sqlite3_open(path.string().c_str(), &db), SQLITE_OK);
+  char * errmsg = nullptr;
+  EXPECT_EQ(
+    sqlite3_exec(
+      db, "CREATE INDEX topic_timestamp_idx ON messages (topic_id, timestamp);", nullptr, nullptr,
+      &errmsg),
+    SQLITE_OK)
+    << (errmsg ? errmsg : "");
+  sqlite3_free(errmsg);
+  sqlite3_close(db);
+  return path;
+}
+
+// Two topics whose messages all share one timestamp, interleaved so that the
+// rowid (recording) order differs from the (topic_id, timestamp) order. Carries
+// the `topic_timestamp_idx` that SqliteFileWriter::close() adds, because that
+// index is what makes SQLite consider a sorting plan for a multi-topic filter.
+//
+// Payload byte i identifies message i, so a test can compare emission order
+// across two iterations without relying on topic names alone.
+std::filesystem::path write_fixture_db3_tied_timestamps(const std::filesystem::path & dir)
+{
+  std::filesystem::create_directories(dir);
+  const auto path = dir / "bag_0.db3";
+
+  sqlite3 * db = nullptr;
+  EXPECT_EQ(sqlite3_open(path.string().c_str(), &db), SQLITE_OK);
+
+  const char * schema =
+    "CREATE TABLE topics("
+    "  id INTEGER PRIMARY KEY,"
+    "  name TEXT NOT NULL,"
+    "  type TEXT NOT NULL,"
+    "  serialization_format TEXT NOT NULL,"
+    "  offered_qos_profiles TEXT NOT NULL);"
+    "CREATE TABLE messages("
+    "  id INTEGER PRIMARY KEY,"
+    "  topic_id INTEGER NOT NULL,"
+    "  timestamp INTEGER NOT NULL,"
+    "  data BLOB NOT NULL);"
+    "CREATE INDEX timestamp_idx ON messages (timestamp ASC);"
+    "INSERT INTO topics(id, name, type, serialization_format, offered_qos_profiles) VALUES"
+    "  (1, '/foo', 'std_msgs/msg/String', 'cdr', ''),"
+    "  (2, '/bar', 'std_msgs/msg/Int32', 'cdr', '');"
+    "INSERT INTO messages(id, topic_id, timestamp, data) VALUES"
+    "  (1, 2, 1000000000, x'01'),"
+    "  (2, 1, 1000000000, x'02'),"
+    "  (3, 2, 1000000000, x'03'),"
+    "  (4, 1, 1000000000, x'04');"
+    "CREATE INDEX topic_timestamp_idx ON messages (topic_id, timestamp);";
+  char * errmsg = nullptr;
+  EXPECT_EQ(sqlite3_exec(db, schema, nullptr, nullptr, &errmsg), SQLITE_OK)
+    << (errmsg ? errmsg : "");
+  sqlite3_free(errmsg);
+
+  sqlite3_close(db);
+  return path;
+}
+
 // Same shape as `write_fixture_db3` but with zero message rows. Exercises the
 // empty-bag branch of compute_stats(), where MIN/MAX(timestamp) are SQL NULL
 // and start_ns/end_ns must stay 0.
@@ -383,6 +452,108 @@ TEST_F(Sqlite3ReaderTest, FilterByTopic)
     ++count;
   }
   EXPECT_EQ(count, 2);
+}
+
+TEST_F(Sqlite3ReaderTest, TopicFilterPreservesUnfilteredOrderOnTiedTimestamps)
+{
+  // Selecting topics must never reorder messages: a filter naming every topic
+  // has to emit exactly what an unfiltered scan emits. Messages recorded at the
+  // same timestamp are ordered by insertion (rowid), which is what the
+  // unfiltered plan yields because `timestamp_idx` carries the rowid in its key.
+  const auto path = write_fixture_db3_tied_timestamps(tmp_dir_ / "tied");
+
+  const auto collect = [](const std::filesystem::path & p, const bagwiz::io::ReadFilter * f) {
+    auto reader = bagwiz::io::open_read(p);
+    if (f != nullptr) {
+      reader->set_filter(*f);
+    }
+    std::vector<std::uint8_t> ids;
+    bagwiz::io::RawMessage msg;
+    while (reader->next(msg)) {
+      ids.push_back(static_cast<std::uint8_t>(msg.payload[0]));
+    }
+    return ids;
+  };
+
+  const auto unfiltered = collect(path, nullptr);
+  ASSERT_EQ(unfiltered, (std::vector<std::uint8_t>{1, 2, 3, 4}));
+
+  bagwiz::io::ReadFilter f;
+  f.topics = {"/foo", "/bar"};
+  EXPECT_EQ(collect(path, &f), unfiltered);
+}
+
+TEST_F(Sqlite3ReaderTest, MergedFilterSkipsPayloadForOtherTopics)
+{
+  // ReadFilter::payload_topics must behave the same on the per-topic merge as
+  // on the single-statement path: only the listed topic carries its payload.
+  const auto path = write_fixture_db3_indexed(tmp_dir_ / "merged_payload");
+
+  auto reader = bagwiz::io::open_read(path);
+  bagwiz::io::ReadFilter f;
+  f.topics = {"/foo", "/bar"};
+  f.payload_topics = {"/foo"};
+  reader->set_filter(f);
+
+  int foo_count = 0;
+  int bar_count = 0;
+  bagwiz::io::RawMessage msg;
+  while (reader->next(msg)) {
+    if (msg.topic->name == "/foo") {
+      EXPECT_EQ(msg.payload.size(), 4U);
+      ++foo_count;
+    } else {
+      EXPECT_TRUE(msg.payload.empty());
+      ++bar_count;
+    }
+  }
+  EXPECT_EQ(foo_count, 3);
+  EXPECT_EQ(bar_count, 2);
+}
+
+TEST_F(Sqlite3ReaderTest, MergedFilterHonoursTimeRange)
+{
+  // The time bounds have to be pushed into every per-topic statement, not just
+  // the first, and end_ns stays exclusive.
+  const auto path = write_fixture_db3_indexed(tmp_dir_ / "merged_time");
+
+  auto reader = bagwiz::io::open_read(path);
+  bagwiz::io::ReadFilter f;
+  f.topics = {"/foo", "/bar"};
+  f.start_ns = 1'000'000'002LL;  // drops the first two /foo messages
+  f.end_ns = 2'000'000'001LL;    // drops the last /bar message
+  reader->set_filter(f);
+
+  std::vector<std::pair<std::string, int64_t>> seen;
+  bagwiz::io::RawMessage msg;
+  while (reader->next(msg)) {
+    seen.emplace_back(std::string(msg.topic->name), msg.timestamp_ns);
+  }
+
+  ASSERT_EQ(seen.size(), 2U);
+  EXPECT_EQ(seen[0].first, "/foo");
+  EXPECT_EQ(seen[0].second, 1'000'000'002LL);
+  EXPECT_EQ(seen[1].first, "/bar");
+  EXPECT_EQ(seen[1].second, 2'000'000'000LL);
+}
+
+TEST_F(Sqlite3ReaderTest, MergedFilterDeduplicatesRepeatedTopicNames)
+{
+  // A caller naming the same topic twice must not open two cursors over the
+  // same rows — that would emit every one of that topic's messages twice.
+  const auto path = write_fixture_db3_indexed(tmp_dir_ / "merged_dupes");
+
+  auto reader = bagwiz::io::open_read(path);
+  bagwiz::io::ReadFilter f;
+  f.topics = {"/foo", "/foo", "/bar"};
+  reader->set_filter(f);
+
+  int count = 0;
+  bagwiz::io::RawMessage msg;
+  while (reader->next(msg)) {
+    ++count;
+  }
+  EXPECT_EQ(count, 5);
 }
 
 TEST_F(Sqlite3ReaderTest, FilterByTimeRange)

@@ -152,15 +152,15 @@ public:
   }
 
   std::unordered_map<std::string, int64_t> compute_topic_counts(
-    std::span<const std::string> topics) override
+    std::span<const std::string> names) override
   {
     std::unordered_map<std::string, int64_t> result;
-    if (topics.empty()) {
+    if (names.empty()) {
       return result;
     }
 
     if (metadata_.has_summary) {
-      for (const auto & topic : topics) {
+      for (const auto & topic : names) {
         if (auto it = metadata_.per_topic_counts.find(topic);
             it != metadata_.per_topic_counts.end()) {
           result[topic] = it->second;
@@ -170,7 +170,7 @@ public:
     }
 
     for (std::size_t i = 0; i < shard_rel_paths_.size(); ++i) {
-      auto shard_counts = ensure_shard(i).compute_topic_counts(topics);
+      auto shard_counts = ensure_shard(i).compute_topic_counts(names);
       // cppcheck-suppress unassignedVariable
       for (const auto & [k, v] : shard_counts) {
         result[k] += v;

@@ -18,6 +18,7 @@
 
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -84,6 +85,9 @@ public:
   bool next(RawMessage & out) override
   {
     ensure_iterator();
+    if (!cursors_.empty()) {
+      return next_merged(out);
+    }
     if (!read_stmt_) {
       return false;
     }
@@ -185,16 +189,16 @@ public:
   }
 
   std::unordered_map<std::string, int64_t> compute_topic_counts(
-    std::span<const std::string> topics) override
+    std::span<const std::string> names) override
   {
     std::unordered_map<std::string, int64_t> result;
-    if (topics.empty()) {
+    if (names.empty()) {
       return result;
     }
 
     std::vector<int64_t> ids;
-    ids.reserve(topics.size());
-    for (const auto & name : topics) {
+    ids.reserve(names.size());
+    for (const auto & name : names) {
       for (const auto & [tid, idx] : topic_id_to_idx_) {
         if (topics_[idx].name == name) {
           ids.push_back(tid);
@@ -247,10 +251,45 @@ public:
   }
 
 private:
+  // One per-topic statement of the k-way merge. `stmt` sits on its current row
+  // whenever `live` is true, and that row's blob stays valid until the cursor
+  // is stepped — which next_merged() defers until the call after the row was
+  // emitted, so the payload span honours the next() contract.
+  struct TopicCursor
+  {
+    SqliteStmtPtr stmt;
+    std::size_t topic_idx = 0;  // index into topics_
+    bool wants_payload = true;  // resolved once from ReadFilter::payload_topics
+    bool live = false;
+    int64_t timestamp = 0;
+    int64_t rowid = 0;
+  };
+
   static const char * column_text_or_empty(sqlite3_stmt * stmt, int col)
   {
     const auto * text = sqlite3_column_text(stmt, col);
     return text ? reinterpret_cast<const char *>(text) : "";
+  }
+
+  // Topic IDs for ReadFilter::topics, deduplicated so a name repeated by the
+  // caller cannot open two cursors over the same rows (which would emit every
+  // one of that topic's messages twice).
+  std::vector<int64_t> resolve_filter_topic_ids() const
+  {
+    std::vector<int64_t> ids;
+    ids.reserve(filter_.topics.size());
+    for (const auto & name : filter_.topics) {
+      for (const auto & [tid, idx] : topic_id_to_idx_) {
+        if (topics_[idx].name != name) {
+          continue;
+        }
+        if (std::find(ids.begin(), ids.end(), tid) == ids.end()) {
+          ids.push_back(tid);
+        }
+        break;
+      }
+    }
+    return ids;
   }
 
   void populate_topics()
@@ -354,6 +393,107 @@ private:
     return sqlite3_step(stmt.get()) == SQLITE_ROW;
   }
 
+  bool index_exists(const char * index) const
+  {
+    auto stmt = sqlite_prepare_or_throw(
+      db_.get(), "SELECT 1 FROM sqlite_master WHERE type='index' AND name=? LIMIT 1");
+    sqlite3_bind_text(stmt.get(), 1, index, -1, SQLITE_TRANSIENT);
+    return sqlite3_step(stmt.get()) == SQLITE_ROW;
+  }
+
+  // Open one statement per selected topic for the k-way merge. Each is served
+  // straight off topic_timestamp_idx in (timestamp, rowid) order — the index
+  // key is (topic_id, timestamp) with the rowid appended, so SQLite satisfies
+  // `ORDER BY timestamp, id` from the index and never builds a sorter.
+  void open_merge_cursors(
+    const std::vector<int64_t> & ids, const std::vector<std::string> & time_clauses)
+  {
+    cursors_.reserve(ids.size());
+    for (const auto tid : ids) {
+      std::string sql = "SELECT topic_id, timestamp, data, id FROM messages WHERE topic_id = " +
+                        std::to_string(tid);
+      for (const auto & clause : time_clauses) {
+        sql += " AND " + clause;
+      }
+      sql += " ORDER BY timestamp, id";
+
+      TopicCursor cursor;
+      cursor.stmt = sqlite_prepare_or_throw(db_.get(), sql);
+      cursor.topic_idx = topic_id_to_idx_.at(tid);
+      // Same rule as the single-statement path: ANY non-empty allow-list means
+      // only the listed topics carry payload.
+      cursor.wants_payload = filter_.payload_topics.empty() || payload_topic_ids_.count(tid) != 0U;
+      cursors_.push_back(std::move(cursor));
+    }
+    for (auto & cursor : cursors_) {
+      advance_cursor(cursor);
+    }
+    pending_advance_ = cursors_.size();  // nothing consumed yet
+  }
+
+  void advance_cursor(TopicCursor & cursor)
+  {
+    const int rc = sqlite3_step(cursor.stmt.get());
+    if (rc == SQLITE_ROW) {
+      cursor.timestamp = sqlite3_column_int64(cursor.stmt.get(), 1);
+      cursor.rowid = sqlite3_column_int64(cursor.stmt.get(), 3);
+      cursor.live = true;
+      return;
+    }
+    if (rc != SQLITE_DONE) {
+      throw std::runtime_error("sqlite3_step failed: " + sqlite_errmsg(db_.get()));
+    }
+    cursor.live = false;
+  }
+
+  // Emit the smallest (timestamp, rowid) across the live cursors. Ties are
+  // broken by rowid so a topic-filtered read emits messages in exactly the
+  // order an unfiltered scan does: the unfiltered plan walks timestamp_idx,
+  // whose key carries the rowid, so same-timestamp messages come out in
+  // insertion order there too.
+  bool next_merged(RawMessage & out)
+  {
+    // Step the cursor consumed by the previous call only now — its blob pointer
+    // had to stay valid until this call, per the next() contract.
+    if (pending_advance_ < cursors_.size()) {
+      advance_cursor(cursors_[pending_advance_]);
+      pending_advance_ = cursors_.size();
+    }
+
+    std::size_t best = cursors_.size();
+    for (std::size_t i = 0; i < cursors_.size(); ++i) {
+      const auto & cursor = cursors_[i];
+      if (!cursor.live) {
+        continue;
+      }
+      if (
+        best == cursors_.size() || cursor.timestamp < cursors_[best].timestamp ||
+        (cursor.timestamp == cursors_[best].timestamp && cursor.rowid < cursors_[best].rowid)) {
+        best = i;
+      }
+    }
+    if (best == cursors_.size()) {
+      return false;
+    }
+
+    auto & cursor = cursors_[best];
+    out.topic = &topics_[cursor.topic_idx];
+    out.timestamp_ns = cursor.timestamp;
+    if (!cursor.wants_payload) {
+      // Never touch the data column, so SQLite leaves the overflow pages
+      // unread — the whole point of ReadFilter::payload_topics.
+      out.payload = {};
+    } else {
+      const void * data = sqlite3_column_blob(cursor.stmt.get(), 2);
+      const int data_size = sqlite3_column_bytes(cursor.stmt.get(), 2);
+      const auto src = std::span<const std::byte>(
+        reinterpret_cast<const std::byte *>(data), static_cast<std::size_t>(data_size));
+      out.payload = decompressor_ ? decompressor_->decompress(src) : src;
+    }
+    pending_advance_ = best;
+    return true;
+  }
+
   void ensure_iterator()
   {
     if (iteration_started_) {
@@ -361,43 +501,10 @@ private:
     }
     iteration_started_ = true;
 
-    std::string sql = "SELECT topic_id, timestamp, data FROM messages";
-    std::vector<std::string> where;
-
-    if (!filter_.topics.empty()) {
-      std::vector<int64_t> ids;
-      for (const auto & name : filter_.topics) {
-        for (const auto & [tid, idx] : topic_id_to_idx_) {
-          if (topics_[idx].name == name) {
-            ids.push_back(tid);
-            break;
-          }
-        }
-      }
-      if (ids.empty()) {
-        BAGWIZ_LOG_WARN(
-          kLogger, "no topic IDs matched the filter for %s; iteration will be empty",
-          path_.c_str());
-        return;
-      }
-      std::string clause = "topic_id IN (";
-      for (std::size_t i = 0; i < ids.size(); ++i) {
-        clause += (i == 0 ? "" : ",") + std::to_string(ids[i]);
-      }
-      clause += ")";
-      where.push_back(std::move(clause));
-    }
-    if (filter_.start_ns) {
-      where.push_back("timestamp >= " + std::to_string(*filter_.start_ns));
-    }
-    if (filter_.end_ns) {
-      // end_ns is exclusive (ReadFilter selects [start_ns, end_ns)), matching
-      // the MCAP backend's ReadMessageOptions::endTime semantics.
-      where.push_back("timestamp < " + std::to_string(*filter_.end_ns));
-    }
-
     // Resolve the payload allow-list (ReadFilter::payload_topics) to topic
     // IDs. An empty allow-list means every row materializes its payload.
+    // Resolved before the statements are built because the merge cursors bake
+    // the decision in per topic.
     payload_topic_ids_.clear();
     for (const auto & name : filter_.payload_topics) {
       for (const auto & [tid, idx] : topic_id_to_idx_) {
@@ -407,6 +514,52 @@ private:
         }
       }
     }
+
+    std::vector<int64_t> ids = resolve_filter_topic_ids();
+    if (!filter_.topics.empty() && ids.empty()) {
+      BAGWIZ_LOG_WARN(
+        kLogger, "no topic IDs matched the filter for %s; iteration will be empty", path_.c_str());
+      return;
+    }
+
+    std::vector<std::string> time_clauses;
+    if (filter_.start_ns) {
+      time_clauses.push_back("timestamp >= " + std::to_string(*filter_.start_ns));
+    }
+    if (filter_.end_ns) {
+      // end_ns is exclusive (ReadFilter selects [start_ns, end_ns)), matching
+      // the MCAP backend's ReadMessageOptions::endTime semantics.
+      time_clauses.push_back("timestamp < " + std::to_string(*filter_.end_ns));
+    }
+
+    // A topic filter plus `ORDER BY timestamp` makes SQLite serve the rows off
+    // topic_timestamp_idx (which orders by topic first) and then sort them back
+    // into time order through a temp B-tree. That sorter carries the `data`
+    // BLOB, so it spills gigabytes of payload to the temp store and reads them
+    // back — measured ~9x slower than the same scan without the sort.
+    //
+    // Splitting into one statement per topic sidesteps it: each is served in
+    // timestamp order straight off the index, and the merge below restores the
+    // global order. Only worth it when topic_timestamp_idx actually exists
+    // (bags bagwiz wrote). Without it SQLite already picks a sorter-free
+    // timestamp_idx scan for the combined statement, and N per-topic statements
+    // would scan that index N times instead of once.
+    if (!ids.empty() && index_exists("topic_timestamp_idx")) {
+      open_merge_cursors(ids, time_clauses);
+      return;
+    }
+
+    std::string sql = "SELECT topic_id, timestamp, data FROM messages";
+    std::vector<std::string> where;
+    if (!ids.empty()) {
+      std::string clause = "topic_id IN (";
+      for (std::size_t i = 0; i < ids.size(); ++i) {
+        clause += (i == 0 ? "" : ",") + std::to_string(ids[i]);
+      }
+      clause += ")";
+      where.push_back(std::move(clause));
+    }
+    where.insert(where.end(), time_clauses.begin(), time_clauses.end());
 
     if (!where.empty()) {
       sql += " WHERE ";
@@ -425,7 +578,13 @@ private:
   // is closed first and then the temp file is removed.
   TempFile temp_;
   SqlitePtr db_;
+  // Exactly one of these drives iteration: `read_stmt_` for an unfiltered read
+  // (or a bag without topic_timestamp_idx), `cursors_` for the per-topic merge.
   SqliteStmtPtr read_stmt_;
+  std::vector<TopicCursor> cursors_;
+  // Index of the cursor emitted by the previous next_merged() call, stepped at
+  // the start of the following one; cursors_.size() means none is pending.
+  std::size_t pending_advance_ = 0;
   std::vector<TopicInfo> topics_;
   std::unordered_map<int64_t, std::size_t> topic_id_to_idx_;
   std::unordered_set<int64_t> payload_topic_ids_;

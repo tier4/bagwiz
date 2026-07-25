@@ -201,10 +201,10 @@ public:
   }
 
   std::unordered_map<std::string, int64_t> compute_topic_counts(
-    std::span<const std::string> topics) override
+    std::span<const std::string> names) override
   {
     std::unordered_map<std::string, int64_t> result;
-    if (topics.empty()) {
+    if (names.empty()) {
       return result;
     }
 
@@ -215,7 +215,7 @@ public:
       return result;
     }
 
-    const std::unordered_set<std::string> requested(topics.begin(), topics.end());
+    const std::unordered_set<std::string> requested(names.begin(), names.end());
     for (const auto & [channel_id, count] : statistics->channelMessageCounts) {
       auto idx_it = channel_to_topic_idx_.find(channel_id);
       if (idx_it == channel_to_topic_idx_.end()) {
