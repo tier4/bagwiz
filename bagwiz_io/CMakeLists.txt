@@ -86,6 +86,7 @@ add_library(bagwiz_io
   src/io/metadata_computer.cpp
   src/io/metadata_yaml.cpp
   src/io/sqlite3_reader.cpp
+  src/io/sqlite3_slice_prefetch.cpp
   src/io/sqlite3_slice_schedule.cpp
   src/io/sqlite3_writer.cpp
   src/io/topics.cpp
@@ -227,6 +228,14 @@ if(BUILD_TESTING)
   target_include_directories(
     bagwiz_sqlite3_slice_schedule_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_link_libraries(bagwiz_sqlite3_slice_schedule_test bagwiz_io)
+
+  # The slice scanner is a src-local detail class; the test drives its worker
+  # pool against a throwaway .db3 (the sqlite3 reader suite covers the wiring).
+  ament_add_gtest(
+    bagwiz_sqlite3_slice_prefetch_test test/io/sqlite3_slice_prefetch_test.cpp)
+  target_include_directories(
+    bagwiz_sqlite3_slice_prefetch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(bagwiz_sqlite3_slice_prefetch_test bagwiz_io)
 endif()
 
 ament_package()
