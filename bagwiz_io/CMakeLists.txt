@@ -170,6 +170,9 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_sqlite3_reader_test test/io/sqlite3_reader_test.cpp)
   target_link_libraries(bagwiz_sqlite3_reader_test bagwiz_io)
 
+  ament_add_gtest(bagwiz_sqlite3_parallel_read_test test/io/sqlite3_parallel_read_test.cpp)
+  target_link_libraries(bagwiz_sqlite3_parallel_read_test bagwiz_io)
+
   ament_add_gtest(bagwiz_metadata_computer_test test/io/metadata_computer_test.cpp)
   target_link_libraries(bagwiz_metadata_computer_test bagwiz_io)
 

@@ -14,7 +14,10 @@
 #include "bagwiz/io/message_decompressor.hpp"
 #include "bagwiz/io/metadata_yaml.hpp"
 #include "bagwiz/io/sqlite3_helpers.hpp"
-#include "shard_multiplexer.hpp"  // NOLINT(build/include_subdir) src-local shared header
+#include "read_tuning.hpp"             // NOLINT(build/include_subdir) src-local shared header
+#include "shard_multiplexer.hpp"       // NOLINT(build/include_subdir) src-local shared header
+#include "sqlite3_slice_prefetch.hpp"  // NOLINT(build/include_subdir) src-local shared header
+#include "sqlite3_slice_schedule.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #include <sqlite3.h>
 
@@ -26,6 +29,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -37,6 +41,11 @@ namespace bagwiz::io::detail
 namespace
 {
 constexpr const char * kLogger = "bagwiz.io.sqlite3";
+
+// Upper bound on the parallel path's slice count, so a pathologically large
+// bag cannot generate an unbounded schedule (each slice costs one prepare and
+// one index seek).
+constexpr std::size_t kMaxSlices = 4096;
 
 // ---------------------------------------------------------------------------
 // Single .db3 file reader.
@@ -85,6 +94,9 @@ public:
   bool next(RawMessage & out) override
   {
     ensure_iterator();
+    if (scanner_) {
+      return next_sliced(out);
+    }
     if (!cursors_.empty()) {
       return next_merged(out);
     }
@@ -494,6 +506,74 @@ private:
     return true;
   }
 
+  // Emit the current slice's records, then block for the next slice. Slices
+  // are disjoint and ascending, so this is a plain concatenation — no merge,
+  // and therefore no tiebreak that could diverge from the serial scan.
+  bool next_sliced(RawMessage & out)
+  {
+    while (record_pos_ >= slice_.records.size()) {
+      if (slice_index_ >= scanner_->size()) {
+        return false;
+      }
+      // Hand the drained buffers back before blocking. Any payload span from
+      // the previous next() dies here, which is exactly what the RawMessage
+      // contract allows: this call invalidates it either way.
+      scanner_->recycle(std::move(slice_.blobs), std::move(slice_.records));
+      slice_ = scanner_->get(slice_index_++);
+      if (!slice_.error.empty()) {
+        throw std::runtime_error("db3 slice scan failed: " + slice_.error);
+      }
+      record_pos_ = 0;
+    }
+
+    const SliceRecord & rec = slice_.records[record_pos_++];
+    out.topic = &topics_[topic_id_to_idx_.at(rec.topic_id)];
+    out.timestamp_ns = rec.timestamp_ns;
+    if (rec.size == 0) {
+      // Either a payload-skipped row (ReadFilter::payload_topics) or a
+      // genuinely empty blob; both surface as an empty span, as on the serial
+      // path, and neither is worth routing through the decompressor.
+      out.payload = {};
+      return true;
+    }
+    const auto src = std::span<const std::byte>(slice_.blobs.data() + rec.offset, rec.size);
+    // The span stays valid until a next() call crosses a slice boundary —
+    // strictly longer than the "valid until the next next()" contract. For
+    // MESSAGE-compressed bags the workers stage the compressed bytes and the
+    // decompression stays here, on the consumer thread: MessageDecompressor
+    // owns one ZSTD_DCtx and is not thread-safe.
+    out.payload = decompressor_ ? decompressor_->decompress(src) : src;
+    return true;
+  }
+
+  // Slice schedule for the parallel path, or an empty vector when the bag is
+  // empty, the filter selects nothing, or the file is too small to be worth
+  // splitting (in which case the caller falls back to the serial scan).
+  std::vector<SliceRef> build_parallel_schedule() const
+  {
+    auto stmt =
+      sqlite_prepare_or_throw(db_.get(), "SELECT MIN(timestamp), MAX(timestamp) FROM messages");
+    // Both come off timestamp_idx's ends in O(1); NULL means an empty bag.
+    if (
+      sqlite3_step(stmt.get()) != SQLITE_ROW || sqlite3_column_type(stmt.get(), 0) == SQLITE_NULL) {
+      return {};
+    }
+
+    SliceScheduleParams params;
+    params.extent_start_ns = sqlite3_column_int64(stmt.get(), 0);
+    params.extent_end_ns = sqlite3_column_int64(stmt.get(), 1);
+    params.filter_start_ns = filter_.start_ns;
+    params.filter_end_ns = filter_.end_ns;
+    std::error_code ec;
+    params.file_size_bytes = std::filesystem::file_size(path_, ec);
+    if (ec) {
+      return {};  // unknown size: no basis for sizing slices
+    }
+    params.target_slice_bytes = resolve_slice_bytes(kLogger);
+    params.max_slices = kMaxSlices;
+    return build_slice_schedule(params);
+  }
+
   void ensure_iterator()
   {
     if (iteration_started_) {
@@ -569,6 +649,35 @@ private:
     }
     sql += " ORDER BY timestamp";
 
+    // Parallel slice scan: split the bag's time extent into disjoint half-open
+    // ranges and let a worker pool scan them ahead of us on its own
+    // connections. Each slice is served straight off timestamp_idx, whose key
+    // is (timestamp, rowid), so concatenating them in schedule order emits
+    // exactly what this single statement would. Requires the index — without
+    // it SQLite sorts through a temp B-tree, whose order among equal
+    // timestamps is not guaranteed to match.
+    if (const int read_threads = resolve_read_threads(kLogger);
+        read_threads > 1 && index_exists("timestamp_idx")) {
+      if (auto schedule = build_parallel_schedule(); !schedule.empty()) {
+        SliceScanSpec spec;
+        if (!ids.empty()) {
+          spec.topic_clause = "topic_id IN (";
+          for (std::size_t i = 0; i < ids.size(); ++i) {
+            spec.topic_clause += (i == 0 ? "" : ",") + std::to_string(ids[i]);
+          }
+          spec.topic_clause += ")";
+        }
+        for (const auto & [tid, idx] : topic_id_to_idx_) {
+          spec.known_topic_ids.insert(tid);
+        }
+        spec.payload_topic_ids = payload_topic_ids_;
+        spec.payload_filter_active = !filter_.payload_topics.empty();
+        scanner_ =
+          std::make_unique<SliceScanner>(path_, std::move(spec), std::move(schedule), read_threads);
+        return;
+      }
+    }
+
     read_stmt_ = sqlite_prepare_or_throw(db_.get(), sql);
   }
 
@@ -585,6 +694,13 @@ private:
   // Index of the cursor emitted by the previous next_merged() call, stepped at
   // the start of the following one; cursors_.size() means none is pending.
   std::size_t pending_advance_ = 0;
+  // The third iteration driver, alongside read_stmt_ and cursors_: a worker
+  // pool scanning disjoint timestamp slices ahead of us. Slices are emitted in
+  // schedule order, which reproduces the serial scan's order exactly.
+  std::unique_ptr<SliceScanner> scanner_;
+  PrefetchedSlice slice_;        // the slice currently being drained
+  std::size_t slice_index_ = 0;  // next schedule index to request
+  std::size_t record_pos_ = 0;   // position within slice_.records
   std::vector<TopicInfo> topics_;
   std::unordered_map<int64_t, std::size_t> topic_id_to_idx_;
   std::unordered_set<int64_t> payload_topic_ids_;
