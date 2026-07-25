@@ -47,6 +47,13 @@ struct StageTotals
   std::int64_t read_ns = 0;
   std::int64_t process_ns = 0;
   std::int64_t write_ns = 0;
+  // Real elapsed wall-clock of the whole rewrite, measured once by the backend.
+  // The threaded backends run stages concurrently, so read_ns + process_ns +
+  // write_ns exceeds this by however much they overlapped — that overlap IS the
+  // speedup, and reporting the sum as the wall time would make the fastest
+  // backend look like the slowest. 0 means the caller did not measure it, in
+  // which case the report falls back to the stage sum.
+  std::int64_t elapsed_ns = 0;
   std::uint64_t messages = 0;
   std::uint64_t in_bytes = 0;   // payload bytes pulled from the reader
   std::uint64_t out_bytes = 0;  // payload bytes handed to the writer
@@ -96,6 +103,11 @@ public:
   // Direct accumulation (used by Scope and by tests).
   void add(Stage stage, std::chrono::nanoseconds elapsed) noexcept;
   void add_message(std::uint64_t in_bytes, std::uint64_t out_bytes) noexcept;
+
+  // Record the run's real elapsed wall-clock. Backends call this once, just
+  // before report(); without it the report can only fall back to the stage sum,
+  // which overstates any backend whose stages overlap.
+  void set_elapsed(std::chrono::nanoseconds elapsed) noexcept;
 
   [[nodiscard]] const StageTotals & totals() const noexcept { return totals_; }
 

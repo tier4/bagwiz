@@ -73,16 +73,27 @@ bool profile_value_enabled(const char * value) noexcept
 // cppcheck-suppress passedByValue  // std::string_view is a cheap value type
 std::string format_stage_report(std::string_view command, const StageTotals & t)
 {
-  const std::int64_t total_ns = t.read_ns + t.process_ns + t.write_ns;
+  const std::int64_t stage_ns = t.read_ns + t.process_ns + t.write_ns;
+  // Percentages are shares of the real elapsed time, so a backend that overlaps
+  // its stages shows each one's true occupancy of the run (and they can sum to
+  // more than 100 %, which is exactly the signal). Without a measured elapsed
+  // the stage sum is all that is available, and then the two coincide.
+  const std::int64_t wall_ns = t.elapsed_ns > 0 ? t.elapsed_ns : stage_ns;
 
   std::ostringstream os;
   os << "profile [" << command << "]: wall " << std::fixed << std::setprecision(3)
-     << to_seconds(total_ns) << " s, " << t.messages << " msg, "
+     << to_seconds(wall_ns) << " s, " << t.messages << " msg, "
      << (static_cast<double>(t.in_bytes) / kBytesPerMiB) << " MiB in / "
      << (static_cast<double>(t.out_bytes) / kBytesPerMiB) << " MiB out\n";
-  emit_stage_line(os, "read", t.read_ns, total_ns);
-  emit_stage_line(os, "process", t.process_ns, total_ns);
-  emit_stage_line(os, "write", t.write_ns, total_ns);
+  emit_stage_line(os, "read", t.read_ns, wall_ns);
+  emit_stage_line(os, "process", t.process_ns, wall_ns);
+  emit_stage_line(os, "write", t.write_ns, wall_ns);
+  if (stage_ns > wall_ns) {
+    // Say it outright: otherwise a reader sums the stage lines, gets more than
+    // the wall, and concludes the threaded backend is the slow one.
+    os << "  stages overlap: " << std::fixed << std::setprecision(3) << to_seconds(stage_ns)
+       << " s of stage time in " << to_seconds(wall_ns) << " s of wall\n";
+  }
   os << "  read " << std::setprecision(1) << mib_per_s(t.in_bytes, t.read_ns) << " MiB/s, write "
      << mib_per_s(t.out_bytes, t.write_ns) << " MiB/s";
   return os.str();
@@ -112,6 +123,11 @@ void StageProfiler::add(Stage stage, std::chrono::nanoseconds elapsed) noexcept
       totals_.write_ns += ns;
       break;
   }
+}
+
+void StageProfiler::set_elapsed(std::chrono::nanoseconds elapsed) noexcept
+{
+  totals_.elapsed_ns = static_cast<std::int64_t>(elapsed.count());
 }
 
 void StageProfiler::add_message(std::uint64_t in_bytes, std::uint64_t out_bytes) noexcept

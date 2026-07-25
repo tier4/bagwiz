@@ -115,5 +115,76 @@ TEST(FormatStageReport, HandlesZeroTotalsWithoutDivByZero)
   EXPECT_NE(r.find("empty"), std::string::npos);  // must not crash / must mention command
 }
 
+// The threaded backends accumulate read and write on concurrent threads, so
+// their stage times sum to more than the run actually took. Reporting that sum
+// as "wall" overstates the cost of exactly the backend whose overlap is the
+// point, so the header must carry the measured elapsed time when there is one.
+TEST(FormatStageReport, ReportsMeasuredElapsedAsWall)
+{
+  StageTotals t;
+  t.read_ns = 1'000'000'000;   // 1.0 s
+  t.write_ns = 1'000'000'000;  // 1.0 s
+  t.elapsed_ns = 3'000'000'000;
+  t.messages = 1;
+
+  const std::string r = format_stage_report("topic drop", t);
+
+  EXPECT_NE(r.find("wall 3.000 s"), std::string::npos) << r;
+  EXPECT_EQ(r.find("wall 2.000 s"), std::string::npos) << r;
+}
+
+TEST(FormatStageReport, FlagsStagesThatOverlapInsteadOfInflatingWall)
+{
+  StageTotals t;
+  t.read_ns = 1'000'000'000;  // 1.0 s
+  t.write_ns = 500'000'000;   // 0.5 s, concurrent with the read
+  t.elapsed_ns = 1'000'000'000;
+  t.messages = 1;
+
+  const std::string r = format_stage_report("topic drop", t);
+
+  // The run took 1.0 s, not the 1.5 s the stages sum to.
+  EXPECT_NE(r.find("wall 1.000 s"), std::string::npos) << r;
+  EXPECT_EQ(r.find("wall 1.500 s"), std::string::npos) << r;
+  // And the overlap is stated rather than left for the reader to infer.
+  EXPECT_NE(r.find("overlap"), std::string::npos) << r;
+  EXPECT_NE(r.find("1.500 s"), std::string::npos) << r;
+}
+
+TEST(FormatStageReport, DoesNotClaimOverlapWhenStagesAreSequential)
+{
+  StageTotals t;
+  t.read_ns = 1'000'000'000;
+  t.write_ns = 1'000'000'000;
+  t.elapsed_ns = 2'000'000'000;  // stages ran back to back
+  t.messages = 1;
+
+  const std::string r = format_stage_report("topic drop", t);
+
+  EXPECT_NE(r.find("wall 2.000 s"), std::string::npos) << r;
+  EXPECT_EQ(r.find("overlap"), std::string::npos) << r;
+}
+
+TEST(FormatStageReport, FallsBackToTheStageSumWhenElapsedWasNotMeasured)
+{
+  StageTotals t;
+  t.read_ns = 1'000'000'000;
+  t.write_ns = 1'000'000'000;
+  t.elapsed_ns = 0;  // caller did not measure
+  t.messages = 1;
+
+  const std::string r = format_stage_report("topic drop", t);
+
+  EXPECT_NE(r.find("wall 2.000 s"), std::string::npos) << r;
+  EXPECT_EQ(r.find("overlap"), std::string::npos) << r;
+}
+
+TEST(StageProfilerElapsed, SetElapsedLandsInTotals)
+{
+  StageProfiler prof(true);
+  prof.set_elapsed(std::chrono::nanoseconds(1'500'000'000));
+  EXPECT_EQ(prof.totals().elapsed_ns, 1'500'000'000);
+}
+
 }  // namespace
 }  // namespace bagwiz::core::pipeline

@@ -128,6 +128,7 @@ RewriteCounts PipelinedBackend::run(
   StageProfiler read_prof(profiling);
   StageProfiler write_prof(profiling);
   BoundedMessageQueue queue(queue_bytes_);
+  const auto started_at = std::chrono::steady_clock::now();
 
   // Write stage on a worker thread; the read stage stays on the calling thread.
   // A throw inside the writer is latched in the queue (which also unblocks a
@@ -161,8 +162,11 @@ RewriteCounts PipelinedBackend::run(
 
   // Merge the writer thread's write time into the read profiler for one report.
   // read_ns/process_ns and write_ns overlap in wall-clock (that overlap IS the
-  // speedup), so the reported "wall" sum exceeds the real elapsed time by design.
+  // speedup), so their sum exceeds the real elapsed time — hence the measured
+  // elapsed below, which is what the report headlines. Without it the report
+  // would price this backend's concurrency as if it were extra cost.
   read_prof.add(Stage::kWrite, std::chrono::nanoseconds(write_prof.totals().write_ns));
+  read_prof.set_elapsed(std::chrono::steady_clock::now() - started_at);
   read_prof.report(profile_label);
   return counts;
 }

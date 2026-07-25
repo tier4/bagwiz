@@ -12,6 +12,7 @@
 #include "bagwiz/core/pipeline/stage_profiler.hpp"
 #include "bagwiz/io/bag_io.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -26,6 +27,7 @@ RewriteCounts SequentialBackend::run(
   std::string_view profile_label)
 {
   StageProfiler prof;
+  const auto started_at = std::chrono::steady_clock::now();
   RewriteCounts counts;
   const bool transforming = processor.transforms();
   std::vector<std::byte> xform_buf;  // reused across transformed messages
@@ -89,6 +91,7 @@ RewriteCounts SequentialBackend::run(
     prof.add_message(in_size, static_cast<std::uint64_t>(out_payload.size()));
     ++counts.copied;
   }
+  prof.set_elapsed(std::chrono::steady_clock::now() - started_at);
   prof.report(profile_label);
   return counts;
 }
