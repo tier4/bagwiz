@@ -239,6 +239,13 @@ if(BUILD_TESTING)
   target_include_directories(
     bagwiz_sqlite3_slice_prefetch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_link_libraries(bagwiz_sqlite3_slice_prefetch_test bagwiz_io)
+
+  # Drives the page-size knob through both the src-local resolver and a bag
+  # written via the public factory, so the pragma is proven to reach the file.
+  ament_add_gtest(bagwiz_sqlite3_page_size_test test/io/sqlite3_page_size_test.cpp)
+  target_include_directories(
+    bagwiz_sqlite3_page_size_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(bagwiz_sqlite3_page_size_test bagwiz_io)
 endif()
 
 ament_package()

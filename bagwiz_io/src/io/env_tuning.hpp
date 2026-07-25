@@ -6,8 +6,8 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#ifndef IO__READ_TUNING_HPP_
-#define IO__READ_TUNING_HPP_
+#ifndef IO__ENV_TUNING_HPP_
+#define IO__ENV_TUNING_HPP_
 
 #include "bagwiz/core/base/logging.hpp"
 
@@ -57,6 +57,39 @@ inline int resolve_read_threads(const char * logger)
   return static_cast<int>(resolve_env_int("BAGWIZ_READ_THREADS", fallback, 0, kMax, logger));
 }
 
+// Page size for newly written .db3 files, from BAGWIZ_DB3_PAGE_SIZE.
+//
+// 32 KiB is the default because it measured fastest on every shape tried — a
+// payload-heavy Autoware bag, a small-message bag, and one whose messages
+// straddle a page boundary — while producing a smaller file than 64 KiB in all
+// three (docs/benchmarks/db3-page-size.md). 64 KiB bought no additional speed
+// and cost ~1.6 % on disk.
+//
+// SQLite accepts only a power of two in [512, 65536] and *silently ignores*
+// anything else, leaving its own 4 KiB default in the file. An invalid value is
+// therefore rejected here with a warning rather than clamped: clamping cannot
+// turn a non-power-of-two into a valid one, and a silently-ignored pragma is
+// exactly the failure this guards against.
+inline std::uint32_t resolve_db3_page_size(const char * logger)
+{
+  constexpr std::int64_t kDefault = 32768;
+  constexpr std::int64_t kMin = 512;
+  constexpr std::int64_t kMax = 65536;
+  // Parse over a wider range than SQLite accepts so an out-of-range value
+  // reaches the check below and is reported, instead of being clamped into
+  // silent acceptance.
+  const std::int64_t value =
+    resolve_env_int("BAGWIZ_DB3_PAGE_SIZE", kDefault, kMin / 2, kMax * 2, logger);
+  const bool power_of_two = value > 0 && (value & (value - 1)) == 0;
+  if (value < kMin || value > kMax || !power_of_two) {
+    BAGWIZ_LOG_WARN(
+      logger, "ignoring BAGWIZ_DB3_PAGE_SIZE=%lld: need a power of two in [512, 65536]",
+      static_cast<long long>(value));  // NOLINT(runtime/int) printf format
+    return static_cast<std::uint32_t>(kDefault);
+  }
+  return static_cast<std::uint32_t>(value);
+}
+
 }  // namespace bagwiz::io::detail
 
-#endif  // IO__READ_TUNING_HPP_
+#endif  // IO__ENV_TUNING_HPP_

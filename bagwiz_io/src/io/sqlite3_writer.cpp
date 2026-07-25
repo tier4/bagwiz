@@ -12,6 +12,7 @@
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/metadata_yaml.hpp"
 #include "bagwiz/io/sqlite3_helpers.hpp"
+#include "env_tuning.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #include <sqlite3.h>
 
@@ -62,6 +63,14 @@ public:
       path.string(), SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX,
       "sqlite3 open"))
   {
+    // page_size must come first: SQLite only honours it while the database is
+    // still empty, so any pragma or statement that writes a page locks in the
+    // 4 KiB default. Rosbag payloads are large BLOBs, and at 4 KiB a 2 MB point
+    // cloud spills across ~500 chained overflow pages versus ~64 at 32 KiB.
+    exec_or_throw(
+      db_.get(),
+      ("PRAGMA page_size = " + std::to_string(resolve_db3_page_size(kLogger)) + ";").c_str());
+
     // Write-side tuning. journal_mode=MEMORY keeps crash-consistency at the
     // cost of some durability; OFF would be faster but leaves a corrupt bag
     // on crash. bagwiz writes new bags so losing one on crash is acceptable,
