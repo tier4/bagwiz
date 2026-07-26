@@ -49,14 +49,15 @@ struct DeskewResult
 // the world trajectory (T_world_sensor over time). `extrinsic` E maps a point
 // from the cloud frame into the trajectory (`--of`) frame; nullopt = identity.
 //   p' = E^{-1} * (T(t_ref)^{-1} * T(t_i)) * E * p
-// Non-target fields/bytes are preserved; only xyz + one per-point time field are
+// `input` is taken by value and rewritten in place (callers can std::move the
+// parsed cloud in to avoid a full data copy). Non-target fields/bytes are
+// preserved; only xyz + one per-point time field are
 // rewritten (time -> t_ref-equivalent to block downstream double-deskew). Time
 // field detected per point_time.hpp. Big-endian input is rejected. A cloud with
 // no usable time field is returned verbatim with points_no_time set (the command
 // treats that as fatal upfront).
 DeskewResult deskew_pointcloud2(
-  const PointCloud2 & input, std::int64_t t_ref_ns,
-  std::span<const core::TrajectoryPose> trajectory,
+  PointCloud2 input, std::int64_t t_ref_ns, std::span<const core::TrajectoryPose> trajectory,
   const std::optional<geometry_msgs::msg::Transform> & extrinsic = std::nullopt);
 
 }  // namespace bagwiz::core::pointcloud

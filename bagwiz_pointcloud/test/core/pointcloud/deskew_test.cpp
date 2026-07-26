@@ -389,3 +389,24 @@ TEST(Deskew, OrganizedCloudWithRowPadding)
   EXPECT_NEAR(xyz0[0], 2.0f, 1e-4);  // row 0: moved to ref pose
   EXPECT_NEAR(xyz1[0], 1.0f, 1e-5);  // row 1: t==t_ref, unchanged
 }
+
+TEST(Deskew, NonMonotonicPointTimes)
+{
+  // Point times jump backwards mid-scan (0.1 -> 0.05 -> 0.15 s relative):
+  // exercises the trajectory lookup's non-monotone handling (each point must
+  // still resolve its own pose, independent of scan order). The trajectory is
+  // a pure +20 m/s X translation (2 m per 0.1 s), so a point at relative
+  // time t_i maps to x + 20*t_i in the t_ref=0 frame.
+  auto cloud = make_cloud_xyzt(
+    {{1.0f, 0.0f, 0.0f, 0.1f}, {10.0f, 0.0f, 0.0f, 0.05f}, {100.0f, 0.0f, 0.0f, 0.15f}});
+  std::vector<TrajectoryPose> traj{
+    {0, 0, 0, 0, 0, 0, 0, 1},
+    {100'000'000, 2, 0, 0, 0, 0, 0, 1},
+    {200'000'000, 4, 0, 0, 0, 0, 0, 1}};
+  auto r = deskew_pointcloud2(cloud, 0, traj);
+  ASSERT_TRUE(r.ok());
+  EXPECT_EQ(r.points_deskewed, 3u);
+  EXPECT_NEAR(xyz_at(*r.cloud, 0)[0], 1.0f + 2.0f, 1e-4);    // t=0.1s: x + 20*0.1
+  EXPECT_NEAR(xyz_at(*r.cloud, 1)[0], 10.0f + 1.0f, 1e-4);   // t=0.05s: x + 20*0.05
+  EXPECT_NEAR(xyz_at(*r.cloud, 2)[0], 100.0f + 3.0f, 1e-4);  // t=0.15s: x + 20*0.15
+}
