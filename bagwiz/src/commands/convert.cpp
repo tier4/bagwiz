@@ -319,10 +319,12 @@ private:
         kLogger, "(plus %zu more topic(s) without resolvable .msg)", unresolved_defs - 5);
     }
 
-    // convert is a pure passthrough copy (only the storage format changes), so it
-    // runs through the shared rewrite seam with an empty suppress set on the
-    // threaded backend. A read/write error now aborts the run (fail-fast) instead
-    // of silently skipping messages, which could mask partial output corruption.
+    // convert re-encodes nothing (only the storage container changes), so it runs
+    // through the shared rewrite seam with an empty suppress set on the threaded
+    // backend. Note this is the decoded pipeline, not the mcap chunk
+    // pass-through — convert never calls try_bag_passthrough_rewrite. A
+    // read/write error now aborts the run (fail-fast) instead of silently
+    // skipping messages, which could mask partial output corruption.
     core::BagCopyCounts counts;
     try {
       const std::unordered_set<std::string> none;

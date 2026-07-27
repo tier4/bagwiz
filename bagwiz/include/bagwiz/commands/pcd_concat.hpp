@@ -17,8 +17,8 @@
 namespace bagwiz::commands
 {
 
-// Parsed arguments for `bagwiz pcd concat`. See docs/commands/pcd.md and
-// .claude/plans/pcd-concat.spec.md for the full behaviour.
+// Parsed arguments for `bagwiz pcd concat`. See docs/commands/pcd.md for the
+// full behaviour.
 struct PcdConcatArgs
 {
   std::filesystem::path input_path;                  // <input> bag

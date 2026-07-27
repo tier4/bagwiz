@@ -59,8 +59,9 @@ struct TrimArgs
 // Copy only the messages inside the half-open window [start, end) — resolved
 // against the bag's time extent — to the output bag, declaring every topic
 // verbatim. Returns a process exit code: 0 on success, 1 on any error (bad
-// window arguments, input open failure, no time extent, start past the bag
-// end, output collision, or a read/write/close error).
+// window arguments, an unusable `--align` selection, a window that trims away
+// the whole bag or is empty, input open failure, no time extent, start past
+// the bag end, output collision, or a declare/read/write/close error).
 int run_trim(const TrimArgs & args);
 
 }  // namespace bagwiz::commands

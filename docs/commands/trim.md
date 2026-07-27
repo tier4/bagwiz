@@ -7,7 +7,7 @@ conversion is performed.
 ## Usage
 
 ```text
-bagwiz trim [OPTIONS] <input> [--start <offset>] [--end <offset> | --duration <length> | --both <offset> | --align <topics>...]
+bagwiz trim [OPTIONS] <input> {[--start <offset>] [--end <offset> | --duration <length>] | --both <offset> | --align <topics>...}
 ```
 
 ## Positional arguments
@@ -105,9 +105,11 @@ even when pipeline latency pushed its record time outside it.
   than read and discarded. Under the default `--stamp header`, stamps live in
   the message payloads, so the whole bag is scanned and filtered with a
   per-message keep predicate (see Reference clock above).
-- Bags whose storage carries no time information (an empty bag, or an MCAP
-  without a summary index) cannot anchor relative offsets; the run stops with
-  an error.
+- Relative offsets need an anchor. Under `--stamp recv` with time bounds that
+  anchor is the storage's time summary, so an empty bag or an MCAP without a
+  summary index stops the run with an error. Under the default
+  `--stamp header`, and for any `msg` bound, the anchor comes from a full scan
+  instead — only a bag with no messages at all fails.
 - In-place vs `-o`. Without `-o`, `<input>` is rewritten via an atomic
   tmp-swap that preserves its storage format and layout. With `-o`, `<input>`
   is left untouched and the result is written to that path; the output's
@@ -151,7 +153,12 @@ bagwiz trim drive.db3 --align /sensing/lidar/concatenated/pointcloud -o aligned.
 
 ## Exit status
 
-| Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | The bag was trimmed successfully, including a window that contains no messages (a valid empty bag is written, after a warning).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `1`  | No window flag was given; `--end` and `--duration` were combined; `--both` or `--align` was combined with another window flag; `--both` was zero or would trim away the entire bag; an `--align` selector matched no topic, a selected topic had no messages, or the selected topics did not overlap in time; `--stamp` was not `header`/`recv`; an offset was negative, missing its unit, or unparseable; a message count was fractional, negative, or malformed; `--duration` was given a `msg` count; the window was empty (`start >= end`); the start (offset or message count) was past the bag end; the bag had no time extent; the input could not be opened; the `-o` output path collided without `-w`/`--overwrite`; the input storage format could not be detected for an in-place rewrite; or a read/write/close error occurred. |
+| Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | The bag was trimmed successfully, including a window that contains no messages (a valid empty bag is written, after a warning).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `1`  | No window flag was given; `--both` was zero or would trim away the entire bag; an `--align` selector matched no topic, a selected topic had no messages, or the selected topics did not overlap in time; an offset was negative, missing its unit, or unparseable; a message count was fractional, negative, or malformed; `--duration` was given a `msg` count; the window was empty (`start >= end`); the start (offset or message count) was past the bag end; the bag had no time extent; the input could not be opened; the `-o` output path collided without `-w`/`--overwrite`; the input storage format could not be detected for an in-place rewrite; or a read/write/close error occurred. |
+
+Flag conflicts (`--end`+`--duration`, `--both`/`--align` with another window
+flag), an invalid `--stamp` value, and a missing or nonexistent `<input>` are
+rejected by the argument parser before the command runs and exit with CLI11's
+own codes (105 validation, 106 required, 108 excludes), not 1.

@@ -73,8 +73,8 @@ constexpr std::array<std::string_view, 1> kTfTreeSupportedTypes{{kTfMessageType}
 // Image topic types the shared to_packed_raster() decoder accepts —
 // `generate video` rendering, `walk`'s image preview, and `map slam --cam`
 // colorization all gate on it. This MUST mirror is_supported_image_type() in
-// src/core/image/packed_raster.cpp (and is_supported_type() in
-// src/commands/generate_video.cpp); keep them in sync. As with `traj dump` /
+// bagwiz_image/src/core/image/packed_raster.cpp (and is_supported_type() in
+// src/commands/generate_video_common.cpp); keep them in sync. As with `traj dump` /
 // `tf tree`, a topic typed as anything outside this set is rejected by the
 // command, so completion never offers it.
 constexpr std::array<std::string_view, 2> kImageTopicTypes{{
@@ -83,7 +83,9 @@ constexpr std::array<std::string_view, 2> kImageTopicTypes{{
 }};
 
 // CameraInfo topic type accepted by `generate video --cam-info`. This MUST
-// mirror the camera-info type constant in src/commands/generate_video.cpp.
+// mirror the camera-info type constants in src/commands/cam_info_common.hpp
+// and bagwiz_image/src/core/image/camera_info_resolver.cpp (the resolver
+// `generate video --cam-info` goes through).
 constexpr std::array<std::string_view, 1> kCameraInfoType{{
   "sensor_msgs/msg/CameraInfo",
 }};
@@ -1208,8 +1210,8 @@ std::vector<std::string> complete_ls(const CompletionRequest & request)
 // topics (any type), mirroring `walk --cam-info`; `--stamp` completes its two
 // clock choices.
 //
-//   trim: `trim`(0) `<input>`(1) [--start <off>] [--end <off>|--duration <len>|--both <off>
-//         |--align <topics>...] [--stamp header|recv] [-o <out>] [-w]
+//   trim: `trim`(0) `<input>`(1) {[--start <off>] [--end <off>|--duration <len>] |
+//         --both <off> | --align <topics>...} [--stamp header|recv] [-o <out>] [-w]
 std::vector<std::string> complete_trim(const CompletionRequest & request)
 {
   const auto current = current_word(request);

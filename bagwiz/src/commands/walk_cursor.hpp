@@ -50,8 +50,9 @@ std::vector<std::byte> copy_payload(std::span<const std::byte> src);
 // Owns the lazy message cache (every message seen so far), the exhausted
 // flag, and the cursor index. The YAML view and the image preview share one
 // cursor so both navigate identically. The cache grows on demand: `prev`
-// stays O(1) for anything already seen and kLast is the only move that forces
-// a full-remaining scan.
+// stays O(1) for anything already seen and kLast is the only move that always
+// forces a full-remaining scan (the forward time steps load ahead only up to
+// the target timestamp, which drains the source when no later message exists).
 class MessageCursor
 {
 public:

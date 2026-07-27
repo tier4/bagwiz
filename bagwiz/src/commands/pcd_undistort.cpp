@@ -141,8 +141,10 @@ OutputItem process_deskew_job(DeskewJob job, std::span<const core::TrajectoryPos
 // Parallel version of Pass 2.  One reader thread, one collector thread that
 // alone calls writer.write(), and a fixed-size std::jthread worker pool that
 // deskews PointCloud2 messages.  Non-pcd messages bypass the job queue and go
-// straight into the in-order completion map.  Output message order is identical
-// to the synchronous path.
+// straight into the in-order completion map.  Output message order and bytes
+// are identical to the synchronous path; note the summary cloud count is not
+// (this path counts every submitted `--pcd` message, including undecodable
+// ones).
 int run_parallel_undistort_pass(
   io::BagWriter & writer, const io::BagReader & topic_reader,
   const std::filesystem::path & input_path, const std::unordered_set<std::string> & pcd_set,

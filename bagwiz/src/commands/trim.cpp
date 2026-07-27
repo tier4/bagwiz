@@ -45,9 +45,9 @@ namespace
 
 constexpr const char * kLogger = "bagwiz.cmd.trim";
 
-// Parse one --start/--end/--duration value; the unit is mandatory. On failure
-// logs a targeted error — distinguishing a bare number (missing unit) from
-// unparseable text — and returns nullopt.
+// Parse the --duration value; the unit is mandatory and must be a time unit.
+// On failure logs a targeted error — distinguishing a bare number (missing
+// unit) from unparseable text — and returns nullopt.
 std::optional<std::int64_t> parse_offset_or_log(const std::string & value, const char * flag)
 {
   const auto ns = core::parse_duration_ns(value, core::DurationUnitPolicy::RequireUnit);

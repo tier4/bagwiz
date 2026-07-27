@@ -35,10 +35,12 @@ namespace
 
 constexpr const char * kLogger = "bagwiz.cmd.topic";
 
-// Declare every input topic except those in `drop`, then stream-copy the bag
-// with the same set suppressed (dropped messages). Shared by the in-place and
-// -o modes; the writer factory is injected so the rewrite dispatch
-// (core::run_bag_rewrite) can supply a tmp path. Returns a process exit code.
+// Try the mcap chunk pass-through first; when it declines, declare every input
+// topic except those in `drop`, push the survivors down as the reader's filter,
+// and stream-copy the bag with the same set suppressed as a backstop. Shared by
+// the in-place and -o modes; the writer factory is injected so the rewrite
+// dispatch (core::run_bag_rewrite) can supply a tmp path. Returns a process
+// exit code.
 int execute_drop_pass(
   const TopicDropArgs & args, const std::unordered_set<std::string> & drop,
   const io::WriterFactory & open_writer, const core::RewriteTarget & target)

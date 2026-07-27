@@ -23,19 +23,19 @@ bagwiz pcd concat <input> <output_topic_name> --pcd <t1> <t2> [<t3> ...] \
     [-j|--threads <N>]
 ```
 
-| Argument / option              | Required | Description                                                                                                                                                                                                                                                                                                   |
-| ------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<input>`                      | ✔        | Input bag (file or directory).                                                                                                                                                                                                                                                                                |
-| `<output_topic_name>`          | ✔        | Name of the new concatenated PointCloud2 topic.                                                                                                                                                                                                                                                               |
-| `--pcd <t...>`                 | ✔        | PointCloud2 topics to concatenate (2 or more). The first topic is the reference; concatenation order follows this list.                                                                                                                                                                                       |
-| `--frame <frame>`              |          | Target frame all clouds are transformed into. Default: `base_link`. Required when the default is not reachable from every `--pcd` frame via the bag's static TF.                                                                                                                                              |
-| `-o, --output <path>`          |          | Output bag. When omitted, the input bag is rewritten in place (atomic tmp swap).                                                                                                                                                                                                                              |
-| `--tolerance <val>`            |          | Nearest-match tolerance for pairing the other topics to the first `--pcd` topic. Takes an optional unit `ns`/`us`/`ms`/`s` (no unit = ms), e.g. `50ms`. Default: half the first topic's median period.                                                                                                        |
-| `--stamp-offset <topic>=<val>` |          | Per-topic offset **added to `header.stamp` for matching only** (the real stamp and per-point times are never rewritten). `<val>` takes an optional unit `ns`/`us`/`ms`/`s` (no unit = ms), signed, e.g. `=-50ms`, `=500ns`. Repeatable. Use it when a sensor triggers early/late relative to the first topic. |
-| `--drop-inputs`                |          | Drop the source `--pcd` topics from the output (default: keep them).                                                                                                                                                                                                                                          |
-| `--force`                      |          | Proceed even if `<output_topic_name>` already exists in the bag (replaces that topic).                                                                                                                                                                                                                        |
-| `-w, --overwrite`              |          | Overwrite an existing `-o/--output` path.                                                                                                                                                                                                                                                                     |
-| `-j, --threads <N>`            |          | Number of worker threads (default: `8`). Accepts `0`–`256`; `0` uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; in-range values above hardware concurrency are capped to it.                                                                                                     |
+| Argument / option              | Required | Description                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<input>`                      | ✔        | Input bag (file or directory).                                                                                                                                                                                                                                                                                                 |
+| `<output_topic_name>`          | ✔        | Name of the new concatenated PointCloud2 topic.                                                                                                                                                                                                                                                                                |
+| `--pcd <t...>`                 | ✔        | PointCloud2 topics to concatenate (2 or more). The first topic is the reference; concatenation order follows this list.                                                                                                                                                                                                        |
+| `--frame <frame>`              |          | Target frame all clouds are transformed into. Default: `base_link`. Required when the default is not reachable from every `--pcd` frame via the bag's static TF.                                                                                                                                                               |
+| `-o, --output <path>`          |          | Output bag. When omitted, the input bag is rewritten in place (atomic tmp swap).                                                                                                                                                                                                                                               |
+| `--tolerance <val>`            |          | Nearest-match tolerance for pairing the other topics to the first `--pcd` topic. Takes an optional unit `ns`/`us`/`ms`/`s` (no unit = ms), e.g. `50ms`. Default: half the first topic's median header-stamp period, or 50 ms when that period cannot be measured (fewer than two reference messages, or a zero median period). |
+| `--stamp-offset <topic>=<val>` |          | Per-topic offset **added to `header.stamp` for matching only** (the real stamp and per-point times are never rewritten). `<val>` takes an optional unit `ns`/`us`/`ms`/`s` (no unit = ms), signed, e.g. `=-50ms`, `=500ns`. Repeatable. Use it when a sensor triggers early/late relative to the first topic.                  |
+| `--drop-inputs`                |          | Drop the source `--pcd` topics from the output (default: keep them).                                                                                                                                                                                                                                                           |
+| `--force`                      |          | Proceed even if `<output_topic_name>` already exists in the bag (replaces that topic).                                                                                                                                                                                                                                         |
+| `-w, --overwrite`              |          | Overwrite an existing `-o/--output` path.                                                                                                                                                                                                                                                                                      |
+| `-j, --threads <N>`            |          | Number of worker threads (default: `8`). Accepts `0`–`256`; `0` uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; in-range values above hardware concurrency are capped to it.                                                                                                                      |
 
 ### Behaviour notes
 
@@ -52,6 +52,10 @@ bagwiz pcd concat <input> <output_topic_name> --pcd <t1> <t2> [<t3> ...] \
   field is copied verbatim.
 - **Output header:** `frame_id` = `--frame`, `stamp` = the reference message's
   real stamp. The merged cloud is unorganized (`height = 1`).
+- **Storage format:** the output inherits the input's format/layout, but MCAP
+  output is written **uncompressed** (`compression: none`), unlike
+  `pcd undistort`, which keeps the zstd default. Expect a larger output file
+  than the input.
 - **Determinism:** CPU-only, no GLIM — deterministic output for a given input.
   When `--threads` is greater than 1, group assembly runs in parallel but a
   single collector thread serializes output, so bag message order — and the
@@ -90,7 +94,7 @@ time, running `undistort` before `concat` still leaves per-point timestamps
 intact for the downstream merge.
 
 ```text
-bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
+bagwiz pcd undistort <input> <pose_topic> --pcd <t1> [<t2> ...] [--pcd <topic>]... \
     [--ref <frame>] [--of <frame>] [-o|--output <path>] [-w|--overwrite] \
     [-j|--threads <N>]
 ```
@@ -106,7 +110,7 @@ bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
 
 | Flag                  | Default      | Description                                                                                                                                                                                           |
 | --------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--pcd <topic>`       | _(required)_ | PointCloud2 topic to deskew. Repeatable — pass `--pcd` once per topic (e.g. `--pcd /a --pcd /b`) to deskew several topics against the same trajectory. At least one is required.                      |
+| `--pcd <topic>`       | _(required)_ | PointCloud2 topic(s) to deskew. Variadic and repeatable — `--pcd /a /b` and `--pcd /a --pcd /b` are equivalent. At least one is required.                                                             |
 | `--ref <frame>`       | `map`        | Reference frame the trajectory is resolved in (same convention as `traj dump`).                                                                                                                       |
 | `--of <frame>`        | `base_link`  | Tracked body frame. The trajectory is obtained as `T_ref_of` (e.g. `T_map_base_link`).                                                                                                                |
 | `-o, --output <path>` | _(unset)_    | Output bag. When omitted, `<input>` is rewritten in place (atomic tmp swap).                                                                                                                          |
@@ -165,6 +169,11 @@ bagwiz pcd undistort <input> <pose_topic> --pcd <topic> [--pcd <topic>]... \
      inconsistent point/row layout — aborts the whole run rather than being
      skipped; a cloud that merely fails to parse as `PointCloud2` is instead
      copied through unchanged with a warning.
+   - a cloud that reaches Pass 2 with no usable per-point time field, or whose
+     reference stamp falls outside the trajectory, is **not** an error — it is
+     written through un-deskewed and reported with a
+     `had nothing deskewed … passed through un-deskewed` warning (the upfront
+     fatal check only inspects each topic's first message).
    - The trajectory is built once and shared by every `--pcd` topic; only the
      extrinsic `E` changes per topic, so sensors with different mount points
      can be deskewed together in one run.
@@ -210,6 +219,7 @@ bagwiz pcd undistort drive.mcap /slam/tf --pcd /points -o undistorted.mcap
 | `<input>` has no `...tf_static` topic                                                                                     | Fatal — needed to resolve `--ref` → `--of` and every `--pcd` topic's extrinsic.                           |
 | `--ref` → `--of` cannot be resolved from `pose_topic` + the bag's static TF                                               | Fatal.                                                                                                    |
 | A `--pcd` topic's first message has no per-point time field                                                               | Fatal.                                                                                                    |
+| A later `--pcd` cloud has no usable time/pose                                                                             | Warning; cloud passed through un-deskewed.                                                                |
 | `--of` → a `--pcd` topic's cloud frame is not reachable via `*tf_static` + `<pose_topic>`                                 | Fatal.                                                                                                    |
 | A cloud reaching the rewrite step is malformed (big-endian, missing/misshapen x/y/z, or an inconsistent point/row layout) | Aborts the run (a cloud that merely fails to _parse_ is copied through unchanged with a warning instead). |
 | `-o` output path already exists without `-w`/`--overwrite`                                                                | Error.                                                                                                    |

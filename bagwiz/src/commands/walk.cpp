@@ -75,8 +75,13 @@ constexpr const char * kLogger = "bagwiz.cmd.walk";
 //   i             : toggle in-terminal image preview (image topics on a
 //                   Kitty/Sixel-capable terminal; absent otherwise)
 //   q / Ctrl-C    : quit
+// Inside the image preview the additional keys u (undistort), p (pcd overlay),
+// t (pcd topics), f/c/r (property/scheme/range), =,+/- (point size) and ]/[
+// (alpha) apply; see walk_preview.hpp / walk_overlay.hpp.
 // Messages are cached lazily so `prev` stays O(1) for anything already
-// seen and `G` is the only key that can trigger a full-remaining scan.
+// seen and `G` is the only key that always triggers a full-remaining scan
+// (the forward time steps `.` / `>` read ahead only as far as the target
+// timestamp, which drains the source when no later message exists).
 class WalkCommand : public Command
 {
 public:
@@ -93,7 +98,8 @@ public:
       ->check(CLI::ExistingPath);
     app.add_option("topic", topic_, "Topic name to inspect")->required();
     app.add_option(
-      "--cam-info", camera_info_topic_, "Explicit CameraInfo topic for undistort preview");
+      "--cam-info", camera_info_topic_,
+      "Explicit CameraInfo topic for the undistort preview and the point-cloud projection overlay");
   }
 
   int run() override

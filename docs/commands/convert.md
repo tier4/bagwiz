@@ -179,7 +179,10 @@ bagwiz convert msg geo [OPTIONS] <input> --dst <type>
   so it is dropped.
 - **In-place vs `-o`.** Without `-o`, `<input>` is rewritten via an atomic
   tmp-swap that preserves its storage format and layout. With `-o`, `<input>`
-  is left untouched and the result is written to that path.
+  is left untouched and the result is written to that path. The `-o` path's
+  extension picks the storage backend (`.mcap` / `.db3`); an extension-less
+  path produces a directory-layout MCAP bag rather than inheriting `<input>`'s
+  backend.
 - The output MCAP is written with `compression=none`.
 
 ### Example
@@ -197,7 +200,7 @@ bagwiz convert msg geo drive.mcap \
 
 ## Exit status
 
-| Code | Meaning                                                                                                                                                                                                             |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | Repack finished successfully. Per-message failure tallies are still logged on stderr.                                                                                                                               |
-| `1`  | Argument resolution failed (bad `--storage`, ambiguous output path), the input could not be opened or used a rejected compression mode, the output could not be opened, or a fatal read/write/close error occurred. |
+| Code | Meaning                                                                                                                                                                                                                                                                                     |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Repack finished successfully. `convert msg geo` still logs a tally of messages that failed to decode/convert and were skipped; `convert format` fails the run outright on any read/write error, and logs a warning per topic whose declaration or message definition could not be resolved. |
+| `1`  | Argument resolution failed (bad `--storage`, ambiguous output path), the input could not be opened or used a rejected compression mode, the output could not be opened, or a fatal read/write/close error occurred.                                                                         |

@@ -93,7 +93,7 @@ private:
       "--tolerance", concat_args_.tolerance,
       "Nearest-match tolerance for pairing the other topics to the first --pcd topic. "
       "Takes an optional unit ns/us/ms/s (no unit = ms), e.g. 50ms. "
-      "Default: half the first topic's median period.");
+      "Default: half the first topic's median period (50 ms when that cannot be measured).");
     sub->add_option(
       "--stamp-offset", concat_args_.stamp_offsets,
       "Per-topic matching offset as topic=value, added to header.stamp for MATCHING ONLY "

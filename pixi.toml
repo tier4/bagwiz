@@ -135,7 +135,7 @@ cmd = 'colcon test --build-base "build/$PIXI_ENVIRONMENT_NAME" --install-base "i
 # AMENT_PREFIX_PATH, so the dynamic links, the runtime dlopen of introspection
 # typesupport, and the .msg lookup all resolve. Pass arguments after `--`,
 # e.g. `pixi run -e jazzy run -- ls x.mcap`. In a *-cuda env this runs the CUDA
-# build, so `map slam --backend gpu|auto` can select the CUDA backend.
+# build, so `map slam --backend cuda|auto` can select the CUDA backend.
 [tasks.run]
 depends-on = ["build-full"]
 cmd = 'install/$PIXI_ENVIRONMENT_NAME/bagwiz/bin/bagwiz'

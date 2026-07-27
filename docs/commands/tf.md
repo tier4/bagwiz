@@ -365,7 +365,9 @@ timeline, where a static transform is expected to already hold.
   untouched.
 - `-o <output>`: `<dst>` is left untouched and the result (`<dst>`'s messages
   plus the copied static TF) is written to `<output>`. The storage format and
-  layout follow `<output>`'s extension (`.mcap` / `.db3` / a directory).
+  layout follow `<output>`: a `.mcap` or `.db3` extension picks that
+  single-file backend, and any other path produces a **directory-layout MCAP**
+  bag — a directory output does not inherit `<dst>`'s storage backend.
 
 ### `-w`, `--overwrite`
 
@@ -470,14 +472,14 @@ restricts the same slots to static `*tf_static` frames.
 
 ### Keys
 
-| Key                       | Action                                    |
-| ------------------------- | ----------------------------------------- |
-| `→` / `Space`             | next timestamp (wraps from last to first) |
-| `←` / `b`                 | previous timestamp                        |
-| `↑` / `k`, `↓` / `j`      | scroll the transform body up / down       |
-| `Home` / `H`, `End` / `T` | jump the body scroll to head / tail       |
-| `g` / `G`                 | jump to the first / last timestamp        |
-| `q` / `Ctrl-C`            | quit                                      |
+| Key                                     | Action                                    |
+| --------------------------------------- | ----------------------------------------- |
+| `→` / `Space`                           | next timestamp (wraps from last to first) |
+| `←` / `b`                               | previous timestamp                        |
+| `↑` / `k`, `↓` / `j`                    | scroll the transform body up / down       |
+| `Home` / `H`, `End` / `T`               | jump the body scroll to head / tail       |
+| `g` / `G`                               | jump to the first / last timestamp        |
+| `q` / `Q` / `Esc` / `Ctrl-C` / `Ctrl-D` | quit                                      |
 
 ### Output
 

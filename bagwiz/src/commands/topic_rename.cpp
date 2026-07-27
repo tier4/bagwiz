@@ -33,10 +33,11 @@ namespace
 
 constexpr const char * kLogger = "bagwiz.cmd.topic";
 
-// Declare every input topic verbatim except `src`, which is re-declared under
-// `dst` (its type, QoS, and embedded schema preserved). Then stream-copy the
-// bag, remapping `src`'s messages onto `dst`. Shared by the in-place and -o
-// modes; the writer factory is injected so the rewrite dispatch
+// Try the mcap chunk pass-through first (before the reader is even opened);
+// when it declines, declare every input topic verbatim except `src`, which is
+// re-declared under `dst` (its type, QoS, and embedded schema preserved), then
+// stream-copy the bag, remapping `src`'s messages onto `dst`. Shared by the
+// in-place and -o modes; the writer factory is injected so the rewrite dispatch
 // (core::run_bag_rewrite) can supply a tmp path. Returns a process exit code.
 int execute_rename_pass(
   const TopicRenameArgs & args, const io::WriterFactory & open_writer,

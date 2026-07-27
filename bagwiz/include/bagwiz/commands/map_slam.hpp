@@ -169,7 +169,8 @@ struct MapSlamArgs
 // SubMapping -> GlobalMapping so the output is the globally-optimized 6-DoF
 // trajectory (traj.tum) plus an optimized world-frame point-cloud map (map.pcd),
 // both under args.output_root. With args.imu_topic set, odometry switches to
-// GLIM's LiDAR-IMU OdometryEstimationCPU.
+// GLIM's LiDAR-IMU estimator (OdometryEstimationCPU, or OdometryEstimationGPU
+// on the GPU backend — see backend).
 //
 // Returns a process exit code: 0 on success, 1 on any error (input open
 // failure, topic/type mismatch, an absent LiDAR<-IMU static-TF chain, output

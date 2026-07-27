@@ -139,7 +139,9 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz -<TAB>` → `--help`, `--version`, `-h`
   - `bagwiz <cmd> -<TAB>` for every command (`cam-info`, `check`, `complete`,
     `convert`, `generate`, `ls`, `map`, `pcd`, `tf`, `topic`, `traj`, `trim`, `walk`);
-    `walk -<TAB>` also surfaces `--cam-info`
+    `walk -<TAB>` also surfaces `--cam-info`, `ls -<TAB>` surfaces `-l`/`--long`,
+    and `trim -<TAB>` surfaces `--start`, `--end`, `--duration`, `--both`,
+    `--align`, `--stamp`, `--output`/`-o`, `--overwrite`/`-w`
   - `bagwiz <cmd> <subcommand> -<TAB>` for every nested subcommand
     (`cam-info replace`, `cam-info recompute-p`, `cam-info dump`, `check broken`,
     `convert format`, `convert msg`,
@@ -165,7 +167,7 @@ source ~/.config/fish/completions/bagwiz.fish
     completes `slam`, `viewer`, `pcd <TAB>` completes `concat`, `undistort`,
     and `topic <TAB>` completes `drop`, `keep`, `rename`
 - Selected option values are completed where bagwiz has a closed set, such as
-  `--storage <mcap|sqlite3>`.
+  `--storage <mcap|sqlite3>` and `--stamp <header|recv>`.
 - Flag values that name a bag topic of a specific type are completed by opening
   `<input>` and offering only topics of that type:
   - `bagwiz generate video <input> ... --cam-info <topic>` — `sensor_msgs/msg/CameraInfo` topics
@@ -199,6 +201,9 @@ source ~/.config/fish/completions/bagwiz.fish
     `tf2_msgs/msg/TFMessage` topics (the only type `tf tree` can render),
     offered at every value of the variadic run. The flag is optional; omitting
     it merges every TF topic in the bag
+  - `bagwiz trim <input> --align <topic>...` — every topic in the bag (no type
+    filter — these take selectors, which may be globs), offered at the first
+    value of the run only
 - Commands that take a `<topic>` positional argument complete it by opening
   `<input>` as a ROS 2 rosbag and listing topics with names that start with
   the current prefix. The currently-covered positions are:
@@ -217,6 +222,9 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz map slam <input> <pcd_topic> <output_root>` — restricted to
     `sensor_msgs/msg/PointCloud2` topics (the only type `map slam` ingests);
     topics of any other type are omitted
+  - `bagwiz cam-info dump <input> <topic>` — restricted to
+    `sensor_msgs/msg/CameraInfo` topics (the only type `cam-info dump` writes
+    out); topics of any other type are omitted
 
   Paths beginning with `~/` are expanded against the current user's home
   directory before opening the bag. Topic completion is suppressed when the
@@ -240,7 +248,10 @@ source ~/.config/fish/completions/bagwiz.fish
   cleanly but carries no matching TF data — no TF at all, or, for
   `tf static calc`, no static `*tf_static` topic — no candidates are emitted
   and the shell's default file completion takes over, exactly as when the bag
-  path does not exist or the input slot is itself a flag.
+  path does not exist or the input slot is itself a flag. FILE-mode-compressed
+  bags (`*.db3.zstd`, or a directory bag with `compression_mode: FILE`) also
+  emit no frame ids: the first TF read would decompress the entire shard to a
+  temporary `.db3`, which would hang TAB for seconds on a multi-GB bag.
 
 - Path completion is delegated to the shell's default file completion when
   bagwiz does not provide command-specific candidates. The bash script uses

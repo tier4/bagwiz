@@ -71,15 +71,25 @@ Because `*` spans `/`, `/sensing/*` removes the entire `/sensing` subtree.
   result is written to that path; the output's storage follows the output
   extension (`.mcap` / `.db3` pick a single-file backend) or, for a directory
   output, inherits the input bag's storage backend.
+- In-place rewriting requires an uncompressed input. A directory bag whose
+  `metadata.yaml` declares `compression_mode: file` — including a
+  chunk-compressed directory bag produced by an earlier `-o` run of
+  `topic`/`trim` — is rejected with `could not detect storage format of input
+bag`; pass an explicit `-o` output for those.
 - Embedded message schemas are preserved for the surviving topics so MCAP
   outputs stay self-describing.
+- MCAP attachment and metadata records are not carried into the output. When
+  the input has any, the run logs a warning naming the counts.
 - When both the input and the output are MCAP, chunks the edit does not touch
   are copied byte-for-byte, preserving the input's chunk compression; only
-  chunks containing a removed topic are re-encoded (with the same codec).
-  When this fast path cannot apply — non-MCAP storage, multi-shard inputs,
-  and a few other layouts — the bag is re-encoded and the output MCAP is
-  written with `compression=none`; re-compress afterwards with
-  `ros2 bag convert` if needed.
+  chunks that still carry both removed and surviving topics are re-encoded
+  (with the chunk's own codec); a chunk holding nothing but removed topics is
+  dropped whole. A few chunks are also re-encoded for layout reasons unrelated
+  to the edit (a missing or untrustworthy chunk message index). When this fast
+  path cannot apply — non-MCAP storage, multi-shard inputs, and a few other
+  layouts — the bag is re-encoded and the output MCAP is written with
+  `compression=none`; re-compress afterwards with `ros2 bag convert` if
+  needed.
 
 ### Example
 
@@ -231,7 +241,10 @@ bagwiz topic rename [OPTIONS] <input> <src_topic> <dst_topic>
   - either `<src_topic>` or `<dst_topic>` is empty (both must be non-empty); or
   - `<src_topic>` and `<dst_topic>` are identical (a no-op).
 - In-place vs `-o`, embedded-schema preservation, and output compression all
-  behave exactly as documented for [`drop`](#bagwiz-topic-drop) above.
+  behave exactly as documented for [`drop`](#bagwiz-topic-drop) above, with the
+  re-encode trigger read as the _renamed_ topic: chunks carrying `<src_topic>`
+  are re-encoded (with the same codec) and every other chunk is copied
+  byte-for-byte.
 
 ### Example
 
@@ -248,7 +261,7 @@ bagwiz topic rename drive_dir/ /camera/image_raw /camera/front/image_raw
 
 ## Exit status
 
-| Code | Meaning                                                                                                                                                                                                                                                                                                                                                                              |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | The bag was rewritten successfully, including the all-topics-matched edge case for `drop`/`keep` (an empty bag for `drop`, an unchanged topic set for `keep`), which logs a warning.                                                                                                                                                                                                 |
-| `1`  | The input could not be opened; a `drop`/`keep` selector matched no topic; `rename`'s `<src_topic>` was not found, its `<dst_topic>` already existed, either name was empty, or its two names were identical; the `-o` output path collided without `-w`/`--overwrite`; the input storage format could not be detected for an in-place rewrite; or a read/write/close error occurred. |
+| Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | The bag was rewritten successfully, including the all-topics-matched edge case for `drop`/`keep` (an empty bag for `drop`, an unchanged topic set for `keep`), which logs a warning.                                                                                                                                                                                                                                         |
+| `1`  | The input could not be opened; a `drop`/`keep` selector matched no topic; `rename`'s `<src_topic>` was not found, its `<dst_topic>` already existed, either name was empty, or its two names were identical; the `-o` output path collided without `-w`/`--overwrite`; the input storage format could not be detected, or the input is a FILE-compressed bag, for an in-place rewrite; or a read/write/close error occurred. |
