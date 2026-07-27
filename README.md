@@ -54,6 +54,24 @@ install needed.
    If the command is not found, make sure the install directory (default
    `~/.local/bin`) is on your `PATH`.
 
+### Cleaning builds
+
+Each pixi environment has its own build/install directory. To remove the
+artifacts for a single environment only:
+
+```bash
+pixi run -e humble clean       # removes build/humble and install/humble
+pixi run -e humble-cuda clean  # removes build/humble-cuda and install/humble-cuda
+```
+
+A bare `pixi run clean` targets the default environment (`jazzy`), so it only
+removes `build/jazzy` and `install/jazzy`. To wipe every distro's build/install
+artifacts plus all logs, use:
+
+```bash
+pixi run clean-all
+```
+
 ### Using your own message packages (overlays)
 
 Bags whose topics use message types beyond the standard stack need the matching
