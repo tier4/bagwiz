@@ -82,6 +82,7 @@ std::optional<std::int64_t> count_topic_messages(
   try {
     // cppcheck-suppress unassignedVariable
     for (const auto & [name, count] : reader.compute_topic_counts(names)) {
+      (void)name;
       total += count;
     }
   } catch (const std::exception &) {
