@@ -9,6 +9,7 @@
 #include "bagwiz/commands/pcd_concat.hpp"
 
 #include "bagwiz/core/bag/rewrite.hpp"
+#include "bagwiz/core/bag/write_order.hpp"
 #include "bagwiz/core/base/duration_parse.hpp"
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/pointcloud/cloud_transform.hpp"
@@ -360,7 +361,7 @@ int execute_concat_pass(
   const io::WriterFactory & factory, const io::BagReader & reader, const PcdConcatArgs & args,
   const std::unordered_map<std::string, std::size_t> & topic_index,
   const std::unordered_set<std::string> & suppress, const io::TopicInfo & out_topic,
-  ConcatAssembler & assembler, const char * logger)
+  ConcatAssembler & assembler, std::vector<std::int64_t> reserved_ns, const char * logger)
 {
   auto writer = io::open_write_or_log(factory, logger);
   if (!writer) {
@@ -385,6 +386,13 @@ int execute_concat_pass(
   }
   rd->populate_schemas();
 
+  // The concatenated output is stamped at the reference scan's capture time,
+  // but cannot be assembled until every contributing cloud has been read, which
+  // happens later in receive time. Reserving every planned group stamp lets the
+  // writer hold back the copy-through that would otherwise be stored ahead of
+  // it, so the bag's row order matches its timestamp order.
+  core::ReorderWriter ordered(*writer, std::move(reserved_ns));
+
   std::vector<std::size_t> seen(topic_index.size(), 0);
   io::RawMessage raw;
   while (rd->next(raw)) {
@@ -393,7 +401,7 @@ int execute_concat_pass(
 
     // copy-through unless suppressed
     if (suppress.count(name) == 0 && name != args.output_topic) {
-      writer->write(name, raw.timestamp_ns, raw.payload);
+      ordered.write(name, raw.timestamp_ns, raw.payload);
     }
 
     if (ti == topic_index.end()) {
@@ -404,7 +412,12 @@ int execute_concat_pass(
 
     auto result = assembler.on_message(t, idx, raw.payload);
     for (const auto & output : result.fired) {
-      writer->write(args.output_topic, output.stamp_ns, output.payload);
+      if (output.payload.empty()) {
+        // The group produced nothing; release what its reservation was holding.
+        ordered.drop_reservation();
+        continue;
+      }
+      ordered.write(args.output_topic, output.stamp_ns, output.payload);
     }
     if (!result.error.empty()) {
       BAGWIZ_LOG_ERROR(logger, "concat failed: %s", result.error.c_str());
@@ -412,6 +425,8 @@ int execute_concat_pass(
     }
   }
 
+  // Release anything still held for a reservation that never fired.
+  ordered.close();
   if (!io::close_writer_or_log(*writer, logger)) {
     return 1;
   }
@@ -445,7 +460,7 @@ struct ConcatOutputItem
 struct ConcatDirectWrite
 {
   std::string topic;
-  std::int64_t timestamp_ns;
+  std::int64_t timestamp_ns = 0;
   std::span<const std::byte> payload;
   bool done = false;
 };
@@ -480,8 +495,8 @@ int execute_parallel_concat_pass(
   const std::unordered_map<std::string, std::size_t> & topic_index,
   const std::unordered_set<std::string> & suppress, const io::TopicInfo & out_topic,
   ConcatGroupTracker & tracker, const std::vector<core::pointcloud::RigidTransform> & extrinsics,
-  const std::string & target_frame, int num_threads, ConcatAssembler::Counters & counters,
-  const char * logger)
+  const std::string & target_frame, int num_threads, std::vector<std::int64_t> reserved_ns,
+  ConcatAssembler::Counters & counters, const char * logger)
 {
   auto writer = io::open_write_or_log(factory, logger);
   if (!writer) {
@@ -505,6 +520,12 @@ int execute_parallel_concat_pass(
     return 1;
   }
   rd->populate_schemas();
+
+  // Same ordering guard as the serial pass (see execute_concat_pass): the
+  // concatenated output is stamped at the reference scan's capture time but only
+  // assembled once its last input has been read. The collector is the single
+  // writing thread, so it alone touches this.
+  core::ReorderWriter ordered(*writer, std::move(reserved_ns));
 
   ConcatParallelContext ctx;
   ctx.max_in_flight = static_cast<std::size_t>(num_threads) * 3;
@@ -561,7 +582,7 @@ int execute_parallel_concat_pass(
             const std::int64_t timestamp_ns = ctx.direct->timestamp_ns;
             const std::span<const std::byte> payload = ctx.direct->payload;
             lock.unlock();
-            writer->write(topic, timestamp_ns, payload);
+            ordered.write(topic, timestamp_ns, payload);
             lock.lock();
             ctx.direct->done = true;
             wrote_direct = true;
@@ -600,14 +621,19 @@ int execute_parallel_concat_pass(
             }
             return;
           }
-          if (!item.group->payload.empty()) {
-            writer->write(args.output_topic, item.group->stamp_ns, item.group->payload);
+          if (item.group->payload.empty()) {
+            // Nothing to emit; release what the reservation was holding.
+            ordered.drop_reservation();
+          } else {
+            ordered.write(args.output_topic, item.group->stamp_ns, item.group->payload);
           }
           continue;
         }
-        writer->write(item.topic, item.timestamp_ns, item.payload);
+        ordered.write(item.topic, item.timestamp_ns, item.payload);
       }
 
+      // Release anything still held for a reservation that never fired.
+      ordered.close();
       if (!io::close_writer_or_log(*writer, logger)) {
         collector_status = 1;
       }
@@ -844,6 +870,14 @@ int run_pcd_concat(const PcdConcatArgs & args)
   const int num_threads =
     resolve_num_threads(args.threads.value_or(8), std::thread::hardware_concurrency());
 
+  // Every planned group's output stamp, so the streaming pass can keep the
+  // output bag's row order equal to its timestamp order (see ReorderWriter).
+  std::vector<std::int64_t> reserved_ns;
+  reserved_ns.reserve(groups.size());
+  for (const auto & g : groups) {
+    reserved_ns.push_back(g.output_stamp_ns);
+  }
+
   ConcatAssembler::Counters counters;
   const int status = core::run_bag_rewrite(
     args.input_path, args.output_path, args.overwrite, pcd_concat_rewrite_options(kLogger),
@@ -851,7 +885,8 @@ int run_pcd_concat(const PcdConcatArgs & args)
       if (num_threads <= 1) {
         ConcatAssembler assembler(*topics, groups, target_frame);
         const int pass_status = execute_concat_pass(
-          factory, *reader, args, topic_index, suppress, out_topic, assembler, kLogger);
+          factory, *reader, args, topic_index, suppress, out_topic, assembler, reserved_ns,
+          kLogger);
         counters = assembler.counters();
         return pass_status;
       }
@@ -863,7 +898,7 @@ int run_pcd_concat(const PcdConcatArgs & args)
       }
       return execute_parallel_concat_pass(
         factory, *reader, args, topic_index, suppress, out_topic, tracker, extrinsics, target_frame,
-        num_threads, counters, kLogger);
+        num_threads, reserved_ns, counters, kLogger);
     });
   if (status != 0) {
     return status;

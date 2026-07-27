@@ -11,6 +11,7 @@
 #include "bagwiz/core/bag/bag_copy.hpp"
 #include "bagwiz/core/bag/bag_topic_plan.hpp"
 #include "bagwiz/core/bag/rewrite.hpp"
+#include "bagwiz/core/bag/write_order.hpp"
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/base/output_path.hpp"
 #include "bagwiz/core/cdr_walker/value.hpp"
@@ -267,18 +268,24 @@ std::optional<core::BagCopyCounts> copy_join_pass_messages(
   }
 }
 
-// Serialize every trajectory sample as one TFMessage and append it on
-// `topic`, with the message receive time taken from the row's timestamp.
-// Returns the injected count; logs and returns std::nullopt on failure.
-std::optional<std::uint64_t> inject_join_tf_messages(
-  io::BagWriter & writer, const std::string & topic,
-  std::span<const geometry_msgs::msg::TransformStamped> transforms,
+// Serialize every trajectory sample as one TFMessage on `topic`, stamped at the
+// sample's own time. Returns the messages ready to be merged into the copy;
+// logs and returns std::nullopt on serialization failure.
+//
+// These are built before the copy rather than appended after it. The samples
+// span the whole bag, so appending them would leave every trajectory row at the
+// end of the storage order while its timestamp points back into the middle of
+// the bag — delivered last to a consumer that reads in physical order instead
+// of sorting. core::InjectingWriter merges them in time order instead.
+std::optional<std::vector<core::OrderedMessage>> build_join_tf_messages(
+  const std::string & topic, std::span<const geometry_msgs::msg::TransformStamped> transforms,
   std::span<const std::int64_t> stamps_ns)
 {
   core::TfMessageSerializer serializer;
   std::vector<std::byte> payload;
   payload.reserve(256);
-  std::uint64_t injected = 0;
+  std::vector<core::OrderedMessage> messages;
+  messages.reserve(transforms.size());
   for (std::size_t i = 0; i < transforms.size(); ++i) {
     try {
       serializer.serialize_one(transforms[i], payload);
@@ -286,17 +293,9 @@ std::optional<std::uint64_t> inject_join_tf_messages(
       BAGWIZ_LOG_ERROR(kLogger, "Failed to serialize TFMessage for sample #%zu: %s", i, e.what());
       return std::nullopt;
     }
-    try {
-      writer.write(topic, stamps_ns[i], std::span<const std::byte>(payload.data(), payload.size()));
-    } catch (const std::exception & e) {
-      BAGWIZ_LOG_ERROR(
-        kLogger, "Failed to write TFMessage on '%s' at stamp %" PRId64 ": %s", topic.c_str(),
-        stamps_ns[i], e.what());
-      return std::nullopt;
-    }
-    ++injected;
+    messages.push_back(core::OrderedMessage{topic, stamps_ns[i], payload});
   }
-  return injected;
+  return messages;
 }
 
 }  // namespace
@@ -930,18 +929,24 @@ private:
       return 1;
     }
 
-    // 5. Stream-copy, suppressing <topic>'s existing payloads on --force.
-    const auto counts =
-      copy_join_pass_messages(*reader, *writer, decision.action, args.topic, args.input_path);
-    if (!counts.has_value()) {
+    // 5. Serialize the trajectory up front so the copy can interleave it.
+    auto injected_messages = build_join_tf_messages(args.topic, transforms, stamps_ns);
+    if (!injected_messages.has_value()) {
       return 1;
     }
 
-    // 6. Inject the trajectory as TFMessage payloads on <topic>.
-    const auto injected = inject_join_tf_messages(*writer, args.topic, transforms, stamps_ns);
-    if (!injected.has_value()) {
+    // 6. Stream-copy through the merging writer, suppressing <topic>'s existing
+    //    payloads on --force. Each trajectory sample lands at its own timestamp
+    //    rather than after every copied message.
+    core::InjectingWriter ordered(*writer, std::move(*injected_messages));
+    const auto counts =
+      copy_join_pass_messages(*reader, ordered, decision.action, args.topic, args.input_path);
+    if (!counts.has_value()) {
       return 1;
     }
+    // Flush samples stamped after the bag's last message.
+    ordered.close();
+    const std::uint64_t injected = ordered.injected_count();
 
     // 7. Close and summarise.
     if (!io::close_writer_or_log(*writer, kLogger)) {
@@ -951,7 +956,7 @@ private:
       kLogger,
       "traj join: copied %" PRIu64 " message(s), suppressed %" PRIu64 ", injected %" PRIu64
       " TFMessage(s) on '%s'.",
-      counts->copied, counts->suppressed, *injected, args.topic.c_str());
+      counts->copied, counts->suppressed, injected, args.topic.c_str());
     return 0;
   }
 

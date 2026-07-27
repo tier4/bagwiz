@@ -44,6 +44,7 @@ add_library(bagwiz_bag
   src/core/bag/bag_topic_plan.cpp
   src/core/bag/broken_bag.cpp
   src/core/bag/rewrite.cpp
+  src/core/bag/write_order.cpp
   src/core/pipeline/backend_select.cpp
   src/core/pipeline/pipelined_backend.cpp
   src/core/pipeline/rewrite_backend.cpp
@@ -77,6 +78,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_bag_copy_test test/core/bag/bag_copy_test.cpp)
   target_link_libraries(bagwiz_bag_copy_test bagwiz_bag)
+
+  ament_add_gtest(bagwiz_write_order_test test/core/bag/write_order_test.cpp)
+  target_link_libraries(bagwiz_write_order_test bagwiz_bag)
 
   ament_add_gtest(bagwiz_bag_inplace_test test/core/bag/bag_inplace_test.cpp)
   target_link_libraries(bagwiz_bag_inplace_test bagwiz_bag)

@@ -12,6 +12,7 @@
 #include "bagwiz/io/bag_io.hpp"
 
 #include <gtest/gtest.h>
+#include <sqlite3.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +20,7 @@
 #include <filesystem>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -247,6 +249,78 @@ TEST_F(PcdConcatTest, MissingInputTopicIsError)
 // The parallel Pass B (threads > 1) must emit exactly what the serial pass
 // emits: same payload bytes and same in-topic order for the merged topic, the
 // kept inputs, and the copy-through topic.
+// The concatenated message is stamped at the reference scan's capture time, but
+// cannot be assembled until its last contributing cloud has been read — which
+// happens later in receive time on any real recording, where header.stamp
+// precedes the bag timestamp. Writing it where it is produced would leave a row
+// whose storage position disagrees with its timestamp, and a consumer reading in
+// physical order rather than sorting (Foxglove's .db3 readers issue their
+// message query with no `ORDER BY`) would then get it late.
+//
+// `write_input`'s fixture stamps header == receive time, which hides this, so
+// build one where they differ.
+TEST_F(PcdConcatTest, OutputIsStoredInTimestampOrder)
+{
+  for (const int threads : {1, 4}) {
+    const auto in = tmp_ / ("order_in_" + std::to_string(threads) + ".db3");
+    const auto out = tmp_ / ("order_out_" + std::to_string(threads) + ".db3");
+
+    {
+      bagwiz::io::CreateOptions db3;
+      db3.format = bagwiz::io::Format::Sqlite3;
+      db3.layout = bagwiz::io::Layout::SingleFile;
+      auto w = bagwiz::io::open_write(in, db3);
+      w->declare_topic(pcd_topic_info("/front"));
+      w->declare_topic(pcd_topic_info("/rear"));
+      w->declare_topic(pcd_topic_info("/other"));
+      for (const std::int64_t capture : {1000 * kMs, 1100 * kMs}) {
+        // header.stamp stays `capture`; the bag timestamps trail it, and /rear
+        // (which completes the group) lands last.
+        const auto f = serialize_cloud(capture, {1.0f});
+        const auto r = serialize_cloud(capture, {2.0f});
+        const auto o = serialize_cloud(capture, {7.0f});
+        w->write("/front", capture + 50 * kMs, std::span<const std::byte>(f.data(), f.size()));
+        w->write("/other", capture + 60 * kMs, std::span<const std::byte>(o.data(), o.size()));
+        w->write("/rear", capture + 80 * kMs, std::span<const std::byte>(r.data(), r.size()));
+      }
+      w->close();
+    }
+
+    auto args = base_args(in, out);
+    args.threads = threads;
+    ASSERT_EQ(run_pcd_concat(args), 0) << "threads=" << threads;
+
+    sqlite3 * db = nullptr;
+    ASSERT_EQ(sqlite3_open(out.string().c_str(), &db), SQLITE_OK);
+    sqlite3_stmt * stmt = nullptr;
+    ASSERT_EQ(
+      sqlite3_prepare_v2(
+        db,
+        "SELECT t.name, m.timestamp FROM messages m JOIN topics t ON t.id = m.topic_id "
+        "ORDER BY m.id",
+        -1, &stmt, nullptr),
+      SQLITE_OK);
+    std::vector<std::pair<std::string, std::int64_t>> rows;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+      rows.emplace_back(
+        reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0)),
+        sqlite3_column_int64(stmt, 1));
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+
+    ASSERT_EQ(rows.size(), 8U) << "threads=" << threads;  // 6 inputs + 2 concatenated
+    for (std::size_t i = 1; i < rows.size(); ++i) {
+      EXPECT_LE(rows[i - 1].second, rows[i].second)
+        << "threads=" << threads << ": row " << i << " (" << rows[i].first
+        << ") is stored out of timestamp order";
+    }
+    // The concatenated message carries the capture time, so it leads its inputs.
+    EXPECT_EQ(rows.front().first, "/concat") << "threads=" << threads;
+    EXPECT_EQ(rows.front().second, 1000 * kMs) << "threads=" << threads;
+  }
+}
+
 TEST_F(PcdConcatTest, SyncAndParallelOutputsAreIdentical)
 {
   const auto in = tmp_ / "in.mcap";
