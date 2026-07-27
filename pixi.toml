@@ -153,7 +153,15 @@ cmd = 'install/$PIXI_ENVIRONMENT_NAME/bagwiz/bin/bagwiz'
 [tasks.install]
 cmd = 'bash scripts/bagwiz-install.sh'
 
+# Clean the build/install directories for the ACTIVE pixi environment only.
+# `pixi run -e <env> clean` removes build/<env> and install/<env>, so switching
+# between distros never accidentally wipes another env's artifacts. The shared
+# log/ directory is left untouched because build logs are not keyed by env.
 [tasks.clean]
+cmd = 'rm -rf "build/$PIXI_ENVIRONMENT_NAME" "install/$PIXI_ENVIRONMENT_NAME"'
+
+# Nuclear option: wipe every distro's build/install artifacts plus all logs.
+[tasks.clean-all]
 cmd = "rm -rf build install log"
 
 # ---------------------------------------------------------------------------
