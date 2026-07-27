@@ -16,6 +16,7 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include <gtest/gtest.h>
+#include <sqlite3.h>
 
 #include <array>
 #include <cstddef>
@@ -24,6 +25,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -217,6 +219,70 @@ TEST_F(TfStaticCpTest, CopiesStaticTfToOutputStampedAtDstStart)
   EXPECT_TRUE(topic_present(out, "/clock"));
   // The destination bag itself is untouched in -o mode.
   EXPECT_FALSE(topic_present(dst, "/tf_static"));
+}
+
+TEST_F(TfStaticCpTest, InjectedStaticTfIsEmittedInTimestampOrder)
+{
+  // The synthesized message is stamped at the destination's start time, so it
+  // belongs at the front of the bag. Appending it after the stream copy would
+  // instead give it the highest rowid while holding the lowest timestamp — the
+  // one row whose storage order disagrees with its time, which any consumer
+  // reading in physical order (a .db3 full-table scan, for instance) would
+  // deliver last.
+  const auto src = tmp_dir_ / "src_order.mcap";
+  const auto dst = tmp_dir_ / "dst_order.db3";
+  const auto out = tmp_dir_ / "out_order.db3";
+  constexpr std::int64_t kDstStart = 5'000'000'000LL;
+  write_src_bag(src);
+
+  {
+    bagwiz::io::TopicInfo clock;
+    clock.name = "/clock";
+    clock.type = "std_msgs/msg/String";
+    clock.serialization_format = "cdr";
+    constexpr std::array<std::byte, 4> kPayload{
+      std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}};
+    const auto bytes = std::span<const std::byte>(kPayload.data(), kPayload.size());
+
+    bagwiz::io::CreateOptions options;
+    options.format = bagwiz::io::Format::Sqlite3;
+    options.layout = bagwiz::io::Layout::SingleFile;
+    auto writer = bagwiz::io::open_write(dst, options);
+    writer->declare_topic(clock);
+    writer->write("/clock", kDstStart, bytes);
+    writer->write("/clock", kDstStart + 1'000'000'000LL, bytes);
+    writer->close();
+  }
+
+  ASSERT_EQ(bagwiz::commands::run_tf_static_cp(src, dst, out, /*overwrite=*/false), 0);
+
+  // Storage order must be non-decreasing in timestamp, so a reader that walks
+  // the rows physically sees the same sequence as one that sorts by time.
+  sqlite3 * db = nullptr;
+  ASSERT_EQ(sqlite3_open(out.string().c_str(), &db), SQLITE_OK);
+  sqlite3_stmt * stmt = nullptr;
+  ASSERT_EQ(
+    sqlite3_prepare_v2(
+      db,
+      "SELECT t.name, m.timestamp FROM messages m JOIN topics t ON t.id = m.topic_id "
+      "ORDER BY m.id",
+      -1, &stmt, nullptr),
+    SQLITE_OK);
+  std::vector<std::pair<std::string, std::int64_t>> rows;
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    rows.emplace_back(
+      reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0)), sqlite3_column_int64(stmt, 1));
+  }
+  sqlite3_finalize(stmt);
+  sqlite3_close(db);
+
+  ASSERT_EQ(rows.size(), 3U);
+  for (std::size_t i = 1; i < rows.size(); ++i) {
+    EXPECT_LE(rows[i - 1].second, rows[i].second)
+      << "row " << i << " (" << rows[i].first << ") is stored out of timestamp order";
+  }
+  EXPECT_EQ(rows.front().first, "/tf_static")
+    << "the injected message shares the bag's start time and must lead";
 }
 
 // In-place mode (no -o): the destination bag gains the static topic.

@@ -89,11 +89,11 @@ std::filesystem::path write_fixture_db3(const std::filesystem::path & dir)
   return path;
 }
 
-// `write_fixture_db3` plus the `topic_timestamp_idx` that
-// SqliteFileWriter::close() adds. That index is what routes a topic-filtered
-// read onto the per-topic merge, so these fixtures cover the merge path while
-// the plain `write_fixture_db3` ones keep covering the single-statement path
-// used for rosbag2-written bags.
+// `write_fixture_db3` plus a `topic_timestamp_idx`. bagwiz no longer writes
+// that index — it steered readers that omit `ORDER BY` into topic-grouped
+// delivery — but bags produced by earlier versions still carry it and must
+// keep reading correctly. These fixtures stand in for those legacy bags; the
+// plain `write_fixture_db3` ones cover bags without it.
 std::filesystem::path write_fixture_db3_indexed(const std::filesystem::path & dir)
 {
   const auto path = write_fixture_db3(dir);
@@ -114,8 +114,9 @@ std::filesystem::path write_fixture_db3_indexed(const std::filesystem::path & di
 
 // Two topics whose messages all share one timestamp, interleaved so that the
 // rowid (recording) order differs from the (topic_id, timestamp) order. Carries
-// the `topic_timestamp_idx` that SqliteFileWriter::close() adds, because that
-// index is what makes SQLite consider a sorting plan for a multi-topic filter.
+// a legacy `topic_timestamp_idx`, because that index is what makes SQLite
+// consider a sorting plan for a multi-topic filter — the reader pins
+// timestamp_idx with INDEXED BY precisely so such bags keep their tie order.
 //
 // Payload byte i identifies message i, so a test can compare emission order
 // across two iterations without relying on topic names alone.
@@ -156,6 +157,82 @@ std::filesystem::path write_fixture_db3_tied_timestamps(const std::filesystem::p
 
   sqlite3_close(db);
   return path;
+}
+
+// Same shape as `write_fixture_db3` (5 messages: 3 on /foo, 2 on /bar) plus a
+// `metadata` table carrying the supplied rosbag2 bagfile-information rows, in
+// insertion order. Exercises the embedded-summary fast path in compute_stats()
+// and each of its fallbacks.
+std::filesystem::path write_fixture_db3_with_metadata(
+  const std::filesystem::path & dir, const std::vector<std::string> & metadata_rows)
+{
+  const auto path = write_fixture_db3(dir);
+
+  sqlite3 * db = nullptr;
+  EXPECT_EQ(sqlite3_open(path.string().c_str(), &db), SQLITE_OK);
+  char * errmsg = nullptr;
+  EXPECT_EQ(
+    sqlite3_exec(
+      db,
+      "CREATE TABLE metadata("
+      "  id INTEGER PRIMARY KEY,"
+      "  metadata_version INTEGER,"
+      "  metadata TEXT);",
+      nullptr, nullptr, &errmsg),
+    SQLITE_OK)
+    << (errmsg ? errmsg : "");
+  sqlite3_free(errmsg);
+
+  for (const auto & row : metadata_rows) {
+    sqlite3_stmt * stmt = nullptr;
+    EXPECT_EQ(
+      sqlite3_prepare_v2(
+        db, "INSERT INTO metadata(metadata_version, metadata) VALUES (5, ?)", -1, &stmt, nullptr),
+      SQLITE_OK);
+    sqlite3_bind_text(stmt, 1, row.c_str(), -1, SQLITE_TRANSIENT);
+    EXPECT_EQ(sqlite3_step(stmt), SQLITE_DONE);
+    sqlite3_finalize(stmt);
+  }
+
+  sqlite3_close(db);
+  return path;
+}
+
+// A well-formed v5 summary for the `write_fixture_db3` shape. `total` and the
+// per-topic counts are parameterised so tests can make the summary disagree
+// with the actual rows.
+std::string make_metadata_body(int64_t total, int64_t foo_count, int64_t bar_count)
+{
+  return "version: 5\n"
+         "storage_identifier: sqlite3\n"
+         "duration:\n"
+         "  nanoseconds: 1000000001\n"
+         "starting_time:\n"
+         "  nanoseconds_since_epoch: 1000000000\n"
+         "message_count: " +
+         std::to_string(total) +
+         "\n"
+         "topics_with_message_count:\n"
+         "  - topic_metadata:\n"
+         "      name: /foo\n"
+         "      type: std_msgs/msg/String\n"
+         "      serialization_format: cdr\n"
+         "      offered_qos_profiles: \"\"\n"
+         "    message_count: " +
+         std::to_string(foo_count) +
+         "\n"
+         "  - topic_metadata:\n"
+         "      name: /bar\n"
+         "      type: std_msgs/msg/Int32\n"
+         "      serialization_format: cdr\n"
+         "      offered_qos_profiles: \"\"\n"
+         "    message_count: " +
+         std::to_string(bar_count) +
+         "\n"
+         "compression_format: \"\"\n"
+         "compression_mode: \"\"\n"
+         "relative_file_paths:\n"
+         "  - bag_0.db3\n";
 }
 
 // Same shape as `write_fixture_db3` but with zero message rows. Exercises the
@@ -483,10 +560,11 @@ TEST_F(Sqlite3ReaderTest, TopicFilterPreservesUnfilteredOrderOnTiedTimestamps)
   EXPECT_EQ(collect(path, &f), unfiltered);
 }
 
-TEST_F(Sqlite3ReaderTest, MergedFilterSkipsPayloadForOtherTopics)
+TEST_F(Sqlite3ReaderTest, LegacyIndexedFilterSkipsPayloadForOtherTopics)
 {
-  // ReadFilter::payload_topics must behave the same on the per-topic merge as
-  // on the single-statement path: only the listed topic carries its payload.
+  // ReadFilter::payload_topics must behave the same on a legacy bag carrying
+  // the old (topic_id, timestamp) index as on one without it: only the listed
+  // topic carries its payload.
   const auto path = write_fixture_db3_indexed(tmp_dir_ / "merged_payload");
 
   auto reader = bagwiz::io::open_read(path);
@@ -511,10 +589,10 @@ TEST_F(Sqlite3ReaderTest, MergedFilterSkipsPayloadForOtherTopics)
   EXPECT_EQ(bar_count, 2);
 }
 
-TEST_F(Sqlite3ReaderTest, MergedFilterHonoursTimeRange)
+TEST_F(Sqlite3ReaderTest, LegacyIndexedFilterHonoursTimeRange)
 {
-  // The time bounds have to be pushed into every per-topic statement, not just
-  // the first, and end_ns stays exclusive.
+  // The time bounds still apply, and end_ns stays exclusive, whatever plan the
+  // extra index tempts SQLite into.
   const auto path = write_fixture_db3_indexed(tmp_dir_ / "merged_time");
 
   auto reader = bagwiz::io::open_read(path);
@@ -537,10 +615,10 @@ TEST_F(Sqlite3ReaderTest, MergedFilterHonoursTimeRange)
   EXPECT_EQ(seen[1].second, 2'000'000'000LL);
 }
 
-TEST_F(Sqlite3ReaderTest, MergedFilterDeduplicatesRepeatedTopicNames)
+TEST_F(Sqlite3ReaderTest, LegacyIndexedFilterDeduplicatesRepeatedTopicNames)
 {
-  // A caller naming the same topic twice must not open two cursors over the
-  // same rows — that would emit every one of that topic's messages twice.
+  // A caller naming the same topic twice must not read that topic's rows
+  // twice — every one of its messages would be emitted in duplicate.
   const auto path = write_fixture_db3_indexed(tmp_dir_ / "merged_dupes");
 
   auto reader = bagwiz::io::open_read(path);
@@ -631,6 +709,94 @@ TEST_F(Sqlite3ReaderTest, Stats)
   EXPECT_EQ(stats.per_topic.at("/bar"), 2);
   EXPECT_EQ(stats.start_ns, 1'000'000'000LL);
   EXPECT_EQ(stats.end_ns, 2'000'000'001LL);
+}
+
+TEST_F(Sqlite3ReaderTest, StatsServedFromEmbeddedMetadata)
+{
+  // rosbag2 iron+ records and every bagwiz-written .db3 carry the bag summary
+  // in the `metadata` table. Answering from it avoids scanning the BLOB-laden
+  // messages rows (measured ~4s cold on a 3 GiB bag).
+  const auto path = write_fixture_db3_with_metadata(
+    tmp_dir_ / "embedded", {make_metadata_body(/*total=*/5, /*foo=*/3, /*bar=*/2)});
+
+  auto reader = bagwiz::io::open_read(path);
+  const auto stats = reader->compute_stats();
+
+  EXPECT_TRUE(stats.from_summary);
+  EXPECT_EQ(stats.total_messages, 5);
+  EXPECT_EQ(stats.per_topic.at("/foo"), 3);
+  EXPECT_EQ(stats.per_topic.at("/bar"), 2);
+  EXPECT_EQ(stats.start_ns, 1'000'000'000LL);
+  EXPECT_EQ(stats.end_ns, 2'000'000'001LL);
+}
+
+TEST_F(Sqlite3ReaderTest, StatsTakesTheLastMetadataRow)
+{
+  // rosbag2 inserts a template row when it opens the bag for writing and the
+  // real summary at close, so the table legitimately holds several rows.
+  // Reading the first would report an empty bag.
+  const auto path = write_fixture_db3_with_metadata(
+    tmp_dir_ / "last_row", {make_metadata_body(/*total=*/999, /*foo=*/999, /*bar=*/999),
+                            make_metadata_body(/*total=*/5, /*foo=*/3, /*bar=*/2)});
+
+  const auto stats = bagwiz::io::open_read(path)->compute_stats();
+
+  EXPECT_TRUE(stats.from_summary);
+  EXPECT_EQ(stats.total_messages, 5);
+  EXPECT_EQ(stats.per_topic.at("/foo"), 3);
+}
+
+TEST_F(Sqlite3ReaderTest, StatsRejectsOpenTimeTemplateMetadataRow)
+{
+  // The row rosbag2 writes before recording starts: message_count 0 with
+  // starting_time == INT64_MAX. A bag whose writer died before close has only
+  // this row; trusting it would silently report an empty bag.
+  const std::string template_row =
+    "version: 5\n"
+    "storage_identifier: sqlite3\n"
+    "duration:\n"
+    "  nanoseconds: 0\n"
+    "starting_time:\n"
+    "  nanoseconds_since_epoch: 9223372036854775807\n"
+    "message_count: 0\n"
+    "topics_with_message_count:\n"
+    "  []\n";
+  const auto path = write_fixture_db3_with_metadata(tmp_dir_ / "template", {template_row});
+
+  const auto stats = bagwiz::io::open_read(path)->compute_stats();
+
+  EXPECT_FALSE(stats.from_summary) << "the template row must not be trusted";
+  EXPECT_EQ(stats.total_messages, 5);
+  EXPECT_EQ(stats.per_topic.at("/foo"), 3);
+}
+
+TEST_F(Sqlite3ReaderTest, StatsRejectsMetadataDisagreeingWithTheRowCount)
+{
+  // The guard that makes trusting a denormalized summary safe: anything that
+  // appended to the bag behind bagwiz's back moves the row count. Verifying it
+  // is a covering scan of timestamp_idx, far cheaper than recomputing the
+  // per-topic GROUP BY it protects.
+  const auto path = write_fixture_db3_with_metadata(
+    tmp_dir_ / "stale", {make_metadata_body(/*total=*/4, /*foo=*/2, /*bar=*/2)});
+
+  const auto stats = bagwiz::io::open_read(path)->compute_stats();
+
+  EXPECT_FALSE(stats.from_summary) << "a stale summary must fall back to scanning";
+  EXPECT_EQ(stats.total_messages, 5);
+  EXPECT_EQ(stats.per_topic.at("/foo"), 3);
+  EXPECT_EQ(stats.per_topic.at("/bar"), 2);
+}
+
+TEST_F(Sqlite3ReaderTest, StatsRejectsUnparseableMetadata)
+{
+  // A corrupt or truncated row must degrade to a scan, never fail the read.
+  const auto path = write_fixture_db3_with_metadata(tmp_dir_ / "corrupt", {"{{ not: [valid yaml"});
+
+  const auto stats = bagwiz::io::open_read(path)->compute_stats();
+
+  EXPECT_FALSE(stats.from_summary);
+  EXPECT_EQ(stats.total_messages, 5);
+  EXPECT_EQ(stats.per_topic.at("/foo"), 3);
 }
 
 TEST_F(Sqlite3ReaderTest, StatsEmptyBag)

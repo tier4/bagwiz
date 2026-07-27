@@ -48,7 +48,14 @@ std::string slice_sql(const SliceScanSpec & spec, const SliceRef & slice)
     where.push_back("timestamp < " + std::to_string(*slice.end_ns));
   }
 
-  std::string sql = "SELECT topic_id, timestamp, data FROM messages";
+  // INDEXED BY pins the plan rather than merely hoping for it. Legacy bags
+  // written by older bagwiz versions carry an extra (topic_id, timestamp)
+  // index, which the planner prefers once a topic clause is present; it would
+  // then sort the rows back into time order through a temp B-tree whose tie
+  // order among equal timestamps does not match the serial scan's. The caller
+  // only builds a SliceScanner when timestamp_idx exists, so the hint always
+  // resolves.
+  std::string sql = "SELECT topic_id, timestamp, data FROM messages INDEXED BY timestamp_idx";
   for (std::size_t i = 0; i < where.size(); ++i) {
     sql += (i == 0 ? " WHERE " : " AND ") + where[i];
   }

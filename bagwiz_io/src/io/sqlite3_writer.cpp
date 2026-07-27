@@ -39,6 +39,13 @@ constexpr const char * kLogger = "bagwiz.io.sqlite3";
 // at most a bounded number of messages but large enough to amortize commit
 // overhead.
 constexpr int kBatchSize = 1024;
+// rosbag2 bagfile-information schema version written into the `metadata` table.
+// Pinned to the humble baseline (and matched by write_metadata_yaml) so one
+// output shape stays readable on every supported distro: rosbag2 reads older
+// versions forward but not newer ones backward, and bagwiz hands its output to
+// consumers whose distro it does not control. Raising this would make bags
+// written under jazzy unopenable under humble.
+constexpr int kMetadataVersion = 5;
 
 void exec_or_throw(sqlite3 * db, const char * sql)
 {
@@ -61,7 +68,8 @@ public:
   explicit SqliteFileWriter(const std::filesystem::path & path)
   : db_(sqlite_open_or_throw(
       path.string(), SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX,
-      "sqlite3 open"))
+      "sqlite3 open")),
+    shard_rel_(path.filename().string())
   {
     // page_size must come first: SQLite only honours it while the database is
     // still empty, so any pragma or statement that writes a page locks in the
@@ -123,6 +131,8 @@ public:
     }
 
     topic_to_id_[topic.name] = sqlite3_last_insert_rowid(db_.get());
+    topics_.push_back(topic);
+    topic_counts_[topic.name] = 0;
 
     // Insert message_definitions row once per type (deduped). Iron+ rosbag2
     // readers query this table directly for self-description; the row is
@@ -169,6 +179,15 @@ public:
     }
     sqlite3_reset(insert_stmt_.get());
 
+    ++topic_counts_[it->first];
+    ++total_messages_;
+    if (timestamp_ns < start_ns_) {
+      start_ns_ = timestamp_ns;
+    }
+    if (timestamp_ns > end_ns_) {
+      end_ns_ = timestamp_ns;
+    }
+
     if (++pending_in_tx_ >= kBatchSize) {
       commit_transaction();
       begin_transaction();
@@ -182,20 +201,54 @@ public:
       return;
     }
     commit_transaction();
-    // Build the (topic_id, timestamp) covering index in one bulk pass now that
-    // every row is inserted, rather than maintaining it on each insert (which
-    // would slow the write hot path). It lets `bagwiz ls -l` / compute_stats()
-    // answer per-topic COUNT and MIN/MAX(timestamp) straight from the index,
-    // without scanning the BLOB-laden messages rows. rosbag2 itself never
-    // creates this index but readers ignore the extra one, so round-trips stay
-    // compatible. See SqliteFileReader::compute_stats() for the read side.
-    exec_or_throw(
-      db_.get(),
-      "CREATE INDEX IF NOT EXISTS topic_timestamp_idx ON messages (topic_id, timestamp);");
+    write_metadata_row();
     closed_ = true;
   }
 
+  // The message accounting gathered during the write, in the shape both
+  // metadata consumers need: the embedded `metadata` row here and the
+  // directory writer's metadata.yaml. Kept in one place so the two can never
+  // disagree about the same bag.
+  //
+  // `shard_relative_path` is this file's own name, which for a directory bag's
+  // shard is exactly the name metadata.yaml lists.
+  [[nodiscard]] MetadataYamlInfo summary() const
+  {
+    MetadataYamlInfo info;
+    info.storage_identifier = "sqlite3";
+    info.topics = topics_;
+    info.per_topic_counts = topic_counts_;
+    info.total_messages = total_messages_;
+    info.start_ns = start_ns_;
+    info.end_ns = end_ns_;
+    info.shard_relative_path = shard_rel_;
+    return info;
+  }
+
 private:
+  // rosbag2 iron+ stores the bag summary in the `metadata` table so a
+  // single-file .db3 is self-describing without a metadata.yaml beside it.
+  // Filling it lets compute_stats() answer per-topic counts without scanning
+  // the BLOB-laden messages rows — the speedup the old (topic_id, timestamp)
+  // index used to provide, now without steering any other reader's query plan.
+  //
+  // Humble ignores this table entirely (its plugin creates it but has no SQL
+  // that reads or writes it), so the row is inert there; jazzy+ parses it at
+  // open time. That parse is why the YAML must come from the shared emitter:
+  // a structure that disagrees with its declared `version` makes jazzy reject
+  // the file outright rather than just misreport it.
+  void write_metadata_row()
+  {
+    const std::string yaml = emit_metadata_yaml_body(summary());
+    auto stmt = sqlite_prepare_or_throw(
+      db_.get(), "INSERT INTO metadata(metadata_version, metadata) VALUES (?, ?);");
+    sqlite3_bind_int(stmt.get(), 1, kMetadataVersion);
+    sqlite3_bind_text(stmt.get(), 2, yaml.c_str(), -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+      throw std::runtime_error("metadata insert failed: " + sqlite_errmsg(db_.get()));
+    }
+  }
+
   void create_schema()
   {
     // Mirrors the rosbag2 sqlite3 plugin schema_version=4 layout
@@ -254,7 +307,14 @@ private:
 
   SqlitePtr db_;
   SqliteStmtPtr insert_stmt_;
+  std::string shard_rel_;
   std::unordered_map<std::string, int64_t> topic_to_id_;
+  // Message accounting for the embedded metadata row (see summary()).
+  std::vector<TopicInfo> topics_;
+  std::unordered_map<std::string, int64_t> topic_counts_;
+  int64_t total_messages_ = 0;
+  int64_t start_ns_ = std::numeric_limits<int64_t>::max();
+  int64_t end_ns_ = std::numeric_limits<int64_t>::min();
   // Tracks message_definitions rows already written, keyed by ROS 2 type
   // name. Each type gets exactly one row regardless of how many topics
   // share it.
@@ -295,25 +355,13 @@ public:
   SqliteDirectoryWriter(SqliteDirectoryWriter &&) = delete;
   SqliteDirectoryWriter & operator=(SqliteDirectoryWriter &&) = delete;
 
-  void declare_topic(const TopicInfo & topic) override
-  {
-    inner_->declare_topic(topic);
-    topics_.push_back(topic);
-    topic_counts_[topic.name] = 0;
-  }
+  void declare_topic(const TopicInfo & topic) override { inner_->declare_topic(topic); }
 
   void write(
+    // cppcheck-suppress passedByValue  // std::string_view is a cheap value type
     std::string_view topic, int64_t timestamp_ns, std::span<const std::byte> payload) override
   {
     inner_->write(topic, timestamp_ns, payload);
-    ++topic_counts_[std::string(topic)];
-    ++total_messages_;
-    if (timestamp_ns < start_ns_) {
-      start_ns_ = timestamp_ns;
-    }
-    if (timestamp_ns > end_ns_) {
-      end_ns_ = timestamp_ns;
-    }
   }
 
   void close() override
@@ -321,17 +369,13 @@ public:
     if (closed_) {
       return;
     }
+    // Take the summary before close() so metadata.yaml and the shard's own
+    // embedded `metadata` row are emitted from one accumulator — they describe
+    // the same bag and must not be able to drift. sqlite3 storage has no
+    // built-in compression, so the compression fields stay empty (an empty
+    // format derives an empty mode).
+    const MetadataYamlInfo info = inner_->summary();
     inner_->close();
-    // sqlite3 storage has no built-in compression, so the compression fields
-    // stay empty (an empty format derives an empty mode).
-    MetadataYamlInfo info;
-    info.storage_identifier = "sqlite3";
-    info.topics = topics_;
-    info.per_topic_counts = topic_counts_;
-    info.total_messages = total_messages_;
-    info.start_ns = start_ns_;
-    info.end_ns = end_ns_;
-    info.shard_relative_path = shard_rel_;
     write_metadata_yaml(dir_, info);
     closed_ = true;
   }
@@ -341,12 +385,6 @@ private:
   CreateOptions options_;
   std::string shard_rel_;
   std::unique_ptr<SqliteFileWriter> inner_;
-
-  std::vector<TopicInfo> topics_;
-  std::unordered_map<std::string, int64_t> topic_counts_;
-  int64_t total_messages_ = 0;
-  int64_t start_ns_ = std::numeric_limits<int64_t>::max();
-  int64_t end_ns_ = std::numeric_limits<int64_t>::min();
   bool closed_ = false;
 };
 

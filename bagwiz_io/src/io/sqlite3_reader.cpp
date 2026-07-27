@@ -22,10 +22,12 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -97,9 +99,6 @@ public:
     if (scanner_) {
       return next_sliced(out);
     }
-    if (!cursors_.empty()) {
-      return next_merged(out);
-    }
     if (!read_stmt_) {
       return false;
     }
@@ -154,17 +153,18 @@ public:
 
   Stats compute_stats() override
   {
+    if (auto summary = stats_from_metadata()) {
+      return *summary;
+    }
+
     Stats stats;
-    // SQLite keeps no pre-computed summary, so the numbers come from the
-    // messages table rather than an index/summary record.
+    // No usable embedded summary, so the numbers come from the messages table.
     stats.from_summary = false;
 
-    // Per-topic counts. bagwiz-written bags carry a (topic_id, timestamp)
-    // index (see SqliteFileWriter::close()), which turns this GROUP BY into a
-    // covering-index scan that never reads the BLOB-laden message rows. Bags
-    // from other tools lack that index and fall back to a full table scan —
-    // the reason `bagwiz ls` keeps per-topic stats behind `-l`. We select only
-    // topic_id here (not MIN/MAX) so the covering index can satisfy the query.
+    // Per-topic counts. This is a full scan of the messages table — the reason
+    // `bagwiz ls` keeps per-topic stats behind `-l`. Only the leaf pages are
+    // touched (SQLite skips the `data` overflow pages when the column is not
+    // selected), but on a multi-GB bag it is still seconds of I/O.
     auto count_stmt = sqlite_prepare_or_throw(
       db_.get(), "SELECT topic_id, COUNT(*) FROM messages GROUP BY topic_id");
     for (;;) {
@@ -263,19 +263,75 @@ public:
   }
 
 private:
-  // One per-topic statement of the k-way merge. `stmt` sits on its current row
-  // whenever `live` is true, and that row's blob stays valid until the cursor
-  // is stepped — which next_merged() defers until the call after the row was
-  // emitted, so the payload span honours the next() contract.
-  struct TopicCursor
+  // Answer compute_stats() from the bag's own `metadata` row instead of
+  // scanning. rosbag2 iron+ writes that row when recording a single-file .db3,
+  // and bagwiz writes it for every .db3 it produces, so this covers both
+  // bagwiz output and jazzy+ recordings. Humble recordings leave the table
+  // empty and fall through to the scan.
+  //
+  // Returns nullopt whenever the summary cannot be trusted, so the caller
+  // always has a correct answer available:
+  //   - no `metadata` table, or no rows
+  //   - unparseable YAML / the rosbag2 open-time template row (both rejected
+  //     by parse_metadata_yaml_body)
+  //   - a total that disagrees with the actual row count
+  //
+  // The last check is what makes trusting a denormalized summary safe: a
+  // COUNT(*) is served as a covering scan of timestamp_idx (~10 MiB on a 3 GiB
+  // bag, measured 0.19s cold) versus ~4s to recompute the per-topic GROUP BY,
+  // so verification costs a fraction of what it protects. Anything that
+  // appends to the bag behind bagwiz's back moves the count and is caught.
+  std::optional<Stats> stats_from_metadata()
   {
-    SqliteStmtPtr stmt;
-    std::size_t topic_idx = 0;  // index into topics_
-    bool wants_payload = true;  // resolved once from ReadFilter::payload_topics
-    bool live = false;
-    int64_t timestamp = 0;
-    int64_t rowid = 0;
-  };
+    if (!table_exists("metadata")) {
+      return std::nullopt;
+    }
+
+    // Last row wins: rosbag2 inserts a template row at open and the final
+    // summary at close, so the first row would report an empty bag.
+    std::string yaml;
+    {
+      auto stmt = sqlite_prepare_or_throw(
+        db_.get(), "SELECT metadata FROM metadata ORDER BY id DESC LIMIT 1");
+      if (sqlite3_step(stmt.get()) != SQLITE_ROW) {
+        return std::nullopt;
+      }
+      yaml = column_text_or_empty(stmt.get(), 0);
+    }
+
+    const auto md = parse_metadata_yaml_body(yaml);
+    if (!md) {
+      return std::nullopt;
+    }
+
+    auto actual_stmt = sqlite_prepare_or_throw(db_.get(), "SELECT COUNT(*) FROM messages");
+    if (sqlite3_step(actual_stmt.get()) != SQLITE_ROW) {
+      return std::nullopt;
+    }
+    const int64_t actual = sqlite3_column_int64(actual_stmt.get(), 0);
+    if (actual != md->total_messages) {
+      BAGWIZ_LOG_WARN(
+        kLogger,
+        "%s: embedded metadata claims %" PRId64 " message(s) but the table holds %" PRId64
+        "; ignoring the summary and scanning instead",
+        path_.c_str(), md->total_messages, actual);
+      return std::nullopt;
+    }
+
+    Stats stats;
+    stats.from_summary = true;
+    stats.total_messages = md->total_messages;
+    stats.start_ns = md->start_ns;
+    stats.end_ns = md->end_ns;
+    // Only report per-topic counts for topics this bag actually declares, so a
+    // stale name in the summary cannot invent a topic the reader cannot serve.
+    for (const auto & t : topics_) {
+      if (auto it = md->per_topic_counts.find(t.name); it != md->per_topic_counts.end()) {
+        stats.per_topic[t.name] = it->second;
+      }
+    }
+    return stats;
+  }
 
   static const char * column_text_or_empty(sqlite3_stmt * stmt, int col)
   {
@@ -413,99 +469,6 @@ private:
     return sqlite3_step(stmt.get()) == SQLITE_ROW;
   }
 
-  // Open one statement per selected topic for the k-way merge. Each is served
-  // straight off topic_timestamp_idx in (timestamp, rowid) order — the index
-  // key is (topic_id, timestamp) with the rowid appended, so SQLite satisfies
-  // `ORDER BY timestamp, id` from the index and never builds a sorter.
-  void open_merge_cursors(
-    const std::vector<int64_t> & ids, const std::vector<std::string> & time_clauses)
-  {
-    cursors_.reserve(ids.size());
-    for (const auto tid : ids) {
-      std::string sql = "SELECT topic_id, timestamp, data, id FROM messages WHERE topic_id = " +
-                        std::to_string(tid);
-      for (const auto & clause : time_clauses) {
-        sql += " AND " + clause;
-      }
-      sql += " ORDER BY timestamp, id";
-
-      TopicCursor cursor;
-      cursor.stmt = sqlite_prepare_or_throw(db_.get(), sql);
-      cursor.topic_idx = topic_id_to_idx_.at(tid);
-      // Same rule as the single-statement path: ANY non-empty allow-list means
-      // only the listed topics carry payload.
-      cursor.wants_payload = filter_.payload_topics.empty() || payload_topic_ids_.count(tid) != 0U;
-      cursors_.push_back(std::move(cursor));
-    }
-    for (auto & cursor : cursors_) {
-      advance_cursor(cursor);
-    }
-    pending_advance_ = cursors_.size();  // nothing consumed yet
-  }
-
-  void advance_cursor(TopicCursor & cursor)
-  {
-    const int rc = sqlite3_step(cursor.stmt.get());
-    if (rc == SQLITE_ROW) {
-      cursor.timestamp = sqlite3_column_int64(cursor.stmt.get(), 1);
-      cursor.rowid = sqlite3_column_int64(cursor.stmt.get(), 3);
-      cursor.live = true;
-      return;
-    }
-    if (rc != SQLITE_DONE) {
-      throw std::runtime_error("sqlite3_step failed: " + sqlite_errmsg(db_.get()));
-    }
-    cursor.live = false;
-  }
-
-  // Emit the smallest (timestamp, rowid) across the live cursors. Ties are
-  // broken by rowid so a topic-filtered read emits messages in exactly the
-  // order an unfiltered scan does: the unfiltered plan walks timestamp_idx,
-  // whose key carries the rowid, so same-timestamp messages come out in
-  // insertion order there too.
-  bool next_merged(RawMessage & out)
-  {
-    // Step the cursor consumed by the previous call only now — its blob pointer
-    // had to stay valid until this call, per the next() contract.
-    if (pending_advance_ < cursors_.size()) {
-      advance_cursor(cursors_[pending_advance_]);
-      pending_advance_ = cursors_.size();
-    }
-
-    std::size_t best = cursors_.size();
-    for (std::size_t i = 0; i < cursors_.size(); ++i) {
-      const auto & cursor = cursors_[i];
-      if (!cursor.live) {
-        continue;
-      }
-      if (
-        best == cursors_.size() || cursor.timestamp < cursors_[best].timestamp ||
-        (cursor.timestamp == cursors_[best].timestamp && cursor.rowid < cursors_[best].rowid)) {
-        best = i;
-      }
-    }
-    if (best == cursors_.size()) {
-      return false;
-    }
-
-    auto & cursor = cursors_[best];
-    out.topic = &topics_[cursor.topic_idx];
-    out.timestamp_ns = cursor.timestamp;
-    if (!cursor.wants_payload) {
-      // Never touch the data column, so SQLite leaves the overflow pages
-      // unread — the whole point of ReadFilter::payload_topics.
-      out.payload = {};
-    } else {
-      const void * data = sqlite3_column_blob(cursor.stmt.get(), 2);
-      const int data_size = sqlite3_column_bytes(cursor.stmt.get(), 2);
-      const auto src = std::span<const std::byte>(
-        reinterpret_cast<const std::byte *>(data), static_cast<std::size_t>(data_size));
-      out.payload = decompressor_ ? decompressor_->decompress(src) : src;
-    }
-    pending_advance_ = best;
-    return true;
-  }
-
   // Emit the current slice's records, then block for the next slice. Slices
   // are disjoint and ascending, so this is a plain concatenation — no merge,
   // and therefore no tiebreak that could diverge from the serial scan.
@@ -612,24 +575,21 @@ private:
       time_clauses.push_back("timestamp < " + std::to_string(*filter_.end_ns));
     }
 
-    // A topic filter plus `ORDER BY timestamp` makes SQLite serve the rows off
-    // topic_timestamp_idx (which orders by topic first) and then sort them back
-    // into time order through a temp B-tree. That sorter carries the `data`
-    // BLOB, so it spills gigabytes of payload to the temp store and reads them
-    // back — measured ~9x slower than the same scan without the sort.
+    // `ORDER BY timestamp` is served sorter-free off timestamp_idx, whose key
+    // is (timestamp, rowid), so equal timestamps come out in insertion order —
+    // the same order an unfiltered scan yields.
     //
-    // Splitting into one statement per topic sidesteps it: each is served in
-    // timestamp order straight off the index, and the merge below restores the
-    // global order. Only worth it when topic_timestamp_idx actually exists
-    // (bags bagwiz wrote). Without it SQLite already picks a sorter-free
-    // timestamp_idx scan for the combined statement, and N per-topic statements
-    // would scan that index N times instead of once.
-    if (!ids.empty() && index_exists("topic_timestamp_idx")) {
-      open_merge_cursors(ids, time_clauses);
-      return;
-    }
-
-    std::string sql = "SELECT topic_id, timestamp, data FROM messages";
+    // Pin that plan with INDEXED BY instead of relying on the planner to pick
+    // it. bagwiz no longer writes the extra (topic_id, timestamp) index, but
+    // bags produced by earlier versions still carry it, and with a topic
+    // clause present the planner prefers it and then sorts the rows back into
+    // time order through a temp B-tree — which both carries the `data` BLOB
+    // (measured ~9x slower) and breaks the tie order. Skip the hint on bags
+    // that somehow lack timestamp_idx, since INDEXED BY on a missing index is
+    // a prepare-time error.
+    const bool pin_timestamp_idx = index_exists("timestamp_idx");
+    std::string sql = std::string("SELECT topic_id, timestamp, data FROM messages") +
+                      (pin_timestamp_idx ? " INDEXED BY timestamp_idx" : "");
     std::vector<std::string> where;
     if (!ids.empty()) {
       std::string clause = "topic_id IN (";
@@ -687,16 +647,12 @@ private:
   // is closed first and then the temp file is removed.
   TempFile temp_;
   SqlitePtr db_;
-  // Exactly one of these drives iteration: `read_stmt_` for an unfiltered read
-  // (or a bag without topic_timestamp_idx), `cursors_` for the per-topic merge.
+  // One of these two drives iteration: `read_stmt_` for the serial scan, or
+  // `scanner_` below.
   SqliteStmtPtr read_stmt_;
-  std::vector<TopicCursor> cursors_;
-  // Index of the cursor emitted by the previous next_merged() call, stepped at
-  // the start of the following one; cursors_.size() means none is pending.
-  std::size_t pending_advance_ = 0;
-  // The third iteration driver, alongside read_stmt_ and cursors_: a worker
-  // pool scanning disjoint timestamp slices ahead of us. Slices are emitted in
-  // schedule order, which reproduces the serial scan's order exactly.
+  // The other iteration driver: a worker pool scanning disjoint timestamp
+  // slices ahead of us. Slices are emitted in schedule order, which reproduces
+  // the serial scan's order exactly.
   std::unique_ptr<SliceScanner> scanner_;
   PrefetchedSlice slice_;        // the slice currently being drained
   std::size_t slice_index_ = 0;  // next schedule index to request

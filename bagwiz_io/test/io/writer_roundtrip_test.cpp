@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -403,13 +404,21 @@ TEST_F(WriterRoundTripTest, Sqlite3WritesIronCompatibleV4Layout)
   sqlite3_close(db);
 }
 
-TEST_F(WriterRoundTripTest, Sqlite3WritesTopicTimestampIndex)
+TEST_F(WriterRoundTripTest, Sqlite3CreatesOnlyTheStockTimestampIndex)
 {
-  // bagwiz adds a (topic_id, timestamp) index that rosbag2 itself does not
-  // create. It turns `ls -l` / compute_stats()'s per-topic COUNT and
-  // MIN/MAX(timestamp) into a covering-index lookup instead of a scan over the
-  // BLOB-laden messages rows. Verify the index exists and covers the expected
-  // columns in order.
+  // bagwiz used to add a (topic_id, timestamp) index to speed up its own
+  // per-topic COUNT. An index is not passive metadata: it is an input to
+  // every query planner that touches the table, including third-party
+  // readers. Foxglove's db3 readers (@foxglove/rosbag2-node SqliteNodejs.ts,
+  // rosbag2-web SqliteSqljs.ts) issue
+  //   select topic_id,timestamp,data from messages
+  //   where timestamp >= ? and timestamp < ? and topic_id in (...)
+  // with NO `ORDER BY`, relying on the planner picking timestamp_idx. With a
+  // (topic_id, timestamp) index present the planner prefers it and returns
+  // rows grouped by topic instead, each topic spanning the whole file — so
+  // high-topic_id topics only arrive once the iterator is drained.
+  //
+  // Pin the index set to exactly what rosbag2 itself writes.
   const auto path = tmp_dir_ / "indexed.db3";
   bagwiz::io::CreateOptions options;
   options.format = bagwiz::io::Format::Sqlite3;
@@ -419,35 +428,68 @@ TEST_F(WriterRoundTripTest, Sqlite3WritesTopicTimestampIndex)
   sqlite3 * db = nullptr;
   ASSERT_EQ(sqlite3_open(path.string().c_str(), &db), SQLITE_OK);
 
-  // The index exists on the messages table.
+  std::vector<std::string> indexes;
+  sqlite3_stmt * stmt = nullptr;
+  ASSERT_EQ(
+    sqlite3_prepare_v2(
+      db, "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='messages' ORDER BY name",
+      -1, &stmt, nullptr),
+    SQLITE_OK);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    indexes.emplace_back(reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0)));
+  }
+  sqlite3_finalize(stmt);
+  sqlite3_close(db);
+
+  ASSERT_EQ(indexes.size(), 1U) << "unexpected extra index on messages";
+  EXPECT_EQ(indexes[0], "timestamp_idx");
+
+  verify_round_trip(path);
+}
+
+TEST_F(WriterRoundTripTest, Sqlite3StaysTimeOrderedForReadersWithoutOrderBy)
+{
+  // Regression guard for the Foxglove breakage described above, expressed as
+  // the symptom rather than the cause: replay Foxglove's exact query shape
+  // (no ORDER BY, time range + topic IN list) and require the rows to come
+  // back in non-decreasing timestamp order.
+  const auto path = tmp_dir_ / "ordered.db3";
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Sqlite3;
+  options.layout = bagwiz::io::Layout::SingleFile;
+
+  // Interleave the two topics so topic-grouped delivery is distinguishable
+  // from time-ordered delivery.
+  const std::vector<std::pair<std::string, int64_t>> interleaved = {
+    {"/foo", 1'000'000'000LL}, {"/bar", 1'000'000'001LL}, {"/foo", 1'000'000'002LL},
+    {"/bar", 1'000'000'003LL}, {"/foo", 1'000'000'004LL}, {"/bar", 1'000'000'005LL}};
+  write_fixture(path, options, topics_, interleaved);
+
+  sqlite3 * db = nullptr;
+  ASSERT_EQ(sqlite3_open(path.string().c_str(), &db), SQLITE_OK);
+
   sqlite3_stmt * stmt = nullptr;
   ASSERT_EQ(
     sqlite3_prepare_v2(
       db,
-      "SELECT 1 FROM sqlite_master WHERE type='index' AND name='topic_timestamp_idx' "
-      "AND tbl_name='messages'",
+      "select topic_id,timestamp,data from messages "
+      "where timestamp >= 0 and timestamp < 9223372036854775807 and topic_id in (1,2)",
       -1, &stmt, nullptr),
     SQLITE_OK);
-  EXPECT_EQ(sqlite3_step(stmt), SQLITE_ROW) << "topic_timestamp_idx missing";
-  sqlite3_finalize(stmt);
 
-  // It covers (topic_id, timestamp) in that column order.
-  std::vector<std::string> cols;
-  ASSERT_EQ(
-    sqlite3_prepare_v2(db, "PRAGMA index_info('topic_timestamp_idx')", -1, &stmt, nullptr),
-    SQLITE_OK);
+  std::vector<int64_t> delivered;
   while (sqlite3_step(stmt) == SQLITE_ROW) {
-    cols.emplace_back(reinterpret_cast<const char *>(sqlite3_column_text(stmt, 2)));
+    delivered.push_back(sqlite3_column_int64(stmt, 1));
   }
   sqlite3_finalize(stmt);
-  ASSERT_EQ(cols.size(), 2U);
-  EXPECT_EQ(cols[0], "topic_id");
-  EXPECT_EQ(cols[1], "timestamp");
-
   sqlite3_close(db);
 
-  // The index must not change what compute_stats() reports.
-  verify_round_trip(path);
+  ASSERT_EQ(delivered.size(), interleaved.size());
+  for (std::size_t i = 1; i < delivered.size(); ++i) {
+    EXPECT_LE(delivered[i - 1], delivered[i])
+      << "rows arrived out of time order at index " << i
+      << " — a reader without ORDER BY sees messages grouped by topic";
+  }
 }
 
 // rosbag2's metadata reader (rosbag2_storage humble 0.15.16
@@ -509,6 +551,65 @@ TEST_F(WriterRoundTripTest, Sqlite3DirectoryMetadataDeclaresFilesSection)
   expect_files_section_matches_summary(
     info, dir.filename().string() + "_0.db3", /*start=*/1'000'000'000LL,
     /*end=*/2'000'000'001LL, /*messages=*/5);
+}
+
+TEST_F(WriterRoundTripTest, Sqlite3SingleFileEmbedsMetadataSummary)
+{
+  // A single-file .db3 has no metadata.yaml beside it, so rosbag2 reserves the
+  // `metadata` table for the same summary. rosbag2 stores the *inner* mapping
+  // there (no `rosbag2_bagfile_information:` wrapper). Populating it lets
+  // compute_stats() answer without scanning the BLOB-laden messages rows —
+  // which is what the dropped (topic_id, timestamp) index used to buy, but
+  // without perturbing any other reader's query plan.
+  //
+  // The YAML must come from the same emitter that writes metadata.yaml: a
+  // declared `version` whose structure does not match makes jazzy's storage
+  // plugin refuse to open the bag outright ("No plugin detected that could
+  // open file"), not merely report wrong numbers.
+  const auto path = tmp_dir_ / "embedded_metadata.db3";
+  bagwiz::io::CreateOptions options;
+  options.format = bagwiz::io::Format::Sqlite3;
+  options.layout = bagwiz::io::Layout::SingleFile;
+  write_fixture(path, options, topics_, messages_);
+
+  sqlite3 * db = nullptr;
+  ASSERT_EQ(sqlite3_open(path.string().c_str(), &db), SQLITE_OK);
+
+  std::vector<std::pair<int, std::string>> rows;
+  sqlite3_stmt * stmt = nullptr;
+  ASSERT_EQ(
+    sqlite3_prepare_v2(
+      db, "SELECT metadata_version, metadata FROM metadata ORDER BY id", -1, &stmt, nullptr),
+    SQLITE_OK);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    rows.emplace_back(
+      sqlite3_column_int(stmt, 0), reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1)));
+  }
+  sqlite3_finalize(stmt);
+  sqlite3_close(db);
+
+  ASSERT_EQ(rows.size(), 1U) << "expected exactly one metadata row";
+  EXPECT_EQ(rows[0].first, 5) << "metadata_version must stay at the humble-readable v5";
+
+  const auto info = YAML::Load(rows[0].second);
+  ASSERT_TRUE(info.IsMap());
+  EXPECT_FALSE(info["rosbag2_bagfile_information"])
+    << "the db3 metadata column stores the inner mapping, not the wrapped document";
+  EXPECT_EQ(info["version"].as<int>(), 5);
+  EXPECT_EQ(info["storage_identifier"].as<std::string>(), "sqlite3");
+  EXPECT_EQ(info["message_count"].as<int64_t>(), 5);
+  EXPECT_EQ(info["starting_time"]["nanoseconds_since_epoch"].as<int64_t>(), 1'000'000'000LL);
+  EXPECT_EQ(info["duration"]["nanoseconds"].as<int64_t>(), 2'000'000'001LL - 1'000'000'000LL);
+
+  const auto topics = info["topics_with_message_count"];
+  ASSERT_TRUE(topics.IsSequence());
+  ASSERT_EQ(topics.size(), 2U);
+  std::unordered_map<std::string, int64_t> counts;
+  for (const auto & t : topics) {
+    counts[t["topic_metadata"]["name"].as<std::string>()] = t["message_count"].as<int64_t>();
+  }
+  EXPECT_EQ(counts.at("/foo"), 3);
+  EXPECT_EQ(counts.at("/bar"), 2);
 }
 
 TEST_F(WriterRoundTripTest, McapDirectoryMetadataDeclaresFilesSection)

@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -78,6 +79,32 @@ struct MetadataYamlInfo
 // Emit `<dir>/metadata.yaml` (schema version 5, single shard). Throws on IO
 // errors.
 void write_metadata_yaml(const std::filesystem::path & dir, const MetadataYamlInfo & info);
+
+// Emit the same summary as `write_metadata_yaml` but as the bare inner mapping
+// (no `rosbag2_bagfile_information:` wrapper), which is how rosbag2 stores it
+// in a single-file .db3's `metadata` table.
+//
+// Both emitters share one body writer on purpose. rosbag2 dispatches its YAML
+// decode on the declared `version`, so a document whose structure does not
+// match the version it claims is not merely wrong — jazzy's storage plugin
+// then fails to open the bag at all ("No plugin detected that could open
+// file"). Never hand-roll this YAML at a call site.
+std::string emit_metadata_yaml_body(const MetadataYamlInfo & info);
+
+// Parse the inner mapping produced by `emit_metadata_yaml_body` (or written by
+// rosbag2 iron+ into a .db3 `metadata` row).
+//
+// Returns nullopt rather than throwing when the document is unusable, so
+// callers fall back to scanning instead of failing the read:
+//   - unparseable YAML, or a document that is not a map
+//   - the open-time template row rosbag2 writes before recording starts
+//     (message_count 0 with starting_time == INT64_MAX)
+//   - a document missing any of the message_count / starting_time / duration
+//     trio, in which case `has_summary` could not be set anyway
+//
+// `relative_file_paths` is not required here: the caller already holds the
+// file it read this from.
+std::optional<BagMetadata> parse_metadata_yaml_body(const std::string & yaml);
 
 }  // namespace bagwiz::io
 

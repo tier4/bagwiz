@@ -56,12 +56,16 @@ regardless of bag size or storage format.
 
 - **MCAP** and **directory-layout** rosbag2 bags answer from the file's
   summary section / `metadata.yaml`, so `-l` stays fast.
-- A **single-file `*.db3`** has no summary, so `COUNT` is computed by querying
-  the SQLite `messages` table. bagwiz-written `*.db3` files carry a
-  `(topic_id, timestamp)` index that makes this a fast covering-index lookup;
-  `*.db3` files recorded by other tools (rosbag2 itself, etc.) lack that index
-  and fall back to a full table scan, which can be slow on large bags. Prefer
-  the directory layout, or run plain `ls` when you only need the topic list.
+- A **single-file `*.db3`** carries its summary in the SQLite `metadata` table.
+  Every bagwiz-written `*.db3` fills it in, as does any bag recorded by rosbag2
+  iron or newer, so `-l` stays fast there too. Bags recorded by older rosbag2
+  (humble) leave that table empty, and `COUNT` falls back to scanning the
+  `messages` table, which can be slow on large bags. Prefer the directory
+  layout, or run plain `ls` when you only need the topic list.
+
+  The summary is cross-checked against the actual row count before it is
+  trusted, so a bag that was appended to behind bagwiz's back falls back to the
+  scan rather than reporting stale numbers.
 
 ## Examples
 

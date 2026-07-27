@@ -133,10 +133,10 @@ public:
 
   // Compute message counts for a subset of topics.
   //
-  // Implementations should prefer summary/index data (MCAP summary,
-  // metadata.yaml per-topic counts, SQLite covering index) and only scan
-  // the requested topics when unavoidable. Topics that are absent or have
-  // zero messages are omitted from the result.
+  // Implementations should prefer summary data (MCAP summary, metadata.yaml
+  // per-topic counts, a single-file .db3's `metadata` table) and only scan the
+  // requested topics when unavoidable. Topics that are absent or have zero
+  // messages are omitted from the result.
   virtual std::unordered_map<std::string, int64_t> compute_topic_counts(
     std::span<const std::string> topics) = 0;
 

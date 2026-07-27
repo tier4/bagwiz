@@ -43,3 +43,12 @@ jobs:
 
       - name: Test
         run: pixi run -e ${{ matrix.distro }} test-full
+
+      # Unit tests cannot see this: rosbag2 picks its metadata decoder from the
+      # declared `version`, and jazzy+ parses that metadata while deciding
+      # whether a storage plugin can open the file, so a structure/version
+      # mismatch makes the bag unopenable rather than merely misreported. Run
+      # the real `ros2 bag info` against bags bagwiz just wrote, on both distros
+      # in the matrix.
+      - name: Check rosbag2 compatibility
+        run: pixi run -e ${{ matrix.distro }} bash scripts/check-rosbag2-compat.sh

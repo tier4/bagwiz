@@ -88,5 +88,5 @@ Measured on the same fixtures and left alone:
 
 - **Transaction batch size** (`kBatchSize = 1024`): 256 / 1024 / 4096 /
   unbounded were within noise of each other.
-- **Deferring `timestamp_idx` to `close()`** (as `topic_timestamp_idx` already
-  is): no measurable difference.
+- **Deferring `timestamp_idx` to `close()`** (as the since-removed
+  `topic_timestamp_idx` was at the time): no measurable difference.

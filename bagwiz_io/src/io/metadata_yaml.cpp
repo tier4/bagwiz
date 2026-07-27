@@ -15,6 +15,7 @@
 #include <cctype>
 #include <cstdint>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -50,30 +51,19 @@ std::string to_lower_copy(std::string s)
   return s;
 }
 
-}  // namespace
-
-BagMetadata load_metadata_yaml(const std::filesystem::path & yaml_path)
+// Decode a `rosbag2_bagfile_information` mapping. Shared by the metadata.yaml
+// path and the .db3 `metadata` row path so both understand exactly the same
+// schema. Field-level absences are tolerated here (an empty
+// `relative_file_paths`, a missing `storage_identifier`); callers that need
+// those apply their own validation, because what is fatal differs: a directory
+// bag cannot be opened without a shard list, whereas a .db3 row's reader
+// already holds the file.
+BagMetadata parse_bagfile_information(const YAML::Node & info)
 {
-  YAML::Node root;
-  try {
-    root = YAML::LoadFile(yaml_path.string());
-  } catch (const YAML::Exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Failed to parse %s: %s", yaml_path.c_str(), e.what());
-    throw std::runtime_error("failed to parse metadata.yaml: " + std::string(e.what()));
-  }
-
-  auto info = root["rosbag2_bagfile_information"];
-  if (!info) {
-    throw std::runtime_error(
-      "metadata.yaml missing `rosbag2_bagfile_information`: " + yaml_path.string());
-  }
-
   BagMetadata md;
 
   if (auto node = info["storage_identifier"]; node) {
-    md.storage_identifier = node.as<std::string>();
-  } else {
-    throw std::runtime_error("metadata.yaml missing storage_identifier");
+    md.storage_identifier = node.as<std::string>("");
   }
 
   // Compression metadata must be read before choosing the shard-path list:
@@ -114,10 +104,6 @@ BagMetadata load_metadata_yaml(const std::filesystem::path & yaml_path)
         md.relative_file_paths.emplace_back(p.as<std::string>());
       }
     }
-  }
-
-  if (md.relative_file_paths.empty()) {
-    throw std::runtime_error("metadata.yaml has no files listed");
   }
 
   if (auto topics = info["topics_with_message_count"]; topics && topics.IsSequence()) {
@@ -162,17 +148,20 @@ BagMetadata load_metadata_yaml(const std::filesystem::path & yaml_path)
   return md;
 }
 
-void write_metadata_yaml(const std::filesystem::path & dir, const MetadataYamlInfo & info)
+// Emit the `rosbag2_bagfile_information` mapping (BeginMap .. EndMap) into an
+// open emitter. Sole producer of this schema: `write_metadata_yaml` wraps it in
+// the outer document key for metadata.yaml, `emit_metadata_yaml_body` returns
+// it bare for a .db3 `metadata` row. rosbag2 selects its YAML decoder from the
+// declared `version`, so a structure/version mismatch stops jazzy opening the
+// bag at all — a single producer is what makes that mismatch impossible.
+void emit_bagfile_information(YAML::Emitter & out, const MetadataYamlInfo & info)
 {
   const int64_t duration_ns =
     (info.total_messages > 0 && info.end_ns >= info.start_ns) ? (info.end_ns - info.start_ns) : 0;
   const int64_t starting_ns = info.total_messages > 0 ? info.start_ns : 0;
   const bool compressed = !(info.compression_format.empty() || info.compression_format == "none");
 
-  YAML::Emitter out;
   out << YAML::BeginMap;
-  out << YAML::Key << "rosbag2_bagfile_information";
-  out << YAML::Value << YAML::BeginMap;
 
   // rosbag2_storage::BagMetadata defaults `version` to 5 on humble, and 5 is
   // the minimum version where rosbag2 considers `files:` part of the schema.
@@ -223,6 +212,47 @@ void write_metadata_yaml(const std::filesystem::path & dir, const MetadataYamlIn
   out << YAML::EndSeq;
 
   out << YAML::EndMap;
+}
+
+}  // namespace
+
+BagMetadata load_metadata_yaml(const std::filesystem::path & yaml_path)
+{
+  YAML::Node root;
+  try {
+    root = YAML::LoadFile(yaml_path.string());
+  } catch (const YAML::Exception & e) {
+    BAGWIZ_LOG_ERROR(kLogger, "Failed to parse %s: %s", yaml_path.c_str(), e.what());
+    throw std::runtime_error("failed to parse metadata.yaml: " + std::string(e.what()));
+  }
+
+  auto info = root["rosbag2_bagfile_information"];
+  if (!info) {
+    throw std::runtime_error(
+      "metadata.yaml missing `rosbag2_bagfile_information`: " + yaml_path.string());
+  }
+
+  BagMetadata md = parse_bagfile_information(info);
+
+  // Fatal for a directory bag specifically: without these the reader cannot
+  // tell which shards to open, or with which storage plugin.
+  if (md.storage_identifier.empty()) {
+    throw std::runtime_error("metadata.yaml missing storage_identifier");
+  }
+  if (md.relative_file_paths.empty()) {
+    throw std::runtime_error("metadata.yaml has no files listed");
+  }
+
+  return md;
+}
+
+void write_metadata_yaml(const std::filesystem::path & dir, const MetadataYamlInfo & info)
+{
+  YAML::Emitter out;
+  out << YAML::BeginMap;
+  out << YAML::Key << "rosbag2_bagfile_information";
+  out << YAML::Value;
+  emit_bagfile_information(out, info);
   out << YAML::EndMap;
 
   std::ofstream f(dir / "metadata.yaml");
@@ -230,6 +260,49 @@ void write_metadata_yaml(const std::filesystem::path & dir, const MetadataYamlIn
     throw std::runtime_error("failed to open metadata.yaml for writing in " + dir.string());
   }
   f << out.c_str() << '\n';
+}
+
+std::string emit_metadata_yaml_body(const MetadataYamlInfo & info)
+{
+  YAML::Emitter out;
+  emit_bagfile_information(out, info);
+  return out.c_str();
+}
+
+std::optional<BagMetadata> parse_metadata_yaml_body(const std::string & yaml)
+{
+  YAML::Node info;
+  try {
+    info = YAML::Load(yaml);
+  } catch (const YAML::Exception &) {
+    return std::nullopt;
+  }
+  if (!info || !info.IsMap()) {
+    return std::nullopt;
+  }
+
+  BagMetadata md;
+  try {
+    md = parse_bagfile_information(info);
+  } catch (const YAML::Exception &) {
+    return std::nullopt;
+  }
+
+  // Only a complete summary is worth anything to the caller: without it they
+  // must scan regardless, and returning a half-filled BagMetadata would invite
+  // reading fields that were never set.
+  if (!md.has_summary) {
+    return std::nullopt;
+  }
+
+  // rosbag2 inserts a template row when it opens the bag for writing and a
+  // second, final row at close. The template carries message_count 0 and
+  // starting_time == INT64_MAX; taking it would silently report an empty bag.
+  if (md.total_messages == 0 && md.start_ns == std::numeric_limits<int64_t>::max()) {
+    return std::nullopt;
+  }
+
+  return md;
 }
 
 }  // namespace bagwiz::io

@@ -290,15 +290,13 @@ int execute_cp_pass(
     }
   }
 
-  core::BagCopyCounts counts;
-  try {
-    counts = core::bag_copy_filtered(
-      *reader, *writer, plan.suppress, "tf_static_cp", core::pipeline::BackendKind::Pipelined);
-  } catch (const std::exception & e) {
-    BAGWIZ_LOG_ERROR(kLogger, "Stream copy from %s failed: %s", dst_path.c_str(), e.what());
-    return 1;
-  }
-
+  // Emit the synthesized messages BEFORE the stream copy. They are stamped at
+  // the destination's start time, so writing them afterwards would leave each
+  // one holding the bag's lowest timestamp at the highest storage position —
+  // the only rows whose physical order disagrees with their time. Consumers
+  // that read a .db3 in row order rather than by timestamp (Foxglove's readers
+  // issue their message query without an ORDER BY) would then receive the
+  // static TF last, after everything it is supposed to precede.
   std::uint64_t injected = 0;
   core::TfMessageSerializer tf_serializer;
   for (const auto & st : src_topics) {
@@ -323,6 +321,15 @@ int execute_cp_pass(
       return 1;
     }
     ++injected;
+  }
+
+  core::BagCopyCounts counts;
+  try {
+    counts = core::bag_copy_filtered(
+      *reader, *writer, plan.suppress, "tf_static_cp", core::pipeline::BackendKind::Pipelined);
+  } catch (const std::exception & e) {
+    BAGWIZ_LOG_ERROR(kLogger, "Stream copy from %s failed: %s", dst_path.c_str(), e.what());
+    return 1;
   }
 
   if (!io::close_writer_or_log(*writer, kLogger)) {
