@@ -180,10 +180,10 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz pcd concat <input> ... --pcd <topic>...` —
     `sensor_msgs/msg/PointCloud2` topics, offered at every value of the variadic
     run
-  - `bagwiz pcd concat <input> ... --stamp-offset <topic>=<val>` — the `<topic>`
-    half is completed to the same `sensor_msgs/msg/PointCloud2` topics (as
-    `<topic>=`) until the value word contains `=`; the `<val>` duration has
-    nothing to suggest
+  - `bagwiz pcd concat <input> ... --stamp-offset <topic>=<val>...` — the
+    `<topic>` half is completed to the same `sensor_msgs/msg/PointCloud2`
+    topics (as `<topic>=`) at every value of the run; once the cursor moves
+    past `=`, the `<val>` duration has nothing to suggest
   - `bagwiz pcd undistort <input> ... --pcd <topic>...` —
     `sensor_msgs/msg/PointCloud2` topics, offered at every value of the variadic
     run

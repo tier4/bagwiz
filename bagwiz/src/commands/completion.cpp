@@ -1365,15 +1365,16 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
 //
 // For `concat`, `<output_topic>` is a free-form new topic name with nothing to
 // suggest. PointCloud2 topic values complete for every `--pcd` value
-// (read from the bag named at word 2). `--stamp-offset` takes a single
-// `<topic>=<value>`, so its `<topic>` half completes to the same PointCloud2
-// topics (as `<topic>=`) until the value word contains `=`. `--frame`,
+// (read from the bag named at word 2). `--stamp-offset` takes one or more
+// `<topic>=<value>` values per occurrence, so its `<topic>` half completes to
+// the same PointCloud2 topics (as `<topic>=`) at every value in its run, until
+// the cursor moves past `=` onto the `<value>` half. `--frame`,
 // `--tolerance`, and `-o`/`--output` take free-form / numeric / path values, so
 // they get no value completion.
 //
 //   concat: `pcd`(0) `concat`(1) `<input>`(2) `<output_topic>`(3)
 //           --pcd <t...> [--frame <f>] [--tolerance <val>]
-//           [--stamp-offset <t=v>]... [-o <out>] [--drop-inputs] [--force]
+//           [--stamp-offset <t=v>...]... [-o <out>] [--drop-inputs] [--force]
 //           [-j|--threads <N>] [-w|--overwrite]
 //
 // For `undistort`, `<pose_topic>` is a free-form topic name (accepted types are
@@ -1413,22 +1414,44 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
     }
   }
 
-  // --stamp-offset takes a single <topic>=<value>; complete the <topic> half from
-  // the bag's PointCloud2 topics (like --pcd) while the value word has no
-  // '=' yet. Each candidate carries a trailing '=' so the shell scripts drop the
-  // auto-space and leave the cursor on the value. Unlike --pcd this is
-  // single-valued, so only the word immediately after --stamp-offset is its value.
+  // --stamp-offset consumes one or more <topic>=<value> values per occurrence
+  // (the CLI option is a vector with no arity limit, like --pcd), so complete
+  // the <topic> half for every value in its run, not just the word immediately
+  // after the flag. Walk back from the cursor over the values already given
+  // (bash splits a typed value at '=', and the resulting `topic`/`=`/`value`
+  // fragments are all skipped here as non-option words); if the nearest option
+  // word is --stamp-offset, the cursor is still consuming its values. Each
+  // candidate carries a trailing '=' so the shell scripts drop the auto-space
+  // and leave the cursor on the value.
+  //
+  // The <value> half (a duration) has nothing to suggest. zsh/fish keep a
+  // typed topic=value unsplit, so a value in progress shows up as a current
+  // word already containing '='; bash splits it, leaving a bare '=' as the
+  // word right before the cursor. Both cases return no candidates.
   if (
     request.cursor_word > kSecondCommandArgWord &&
-    request.words[request.cursor_word - 1] == "--stamp-offset" &&
     current.find('=') == std::string::npos) {
-    const auto & bag_arg = request.words[kSecondCommandArgWord];
-    if (!bag_arg.empty() && !bag_arg.starts_with("-")) {
-      auto topics = complete_topics(expand_current_user_home(bag_arg), current, kPointCloud2Type);
-      for (auto & topic : topics) {
-        topic += '=';
+    const bool after_equals = request.words[request.cursor_word - 1] == "=";
+    for (std::size_t w = request.cursor_word; w > kSecondCommandArgWord;) {
+      const auto & word = request.words[--w];
+      if (!word.starts_with("-")) {
+        continue;  // a value already given to --stamp-offset; keep scanning
       }
-      return topics;
+      if (word == "--stamp-offset") {
+        if (after_equals) {
+          return {};  // on the <value> half (bash split at '='); nothing to offer
+        }
+        const auto & bag_arg = request.words[kSecondCommandArgWord];
+        if (!bag_arg.empty() && !bag_arg.starts_with("-")) {
+          auto topics =
+            complete_topics(expand_current_user_home(bag_arg), current, kPointCloud2Type);
+          for (auto & topic : topics) {
+            topic += '=';
+          }
+          return topics;
+        }
+      }
+      break;  // the nearest option decides; a non-stamp-offset option ends the run
     }
   }
 

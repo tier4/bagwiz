@@ -1255,6 +1255,75 @@ TEST_F(CompletionTest, PcdConcatStampOffsetUnknownBagYieldsNoCandidates)
     "");
 }
 
+// One --stamp-offset occurrence consumes several <topic>=<value> values, so the
+// <topic> half completes for the second value in the same run too.
+TEST_F(CompletionTest, PcdConcatStampOffsetCompletesSecondValueInSameRun)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_pointcloud2_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "7", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
+       "--stamp-offset", "/points=50"}),
+    "/points=\n");
+}
+
+// A typed prefix narrows the second value's topic candidates as well.
+TEST_F(CompletionTest, PcdConcatStampOffsetSecondValueRespectsPrefix)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_pointcloud2_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "8", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
+       "--stamp-offset", "/points=50", "/po"}),
+    "/points=\n");
+}
+
+// The run keeps completing for a third value after two complete ones.
+TEST_F(CompletionTest, PcdConcatStampOffsetCompletesThirdValueInSameRun)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_pointcloud2_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "8", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
+       "--stamp-offset", "/points=50", "/points2=100"}),
+    "/points=\n");
+}
+
+// Bash splits a typed value at COMP_WORDBREAKS' '=', so the same second-value
+// completion must work when the first value arrives as three separate words.
+TEST_F(CompletionTest, PcdConcatStampOffsetCompletesAfterBashSplitValue)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_pointcloud2_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "9", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
+       "--stamp-offset", "/points", "=", "50"}),
+    "/points=\n");
+}
+
+// With bash's '=' splitting, the cursor right after '=' sits on the <value>
+// half (a duration), which has nothing to suggest — the walk-back must not
+// offer topics there.
+TEST_F(CompletionTest, PcdConcatStampOffsetOffersNothingOnBashSplitValueHalf)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_pointcloud2_fixture(tmp_dir_ / "fixture.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "8", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
+       "--stamp-offset", "/points", "="}),
+    "");
+}
+
 // `pcd <TAB>` lists the command group's two subcommands.
 TEST(FlagCompletionTest, PcdSubcommandListsConcatAndUndistort)
 {
