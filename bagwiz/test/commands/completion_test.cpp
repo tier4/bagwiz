@@ -858,7 +858,7 @@ TEST(FlagCompletionTest, TfStaticCpDashListsCpFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "cp", "-"}),
-    "--dst\n--help\n--output\n--overwrite\n--src\n-d\n-h\n-o\n-s\n-w\n");
+    "--dst\n--help\n--output\n--overwrite\n--src\n-h\n-o\n-w\n");
 }
 
 // `tf walk -` surfaces its --of/--ref flags alongside the implicit help flags,

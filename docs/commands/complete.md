@@ -152,8 +152,8 @@ source ~/.config/fish/completions/bagwiz.fish
     since its topics are now `-s`/`--src-topic` and `-d`/`--dst-topic`);
     `tf tree -<TAB>` surfaces `--input`/`-i` and `--topics`/`-t` (the flag is optional there —
     omitting it merges every TF topic); `tf static calc -<TAB>` also surfaces
-    `--json`, `--of`, `--ref`, and `tf static cp -<TAB>` surfaces `--src`/`-s`, `--dst`/`-d`,
-    `--output`/`-o` and `-w`/`--overwrite`.
+    `--json`, `--of`, `--ref`, and `tf static cp -<TAB>` surfaces `--src`, `--dst`
+    (long-form only — neither has a short form), `--output`/`-o` and `-w`/`--overwrite`.
     `tf static` is itself a command group, so `tf static <TAB>` completes its
     actions (`calc`, `cp`) and `tf static -<TAB>` lists just the help flags.
     `cam-info`, `check`, `generate`, `map`, `pcd`, and `topic` are likewise

@@ -709,10 +709,10 @@ private:
       "cp",
       "Copy every static TF topic from <src> into <dst>, preserving topic names. Each copied "
       "topic is written as one TFMessage stamped at <dst>'s start time.");
-    sub->add_option("-s,--src", static_cp_args_.src_path, "Source bag to copy static TF from")
+    sub->add_option("--src", static_cp_args_.src_path, "Source bag to copy static TF from")
       ->required()
       ->check(CLI::ExistingPath);
-    sub->add_option("-d,--dst", static_cp_args_.dst_path, "Destination bag to copy static TF into")
+    sub->add_option("--dst", static_cp_args_.dst_path, "Destination bag to copy static TF into")
       ->required()
       ->check(CLI::ExistingPath);
     sub->add_option(

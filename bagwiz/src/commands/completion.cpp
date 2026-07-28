@@ -833,7 +833,7 @@ std::vector<std::string> complete_traj(const CompletionRequest & request)
 // of the flat `tf` subcommands.
 //
 //   calc: `tf`(0) `static`(1) `calc`(2) -i|--input <bag> --of <frame> --ref <frame> [--json]
-//   cp:   `tf`(0) `static`(1) `cp`(2)   -s|--src <bag> -d|--dst <bag> [-o <out>] [-w|--overwrite]
+//   cp:   `tf`(0) `static`(1) `cp`(2)   --src <bag> --dst <bag> [-o <out>] [-w|--overwrite]
 //
 // At the action slot (word 2) the candidates are `calc` / `cp`. For `calc`,
 // `-i`/`--input`/`--json`/`--of`/`--ref` are offered for any `-` word, and the
@@ -873,7 +873,7 @@ std::vector<std::string> complete_tf_static(
   if (action == "cp") {
     if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
       return matching(
-        with_help({"--dst", "--output", "--overwrite", "--src", "-d", "-o", "-s", "-w"}), current);
+        with_help({"--dst", "--output", "--overwrite", "--src", "-o", "-w"}), current);
     }
     return {};
   }

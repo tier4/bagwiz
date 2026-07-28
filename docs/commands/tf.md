@@ -352,7 +352,7 @@ of the flag.
 ### Usage
 
 ```text
-bagwiz tf static cp -s|--src <src> -d|--dst <dst> [-o <output>] [-w|--overwrite]
+bagwiz tf static cp --src <src> --dst <dst> [-o <output>] [-w|--overwrite]
 ```
 
 `<src>` is read; `<dst>` (or `<output>`) is the write target.
@@ -361,17 +361,17 @@ bagwiz tf static cp -s|--src <src> -d|--dst <dst> [-o <output>] [-w|--overwrite]
 
 | Flag                | Description                                                                                             |
 | ------------------- | ------------------------------------------------------------------------------------------------------- |
-| `-s`, `--src <src>` | Source rosbag to copy static TF from (rosbag2 directory, `*.mcap`, `*.db3`, ...).                       |
-| `-d`, `--dst <dst>` | Destination rosbag to copy static TF into (rewritten in place unless `-o`).                             |
+| `--src <src>`       | Source rosbag to copy static TF from (rosbag2 directory, `*.mcap`, `*.db3`, ...).                       |
+| `--dst <dst>`       | Destination rosbag to copy static TF into (rewritten in place unless `-o`).                             |
 | `-o`, `--output`    | Write the result to this new bag instead of rewriting `<dst>` in place.                                 |
 | `-w`, `--overwrite` | Replace an existing `-o`/`--output` path, and replace any colliding static topic's messages in `<dst>`. |
 
 ### Examples
 
 ```bash
-bagwiz tf static cp -s donor.mcap -d target.mcap              # rewrite target.mcap in place
-bagwiz tf static cp -s donor.mcap -d target.mcap -o merged.mcap  # write a new bag
-bagwiz tf static cp -s donor.mcap -d target.mcap -w  # replace a colliding /tf_static
+bagwiz tf static cp --src donor.mcap --dst target.mcap              # rewrite target.mcap in place
+bagwiz tf static cp --src donor.mcap --dst target.mcap -o merged.mcap  # write a new bag
+bagwiz tf static cp --src donor.mcap --dst target.mcap -w  # replace a colliding /tf_static
 ```
 
 ### Exit status
@@ -487,7 +487,8 @@ bagwiz tf walk -i capture.mcap --of map --ref base_link
 ## Migration
 
 The bag operand is now `-i` / `--input` on every `tf` subcommand.
-`tf static cp` operands are now `-s` / `--src` and `-d` / `--dst`.
+`tf static cp` operands are `--src` and `--dst`, long-form only: the `-s` / `-d`
+short forms they briefly carried have been removed.
 The frame operands on `tf static calc` and `tf walk` have long been `--of` /
 `--ref`; the only change is that the bag is no longer positional:
 
@@ -498,8 +499,9 @@ bagwiz tf tree -i capture.mcap                      # after
 bagwiz tf static calc capture.mcap --of base_link --ref lidar   # before — now an error
 bagwiz tf static calc -i capture.mcap --of base_link --ref lidar # after
 
-bagwiz tf static cp donor.mcap target.mcap            # before — now an error
-bagwiz tf static cp -s donor.mcap -d target.mcap      # after
+bagwiz tf static cp donor.mcap target.mcap                # before — now an error
+bagwiz tf static cp -s donor.mcap -d target.mcap          # before — now an error
+bagwiz tf static cp --src donor.mcap --dst target.mcap    # after
 
 bagwiz tf walk capture.mcap --of base_link --ref lidar  # before — now an error
 bagwiz tf walk -i capture.mcap --of base_link --ref lidar # after
