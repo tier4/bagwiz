@@ -64,9 +64,9 @@ public:
 
   // Identifies which backend served this decoder: "schema" when the
   // schema-driven path was chosen, "introspection" when the rosidl
-  // typesupport path was used. Surfaced for one-line per-topic INFO
+  // typesupport path was used. Surfaced for one-line per-topic DEBUG
   // logs so users can confirm whether their bag exercises the
-  // self-describing path.
+  // self-describing path (BAGWIZ_LOG_LEVEL=debug to see them).
   virtual std::string_view backend() const noexcept = 0;
 };
 
@@ -99,8 +99,10 @@ struct OpenDecoderResult
 // silently; on step 3 failure to load typesupport, the factory returns
 // an error.
 //
-// Logs the chosen backend at INFO once per call so the user can correlate
-// `bagwiz walk` output with which path served it.
+// Logs the chosen backend at DEBUG once per call so the user can correlate
+// `bagwiz walk` output with which path served it. Run with
+// BAGWIZ_LOG_LEVEL=debug to surface those lines; they are suppressed at the
+// default INFO level.
 OpenDecoderResult open_decoder(const io::TopicInfo & topic);
 
 }  // namespace bagwiz::core::decoder
