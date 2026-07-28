@@ -32,7 +32,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(bagwiz_io REQUIRED)
 find_package(bagwiz_msg REQUIRED)
-# tf2 supplies BufferCore + math helpers used by the TF walk/trajectory code.
+# tf2 supplies BufferCore + math helpers used by the TF trajectory code.
 # geometry_msgs is needed for the header-only TransformStamped struct handed to
 # BufferCore::setTransform from tf_value_extract. tf2_msgs is pulled in for
 # tf_message_wire, which constructs a tf2_msgs::msg::TFMessage in-memory and
@@ -62,7 +62,6 @@ add_library(bagwiz_tf
   src/core/tf/tf_trajectory_sample.cpp
   src/core/tf/tf_transform_format.cpp
   src/core/tf/tf_value_extract.cpp
-  src/core/tf/tf_walk_timeline.cpp
   src/core/tf/trajectory.cpp
 )
 target_include_directories(bagwiz_tf
@@ -172,9 +171,6 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_tf_transform_format_test test/core/tf/tf_transform_format_test.cpp)
   target_link_libraries(
     bagwiz_tf_transform_format_test bagwiz_tf nlohmann_json::nlohmann_json)
-
-  ament_add_gtest(bagwiz_tf_walk_timeline_test test/core/tf/tf_walk_timeline_test.cpp)
-  target_link_libraries(bagwiz_tf_walk_timeline_test bagwiz_tf)
 
   ament_add_gtest(bagwiz_trajectory_test test/core/tf/trajectory_test.cpp)
   target_link_libraries(bagwiz_trajectory_test bagwiz_tf)

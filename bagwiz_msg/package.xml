@@ -12,7 +12,6 @@
   <depend>ament_index_cpp</depend>
   <depend>bagwiz_base</depend>
   <depend>bagwiz_io</depend>
-  <depend>geographiclib</depend>
   <depend>geometry_msgs</depend>
   <depend>rcutils</depend>
   <depend>rmw</depend>

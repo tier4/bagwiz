@@ -95,7 +95,7 @@ std::vector<std::string> missing_frames(
     missing.push_back(of_frame);
   }
   // Skip the second check when both endpoints are the same frame so a missing
-  // `tf walk <f> <f>` reports the frame once rather than twice.
+  // same-frame query reports the frame once rather than twice.
   if (ref_frame != of_frame && known.count(ref_frame) == 0) {
     missing.push_back(ref_frame);
   }

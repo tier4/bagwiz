@@ -698,58 +698,6 @@ std::vector<std::string> complete_complete_command(const CompletionRequest & req
   return {};
 }
 
-// `convert msg` is a nested command group with one action verb, `geo`,
-// shifting every argument one word right of the flat `format` subcommand:
-//
-//   geo: `convert`(0) `msg`(1) `geo`(2) `-i|--input <bag>`(3) [--src V] [--dst V]
-//        [--topic ...] [--crs V] [--origin V] [--frame-id V] [-o <out>]
-//        [-w|--overwrite]
-//
-// At the action slot (word 2) the only candidate is `geo`. Past it, `-` words
-// surface the geo flags, and the `--src` / `--dst` / `--crs` slots complete from
-// the same snake_case choice sets the command's CLI::IsMember checks enforce
-// (kept in sync by hand, like the other hard-coded candidate sets here). The
-// `<input>` and `-o` values are paths that fall through to file completion.
-std::vector<std::string> complete_convert_msg(
-  const CompletionRequest & request, const std::string & current)
-{
-  if (request.cursor_word == kSecondCommandArgWord) {
-    if (current.starts_with("-")) {
-      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
-    }
-    return matching({"geo"}, current);
-  }
-
-  // Reaching here implies cursor_word > kSecondCommandArgWord, so words[2]
-  // exists (parse_request clamps cursor_word to words.size()).
-  const auto & action = request.words[kSecondCommandArgWord];
-  if (action != "geo") {
-    return {};
-  }
-
-  if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
-    return matching(
-      with_help(
-        {"--crs", "--dst", "--frame-id", "--input", "--origin", "--output", "--overwrite", "--src",
-         "--topic", "-i", "-o", "-w"}),
-      current);
-  }
-
-  if (request.cursor_word > 0) {
-    const auto & previous = request.words[request.cursor_word - 1];
-    if (previous == "--src") {
-      return matching({"nav_sat_fix"}, current);
-    }
-    if (previous == "--dst") {
-      return matching({"pose_with_covariance_stamped", "pose_stamped"}, current);
-    }
-    if (previous == "--crs") {
-      return matching({"enu", "utm"}, current);
-    }
-  }
-  return {};
-}
-
 std::vector<std::string> complete_convert(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -757,16 +705,10 @@ std::vector<std::string> complete_convert(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"format", "msg"}, current);
+    return matching({"format"}, current);
   }
 
   const auto & mode = request.words[kFirstCommandArgWord];
-
-  // `msg` is a nested command group (`msg geo`); its positional shape
-  // differs from the flat `format` subcommand, so it is handled apart.
-  if (mode == "msg") {
-    return complete_convert_msg(request, current);
-  }
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     if (mode == "format") {
@@ -881,18 +823,16 @@ std::vector<std::string> complete_tf_static(
   return {};
 }
 
-// `tf` has three subcommands: `tree`, `static` (itself a nested command group,
-// handled by complete_tf_static), and `walk`. At the subcommand slot (word 1)
-// the candidates are `static` / `tree` / `walk`.
+// `tf` has two subcommands: `tree`, and `static` (itself a nested command
+// group, handled by complete_tf_static). At the subcommand slot (word 1) the
+// candidates are `static` / `tree`.
 //
 //   tree: `tf`(0) `tree`(1) -i|--input <bag> [-t|--topics <topic-or-selector>...]
-//   walk: `tf`(0) `walk`(1) -i|--input <bag> --of <frame> --ref <frame>
 //
 // `tree`'s -t/--topics value completion is handled earlier by
 // try_topic_completion via kTopicBindings (TFMessage topics only, at every
 // value slot since the flag is variadic and optional); here we surface only
-// `tree`'s own flags for any `-` word. `walk`'s --of/--ref value slots complete
-// the bag's TF frame ids merged from every TF topic (static + dynamic).
+// `tree`'s own flags for any `-` word.
 std::vector<std::string> complete_tf(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -900,13 +840,13 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"static", "tree", "walk"}, current);
+    return matching({"static", "tree"}, current);
   }
 
   const auto & mode = request.words[kFirstCommandArgWord];
 
   // `static` is a nested command group (`static calc`); its positional shape
-  // differs from the flat `tree` / `walk` subcommands, so it is handled apart.
+  // differs from the flat `tree` subcommand, so it is handled apart.
   if (mode == "static") {
     return complete_tf_static(request, current);
   }
@@ -915,24 +855,7 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
     if (mode == "tree") {
       return matching(with_help({"--input", "--topics", "-i", "-t"}), current);
     }
-    if (mode == "walk") {
-      return matching(with_help({"--input", "--of", "--ref", "-i"}), current);
-    }
     return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
-  }
-
-  // `tf walk -i <bag> --of <frame> --ref <frame>`: complete the --of/--ref value
-  // slots from the bag's TF frame ids. `tf walk` merges every TF topic, so it
-  // offers frame ids from all of them (static + dynamic).
-  if (mode == "walk" && request.cursor_word > 0) {
-    const auto & previous = request.words[request.cursor_word - 1];
-    if (previous == "--of" || previous == "--ref") {
-      const auto bag_arg = find_flag_value(request, kInputFlags);
-      if (!bag_arg || bag_arg->empty() || bag_arg->starts_with("-")) {
-        return {};
-      }
-      return complete_frame_id_value(*bag_arg, current);
-    }
   }
 
   return {};

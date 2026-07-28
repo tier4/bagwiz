@@ -139,10 +139,9 @@ source ~/.config/fish/completions/bagwiz.fish
     `--align`, `--stamp`, `--output`/`-o`, `--overwrite`/`-w`
   - `bagwiz <cmd> <subcommand> -<TAB>` for every nested subcommand
     (`cam-info replace`, `cam-info recompute-p`, `cam-info dump`, `check broken`,
-    `convert format`, `convert msg`,
-    `convert msg geo`, `generate video`, `map slam`, `map viewer`,
+    `convert format`, `generate video`, `map slam`, `map viewer`,
     `pcd concat`, `pcd undistort`, `tf static calc`, `tf static cp`,
-    `tf tree`, `tf walk`, `topic drop`, `topic keep`, `topic rename`,
+    `tf tree`, `topic drop`, `topic keep`, `topic rename`,
     `traj dump`, `traj join`);
     `cam-info replace -<TAB>` surfaces `--frame-id`, `--output`/`-o`,
     `--topics`/`-t`, and `-w`/`--overwrite`; `check broken -<TAB>` surfaces
@@ -228,8 +227,6 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz traj dump -i <input> ... --ref <FRAME>` / `--of <FRAME>` (all TF topics)
   - `bagwiz traj join -i <input> ... --ref <FRAME>` / `--of <FRAME>` (all TF topics)
   - `bagwiz pcd undistort -i <input> ... --ref <FRAME>` / `--of <FRAME>` (all TF topics)
-  - `bagwiz tf walk -i <input> ... --ref <FRAME>` / `--of <FRAME>` (all TF topics,
-    static + dynamic, merged)
   - `bagwiz tf static calc -i <input> ... --ref <FRAME>` / `--of <FRAME>`
     (**only** static `*tf_static` topics, since `tf static calc` resolves the
     static tree)

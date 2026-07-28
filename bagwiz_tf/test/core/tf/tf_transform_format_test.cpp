@@ -193,8 +193,8 @@ TEST(FormatTransformHuman, RendersFullChainOnChainLine)
   EXPECT_NE(out.find("transform: of=base_link  ref=velodyne_top"), std::string::npos);
 }
 
-// `tf walk` does not classify transforms, so the default (no annotation) must
-// not tag the block with a "(static)" suffix.
+// Callers that do not classify transforms use the default (no annotation),
+// which must not tag the block with a "(static)" suffix.
 TEST(FormatTransformHuman, OmitsAnnotationByDefault)
 {
   const auto tf = make_identity_tf("base_link", "velodyne", 1.0, 2.0, 3.0);

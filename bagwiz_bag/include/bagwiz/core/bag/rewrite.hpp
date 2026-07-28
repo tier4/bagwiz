@@ -16,7 +16,7 @@
 #include <optional>
 
 // The shared "-o vs in-place" dispatch every rewrite-style command
-// (topic drop/keep/rename, cam-info replace/recompute-p, convert msg geo,
+// (topic drop/keep/rename, cam-info replace/recompute-p,
 // pcd concat/undistort, tf static cp, traj join) runs after validating its
 // arguments:
 //

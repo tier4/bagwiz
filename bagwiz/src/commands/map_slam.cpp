@@ -77,7 +77,7 @@ constexpr const char * kImuType = "sensor_msgs/msg/Imu";
 constexpr const char * kNavSatFixType = "sensor_msgs/msg/NavSatFix";
 constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
 // Static transforms are timeless; a year-long cache dwarfs any bag and matches
-// `tf walk` / `tf static calc` buffer sizing.
+// `tf static calc` buffer sizing.
 constexpr std::chrono::hours kTfBufferCacheTime{24 * 365};
 
 // tf2's lookupTransform(target=cloud, source=imu) yields p_cloud = T * p_imu,

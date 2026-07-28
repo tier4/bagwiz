@@ -8,18 +8,15 @@
 
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
-#include "bagwiz/commands/convert_msg_geo.hpp"
 #include "bagwiz/core/bag/bag_copy.hpp"
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/base/output_path.hpp"
-#include "bagwiz/core/msg_convert/geo_pose_convert.hpp"
 #include "bagwiz/core/msg_yaml/msg_definition_resolver.hpp"
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/bag_open.hpp"
 
 #include <cinttypes>
 #include <cstddef>
-#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <memory>
@@ -74,22 +71,22 @@ io::Format resolve_target_storage(
 
 // `bagwiz convert` is a command group for cross-format bag conversion.
 // Ships `format` (ROS 2 mcap <-> sqlite3 repack, plus file <-> directory
-// layout transitions inferred from the output path) and `msg geo` (re-type
-// NavSatFix topics into a geometry_msgs pose type).
+// layout transitions inferred from the output path). It stays a group rather
+// than collapsing into a flat `convert` so further conversion families can be
+// added without reshaping the existing CLI surface.
 class ConvertCommand : public Command
 {
 public:
   [[nodiscard]] std::string_view name() const override { return "convert"; }
   [[nodiscard]] std::string_view description() const override
   {
-    return "Convert bag storage formats or topic message types";
+    return "Convert bag storage formats";
   }
 
   void configure(CLI::App & app) override
   {
     app.require_subcommand(1);
     configure_format(app);
-    configure_msg(app);
   }
 
   int run() override
@@ -97,8 +94,6 @@ public:
     switch (selected_) {
       case Subcommand::kFormat:
         return run_format();
-      case Subcommand::kMsgGeo:
-        return run_convert_msg_geo(msg_geo_args_);
       case Subcommand::kNone:
         BAGWIZ_LOG_ERROR(kLogger, "no subcommand selected");
         return 1;
@@ -107,7 +102,7 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kFormat, kMsgGeo };
+  enum class Subcommand { kNone, kFormat };
   Subcommand selected_ = Subcommand::kNone;
 
   struct FormatArgs
@@ -117,8 +112,6 @@ private:
     std::string storage;     // empty when --storage not passed; resolved at run time
     bool overwrite = false;  // replace any pre-existing output_path
   } format_args_;
-
-  ConvertMsgGeoArgs msg_geo_args_;
 
   void configure_format(CLI::App & app)
   {
@@ -144,62 +137,6 @@ private:
       "Replace <output> if it already exists. Without this flag, an "
       "existing output path stops the run.");
     sub->callback([this]() { selected_ = Subcommand::kFormat; });
-  }
-
-  // `msg` is a command group, not a leaf: its actions live under families
-  // such as `msg geo` (position-related type conversions). Modeling it as a
-  // group keeps room for further families (e.g. imu) without one flat command
-  // accreting every type's options.
-  void configure_msg(CLI::App & app)
-  {
-    auto * group = app.add_subcommand("msg", "Convert the message type of selected topics");
-    group->require_subcommand(1);
-    configure_msg_geo(*group);
-  }
-
-  void configure_msg_geo(CLI::App & group)
-  {
-    namespace mtc = bagwiz::core::msg_convert;
-    auto * sub = group.add_subcommand(
-      "geo",
-      "Convert a geographic source (sensor_msgs/msg/NavSatFix) into a geometry_msgs pose type, "
-      "projecting WGS84 lat/lon/alt into a Cartesian frame (ENU or UTM)");
-    sub
-      ->add_option("-i,--input", msg_geo_args_.input_path, "Input ROS 2 rosbag (file or directory)")
-      ->required()
-      ->check(CLI::ExistingPath);
-    sub
-      ->add_option(
-        "--src", msg_geo_args_.src,
-        "Source message type (snake_case). Required unless --topic is given; ignored when it is.")
-      ->check(CLI::IsMember(mtc::from_snake_choices()));
-    sub->add_option("--dst", msg_geo_args_.dst, "Target message type (snake_case). Required.")
-      ->check(CLI::IsMember(mtc::to_snake_choices()));
-    sub->add_option(
-      "--topic", msg_geo_args_.topics,
-      "Convert exactly these topic(s) instead of every topic matching --src. All named topics "
-      "must share one message type.");
-    sub
-      ->add_option(
-        "--crs", msg_geo_args_.crs,
-        "Target Cartesian coordinate system: 'enu' (local tangent plane, needs an origin) or "
-        "'utm' (easting/northing). Defaults to 'enu'.")
-      ->check(CLI::IsMember({"enu", "utm"}))
-      ->capture_default_str();
-    sub->add_option(
-      "--origin", msg_geo_args_.origin,
-      "WGS84 datum as <lat>,<lon>,<alt>. Required for ENU unless it can be derived from the "
-      "first NavSatFix; an optional offset for UTM.");
-    sub->add_option(
-      "--frame-id", msg_geo_args_.frame_id,
-      "frame_id written onto the converted messages. Defaults to 'map' (enu) or 'utm' (utm).");
-    sub->add_option(
-      "-o,--output", msg_geo_args_.output_path,
-      "Write the result to this new bag instead of rewriting <input> in place.");
-    sub->add_flag(
-      "-w,--overwrite", msg_geo_args_.overwrite,
-      "Replace an existing -o/--output path. Without it, an existing output path stops the run.");
-    sub->callback([this]() { selected_ = Subcommand::kMsgGeo; });
   }
 
   int run_format()

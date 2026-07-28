@@ -183,7 +183,7 @@ TEST(MissingFrames, BothAbsentReportedInOrder)
   EXPECT_EQ(missing[1], "y");
 }
 
-// The exact `tf walk <f> <f>` bug: an absent frame given for both endpoints is
+// The same-frame bug: an absent frame given for both endpoints is
 // reported once (deduplicated), not twice. tf2's lookupTransform would
 // otherwise return an identity transform for the same-frame case without ever
 // checking the frame exists.

@@ -16,9 +16,8 @@
 namespace bagwiz::core::slam
 {
 
-// Holds the GeographicLib ENU solver plus a latch for the origin. Mirrors the
-// ENU branch of geo_pose_convert's Projector, but the origin is chosen lazily
-// from the first fix rather than configured up front.
+// Holds the GeographicLib ENU solver plus a latch for the origin. The origin is
+// chosen lazily from the first fix rather than configured up front.
 struct GnssProjector::Impl
 {
   GeographicLib::LocalCartesian enu;  // default datum (0,0,0) until origin is set

@@ -129,34 +129,6 @@ if(NOT zstd_vendor_FOUND)
 endif()
 find_package(zstd REQUIRED)
 
-# GeographicLib is exercised directly by the `convert msg geo` command test
-# (the command drives the projection, so the test re-links the library, same
-# as the geo_pose_convert test in bagwiz_msg). Two packagings exist and both
-# are supported:
-#   - a CMake CONFIG package (e.g. conda-forge `geographiclib-cpp`, used by the
-#     pixi/RoboStack build) that exports the GeographicLib::GeographicLib target;
-#   - the classic Debian/Ubuntu find-module that ships no imported target, only
-#     sets GeographicLib_LIBRARIES / _INCLUDE_DIRS, and lives under
-#     /usr/share/cmake/geographiclib.
-# Try CONFIG mode first; fall back to MODULE mode, appending the Debian module
-# directory to CMAKE_MODULE_PATH only when it exists so the path is harmless
-# inside a conda prefix (which has no /usr/share/cmake/geographiclib).
-find_package(GeographicLib CONFIG QUIET)
-if(NOT GeographicLib_FOUND)
-  if(EXISTS "/usr/share/cmake/geographiclib")
-    list(APPEND CMAKE_MODULE_PATH "/usr/share/cmake/geographiclib")
-  endif()
-  find_package(GeographicLib MODULE REQUIRED)
-endif()
-# Normalise both packagings onto the variables the consumers below use: when the
-# CONFIG package exported only the imported target, point GeographicLib_LIBRARIES
-# at it (a target is a valid link item, and linking it propagates its include
-# dirs — same approach as the PRIVATE nlohmann_json::nlohmann_json link). The
-# classic find-module already populates these variables itself.
-if(TARGET GeographicLib::GeographicLib AND NOT GeographicLib_LIBRARIES)
-  set(GeographicLib_LIBRARIES GeographicLib::GeographicLib)
-endif()
-
 # FFmpeg/libav is exercised directly by the `generate video` command test,
 # which synthesizes image fixtures and inspects the encoded output. No
 # ament/CMake package exists for it, so locate the libraries via pkg-config.
@@ -185,7 +157,6 @@ add_executable(bagwiz
   src/commands/check.cpp
   src/commands/completion.cpp
   src/commands/convert.cpp
-  src/commands/convert_msg_geo.cpp
   src/commands/generate.cpp
   src/commands/generate_video.cpp
   src/commands/generate_video_common.cpp
@@ -207,7 +178,6 @@ add_executable(bagwiz
   src/commands/traj.cpp
   src/commands/traj_common.cpp
   src/commands/tf.cpp
-  src/commands/tf_walk.cpp
   src/commands/tf_static_cp.cpp
   src/commands/topic.cpp
   src/commands/topic_drop.cpp
@@ -425,17 +395,6 @@ if(BUILD_TESTING)
   target_include_directories(bagwiz_trim_test
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/commands)
   target_link_libraries(bagwiz_trim_test ${bagwiz_test_libs} CLI11::CLI11 fmt::fmt)
-
-  # The command test drives the WGS84 projection end to end, so it re-links
-  # GeographicLib (a private dep of bagwiz_msg), plus rmw/sensor_msgs for the
-  # typed round-trip through rmw_(de)serialize.
-  ament_add_gtest(bagwiz_convert_msg_geo_test
-    test/commands/convert_msg_geo_test.cpp
-    src/commands/convert_msg_geo.cpp)
-  target_include_directories(bagwiz_convert_msg_geo_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-  target_link_libraries(
-    bagwiz_convert_msg_geo_test ${bagwiz_test_libs} fmt::fmt ${GeographicLib_LIBRARIES}
-    ${sensor_msgs_TARGETS} ${rmw_TARGETS} ${rmw_implementation_TARGETS})
 
   ament_add_gtest(bagwiz_cam_info_recompute_p_test
     test/commands/cam_info_recompute_p_test.cpp

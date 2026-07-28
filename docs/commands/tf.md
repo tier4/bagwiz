@@ -5,7 +5,6 @@ TF inspection and static-TF editing on a ROS 2 rosbag.
 - [`tree`](#bagwiz-tf-tree) — merge one or more `tf2_msgs/msg/TFMessage` topics into one TF frame tree, colored by static vs dynamic (`static` / `dynamic` selectors supported).
 - [`static calc`](#bagwiz-tf-static-calc) — resolve the pose of `--of` expressed in `--ref` using only the bag's static TF tree; print translation/quaternion/RPY or JSON. (`static` is a command group; `calc` is its action.)
 - [`static cp`](#bagwiz-tf-static-cp) — copy every static TF topic from `<src>` into `<dst>` (in place, or to a new bag via `-o`), preserving topic names and stamping each at `<dst>`'s start time.
-- [`walk`](#bagwiz-tf-walk) — merge every TF topic into one buffer and step interactively through the times the merged TF changed, showing `--of`'s pose in `--ref` at each.
 
 ROS 1 `*.bag` inputs are not supported.
 
@@ -381,115 +380,15 @@ bagwiz tf static cp -s donor.mcap -d target.mcap -w  # replace a colliding /tf_s
 | `0`  | Static TF copied; `<dst>` rewritten or `<output>` written.                                                                                                                                                                              |
 | `1`  | A bag could not be opened, `<src>` has no static TF topic carrying transforms, a decode/serialize failure, an unresolved conflict (existing output or colliding topic without `-w`/`--overwrite`, or a type mismatch), or an I/O error. |
 
----
-
-## `bagwiz tf walk`
-
-Merges **every** `tf2_msgs/msg/TFMessage` topic in the bag (`/tf`, `*tf_static`,
-and any other TF topic) into one TF buffer, then steps through the distinct
-times at which the merged TF changed — one step per timestamp — resolving
-`--of`'s pose in `--ref` at each. Unlike [`tf static calc`](#bagwiz-tf-static-calc),
-`tf walk` does **not** classify transforms as static vs dynamic: static topics
-are merged in alongside dynamic ones so a chain that crosses both (e.g. a
-dynamic `map → base_link` plus a static `base_link → lidar`) resolves at every
-step. The view is the same interactive pager as [`bagwiz walk`](walk.md).
-
-### Direction convention
-
-Each step shows the **pose of `--of` expressed in the `--ref` frame** —
-`lookupTransform(target=<ref>, source=<of>)`, identical to `tf static calc` and
-to `ros2 run tf2_ros tf2_echo <ref> <of>`: the translation is `<of>`'s origin
-expressed in the `<ref>` frame.
-
-### Usage
-
-```text
-bagwiz tf walk -i <input> --of <frame> --ref <frame>
-```
-
-`tf walk` requires an interactive terminal (stdin and stdout must be a TTY).
-
-### Options
-
-| Flag                    | Description                                                             |
-| ----------------------- | ----------------------------------------------------------------------- |
-| `-i`, `--input <input>` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). |
-| `--of <frame>`          | Frame whose pose is resolved (`<of>`).                                  |
-| `--ref <frame>`         | Reference frame the pose is expressed in (`<ref>`).                     |
-
-Both `--of` and `--ref` support TAB completion from the bag's TF frame ids
-across **all** TF topics (static + dynamic, since `tf walk` merges them; see
-[`bagwiz complete`](complete.md)). This is broader than `tf static calc`, which
-restricts the same slots to static `*tf_static` frames.
-
-### Keys
-
-| Key                                     | Action                                    |
-| --------------------------------------- | ----------------------------------------- |
-| `→` / `Space`                           | next timestamp (wraps from last to first) |
-| `←` / `b`                               | previous timestamp                        |
-| `↑` / `k`, `↓` / `j`                    | scroll the transform body up / down       |
-| `Home` / `H`, `End` / `T`               | jump the body scroll to head / tail       |
-| `g` / `G`                               | jump to the first / last timestamp        |
-| `q` / `Q` / `Esc` / `Ctrl-C` / `Ctrl-D` | quit                                      |
-
-### Output
-
-Per step, the header shows the timestamp and the body shows the resolved
-transform (monochrome, like `tf2_echo`; no `(static)` tag since the walk does
-not classify transforms). The `transform:` line names the two endpoints as
-`of=<of>  ref=<ref>`; the `chain:` line below it lists the full frame chain
-resolved at that step, not just the endpoints:
-
-```text
-timestamp: 2026-01-01 12:00:00.000000000 UTC (1767268800.000000000)
-
-transform: of=base_link  ref=lidar
-  chain: base_link -> sensor_kit_base_link -> lidar
-  translation:
-    x: -0.000000
-    y: 1.000000
-    z: -0.500000
-  rotation:
-    quaternion:
-      x: 0.000000
-      y: 0.000000
-      z: -0.707107
-      w: 0.707107
-    rpy_rad:
-      roll: 0.000000
-      pitch: 0.000000
-      yaw: -1.570796
-    rpy_deg:
-      roll: 0.000000
-      pitch: 0.000000
-      yaw: -90.000000
-```
-
-When the merged TF cannot connect `--of` and `--ref` at a given timestamp
-(e.g. the chain is not yet complete), that step shows a `⚠` warning line with
-the tf2 reason instead of a transform, and navigation continues.
-
-### Examples
-
-```bash
-bagwiz tf walk -i capture.mcap --of base_link --ref lidar
-bagwiz tf walk -i capture.mcap --of map --ref base_link
-```
-
-### Exit status
-
-| Code | Meaning                                                                                                                                                                                                                                                                             |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | The pager ran and the user quit.                                                                                                                                                                                                                                                    |
-| `1`  | Not a TTY, the bag could not be opened, it has no `tf2_msgs/msg/TFMessage` topic, the TF topics carry no decodable transforms, a `--of`/`--ref` frame absent from the bag's merged TF tree (available frames are listed on stderr), an empty frame id, or a TF load/decode failure. |
-
 ## Migration
+
+`tf walk` was removed. `tf static calc` covers the static-tree query; there is
+no in-tree replacement for stepping through a dynamic TF timeline.
 
 The bag operand is now `-i` / `--input` on every `tf` subcommand.
 `tf static cp` operands are now `-s` / `--src` and `-d` / `--dst`.
-The frame operands on `tf static calc` and `tf walk` have long been `--of` /
-`--ref`; the only change is that the bag is no longer positional:
+The frame operands on `tf static calc` have long been `--of` / `--ref`; the only
+change is that the bag is no longer positional:
 
 ```bash
 bagwiz tf tree capture.mcap                           # before — now an error
@@ -500,7 +399,4 @@ bagwiz tf static calc -i capture.mcap --of base_link --ref lidar # after
 
 bagwiz tf static cp donor.mcap target.mcap            # before — now an error
 bagwiz tf static cp -s donor.mcap -d target.mcap      # after
-
-bagwiz tf walk capture.mcap --of base_link --ref lidar  # before — now an error
-bagwiz tf walk -i capture.mcap --of base_link --ref lidar # after
 ```

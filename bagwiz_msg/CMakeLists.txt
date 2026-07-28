@@ -51,34 +51,6 @@ find_package(geometry_msgs REQUIRED)
 find_package(yaml_cpp_vendor REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
-# GeographicLib provides the WGS84 -> ENU / UTM projections used by
-# geo_pose_convert.cpp. It is consumed PRIVATE — an implementation detail
-# behind the GeoPoseConverter pimpl that must not leak into bagwiz_msg's
-# export set. Two packagings exist and both are supported:
-#   - a CMake CONFIG package (e.g. conda-forge `geographiclib-cpp`, used by the
-#     pixi/RoboStack build) that exports the GeographicLib::GeographicLib target;
-#   - the classic Debian/Ubuntu find-module that ships no imported target, only
-#     sets GeographicLib_LIBRARIES / _INCLUDE_DIRS, and lives under
-#     /usr/share/cmake/geographiclib.
-# Try CONFIG mode first; fall back to MODULE mode, appending the Debian module
-# directory to CMAKE_MODULE_PATH only when it exists so the path is harmless
-# inside a conda prefix (which has no /usr/share/cmake/geographiclib).
-find_package(GeographicLib CONFIG QUIET)
-if(NOT GeographicLib_FOUND)
-  if(EXISTS "/usr/share/cmake/geographiclib")
-    list(APPEND CMAKE_MODULE_PATH "/usr/share/cmake/geographiclib")
-  endif()
-  find_package(GeographicLib MODULE REQUIRED)
-endif()
-# Normalise both packagings onto the variables the consumers below use: when the
-# CONFIG package exported only the imported target, point GeographicLib_LIBRARIES
-# at it (a target is a valid link item, and linking it propagates its include
-# dirs — same approach as the PRIVATE nlohmann_json::nlohmann_json link). The
-# classic find-module already populates these variables itself.
-if(TARGET GeographicLib::GeographicLib AND NOT GeographicLib_LIBRARIES)
-  set(GeographicLib_LIBRARIES GeographicLib::GeographicLib)
-endif()
-
 add_library(bagwiz_msg
   src/core/cdr_walker/cdr_reader.cpp
   src/core/cdr_walker/cdr_writer.cpp
@@ -89,7 +61,6 @@ add_library(bagwiz_msg
   src/core/decoder/schema_decoder.cpp
   src/core/introspection/introspection_loader.cpp
   src/core/introspection/message_deserializer.cpp
-  src/core/msg_convert/geo_pose_convert.cpp
   src/core/msg_schema/parser.cpp
   src/core/msg_schema/schema_model.cpp
   src/core/msg_yaml/message_formatter.cpp
@@ -125,9 +96,6 @@ foreach(bagwiz_dep IN LISTS bagwiz_msg_ros_deps)
   target_link_libraries(bagwiz_msg PRIVATE ${${bagwiz_dep}_TARGETS})
 endforeach()
 target_link_libraries(bagwiz_msg PRIVATE yaml-cpp ${CMAKE_DL_LIBS})
-# GeographicLib (WGS84 -> ENU/UTM projection) is private to geo_pose_convert.cpp.
-target_include_directories(bagwiz_msg PRIVATE ${GeographicLib_INCLUDE_DIRS})
-target_link_libraries(bagwiz_msg PRIVATE ${GeographicLib_LIBRARIES})
 
 install(TARGETS bagwiz_msg
   EXPORT export_${PROJECT_NAME}
@@ -154,7 +122,6 @@ ament_export_dependencies(
   rosidl_runtime_cpp
   rosidl_typesupport_introspection_cpp
   geometry_msgs
-  GeographicLib
 )
 
 if(BUILD_TESTING)
@@ -194,22 +161,6 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_yaml_msg_stamp_sync_test test/core/msg_yaml/yaml_msg_stamp_sync_test.cpp)
   target_link_libraries(bagwiz_yaml_msg_stamp_sync_test bagwiz_msg yaml-cpp)
-
-  # geo_pose_convert lives in bagwiz_msg; GeographicLib is linked explicitly so
-  # the test still resolves the projection symbols under a static-lib build.
-  # The test decodes poses through tf_value_extract, whose TU lives in
-  # bagwiz_tf; bagwiz_tf depends on bagwiz_msg, so linking bagwiz_tf here
-  # would create a package cycle. The test compiles that single TU directly
-  # instead (the same pattern warmup_fill_test uses for warmup_fill.cpp).
-  ament_add_gtest(
-    bagwiz_geo_pose_convert_test
-    test/core/msg_convert/geo_pose_convert_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../bagwiz_tf/src/core/tf/tf_value_extract.cpp)
-  target_include_directories(bagwiz_geo_pose_convert_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../bagwiz_tf/include)
-  target_link_libraries(
-    bagwiz_geo_pose_convert_test bagwiz_msg ${GeographicLib_LIBRARIES}
-    ${std_msgs_TARGETS} ${nav_msgs_TARGETS} ${geometry_msgs_TARGETS})
 
   ament_add_gtest(bagwiz_mcap_schema_decode_test test/io/mcap_schema_decode_test.cpp)
   target_link_libraries(bagwiz_mcap_schema_decode_test bagwiz_msg)

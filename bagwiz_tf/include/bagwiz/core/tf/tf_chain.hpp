@@ -49,8 +49,8 @@ std::vector<std::pair<std::string, std::string>> chain_to_edges(
 //
 // This guards against tf2::BufferCore::lookupTransform's same-frame fast path:
 // when target == source it returns an identity transform WITHOUT verifying the
-// frame exists, so `tf walk <f> <f>` for a frame absent from the bag would
-// otherwise display a bogus identity transform instead of erroring.
+// frame exists, so a same-frame query for a frame absent from the bag would
+// otherwise yield a bogus identity transform instead of erroring.
 std::vector<std::string> missing_frames(
   const tf2::BufferCore & buffer, const std::string & of_frame, const std::string & ref_frame);
 

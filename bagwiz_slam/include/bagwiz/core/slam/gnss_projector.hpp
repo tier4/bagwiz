@@ -20,11 +20,9 @@
 // consistent metric frame works, and anchoring at the first fix keeps
 // coordinates small and well-conditioned.
 //
-// GeographicLib is hidden behind a pimpl so this header stays dependency-free
-// (mirroring geo_pose_convert's GeoPoseConverter). The projection itself reuses
-// the same GeographicLib::LocalCartesian forward solve as `bagwiz convert
-// msg geo`'s ENU route. Stateful and thread-incompatible; construct one per
-// run.
+// GeographicLib is hidden behind a pimpl so this header stays dependency-free.
+// The projection itself is a GeographicLib::LocalCartesian forward solve.
+// Stateful and thread-incompatible; construct one per run.
 namespace bagwiz::core::slam
 {
 

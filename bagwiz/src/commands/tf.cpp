@@ -9,7 +9,6 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/tf_static_cp.hpp"
-#include "bagwiz/commands/tf_walk.hpp"
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/base/str_utils.hpp"
 #include "bagwiz/core/tf/tf_buffer_loader.hpp"
@@ -451,9 +450,6 @@ std::string format_category_legend(bool use_color)
 //   static cp    Copy every static TF topic from <src> into <dst> (in place, or
 //                to a new bag via -o), preserving topic names and stamping each
 //                at <dst>'s start time.
-//   walk         Merge every TF topic into one buffer and step interactively
-//                through the times the merged TF changed, showing of=<of>
-//                ref=<ref> at each
 class TfCommand : public Command
 {
 public:
@@ -465,7 +461,6 @@ public:
     app.require_subcommand(1);
     configure_tree(app);
     configure_static(app);
-    configure_walk(app);
   }
 
   int run() override
@@ -477,8 +472,6 @@ public:
         return run_static_calc();
       case Subcommand::kStaticCp:
         return run_static_cp();
-      case Subcommand::kWalk:
-        return run_walk();
       case Subcommand::kNone:
         BAGWIZ_LOG_ERROR(kLogger, "no subcommand selected");
         return 1;
@@ -487,7 +480,7 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kTree, kStaticCalc, kStaticCp, kWalk };
+  enum class Subcommand { kNone, kTree, kStaticCalc, kStaticCp };
   Subcommand selected_ = Subcommand::kNone;
 
   struct TreeArgs
@@ -511,13 +504,6 @@ private:
     std::optional<std::filesystem::path> output_path;
     bool overwrite = false;
   } static_cp_args_;
-
-  struct WalkArgs
-  {
-    std::filesystem::path input_path;
-    std::string of_frame;
-    std::string ref_frame;
-  } walk_args_;
 
   void configure_tree(CLI::App & app)
   {
@@ -835,37 +821,6 @@ private:
   {
     const auto & args = static_cp_args_;
     return run_tf_static_cp(args.src_path, args.dst_path, args.output_path, args.overwrite);
-  }
-
-  void configure_walk(CLI::App & app)
-  {
-    auto * sub = app.add_subcommand(
-      "walk",
-      "Step interactively through the times the merged TF changed, showing "
-      "<of>'s pose in <ref> at each (merges every TF topic in the bag)");
-    sub->add_option("-i,--input", walk_args_.input_path, "Bag path (file or directory)")
-      ->required()
-      ->check(CLI::ExistingPath);
-    sub->add_option("--of", walk_args_.of_frame, "Frame whose pose is resolved (<of>)")->required();
-    sub
-      ->add_option(
-        "--ref", walk_args_.ref_frame, "Reference frame the pose is expressed in (<ref>)")
-      ->required();
-    sub->callback([this]() { selected_ = Subcommand::kWalk; });
-  }
-
-  int run_walk()
-  {
-    const auto & args = walk_args_;
-
-    // CLI11 marks --of/--ref required but accepts the empty string; reject it
-    // up front so lookupTransform isn't asked to resolve a blank frame.
-    if (args.of_frame.empty() || args.ref_frame.empty()) {
-      BAGWIZ_LOG_ERROR(kLogger, "Both --of and --ref frame ids must be non-empty.");
-      return 1;
-    }
-
-    return run_tf_walk(args.input_path, args.of_frame, args.ref_frame);
   }
 };
 

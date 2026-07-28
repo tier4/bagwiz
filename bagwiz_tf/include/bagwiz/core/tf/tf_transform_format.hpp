@@ -16,9 +16,9 @@
 #include <vector>
 
 // Rendering of a single resolved rigid-body transform (the result of
-// tf2::BufferCore::lookupTransform), shared by `bagwiz tf static calc` and
-// `bagwiz tf walk`. Kept free of I/O and colour so it is pure and
-// unit-testable without a bag; the command layer decides where the strings go.
+// tf2::BufferCore::lookupTransform), used by `bagwiz tf static calc`. Kept free
+// of I/O and colour so it is pure and unit-testable without a bag; the command
+// layer decides where the strings go.
 namespace bagwiz::core
 {
 
@@ -57,8 +57,8 @@ RollPitchYaw quaternion_to_rpy(const geometry_msgs::msg::Quaternion & q);
 //
 // `annotation` is appended to the label line right after the "of=<of>
 // ref=<ref>" endpoints (e.g. "  (static)" for `tf static calc`, which resolves
-// only the static tree). `tf walk` does not classify transforms as static vs
-// dynamic, so it passes the default empty annotation.
+// only the static tree). Callers that do not classify transforms as static vs
+// dynamic pass the default empty annotation.
 std::string format_transform_human(
   const geometry_msgs::msg::TransformStamped & tf, const std::vector<std::string> & path,
   const std::string & annotation = {});

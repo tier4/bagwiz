@@ -287,11 +287,10 @@ are allowed.
   another package directly, as an extra translation unit, when the
   code it must assert on sits in a package that already depends on
   this one — linking that package would close a cycle the DAG
-  forbids. `bagwiz_msg`'s `geo_pose_convert_test` does this with
-  `bagwiz_tf`'s `tf_value_extract.cpp` (`bagwiz_tf` depends on
-  `bagwiz_msg`). Keep such cases rare and comment the CMake block with
-  the cycle it avoids; when the assertions are really about the other
-  package's own behavior, put the test there instead.
+  forbids. No test does this today. Keep such cases rare and comment
+  the CMake block with the cycle it avoids; when the assertions are
+  really about the other package's own behavior, put the test there
+  instead.
 
 ## Maintaining These Guidelines
 

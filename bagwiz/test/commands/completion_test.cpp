@@ -735,53 +735,10 @@ TEST(FlagCompletionTest, ConvertFormatDashListsFormatFlags)
     "--help\n--input\n--output\n--overwrite\n--storage\n-h\n-i\n-o\n-w\n");
 }
 
-// `bagwiz convert <TAB>` lists both subcommands, sorted.
-TEST(FlagCompletionTest, ConvertSubcommandListsFormatAndMsg)
+// `bagwiz convert <TAB>` lists its only subcommand.
+TEST(FlagCompletionTest, ConvertSubcommandListsFormat)
 {
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "2", "bagwiz", "convert", ""}), "format\nmsg\n");
-}
-
-// `bagwiz convert msg <TAB>` lists its single action verb.
-TEST(FlagCompletionTest, ConvertMsgSubcommandListsGeo)
-{
-  EXPECT_EQ(run_completion({"bagwiz", "__complete", "3", "bagwiz", "convert", "msg", ""}), "geo\n");
-}
-
-// `bagwiz convert msg geo -` lists the geo flags, sorted, with help merged.
-TEST(FlagCompletionTest, ConvertMsgGeoDashListsGeoFlags)
-{
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "convert", "msg", "geo", "-"}),
-    "--crs\n--dst\n--frame-id\n--help\n--input\n--origin\n--output\n--overwrite\n--src\n--topic\n-"
-    "h\n-i\n-o\n-w\n");
-}
-
-// `--src` completes from the source snake_case choice set (no bag access).
-TEST(FlagCompletionTest, ConvertMsgGeoSrcFlagListsChoices)
-{
-  EXPECT_EQ(
-    run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "convert", "msg", "geo", "-i", "in.mcap", "--src"}),
-    "nav_sat_fix\n");
-}
-
-// `--dst` completes from the target snake_case choice set, sorted.
-TEST(FlagCompletionTest, ConvertMsgGeoDstFlagListsChoices)
-{
-  EXPECT_EQ(
-    run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "convert", "msg", "geo", "-i", "in.mcap", "--dst"}),
-    "pose_stamped\npose_with_covariance_stamped\n");
-}
-
-// `--crs` completes the coordinate-system choices, sorted.
-TEST(FlagCompletionTest, ConvertMsgGeoCrsFlagListsChoices)
-{
-  EXPECT_EQ(
-    run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "convert", "msg", "geo", "-i", "in.mcap", "--crs"}),
-    "enu\nutm\n");
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "convert", ""}), "format\n");
 }
 
 // Parent-level flag completion at the subcommand slot.
@@ -821,10 +778,9 @@ TEST(FlagCompletionTest, TfTreeDashListsHelpFlags)
 }
 
 // `bagwiz tf <TAB>` lists all subcommands, sorted.
-TEST(FlagCompletionTest, TfSubcommandListsStaticTreeAndWalk)
+TEST(FlagCompletionTest, TfSubcommandListsStaticAndTree)
 {
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "2", "bagwiz", "tf", ""}), "static\ntree\nwalk\n");
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "tf", ""}), "static\ntree\n");
 }
 
 // `tf static <TAB>` lists the command group's actions, sorted.
@@ -859,15 +815,6 @@ TEST(FlagCompletionTest, TfStaticCpDashListsCpFlags)
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "cp", "-"}),
     "--dst\n--help\n--output\n--overwrite\n--src\n-d\n-h\n-o\n-s\n-w\n");
-}
-
-// `tf walk -` surfaces its --of/--ref flags alongside the implicit help flags,
-// sorted.
-TEST(FlagCompletionTest, TfWalkDashListsWalkFlags)
-{
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "walk", "-"}),
-    "--help\n--input\n--of\n--ref\n-h\n-i\n");
 }
 
 // `tf static calc <bag> --of <TAB>` lists only frame ids from the bag's static
@@ -916,12 +863,12 @@ TEST_F(CompletionTest, TfStaticCalcOfFlagRespectsPrefix)
 
 // A bag with only a dynamic /tf topic (no *tf_static) has no static frames, so
 // `tf static calc --of <TAB>` returns empty rather than listing the dynamic
-// frames — confirming the static-only restriction. `tf walk --of` on the
-// exact same fixture DOES list those frames (see TfWalkOfFlagListsFrameIds),
-// so this is the one test in the suite that can actually tell "static
-// filtering applied" apart from "no filtering at all": every other static
-// fixture (write_mixed_tf_mcap_fixture) carries identical frames on /tf and
-// /tf_static and so cannot distinguish the two.
+// frames — confirming the static-only restriction. This is the one test in the
+// suite that can tell "static filtering applied" apart from "no filtering at
+// all": the fixture carries base_link/lidar/map/odom on /tf alone, so an
+// unfiltered lookup would surface them. Every other static fixture
+// (write_mixed_tf_mcap_fixture) carries identical frames on /tf and /tf_static
+// and so cannot distinguish the two.
 TEST_F(CompletionTest, TfStaticCalcOfFlagExcludesDynamicOnlyFrames)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
@@ -932,34 +879,6 @@ TEST_F(CompletionTest, TfStaticCalcOfFlagExcludesDynamicOnlyFrames)
     run_completion(
       {"bagwiz", "__complete", "7", "bagwiz", "tf", "static", "calc", "-i", "~/tf.mcap", "--of"}),
     "");
-}
-
-// `tf walk <bag> --of <TAB>` lists the bag's TF frame ids. Unlike
-// `tf static calc`, `tf walk` draws from all TF topics, not just the static
-// ones.
-TEST_F(CompletionTest, TfWalkOfFlagListsFrameIds)
-{
-  const HomeEnvGuard home_guard(tmp_dir_);
-
-  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
-
-  EXPECT_EQ(
-    run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "tf", "walk", "-i", "~/tf.mcap", "--of"}),
-    "base_link\nlidar\nmap\nodom\n");
-}
-
-// `--ref <TAB>` shares the same frame-id source as `--of`.
-TEST_F(CompletionTest, TfWalkRefFlagListsFrameIds)
-{
-  const HomeEnvGuard home_guard(tmp_dir_);
-
-  write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
-
-  EXPECT_EQ(
-    run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "tf", "walk", "-i", "~/tf.mcap", "--ref"}),
-    "base_link\nlidar\nmap\nodom\n");
 }
 
 // `tf tree <input> -t <TAB>` offers only the bag's TFMessage topics -- not the

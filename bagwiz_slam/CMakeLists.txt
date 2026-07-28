@@ -432,8 +432,8 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_slam_gnss_sample_test test/core/slam/gnss_sample_test.cpp)
   target_link_libraries(bagwiz_slam_gnss_sample_test bagwiz_slam)
 
-  # gnss_projector lives in bagwiz_slam; GeographicLib is linked explicitly (as
-  # the geo_pose_convert test does) since it is otherwise a private dependency.
+  # gnss_projector lives in bagwiz_slam; GeographicLib is linked explicitly
+  # since it is otherwise a private dependency.
   ament_add_gtest(bagwiz_slam_gnss_projector_test test/core/slam/gnss_projector_test.cpp)
   target_link_libraries(bagwiz_slam_gnss_projector_test bagwiz_slam ${GeographicLib_LIBRARIES})
 

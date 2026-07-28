@@ -38,7 +38,7 @@ bagwiz cam-info replace -i <input> --yaml <yaml> -t|--topics <topics>... [OPTION
 ```
 
 `<input>` doubles as the write-side target: without `-o` the bag is rewritten in
-place, mirroring `bagwiz traj join` and `bagwiz convert msg geo`. One or more
+place, mirroring `bagwiz traj join`. One or more
 topics are given via `-t`/`--topics`; each must be a `sensor_msgs/msg/CameraInfo`
 topic.
 

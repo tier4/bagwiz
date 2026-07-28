@@ -61,11 +61,11 @@ Registered commands: `cam-info`, `check`, `complete`, `convert`, `generate`,
 | cam-info | `cam_info.cpp`, `cam_info_replace.cpp`, `bagwiz_image/src/core/image/camera_info_resolver.cpp`                                 | `docs/commands/cam-info.md` |
 | check    | `check.cpp`                                                                                                                    | `docs/commands/check.md`    |
 | complete | `completion.cpp`                                                                                                               | `docs/commands/complete.md` |
-| convert  | `convert.cpp`, `convert_msg_geo.cpp`                                                                                           | `docs/commands/convert.md`  |
+| convert  | `convert.cpp`                                                                                                                  | `docs/commands/convert.md`  |
 | generate | `generate.cpp`, `generate_video.cpp`                                                                                           | `docs/commands/generate.md` |
 | ls       | `ls.cpp`                                                                                                                       | `docs/commands/ls.md`       |
 | map      | `map.cpp`, `map_slam.cpp`, `map_viewer.cpp`                                                                                    | `docs/commands/map.md`      |
-| tf       | `tf.cpp`, `tf_walk.cpp`, `tf_static_cp.cpp`, `bagwiz_tf/src/core/tf/*.cpp`                                                     | `docs/commands/tf.md`       |
+| tf       | `tf.cpp`, `tf_static_cp.cpp`, `bagwiz_tf/src/core/tf/*.cpp`                                                                    | `docs/commands/tf.md`       |
 | topic    | `topic.cpp`, `topic_drop/keep/rename.cpp`, `bagwiz_base/src/core/base/topic_match.cpp`, `bagwiz_bag/src/core/bag/bag_copy.cpp` | `docs/commands/topic.md`    |
 | traj     | `traj.cpp`                                                                                                                     | `docs/commands/traj.md`     |
 | walk     | `walk.cpp`                                                                                                                     | `docs/commands/walk.md`     |

@@ -20,7 +20,6 @@
   <depend>bagwiz_tui</depend>
   <depend>bagwiz_video</depend>
   <depend>ffmpeg</depend>
-  <depend>geographiclib</depend>
   <depend>geometry_msgs</depend>
   <depend>rcutils</depend>
   <depend>rmw</depend>

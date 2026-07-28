@@ -74,7 +74,7 @@ if(BUILD_TESTING)
 
   # video_encoder lives in bagwiz_video; libav is linked explicitly so the test
   # still resolves the encode/mux symbols under a static-lib build (same reason
-  # geo_pose_convert_test re-links GeographicLib).
+  # bagwiz_slam's gnss_projector_test re-links GeographicLib).
   ament_add_gtest(bagwiz_video_encoder_test test/core/video/video_encoder_test.cpp)
   target_link_libraries(bagwiz_video_encoder_test bagwiz_video PkgConfig::LIBAV)
 endif()
