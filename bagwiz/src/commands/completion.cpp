@@ -1428,9 +1428,7 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
   // typed topic=value unsplit, so a value in progress shows up as a current
   // word already containing '='; bash splits it, leaving a bare '=' as the
   // word right before the cursor. Both cases return no candidates.
-  if (
-    request.cursor_word > kSecondCommandArgWord &&
-    current.find('=') == std::string::npos) {
+  if (request.cursor_word > kSecondCommandArgWord && current.find('=') == std::string::npos) {
     const bool after_equals = request.words[request.cursor_word - 1] == "=";
     for (std::size_t w = request.cursor_word; w > kSecondCommandArgWord;) {
       const auto & word = request.words[--w];
