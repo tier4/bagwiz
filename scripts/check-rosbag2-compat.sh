@@ -87,13 +87,13 @@ check() { # <label> <path>
 # `convert format` refuses a no-op (same storage AND same layout), so reach the
 # directory bag by changing layout, then the single file by changing it back.
 # Both hops are genuine bagwiz writes.
-"$BAGWIZ_BIN" convert format "$SEED" "$WORK/dir" >/dev/null
+"$BAGWIZ_BIN" convert format -i "$SEED" -o "$WORK/dir" >/dev/null
 check "directory bag" "$WORK/dir"
 
-"$BAGWIZ_BIN" convert format "$WORK/dir" "$WORK/single.db3" >/dev/null
+"$BAGWIZ_BIN" convert format -i "$WORK/dir" -o "$WORK/single.db3" >/dev/null
 check "single-file .db3" "$WORK/single.db3"
 
-"$BAGWIZ_BIN" convert format "$SEED" "$WORK/single.mcap" >/dev/null
+"$BAGWIZ_BIN" convert format -i "$SEED" -o "$WORK/single.mcap" >/dev/null
 # humble ships no mcap storage plugin at all. That is a distro limitation
 # rather than a bagwiz regression, so probe for it and skip. Capture the output
 # first: `ros2 bag info` exits non-zero here, and under `pipefail` piping it
