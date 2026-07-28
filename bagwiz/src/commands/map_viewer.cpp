@@ -30,7 +30,7 @@ int run_map_viewer(const MapViewerArgs & args)
   std::filesystem::path map_path = args.map_path;
   std::error_code ec;
   // Accept either the map.pcd file directly or the output directory that holds
-  // it, so `map viewer <output_root>` mirrors `map slam … <output_root>`.
+  // it, so `map viewer -m <output_root>` mirrors `map slam -o <output_root>`.
   if (std::filesystem::is_directory(map_path, ec)) {
     map_path /= kMapFileName;
   }

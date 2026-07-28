@@ -77,12 +77,13 @@ private:
       "replace",
       "Replace the calibration carried by one or more sensor_msgs/msg/CameraInfo topics with the "
       "values from a single standard ROS camera_calibration YAML file");
-    sub->add_option("input", replace_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+    sub
+      ->add_option("-i,--input", replace_args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     sub
       ->add_option(
-        "calib_yaml", replace_args_.yaml_path,
+        "--yaml", replace_args_.yaml_path,
         "Camera calibration YAML in the camera_calibration / camera_info_manager format")
       ->required()
       ->check(CLI::ExistingFile);
@@ -115,7 +116,7 @@ private:
       "in a camera_calibration YAML file or in a bag's sensor_msgs/msg/CameraInfo topics");
     sub
       ->add_option(
-        "input", recompute_p_args_.input_path,
+        "-i,--input", recompute_p_args_.input_path,
         "Calibration YAML (a .yaml/.yml file in the camera_calibration / camera_info_manager "
         "format) or an input ROS 2 rosbag (file or directory)")
       ->required()
@@ -150,12 +151,12 @@ private:
       "dump",
       "Write a sensor_msgs/msg/CameraInfo topic's calibration out as a standard ROS "
       "camera_calibration YAML file");
-    sub->add_option("input", dump_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+    sub->add_option("-i,--input", dump_args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     sub
       ->add_option(
-        "topic", dump_args_.topic,
+        "-t,--topic", dump_args_.topic,
         "The CameraInfo topic whose calibration to write (its type must be "
         "sensor_msgs/msg/CameraInfo)")
       ->required();

@@ -90,9 +90,21 @@ constexpr std::array<std::string_view, 1> kCameraInfoType{{
   "sensor_msgs/msg/CameraInfo",
 }};
 
-// Every command that takes topics spells the flag this way; see
-// docs/superpowers/specs/2026-07-15-topics-flag-convention-design.md.
+// Every command that takes multiple topics spells the flag this way, so
+// topics are named consistently across the whole CLI.
 constexpr std::array<std::string_view, 2> kTopicsFlags{{"-t", "--topics"}};
+
+// Required rosbag input is always behind -i/--input after the flag conversion.
+constexpr std::array<std::string_view, 2> kInputFlags{{"-i", "--input"}};
+
+// Single topic operand behind -t/--topic.
+constexpr std::array<std::string_view, 2> kSingleTopicFlags{{"-t", "--topic"}};
+
+// Source topic for `topic rename`.
+constexpr std::array<std::string_view, 2> kSrcTopicFlags{{"-s", "--src-topic"}};
+
+// PointCloud2 topic(s) for `map slam --pcd`.
+constexpr std::array<std::string_view, 1> kPcdFlags{{"--pcd"}};
 
 constexpr std::array<std::string_view, 1> kPointCloud2Type{{
   "sensor_msgs/msg/PointCloud2",
@@ -102,69 +114,47 @@ constexpr std::array<std::string_view, 1> kImuType{{
   "sensor_msgs/msg/Imu",
 }};
 
-// Declarative table of commands that take a topic argument, either as a
-// positional or as the value(s) of a flag. `subcommand` is empty when the
-// command has no subcommand level (e.g. `bagwiz walk <input> <topic>`).
-// `input_word` is an index into CompletionRequest::words AFTER the leading
-// "bagwiz" has been stripped, so position 0 is the top-level command.
-// `allowed_types` restricts the offered topics to those whose type is listed
-// (e.g. `tf tree` to TFMessage, `traj dump` to the message types it can
-// process); an empty span offers every topic in the bag.
+// Declarative table of commands whose topic-value slots should be completed
+// from a bag. `subcommand` is empty when the command has no subcommand level
+// (e.g. `bagwiz walk -i <bag> -t <topic>`). `input_flags` names the flag(s)
+// whose value provides the bag path; `topic_flags` names the flag(s) whose
+// value(s) should be completed as topic names. `allowed_types` restricts the
+// offered topics to those whose type is listed (e.g. `tf tree` to TFMessage,
+// `traj dump` to the message types it can process); an empty span offers every
+// topic in the bag. `variadic` is true when the flag accepts several values per
+// occurrence.
 struct TopicArgBinding
 {
   std::string_view command{};
   std::string_view subcommand{};
-  std::size_t input_word{0};
-  // Positional mode: the slot the topic sits at, and whether later slots count
-  // too. Both ignored when `flags` is non-empty.
-  std::size_t topic_word{0};
+  std::span<const std::string_view> input_flags{};
+  std::span<const std::string_view> topic_flags{};
   std::span<const std::string_view> allowed_types{};
   bool variadic{false};
-  // Flag mode: complete the value slots of these flags instead of a positional
-  // slot. Empty selects positional mode; the two modes are mutually exclusive.
-  std::span<const std::string_view> flags{};
 };
 
-constexpr std::array<TopicArgBinding, 12> kTopicBindings{{
-  {"walk", "", kFirstCommandArgWord, kSecondCommandArgWord, {}, false},
-  {"traj", "dump", kSecondCommandArgWord, kThirdCommandArgWord, kTrajDumpSupportedTypes, false},
-  {"traj", "join", kSecondCommandArgWord, kFourthCommandArgWord, {}, false},
-  // `tf tree <input> [-t/--topics <topic>...]`: flag mode — the bag sits at
-  // <input>, TFMessage topics only, at every value slot since the flag is
-  // variadic. The flag is optional; omitting it merges every TF topic.
-  {"tf", "tree", kSecondCommandArgWord, 0, kTfTreeSupportedTypes, false, kTopicsFlags},
-  // `topic drop|keep <input> -t/--topics <selector>...`: flag mode — the bag
-  // sits at <input>, every topic (no type filter — these take selectors, which
-  // may be globs), at every value slot since the flag is variadic.
-  {"topic", "drop", kSecondCommandArgWord, 0, {}, false, kTopicsFlags},
-  {"topic", "keep", kSecondCommandArgWord, 0, {}, false, kTopicsFlags},
-  // `rename` completes only its <src_topic> slot (an existing topic) from the
-  // bag; <dst_topic> is a new name with nothing to suggest, so the binding is
-  // non-variadic and fires at the single topic_word.
-  {"topic", "rename", kSecondCommandArgWord, kThirdCommandArgWord, {}, false},
-  // `generate video <input> <image_topic> <output>`: complete the single <image_topic> slot
-  // from the bag's image topics (kImageTopicTypes). <input> and
-  // <output> are paths that fall through to the shell's file completion.
-  {"generate", "video", kSecondCommandArgWord, kThirdCommandArgWord, kImageTopicTypes, false},
-  // `map slam <input> <pcd_topic> <output_root>`: complete the single <pcd_topic>
-  // slot from the bag's PointCloud2 topics. <input> and <output_root> are paths
-  // that fall through to the shell's file completion.
-  {"map", "slam", kSecondCommandArgWord, kThirdCommandArgWord, kPointCloud2Type, false},
-  // `cam-info replace <input> <calib_yaml> -t/--topics <topic>...`: flag mode —
-  // the bag sits at <input>, CameraInfo topics only, at every value slot since
-  // the flag is variadic.
-  {"cam-info", "replace", kSecondCommandArgWord, 0, kCameraInfoType, false, kTopicsFlags},
-  // `cam-info dump <input> <topic>`: complete the single <topic> slot from the
-  // bag's CameraInfo topics (the only type it can dump). <topic> sits at word 3
-  // rather than `replace`'s word 4 because `dump` has no <calib_yaml> shifting
-  // the positionals right, and the binding is non-variadic because a
-  // camera_calibration YAML holds exactly one calibration. <input> and -o's
-  // value are paths that fall through to the shell's file completion.
-  {"cam-info", "dump", kSecondCommandArgWord, kThirdCommandArgWord, kCameraInfoType, false},
-  // `cam-info recompute-p <input> -t/--topics <topic>...`: flag mode — the
-  // bag sits at <input> and every value slot of the flag completes, since
-  // the flag is variadic.
-  {"cam-info", "recompute-p", kSecondCommandArgWord, 0, kCameraInfoType, false, kTopicsFlags},
+constexpr std::array<TopicArgBinding, 11> kTopicBindings{{
+  // `walk -i <bag> -t <topic>`
+  {"walk", "", kInputFlags, kSingleTopicFlags, {}, false},
+  // `traj dump -i <bag> -t <topic>`
+  {"traj", "dump", kInputFlags, kSingleTopicFlags, kTrajDumpSupportedTypes, false},
+  // `tf tree -i <bag> [-t/--topics <topic>...]`
+  {"tf", "tree", kInputFlags, kTopicsFlags, kTfTreeSupportedTypes, true},
+  // `topic drop|keep -i <bag> -t/--topics <selector>...`
+  {"topic", "drop", kInputFlags, kTopicsFlags, {}, true},
+  {"topic", "keep", kInputFlags, kTopicsFlags, {}, true},
+  // `topic rename -i <bag> -s/--src-topic <topic>` (dst is a new name)
+  {"topic", "rename", kInputFlags, kSrcTopicFlags, {}, false},
+  // `generate video -i <bag> -t <topic>`
+  {"generate", "video", kInputFlags, kSingleTopicFlags, kImageTopicTypes, false},
+  // `map slam -i <bag> --pcd <topic>`
+  {"map", "slam", kInputFlags, kPcdFlags, kPointCloud2Type, false},
+  // `cam-info replace -i <bag> -t/--topics <topic>...`
+  {"cam-info", "replace", kInputFlags, kTopicsFlags, kCameraInfoType, true},
+  // `cam-info dump -i <bag> -t <topic>`
+  {"cam-info", "dump", kInputFlags, kSingleTopicFlags, kCameraInfoType, false},
+  // `cam-info recompute-p -i <bag> -t/--topics <topic>...`
+  {"cam-info", "recompute-p", kInputFlags, kTopicsFlags, kCameraInfoType, true},
 }};
 
 enum class CompletionShell { Bash, Zsh, Fish };
@@ -605,15 +595,33 @@ std::vector<std::string> complete_frame_id_value(
   return result;
 }
 
+// Returns the value of the most recently occurring flag in `flags`, or nullopt
+// if none is present before the cursor word.
+std::optional<std::string_view> find_flag_value(
+  const CompletionRequest & request, std::span<const std::string_view> flags)
+{
+  for (std::size_t i = request.cursor_word; i > kFirstCommandArgWord; --i) {
+    const auto & prev = request.words[i - 1];
+    for (const auto & flag : flags) {
+      if (prev == flag) {
+        if (i < request.words.size()) {
+          return request.words[i];
+        }
+        return std::nullopt;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
 // True when the cursor sits in a value slot owned by `flag`. Unlike a plain
 // `words[cursor - 1] == flag` check this walks back over the flag's earlier
 // values, so a variadic flag completes at its second and later value slots too.
-// The walk stops at the <input> positional: nothing at or before it is a flag
-// value, and stopping there keeps a topic-shaped positional from being mistaken
-// for one.
+// The walk stops at the top-level command word: nothing at or before it is a
+// flag value.
 bool is_value_slot_of(const CompletionRequest & request, const std::string_view & flag)
 {
-  for (std::size_t i = request.cursor_word; i > kSecondCommandArgWord; --i) {
+  for (std::size_t i = request.cursor_word; i > kFirstCommandArgWord; --i) {
     const auto & word = request.words[i - 1];
     if (word == flag) {
       return true;
@@ -626,15 +634,8 @@ bool is_value_slot_of(const CompletionRequest & request, const std::string_view 
 }
 
 // True when `binding` applies at the request's cursor position: command and
-// subcommand match, and then either mode's own condition holds. In flag mode
-// (`binding.flags` non-empty) the cursor must sit on a value slot of one of
-// those flags. In positional mode the cursor must sit on a topic slot (the
-// single `topic_word`, or `topic_word`-and-later for a variadic binding), and
-// no positional slot before the first topic may have been replaced by a flag.
-// Callers must ensure `request.words` is non-empty (so words[0] is valid). A
-// matched slot implies the explicit `input_word` guard (present in both modes)
-// has passed, so the caller can dereference `words[input_word]` safely
-// regardless of the binding's indices.
+// subcommand match, the cursor sits on a value slot of one of the topic flags,
+// and the input flag(s) name a reachable bag path.
 bool binding_applies(const TopicArgBinding & binding, const CompletionRequest & request)
 {
   if (binding.command != request.words[kTopLevelCommandWord]) {
@@ -648,33 +649,14 @@ bool binding_applies(const TopicArgBinding & binding, const CompletionRequest & 
       return false;
     }
   }
-  if (!binding.flags.empty()) {
-    const bool on_a_flag_value = std::any_of(
-      binding.flags.begin(), binding.flags.end(),
-      [&](const std::string_view & f) { return is_value_slot_of(request, f); });
-    if (!on_a_flag_value) {
-      return false;
-    }
-    // The caller dereferences words[input_word]; guard it as the positional
-    // path does.
-    return request.words.size() > binding.input_word;
-  }
-  const bool slot_matches = binding.variadic ? (request.cursor_word >= binding.topic_word)
-                                             : (request.cursor_word == binding.topic_word);
-  if (!slot_matches) {
+  const bool on_a_flag_value = std::any_of(
+    binding.topic_flags.begin(), binding.topic_flags.end(),
+    [&](const std::string_view & f) { return is_value_slot_of(request, f); });
+  if (!on_a_flag_value) {
     return false;
   }
-  // The caller dereferences words[input_word]; guard it explicitly so the table
-  // stays safe even for a future binding with input_word >= topic_word.
-  if (request.words.size() <= binding.input_word) {
-    return false;
-  }
-  for (std::size_t i = kFirstCommandArgWord; i < binding.topic_word; ++i) {
-    if (request.words[i].starts_with("-")) {
-      return false;
-    }
-  }
-  return true;
+  const auto input_path = find_flag_value(request, binding.input_flags);
+  return input_path.has_value() && !input_path->empty() && !input_path->starts_with("-");
 }
 
 // Looks up the cursor position in kTopicBindings and, if a binding applies,
@@ -697,8 +679,11 @@ std::optional<std::vector<std::string>> try_topic_completion(const CompletionReq
     if (!binding_applies(binding, request)) {
       continue;
     }
-    const auto & input_arg = request.words[binding.input_word];
-    return complete_topics(input_arg, current, binding.allowed_types);
+    const auto input_path = find_flag_value(request, binding.input_flags);
+    if (!input_path) {
+      continue;
+    }
+    return complete_topics(*input_path, current, binding.allowed_types);
   }
 
   return std::nullopt;
@@ -708,10 +693,7 @@ std::vector<std::string> complete_complete_command(const CompletionRequest & req
 {
   const auto current = current_word(request);
   if (current.starts_with("-")) {
-    return matching(with_help({"--install", "--overwrite", "-w"}), current);
-  }
-  if (request.cursor_word == kFirstCommandArgWord) {
-    return matching(supported_shell_names(), current);
+    return matching(with_help({"--install", "--overwrite", "--shell", "-w"}), current);
   }
   return {};
 }
@@ -719,7 +701,7 @@ std::vector<std::string> complete_complete_command(const CompletionRequest & req
 // `convert msg` is a nested command group with one action verb, `geo`,
 // shifting every argument one word right of the flat `format` subcommand:
 //
-//   geo: `convert`(0) `msg`(1) `geo`(2) `<input>`(3) [--src V] [--dst V]
+//   geo: `convert`(0) `msg`(1) `geo`(2) `-i|--input <bag>`(3) [--src V] [--dst V]
 //        [--topic ...] [--crs V] [--origin V] [--frame-id V] [-o <out>]
 //        [-w|--overwrite]
 //
@@ -748,8 +730,8 @@ std::vector<std::string> complete_convert_msg(
   if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
     return matching(
       with_help(
-        {"--crs", "--dst", "--frame-id", "--origin", "--output", "--overwrite", "--src", "--topic",
-         "-o", "-w"}),
+        {"--crs", "--dst", "--frame-id", "--input", "--origin", "--output", "--overwrite", "--src",
+         "--topic", "-i", "-o", "-w"}),
       current);
   }
 
@@ -788,39 +770,15 @@ std::vector<std::string> complete_convert(const CompletionRequest & request)
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     if (mode == "format") {
-      return matching(with_help({"--overwrite", "--storage", "-s", "-w"}), current);
+      return matching(
+        with_help({"--input", "--output", "--overwrite", "--storage", "-i", "-o", "-w"}), current);
     }
   }
 
-  if (
-    request.cursor_word > 0 && (request.words[request.cursor_word - 1] == "--storage" ||
-                                request.words[request.cursor_word - 1] == "-s")) {
+  if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--storage") {
     return matching({"mcap", "sqlite3"}, current);
   }
   return {};
-}
-
-// Shared frame-id completion entry point. Looks up the bag path at
-// `input_word` (the per-command positional slot that holds the input
-// bag) and dispatches to complete_frame_id_value. Bails out when the
-// slot is missing or holds a flag — otherwise we would invoke
-// io::open_read on something that is definitely not a bag path.
-//
-// Callers: traj dump/join --of/--ref flag-value completion (bag at
-// word 2). Parameterising the slot keeps the helper reusable for any
-// future command that places the bag at a different positional index.
-std::vector<std::string> complete_frame_id_arg(
-  const CompletionRequest & request, std::size_t input_word, const std::string_view & current,
-  bool static_only = false)
-{
-  if (request.words.size() <= input_word) {
-    return {};
-  }
-  const auto & bag_arg = request.words[input_word];
-  if (bag_arg.empty() || bag_arg.starts_with("-")) {
-    return {};
-  }
-  return complete_frame_id_value(bag_arg, current, static_only);
 }
 
 std::vector<std::string> complete_traj(const CompletionRequest & request)
@@ -836,13 +794,17 @@ std::vector<std::string> complete_traj(const CompletionRequest & request)
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & mode = request.words[kFirstCommandArgWord];
     if (mode == "dump") {
-      return matching(with_help({"--format", "--of", "--overwrite", "--ref", "-f", "-w"}), current);
+      return matching(
+        with_help(
+          {"--format", "--input", "--of", "--output", "--overwrite", "--ref", "--topic", "-f", "-i",
+           "-o", "-t", "-w"}),
+        current);
     }
     if (mode == "join") {
       return matching(
         with_help(
-          {"--force", "--format", "--msg-type", "--of", "--output", "--overwrite", "--ref", "-f",
-           "-o", "-t", "-w"}),
+          {"--force", "--format", "--input", "--msg-type", "--of", "--output", "--overwrite",
+           "--ref", "--topic", "--traj", "-i", "-m", "-o", "-t", "-w"}),
         current);
     }
   }
@@ -852,11 +814,15 @@ std::vector<std::string> complete_traj(const CompletionRequest & request)
     if (previous == "--format" || previous == "-f") {
       return matching({"tum"}, current);
     }
-    if (previous == "--msg-type" || previous == "-t") {
+    if (previous == "--msg-type" || previous == "-m") {
       return matching({"tf"}, current);
     }
     if (previous == "--of" || previous == "--ref") {
-      return complete_frame_id_arg(request, kSecondCommandArgWord, current);
+      const auto bag_arg = find_flag_value(request, kInputFlags);
+      if (!bag_arg || bag_arg->empty() || bag_arg->starts_with("-")) {
+        return {};
+      }
+      return complete_frame_id_value(*bag_arg, current);
     }
   }
   return {};
@@ -866,15 +832,13 @@ std::vector<std::string> complete_traj(const CompletionRequest & request)
 // verb adds one positional slot, shifting every argument one word to the right
 // of the flat `tf` subcommands.
 //
-//   calc: `tf`(0) `static`(1) `calc`(2) `<input>`(3) --of <frame> --ref <frame> [--json]
-//   cp:   `tf`(0) `static`(1) `cp`(2)   `<src>`(3)   `<dst>`(4)  [-o <out>] [-w|--overwrite]
+//   calc: `tf`(0) `static`(1) `calc`(2) -i|--input <bag> --of <frame> --ref <frame> [--json]
+//   cp:   `tf`(0) `static`(1) `cp`(2)   -s|--src <bag> -d|--dst <bag> [-o <out>] [-w|--overwrite]
 //
 // At the action slot (word 2) the candidates are `calc` / `cp`. For `calc`,
-// `--json`/`--of`/`--ref` are offered for any `-` word, and the `--of`/`--ref`
-// value slots complete from the bag's static `*tf_static` frame ids only (the
-// bag path sits at word 3); unlike `tf walk`, dynamic-only frames are never
-// offered. For `cp`, the <src>/<dst>/-o values are bag paths that fall through
-// to the shell's file completion, so only the flags are surfaced.
+// `-i`/`--input`/`--json`/`--of`/`--ref` are offered for any `-` word, and the
+// `--of`/`--ref` value slots complete from the bag's static `*tf_static` frame
+// ids only. For `cp`, the `--src`/`--dst`/`--output` flags are surfaced.
 std::vector<std::string> complete_tf_static(
   const CompletionRequest & request, const std::string & current)
 {
@@ -891,12 +855,16 @@ std::vector<std::string> complete_tf_static(
 
   if (action == "calc") {
     if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
-      return matching(with_help({"--json", "--of", "--ref"}), current);
+      return matching(with_help({"--input", "--json", "--of", "--ref", "-i"}), current);
     }
     if (request.cursor_word > 0) {
       const auto & previous = request.words[request.cursor_word - 1];
       if (previous == "--of" || previous == "--ref") {
-        return complete_frame_id_arg(request, kThirdCommandArgWord, current, /*static_only=*/true);
+        const auto bag_arg = find_flag_value(request, kInputFlags);
+        if (!bag_arg || bag_arg->empty() || bag_arg->starts_with("-")) {
+          return {};
+        }
+        return complete_frame_id_value(*bag_arg, current, /*static_only=*/true);
       }
     }
     return {};
@@ -904,7 +872,8 @@ std::vector<std::string> complete_tf_static(
 
   if (action == "cp") {
     if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
-      return matching(with_help({"--output", "--overwrite", "-o", "-w"}), current);
+      return matching(
+        with_help({"--dst", "--output", "--overwrite", "--src", "-d", "-o", "-s", "-w"}), current);
     }
     return {};
   }
@@ -916,15 +885,14 @@ std::vector<std::string> complete_tf_static(
 // handled by complete_tf_static), and `walk`. At the subcommand slot (word 1)
 // the candidates are `static` / `tree` / `walk`.
 //
-//   tree: `tf`(0) `tree`(1) `<input>`(2) [-t|--topics <topic-or-selector>...]
-//   walk: `tf`(0) `walk`(1) `<input>`(2) --of <frame> --ref <frame>
+//   tree: `tf`(0) `tree`(1) -i|--input <bag> [-t|--topics <topic-or-selector>...]
+//   walk: `tf`(0) `walk`(1) -i|--input <bag> --of <frame> --ref <frame>
 //
 // `tree`'s -t/--topics value completion is handled earlier by
 // try_topic_completion via kTopicBindings (TFMessage topics only, at every
 // value slot since the flag is variadic and optional); here we surface only
 // `tree`'s own flags for any `-` word. `walk`'s --of/--ref value slots complete
-// the bag's TF frame ids merged from every TF topic (static + dynamic);
-// <input> is a path that falls through to the shell's file completion.
+// the bag's TF frame ids merged from every TF topic (static + dynamic).
 std::vector<std::string> complete_tf(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -945,23 +913,25 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
 
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     if (mode == "tree") {
-      return matching(with_help({"--topics", "-t"}), current);
+      return matching(with_help({"--input", "--topics", "-i", "-t"}), current);
     }
     if (mode == "walk") {
-      return matching(with_help({"--of", "--ref"}), current);
+      return matching(with_help({"--input", "--of", "--ref", "-i"}), current);
     }
     return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
   }
 
-  // `tf walk <input> --of <frame> --ref <frame>`: complete the --of/--ref value
-  // slots from the bag's TF frame ids (bag path at the <input> slot, word 2).
-  // The <input> slot itself falls through to the shell's file completion.
-  // `tf walk` merges every TF topic, so it offers frame ids from all of them
-  // (static + dynamic).
+  // `tf walk -i <bag> --of <frame> --ref <frame>`: complete the --of/--ref value
+  // slots from the bag's TF frame ids. `tf walk` merges every TF topic, so it
+  // offers frame ids from all of them (static + dynamic).
   if (mode == "walk" && request.cursor_word > 0) {
     const auto & previous = request.words[request.cursor_word - 1];
     if (previous == "--of" || previous == "--ref") {
-      return complete_frame_id_arg(request, kSecondCommandArgWord, current);
+      const auto bag_arg = find_flag_value(request, kInputFlags);
+      if (!bag_arg || bag_arg->empty() || bag_arg->starts_with("-")) {
+        return {};
+      }
+      return complete_frame_id_value(*bag_arg, current);
     }
   }
 
@@ -972,15 +942,15 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
 // `rename`. At the action slot (word 1) the candidates are those verbs.
 // Topic-name completion for `drop`/`keep` is handled earlier by
 // try_topic_completion via kTopicBindings in flag mode (every -t/--topics value
-// slot); `rename` completes only its <src_topic> positional slot the same way.
+// slot); `rename` completes only its --src-topic value slot the same way.
 // Here we surface each verb's own flags for any `-` word.
 //
-//   drop:   `topic`(0) `drop`(1)   `<input>`(2) -t|--topics <selector>...
+//   drop:   `topic`(0) `drop`(1)   -i|--input <bag> -t|--topics <selector>...
 //           [-o <out>] [-w|--overwrite]
-//   keep:   `topic`(0) `keep`(1)   `<input>`(2) -t|--topics <selector>...
+//   keep:   `topic`(0) `keep`(1)   -i|--input <bag> -t|--topics <selector>...
 //           [-o <out>] [-w|--overwrite]
-//   rename: `topic`(0) `rename`(1) `<input>`(2) `<src_topic>`(3) `<dst_topic>`(4)
-//           [-o <out>] [-w|--overwrite]
+//   rename: `topic`(0) `rename`(1) -i|--input <bag> -s|--src-topic <topic>
+//           -d|--dst-topic <topic> [-o <out>] [-w|--overwrite]
 std::vector<std::string> complete_topic(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -995,10 +965,15 @@ std::vector<std::string> complete_topic(const CompletionRequest & request)
     const auto & verb = request.words[kFirstCommandArgWord];
     if (verb == "drop" || verb == "keep") {
       return matching(
-        with_help({"--output", "--overwrite", "--topics", "-o", "-t", "-w"}), current);
+        with_help({"--input", "--output", "--overwrite", "--topics", "-i", "-o", "-t", "-w"}),
+        current);
     }
     if (verb == "rename") {
-      return matching(with_help({"--output", "--overwrite", "-o", "-w"}), current);
+      return matching(
+        with_help(
+          {"--dst-topic", "--input", "--output", "--overwrite", "--src-topic", "-d", "-i", "-o",
+           "-s", "-w"}),
+        current);
     }
   }
   return {};
@@ -1006,17 +981,16 @@ std::vector<std::string> complete_topic(const CompletionRequest & request)
 
 // `generate` is a command group for producing media from a rosbag; its sole
 // subcommand is `video`. At the subcommand slot (word 1) the only candidate is
-// `video`. The `<image_topic>` positional is completed earlier by
-// try_topic_completion via kTopicBindings (image topics only); <input>/<output>
-// are paths that fall through to the shell's file completion. Here we surface
-// `video` plus its own flags for any `-` word, and values for `--cam-info`
-// (CameraInfo topics), `--pcd` (PointCloud2 topics), and the enum choices for
-// `--field` and `--scheme`.
+// `video`. The image topic is completed earlier by try_topic_completion via
+// kTopicBindings (image topics only). Here we surface `video` plus its own
+// flags for any `-` word, and values for `--cam-info` (CameraInfo topics),
+// `--pcd` (PointCloud2 topics), and the enum choices for `--field` and
+// `--scheme`.
 //
-//   video: `generate`(0) `video`(1) `<input>`(2) `<image_topic>`(3) `<output>`(4)
-//          [--cam-info <topic>] [--undistort] [--resize <s>] [--pcd <topic>...]
-//          [--field <f>] [--min <v>] [--max <v>] [--scheme <s>] [--point-size <n>]
-//          [--alpha <a>] [-w|--overwrite]
+//   video: `generate`(0) `video`(1) -i|--input <bag> -t|--topic <image_topic>
+//          -o|--output <path> [--cam-info <topic>] [--undistort] [--resize <s>]
+//          [--pcd <topic>...] [--field <f>] [--min <v>] [--max <v>]
+//          [--scheme <s>] [--point-size <n>] [--alpha <a>] [-w|--overwrite]
 std::vector<std::string> complete_generate(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -1032,8 +1006,9 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
     if (sub == "video") {
       return matching(
         with_help(
-          {"--alpha", "--cam-info", "--field", "--max", "--min", "--overwrite", "--pcd",
-           "--point-size", "--resize", "--scheme", "--undistort", "-w"}),
+          {"--alpha", "--cam-info", "--field", "--input", "--max", "--min", "--output",
+           "--overwrite", "--pcd", "--point-size", "--resize", "--scheme", "--topic", "--undistort",
+           "-i", "-o", "-t", "-w"}),
         current);
     }
   }
@@ -1043,15 +1018,12 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
       if (request.cursor_word == 0 || request.words[request.cursor_word - 1] != flag) {
         return std::optional<std::vector<std::string>>{};
       }
-      if (request.words.size() <= kSecondCommandArgWord) {
-        return std::optional<std::vector<std::string>>{std::vector<std::string>{}};
-      }
-      const auto & bag_arg = request.words[kSecondCommandArgWord];
-      if (bag_arg.empty() || bag_arg.starts_with("-")) {
+      const auto bag_arg = find_flag_value(request, kInputFlags);
+      if (!bag_arg || bag_arg->empty() || bag_arg->starts_with("-")) {
         return std::optional<std::vector<std::string>>{std::vector<std::string>{}};
       }
       return std::optional<std::vector<std::string>>{
-        complete_topics(expand_current_user_home(bag_arg), current, types)};
+        complete_topics(expand_current_user_home(*bag_arg), current, types)};
     };
 
   if (auto cam_info = complete_topic_after_flag("--cam-info", kCameraInfoType); cam_info) {
@@ -1074,7 +1046,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 // verbs are `slam` and `viewer`. The verb adds one positional slot, shifting
 // every argument one word to the right of a flat command.
 //
-//   slam:   `map`(0) `slam`(1) `<input>`(2) `<pcd_topic>`(3) `<output_root>`(4)
+//   slam:   `map`(0) `slam`(1) -i|--input <bag> --pcd <topic> -o|--output <root>
 //           [--backend <cpu|cuda|auto>] [--frame <frame_id>] [--imu <topic>]
 //           [--gnss <topic>] [--cam <topic>...] [--cam-info <topic>...]
 //           [--input-res <m>] [--min-range <m>] [--max-range <m>]
@@ -1083,15 +1055,15 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //           [--no-color-propagate] [--fill-min-inliers <f>] [--submap-keyframes <N>]
 //           [--remove-outliers] [--outlier-r <m>] [--outlier-k <N>]
 //           [--remove-dynamic] [--dynamic-res <m>] [--dynamic-ds <m>] [--dynamic-dp <N>]
-//   viewer: `map`(0) `viewer`(1) `<map>`(2)
+//   viewer: `map`(0) `viewer`(1) -m|--map <map>
 //
 // At the action slot (word 1) the candidates are `slam` and `viewer` (or the
-// help flags for a `-` word). Past it, the positional <pcd_topic> slot for
-// `map slam` is completed earlier by try_topic_completion via kTopicBindings
-// (PointCloud2 topics only); here we surface `slam`'s flags for any `-` word and
-// complete the values of `--imu` (Imu topics), `--cam` (image topics), and
-// `--cam-info` (CameraInfo topics) from the bag.
-// `viewer` has no value-bearing flags and its single <map> positional is a path.
+// help flags for a `-` word). Past it, the `--pcd` slot for `map slam` is
+// completed earlier by try_topic_completion via kTopicBindings (PointCloud2
+// topics only); here we surface `slam`'s flags for any `-` word and complete the
+// values of `--imu` (Imu topics), `--cam` (image topics), and `--cam-info`
+// (CameraInfo topics) from the bag. `viewer` has no value-bearing flags and its
+// `--map` value is a path.
 
 std::vector<std::string> complete_map(const CompletionRequest & request)
 {
@@ -1107,7 +1079,7 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
   const auto & verb = request.words[kFirstCommandArgWord];
   if (verb == "viewer") {
     if (current.starts_with("-")) {
-      return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
+      return matching(with_help({"--map", "-m"}), current);
     }
     return {};
   }
@@ -1129,6 +1101,7 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
          "--frame",
          "--gnss",
          "--imu",
+         "--input",
          "--input-res",
          "--max-range",
          "--min-range",
@@ -1138,13 +1111,17 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
          "--no-warmup-fill",
          "--outlier-k",
          "--outlier-r",
+         "--output",
          "--overwrite",
+         "--pcd",
          "--remove-dynamic",
          "--remove-outliers",
          "--submap-keyframes",
          "--threads",
          "--viewer",
+         "-i",
          "-j",
+         "-o",
          "-w"}),
       current);
   }
@@ -1159,7 +1136,7 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
   // values per occurrence (CLI11 consumes every following non-flag word), so
   // the governing flag is found by walking left past the values already
   // typed; any other intervening flag ends that value run.
-  if (request.cursor_word == 0 || request.words.size() <= kSecondCommandArgWord) {
+  if (request.cursor_word == 0) {
     return {};
   }
   std::span<const std::string_view> flag_topic_types;
@@ -1167,7 +1144,7 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
     flag_topic_types = kImuType;
   } else {
     std::string_view governing;
-    for (std::size_t w = request.cursor_word; w > kSecondCommandArgWord;) {
+    for (std::size_t w = request.cursor_word; w > kFirstCommandArgWord;) {
       --w;
       const auto & word = request.words[w];
       if (!word.empty() && word.front() == '-') {
@@ -1183,43 +1160,45 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
       return {};
     }
   }
-  const auto & bag_arg = request.words[kSecondCommandArgWord];
-  if (bag_arg.empty() || bag_arg.starts_with("-")) {
+  const auto bag_arg = find_flag_value(request, kInputFlags);
+  if (!bag_arg || bag_arg->empty() || bag_arg->starts_with("-")) {
     return {};
   }
-  return complete_topics(expand_current_user_home(bag_arg), current, flag_topic_types);
+  return complete_topics(expand_current_user_home(*bag_arg), current, flag_topic_types);
 }
 
-// `ls <input>` lists topics. Its only flag is `-l/--long` (per-topic COUNT and
-// HZ); <input> is a path that falls through to the shell's file completion. We
-// surface `-l`/`--long` plus the implicit help flags for any `-` word.
+// `ls -i|--input <bag>` lists topics. Its only flag is `-l/--long` (per-topic
+// COUNT and HZ); <input> is a path that falls through to the shell's file
+// completion. We surface `-i`/`--input` and `-l`/`--long` plus the implicit help
+// flags for any `-` word.
 //
-//   ls: `ls`(0) `<input>`(1) [-l|--long]
+//   ls: `ls`(0) -i|--input <bag> [-l|--long]
 std::vector<std::string> complete_ls(const CompletionRequest & request)
 {
   const auto current = current_word(request);
   if (current.starts_with("-")) {
-    return matching(with_help({"--long", "-l"}), current);
+    return matching(with_help({"--input", "--long", "-i", "-l"}), current);
   }
   return {};
 }
 
-// `trim <input>` copies only the messages inside a time window. All its flags
-// are surfaced for any `-` word; <input> is a path that falls through to the
-// shell's file completion. The value of `--align` is completed from the bag's
-// topics (any type), mirroring `walk --cam-info`; `--stamp` completes its two
-// clock choices.
+// `trim -i|--input <bag>` copies only the messages inside a time window. All
+// its flags are surfaced for any `-` word; <input> is a path that falls through
+// to the shell's file completion. The value of `--align` is completed from the
+// bag's topics (any type), mirroring `walk --cam-info`; `--stamp` completes its
+// two clock choices.
 //
-//   trim: `trim`(0) `<input>`(1) {[--start <off>] [--end <off>|--duration <len>] |
-//         --both <off> | --align <topics>...} [--stamp header|recv] [-o <out>] [-w]
+//   trim: `trim`(0) -i|--input <bag>
+//         {[--start <off>] [--end <off>|--duration <len>] | --both <off> |
+//          --align <topics>...} [--stamp header|recv] [-o <out>] [-w]
 std::vector<std::string> complete_trim(const CompletionRequest & request)
 {
   const auto current = current_word(request);
   if (current.starts_with("-")) {
     return matching(
       with_help(
-        {"--align", "--both", "--duration", "--end", "--output", "--overwrite", "--stamp",
-         "--start", "-o", "-w"}),
+        {"--align", "--both", "--duration", "--end", "--input", "--output", "--overwrite",
+         "--stamp", "--start", "-i", "-o", "-w"}),
       current);
   }
 
@@ -1228,49 +1207,40 @@ std::vector<std::string> complete_trim(const CompletionRequest & request)
   }
 
   // Complete the value of `--align` from the bag's topic list. Bail out when
-  // the <input> slot is missing or holds a flag, so we never call the bag
-  // reader on something that is not a bag path.
+  // the -i/--input value is missing or holds a flag.
   if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--align") {
-    if (request.words.size() <= kFirstCommandArgWord) {
+    const auto bag_arg = find_flag_value(request, kInputFlags);
+    if (!bag_arg || bag_arg->empty() || bag_arg->starts_with("-")) {
       return {};
     }
-    const auto & bag_arg = request.words[kFirstCommandArgWord];
-    if (bag_arg.empty() || bag_arg.starts_with("-")) {
-      return {};
-    }
-    return complete_topics(expand_current_user_home(bag_arg), current, {});
+    return complete_topics(expand_current_user_home(*bag_arg), current, {});
   }
   return {};
 }
 
-// `walk <input> <topic>` walks a single topic's messages. Its <topic> positional
-// is completed earlier by try_topic_completion via kTopicBindings (every topic in
-// the bag); <input> is a path that falls through to the shell's file completion.
-// Here we surface walk's own `--cam-info` flag (plus the implicit help flags) for
-// any `-` word, and complete the value of `--cam-info` from the bag's CameraInfo
-// topics — mirroring `generate video --cam-info`. The bag path sits at the
-// <input> slot, word 1.
+// `walk -i|--input <bag> -t|--topic <topic>` walks a single topic's messages.
+// Its topic is completed earlier by try_topic_completion via kTopicBindings
+// (every topic in the bag). Here we surface walk's own `--cam-info` flag (plus
+// the implicit help flags) for any `-` word, and complete the value of
+// `--cam-info` from the bag's CameraInfo topics — mirroring `generate video
+// --cam-info`.
 //
-//   walk: `walk`(0) `<input>`(1) `<topic>`(2) [--cam-info <topic>]
+//   walk: `walk`(0) -i|--input <bag> -t|--topic <topic> [--cam-info <topic>]
 std::vector<std::string> complete_walk(const CompletionRequest & request)
 {
   const auto current = current_word(request);
   if (current.starts_with("-")) {
-    return matching(with_help({"--cam-info"}), current);
+    return matching(with_help({"--cam-info", "--input", "--topic", "-i", "-t"}), current);
   }
 
   // Complete the value of `--cam-info` from the bag's CameraInfo topics. Bail out
-  // when the <input> slot is missing or holds a flag, so we never call the bag
-  // reader on something that is not a bag path.
+  // when the -i/--input value is missing or holds a flag.
   if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--cam-info") {
-    if (request.words.size() <= kFirstCommandArgWord) {
+    const auto bag_arg = find_flag_value(request, kInputFlags);
+    if (!bag_arg || bag_arg->empty() || bag_arg->starts_with("-")) {
       return {};
     }
-    const auto & bag_arg = request.words[kFirstCommandArgWord];
-    if (bag_arg.empty() || bag_arg.starts_with("-")) {
-      return {};
-    }
-    return complete_topics(expand_current_user_home(bag_arg), current, kCameraInfoType);
+    return complete_topics(expand_current_user_home(*bag_arg), current, kCameraInfoType);
   }
   return {};
 }
@@ -1278,10 +1248,10 @@ std::vector<std::string> complete_walk(const CompletionRequest & request)
 // `check` is a command group for rosbag integrity checks. Its sole subcommand is
 // `broken`. At the subcommand slot (word 1) the only candidate is `broken` (or the
 // implicit help flags for a `-` word). Past it, `broken`'s flags are surfaced for
-// any `-` word; its single <input> positional is a path that falls through to the
+// any `-` word; its `-i`/`--input` value is a path that falls through to the
 // shell's file completion.
 //
-//   broken: `check`(0) `broken`(1) `<input>`(2) [--rm] [--deep]
+//   broken: `check`(0) `broken`(1) -i|--input <bag> [--rm] [--deep]
 std::vector<std::string> complete_check(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -1295,7 +1265,7 @@ std::vector<std::string> complete_check(const CompletionRequest & request)
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     const auto & sub = request.words[kFirstCommandArgWord];
     if (sub == "broken") {
-      return matching(with_help({"--deep", "--rm"}), current);
+      return matching(with_help({"--deep", "--input", "--rm", "-i"}), current);
     }
   }
   return {};
@@ -1307,20 +1277,19 @@ std::vector<std::string> complete_check(const CompletionRequest & request)
 // word).
 //
 // All three subcommands' topic values are completed earlier by
-// try_topic_completion via kTopicBindings — `dump` in positional mode,
-// `replace`'s and `recompute-p`'s `-t/--topics` in flag mode — so nothing in
-// this function completes a topic value.
+// try_topic_completion via kTopicBindings, so nothing in this function completes
+// a topic value.
 //
-// <input> and <calib_yaml> are paths that fall through to the shell's file
+// <input> and <calib> are paths that fall through to the shell's file
 // completion. `--frame-id`'s value is a free-form header override with nothing
 // to suggest, `-o`/`--output`'s is an output path, and `-a`/`--alpha`'s is a
 // free number in [0, 1], so none of those get value completion.
 //
-//   replace:     `cam-info`(0) `replace`(1) `<input>`(2) `<calib_yaml>`(3)
+//   replace:     `cam-info`(0) `replace`(1) -i|--input <bag> --yaml <yaml>
 //                -t|--topics <topic>... [--frame-id <id>] [-o <out>] [-w|--overwrite]
-//   recompute-p: `cam-info`(0) `recompute-p`(1) `<input>`(2)
+//   recompute-p: `cam-info`(0) `recompute-p`(1) -i|--input <bag>
 //                [-t|--topics <topic>...] [-a|--alpha <a>] [-o <out>] [-w|--overwrite]
-//   dump:        `cam-info`(0) `dump`(1) `<input>`(2) `<topic>`(3)
+//   dump:        `cam-info`(0) `dump`(1) -i|--input <bag> -t|--topic <topic>
 //                [-o <out>] [-w|--overwrite]
 std::vector<std::string> complete_cam_info(const CompletionRequest & request)
 {
@@ -1340,16 +1309,22 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
   if (request.cursor_word >= kSecondCommandArgWord && current.starts_with("-")) {
     if (sub == "replace") {
       return matching(
-        with_help({"--frame-id", "--output", "--overwrite", "--topics", "-o", "-t", "-w"}),
+        with_help(
+          {"--frame-id", "--input", "--output", "--overwrite", "--topics", "--yaml", "-i", "-o",
+           "-t", "-w"}),
         current);
     }
     if (sub == "recompute-p") {
       return matching(
-        with_help({"--alpha", "--output", "--overwrite", "--topics", "-a", "-o", "-t", "-w"}),
+        with_help(
+          {"--alpha", "--input", "--output", "--overwrite", "--topics", "-a", "-i", "-o", "-t",
+           "-w"}),
         current);
     }
     if (sub == "dump") {
-      return matching(with_help({"--output", "--overwrite", "-o", "-w"}), current);
+      return matching(
+        with_help({"--input", "--output", "--overwrite", "--topic", "-i", "-o", "-t", "-w"}),
+        current);
     }
     return {};
   }
@@ -1359,32 +1334,31 @@ std::vector<std::string> complete_cam_info(const CompletionRequest & request)
 
 // `pcd` is a command group for PointCloud2 topic processing. Its subcommands are
 // `concat` and `undistort`. At the subcommand slot (word 1) the candidates are
-// those two (or the implicit help flags for a `-` word). `<input>` is a path
-// that falls through to the shell's file completion. Past the subcommand we
+// those two (or the implicit help flags for a `-` word). `-i`/`--input` names a
+// path that falls through to the shell's file completion. Past the subcommand we
 // surface each subcommand's own flags for any `-` word.
 //
-// For `concat`, `<output_topic>` is a free-form new topic name with nothing to
-// suggest. PointCloud2 topic values complete for every `--pcd` value
-// (read from the bag named at word 2). `--stamp-offset` takes one or more
-// `<topic>=<value>` values per occurrence, so its `<topic>` half completes to
-// the same PointCloud2 topics (as `<topic>=`) at every value in its run, until
-// the cursor moves past `=` onto the `<value>` half. `--frame`,
-// `--tolerance`, and `-o`/`--output` take free-form / numeric / path values, so
-// they get no value completion.
+// For `concat`, `-t`/`--topic` names a free-form new topic name with nothing to
+// suggest. PointCloud2 topic values complete for every `--pcd` value (read from
+// the input bag). `--stamp-offset` takes one or more `<topic>=<value>` values
+// per occurrence, so its `<topic>` half completes to the same PointCloud2 topics
+// (as `<topic>=`) at every value in its run, until the cursor moves past `=`
+// onto the `<value>` half. `--frame`, `--tolerance`, and `-o`/`--output` take
+// free-form / numeric / path values, so they get no value completion.
 //
-//   concat: `pcd`(0) `concat`(1) `<input>`(2) `<output_topic>`(3)
+//   concat: `pcd`(0) `concat`(1) -i|--input <bag> -t|--topic <output_topic>
 //           --pcd <t...> [--frame <f>] [--tolerance <val>]
 //           [--stamp-offset <t=v>...]... [-o <out>] [--drop-inputs] [--force]
 //           [-j|--threads <N>] [-w|--overwrite]
 //
-// For `undistort`, `<pose_topic>` is a free-form topic name (accepted types are
-// TFMessage / Odometry / PoseStamped / PoseWithCovarianceStamped) with nothing
-// to suggest. `--pcd` is variadic and completes PointCloud2 topics from the bag
-// named at word 2, mirroring concat's `--pcd`. `--ref`/`--of` complete
-// the bag's TF frame ids, mirroring `traj dump`/`join`. `-o`/`--output` takes a
-// path and `-j`/`--threads` takes a count, so they get no value completion.
+// For `undistort`, `--pose` names a topic (accepted types are TFMessage /
+// Odometry / PoseStamped / PoseWithCovarianceStamped) with nothing to suggest.
+// `--pcd` is variadic and completes PointCloud2 topics from the input bag,
+// mirroring concat's `--pcd`. `--ref`/`--of` complete the bag's TF frame ids,
+// mirroring `traj dump`/`join`. `-o`/`--output` takes a path and `-j`/`--threads`
+// takes a count, so they get no value completion.
 //
-//   undistort: `pcd`(0) `undistort`(1) `<input>`(2) `<pose_topic>`(3)
+//   undistort: `pcd`(0) `undistort`(1) -i|--input <bag> --pose <topic>
 //              --pcd <t...> [--ref <frame>] [--of <frame>] [-o <out>]
 //              [-j|--threads <N>] [-w|--overwrite]
 std::vector<std::string> complete_pcd(const CompletionRequest & request)
@@ -1402,14 +1376,15 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
     if (sub == "concat") {
       return matching(
         with_help(
-          {"--drop-inputs", "--force", "--frame", "--output", "--overwrite", "--pcd",
-           "--stamp-offset", "--threads", "--tolerance", "-j", "-o", "-w"}),
+          {"--drop-inputs", "--force", "--frame", "--input", "--output", "--overwrite", "--pcd",
+           "--stamp-offset", "--threads", "--tolerance", "--topic", "-i", "-j", "-o", "-t", "-w"}),
         current);
     }
     if (sub == "undistort") {
       return matching(
         with_help(
-          {"--of", "--output", "--overwrite", "--pcd", "--ref", "--threads", "-j", "-o", "-w"}),
+          {"--input", "--of", "--output", "--overwrite", "--pcd", "--pose", "--ref", "--threads",
+           "-i", "-j", "-o", "-w"}),
         current);
     }
   }
@@ -1428,9 +1403,9 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
   // typed topic=value unsplit, so a value in progress shows up as a current
   // word already containing '='; bash splits it, leaving a bare '=' as the
   // word right before the cursor. Both cases return no candidates.
-  if (request.cursor_word > kSecondCommandArgWord && current.find('=') == std::string::npos) {
+  if (request.cursor_word > kFirstCommandArgWord && current.find('=') == std::string::npos) {
     const bool after_equals = request.words[request.cursor_word - 1] == "=";
-    for (std::size_t w = request.cursor_word; w > kSecondCommandArgWord;) {
+    for (std::size_t w = request.cursor_word; w > kFirstCommandArgWord;) {
       const auto & word = request.words[--w];
       if (!word.starts_with("-")) {
         continue;  // a value already given to --stamp-offset; keep scanning
@@ -1439,10 +1414,10 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
         if (after_equals) {
           return {};  // on the <value> half (bash split at '='); nothing to offer
         }
-        const auto & bag_arg = request.words[kSecondCommandArgWord];
-        if (!bag_arg.empty() && !bag_arg.starts_with("-")) {
+        const auto bag_arg = find_flag_value(request, kInputFlags);
+        if (bag_arg && !bag_arg->empty() && !bag_arg->starts_with("-")) {
           auto topics =
-            complete_topics(expand_current_user_home(bag_arg), current, kPointCloud2Type);
+            complete_topics(expand_current_user_home(*bag_arg), current, kPointCloud2Type);
           for (auto & topic : topics) {
             topic += '=';
           }
@@ -1453,46 +1428,34 @@ std::vector<std::string> complete_pcd(const CompletionRequest & request)
     }
   }
 
-  // --pcd is variadic: complete PointCloud2 topics for every value in
-  // its run, not just the first. Walk back from the cursor to the nearest option
-  // word; if it is --pcd, the cursor is still consuming its values, so
-  // offer topics from the bag named at word 2 (the <input> positional).
-  for (std::size_t w = request.cursor_word; w > kSecondCommandArgWord;) {
+  // --pcd is variadic: complete PointCloud2 topics for every value in its run,
+  // not just the first. Walk back from the cursor to the nearest option word; if
+  // it is --pcd, the cursor is still consuming its values, so offer topics from
+  // the input bag.
+  for (std::size_t w = request.cursor_word; w > kFirstCommandArgWord;) {
     const auto & word = request.words[--w];
     if (!word.starts_with("-")) {
       continue;  // a topic value already given to --pcd; keep scanning
     }
     if (word == "--pcd") {
-      const auto & bag_arg = request.words[kSecondCommandArgWord];
-      if (!bag_arg.empty() && !bag_arg.starts_with("-")) {
-        return complete_topics(expand_current_user_home(bag_arg), current, kPointCloud2Type);
-      }
-    }
-    break;  // the nearest option decides; a non-pcd option ends the run
-  }
-
-  // undistort's --pcd is likewise variadic: complete PointCloud2 topics for
-  // every value in its run, not just the first, mirroring --pcd above.
-  for (std::size_t w = request.cursor_word; w > kSecondCommandArgWord;) {
-    const auto & word = request.words[--w];
-    if (!word.starts_with("-")) {
-      continue;  // a topic value already given to --pcd; keep scanning
-    }
-    if (word == "--pcd") {
-      const auto & bag_arg = request.words[kSecondCommandArgWord];
-      if (!bag_arg.empty() && !bag_arg.starts_with("-")) {
-        return complete_topics(expand_current_user_home(bag_arg), current, kPointCloud2Type);
+      const auto bag_arg = find_flag_value(request, kInputFlags);
+      if (bag_arg && !bag_arg->empty() && !bag_arg->starts_with("-")) {
+        return complete_topics(expand_current_user_home(*bag_arg), current, kPointCloud2Type);
       }
     }
     break;  // the nearest option decides; a non-pcd option ends the run
   }
 
   // undistort's --of/--ref complete the bag's TF frame ids, mirroring
-  // `traj dump`/`join` (bag path at the same word 2 <input> slot).
+  // `traj dump`/`join`.
   if (request.cursor_word > 0) {
     const auto & previous = request.words[request.cursor_word - 1];
     if (previous == "--of" || previous == "--ref") {
-      return complete_frame_id_arg(request, kSecondCommandArgWord, current);
+      const auto bag_arg = find_flag_value(request, kInputFlags);
+      if (!bag_arg || bag_arg->empty() || bag_arg->starts_with("-")) {
+        return {};
+      }
+      return complete_frame_id_value(*bag_arg, current);
     }
   }
   return {};
@@ -1721,7 +1684,7 @@ public:
 
   void configure(CLI::App & app) override
   {
-    app.add_option("shell", shell_, "Shell to generate completions for")
+    app.add_option("--shell", shell_, "Shell to generate completions for")
       ->required()
       ->check(CLI::IsMember(supported_shell_name_strings()));
     app.add_flag(

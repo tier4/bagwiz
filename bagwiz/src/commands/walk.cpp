@@ -46,11 +46,11 @@ constexpr const char * kLogger = "bagwiz.cmd.walk";
 
 }  // namespace
 
-// `bagwiz walk <input> <topic>` walks the messages of a single topic
+// `bagwiz walk -i <input> -t <topic>` walks the messages of a single topic
 // one at a time and renders each payload as YAML, mirroring what
-// `ros2 topic echo` produces. Decoding relies on the rosidl
-// introspection typesupport library (or the schema-driven path when
-// the MCAP carries a `ros2msg` schema).
+// `ros2 topic echo` produces. Decoding prefers the schema-driven path when
+// the MCAP carries a usable `ros2msg` schema, falling back to the rosidl
+// introspection typesupport library otherwise.
 //
 // The view is a pager driven by `bagwiz::core::tui::ScrollablePager`:
 // the header (timestamp, size) and footer (index + topic/type + scroll
@@ -93,10 +93,10 @@ public:
 
   void configure(CLI::App & app) override
   {
-    app.add_option("input", input_path_, "Bag path (file or directory)")
+    app.add_option("-i,--input", input_path_, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
-    app.add_option("topic", topic_, "Topic name to inspect")->required();
+    app.add_option("-t,--topic", topic_, "Topic name to inspect")->required();
     app.add_option(
       "--cam-info", camera_info_topic_,
       "Explicit CameraInfo topic for the undistort preview and the point-cloud projection overlay");

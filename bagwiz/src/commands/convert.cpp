@@ -126,16 +126,16 @@ private:
       "format",
       "Repack a ROS 2 rosbag, converting between storage backends and/or "
       "file/directory layouts");
-    sub->add_option("input", format_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+    sub->add_option("-i,--input", format_args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     sub
       ->add_option(
-        "output", format_args_.output_path, "Output rosbag2 directory (or .mcap/.db3 file)")
+        "-o,--output", format_args_.output_path, "Output rosbag2 directory (or .mcap/.db3 file)")
       ->required();
     sub
       ->add_option(
-        "-s,--storage", format_args_.storage,
+        "--storage", format_args_.storage,
         "Target storage backend (default: inferred from the output extension when it "
         "is .mcap or .db3; otherwise the input bag's storage backend is reused)")
       ->check(CLI::IsMember({"mcap", "sqlite3"}));
@@ -164,7 +164,8 @@ private:
       "geo",
       "Convert a geographic source (sensor_msgs/msg/NavSatFix) into a geometry_msgs pose type, "
       "projecting WGS84 lat/lon/alt into a Cartesian frame (ENU or UTM)");
-    sub->add_option("input", msg_geo_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+    sub
+      ->add_option("-i,--input", msg_geo_args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     sub

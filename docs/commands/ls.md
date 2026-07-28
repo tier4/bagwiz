@@ -7,20 +7,15 @@ counts and average frequencies. ROS 1 `*.bag` inputs are not supported.
 ## Usage
 
 ```text
-bagwiz ls [-l|--long] <input>
+bagwiz ls -i <input> [-l|--long]
 ```
-
-## Positional arguments
-
-| Name    | Description                                                                                                                        |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `input` | ROS 2 rosbag path: a rosbag2 directory or a single-file `*.mcap` / `*.db3`. zstd-compressed `*.db3.zstd` inputs are also accepted. |
 
 ## Options
 
-| Flag           | Description                                                                                       |
-| -------------- | ------------------------------------------------------------------------------------------------- |
-| `-l`, `--long` | Add the `COUNT` and `HZ` columns. This requires a statistics pass over the bag (see Performance). |
+| Flag                    | Description                                                                                                                        |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `-i`, `--input <input>` | ROS 2 rosbag path: a rosbag2 directory or a single-file `*.mcap` / `*.db3`. zstd-compressed `*.db3.zstd` inputs are also accepted. |
+| `-l`, `--long`          | Add the `COUNT` and `HZ` columns. This requires a statistics pass over the bag (see Performance).                                  |
 
 ## Output
 
@@ -71,18 +66,27 @@ regardless of bag size or storage format.
 
 ```bash
 # List every topic in a directory-layout rosbag2 (names + types only).
-bagwiz ls path/to/rosbag2_2025_01_01-12_00_00/
+bagwiz ls -i path/to/rosbag2_2025_01_01-12_00_00/
 
 # Single-file MCAP.
-bagwiz ls capture.mcap
+bagwiz ls -i capture.mcap
 
 # Long listing: add per-topic message counts and average Hz.
-bagwiz ls -l capture.mcap
+bagwiz ls -i capture.mcap -l
 
 # Filter with grep — column-oriented output makes this trivial.
-bagwiz ls capture.mcap | grep /sensors/
-bagwiz ls capture.mcap | grep sensor_msgs/msg/PointCloud2
-bagwiz ls -l capture.mcap | grep lidar
+bagwiz ls -i capture.mcap | grep /sensors/
+bagwiz ls -i capture.mcap | grep sensor_msgs/msg/PointCloud2
+bagwiz ls -i capture.mcap -l | grep lidar
+```
+
+## Migration
+
+`<input>` used to be a positional argument. It is now `-i` / `--input`:
+
+```bash
+bagwiz ls capture.mcap         # before — now an error
+bagwiz ls -i capture.mcap      # after
 ```
 
 ## Exit status

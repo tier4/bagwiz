@@ -102,7 +102,7 @@ void print_long(const std::vector<Row> & rows, double duration_sec)
 
 }  // namespace
 
-// `bagwiz ls <input>` lists every topic in a single rosbag. Filtering is
+// `bagwiz ls -i <input>` lists every topic in a single rosbag. Filtering is
 // intentionally left to downstream tools (grep, awk, …) on the tabular
 // output rather than being baked into the command itself.
 //
@@ -121,7 +121,7 @@ public:
 
   void configure(CLI::App & app) override
   {
-    app.add_option("input", input_path_, "Bag path (file or directory)")
+    app.add_option("-i,--input", input_path_, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     app.add_flag(

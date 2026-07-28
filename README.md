@@ -80,7 +80,7 @@ colcon workspace and source its `install/setup.bash` before running bagwiz:
 
 ```bash
 source /path/to/my_msgs_ws/install/setup.bash
-bagwiz walk my.mcap /topic
+bagwiz walk -i my.mcap -t /topic
 ```
 
 Sourcing the overlay sets `AMENT_PREFIX_PATH` and `LD_LIBRARY_PATH`, so bagwiz

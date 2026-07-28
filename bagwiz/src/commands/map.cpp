@@ -68,14 +68,14 @@ private:
   {
     auto * sub = app.add_subcommand(
       "slam", "Estimate a trajectory from a LiDAR PointCloud2 topic (GLIM, in-process)");
-    sub->add_option("input", slam_args_.input_path, "Bag path (file or directory)")
+    sub->add_option("-i,--input", slam_args_.input_path, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
-    sub->add_option("pcd_topic", slam_args_.cloud_topic, "PointCloud2 topic to run SLAM on")
+    sub->add_option("--pcd", slam_args_.cloud_topic, "PointCloud2 topic to run SLAM on")
       ->required();
     sub
       ->add_option(
-        "output_root", slam_args_.output_root, "Output root directory; writes traj.tum and map.pcd")
+        "-o,--output", slam_args_.output_root, "Output root directory; writes traj.tum and map.pcd")
       ->required();
     sub->add_option(
       "--imu", slam_args_.imu_topic,
@@ -247,7 +247,7 @@ private:
       "viewer", "Open the browser map viewer for an existing map.pcd (no SLAM run)");
     sub
       ->add_option(
-        "map", viewer_args_.map_path,
+        "-m,--map", viewer_args_.map_path,
         "Path to a map.pcd file, or a directory containing map.pcd (e.g. a map slam "
         "output root). Served over a loopback HTTP server with the Three.js viewer; "
         "runs until interrupted (Ctrl-C).")

@@ -65,18 +65,18 @@ private:
   {
     auto * sub =
       app.add_subcommand("video", "Render an image topic from a rosbag to a video file.");
-    sub->add_option("<input>", video_args_.input_path, "Input ROS 2 rosbag (file or directory).")
+    sub->add_option("-i,--input", video_args_.input_path, "Input ROS 2 rosbag (file or directory).")
       ->required()
       ->check(CLI::ExistingPath);
     sub
       ->add_option(
-        "<img_topic>", video_args_.topic,
+        "-t,--topic", video_args_.topic,
         "Image topic to render. Supported types: sensor_msgs/msg/Image (bgr8, rgb8) and "
         "sensor_msgs/msg/CompressedImage (JPEG/PNG).")
       ->required();
     sub
       ->add_option(
-        "<output>", video_args_.output_path,
+        "-o,--output", video_args_.output_path,
         "Output video path. Extension selects container/codec: .mp4/.mkv/.mov -> H.264, "
         ".avi -> MJPEG.")
       ->required();

@@ -75,7 +75,7 @@ private:
       "Remove topics from a rosbag, copying every other topic verbatim. Each "
       "<topic> is a literal name or a '*' glob (e.g. /sensing/*); '*' matches any "
       "run of characters, including '/'.");
-    sub->add_option("input", drop_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+    sub->add_option("-i,--input", drop_args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     sub
@@ -99,7 +99,7 @@ private:
       "Keep only the selected topics, dropping every other topic. Each "
       "<topic> is a literal name or a '*' glob (e.g. /sensing/*); '*' matches any "
       "run of characters, including '/'.");
-    sub->add_option("input", keep_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+    sub->add_option("-i,--input", keep_args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     sub
@@ -123,12 +123,16 @@ private:
       "Rename one topic in a rosbag, copying every other topic verbatim. <src_topic> and "
       "<dst_topic> are literal topic names (no globs): the topic named <src_topic> is "
       "re-declared as <dst_topic> and its messages move with it.");
-    sub->add_option("input", rename_args_.input_path, "Input ROS 2 rosbag (file or directory)")
+    sub->add_option("-i,--input", rename_args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
-    sub->add_option("src_topic", rename_args_.src_topic, "Existing topic to rename (literal name).")
+    sub
+      ->add_option(
+        "-s,--src-topic", rename_args_.src_topic, "Existing topic to rename (literal name).")
       ->required();
-    sub->add_option("dst_topic", rename_args_.dst_topic, "New name for the topic (literal name).")
+    sub
+      ->add_option(
+        "-d,--dst-topic", rename_args_.dst_topic, "New name for the topic (literal name).")
       ->required();
     sub->add_option(
       "-o,--output", rename_args_.output_path,

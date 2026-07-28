@@ -13,21 +13,16 @@ cleanly on terminal resize. ROS 1 `*.bag` inputs are not supported.
 ## Usage
 
 ```text
-bagwiz walk <input> <topic> [--cam-info <cam-info-topic>]
+bagwiz walk -i <input> -t <topic> [--cam-info <cam-info-topic>]
 ```
-
-## Positional arguments
-
-| Name    | Description                                                             |
-| ------- | ----------------------------------------------------------------------- |
-| `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). |
-| `topic` | Topic name to inspect. Must exist in the bag.                           |
 
 ## Options
 
-| Flag         | Description                                                                                                                                                                                                                                    |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--cam-info` | Explicit `sensor_msgs/msg/CameraInfo` topic for the preview's undistort toggle and the PointCloud2 projection overlay. When omitted, bagwiz auto-resolves it from `<topic>` using the rules documented for `bagwiz generate video --cam-info`. |
+| Flag                    | Description                                                                                                                                                                                                                                    |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-i`, `--input <input>` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).                                                                                                                                                                        |
+| `-t`, `--topic <topic>` | Topic name to inspect. Must exist in the bag.                                                                                                                                                                                                  |
+| `--cam-info`            | Explicit `sensor_msgs/msg/CameraInfo` topic for the preview's undistort toggle and the PointCloud2 projection overlay. When omitted, bagwiz auto-resolves it from `<topic>` using the rules documented for `bagwiz generate video --cam-info`. |
 
 ## Behavior
 
@@ -286,7 +281,17 @@ because `walk` is the most decoder-centric command.
 ## Example
 
 ```bash
-bagwiz walk capture.mcap /sensing/imu/data
+bagwiz walk -i capture.mcap -t /sensing/imu/data
+```
+
+## Migration
+
+`<input>` and `<topic>` used to be positional arguments. They are now
+`-i` / `--input` and `-t` / `--topic`:
+
+```bash
+bagwiz walk capture.mcap /sensing/imu/data        # before — now an error
+bagwiz walk -i capture.mcap -t /sensing/imu/data  # after
 ```
 
 ## Exit status

@@ -438,7 +438,7 @@ TEST_F(CompletionTest, WalkTopicCompletionExpandsCurrentUserHome)
   write_mcap_fixture(tmp_dir_ / "fixture.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "3", "bagwiz", "walk", "~/fixture.mcap"}),
+    run_completion({"bagwiz", "__complete", "5", "bagwiz", "walk", "-i", "~/fixture.mcap", "-t"}),
     "/bar\n/foo\n");
 }
 
@@ -452,7 +452,8 @@ TEST_F(CompletionTest, TrajDumpTopicCompletionListsOnlySupportedTypes)
   write_traj_dump_mixed_fixture(tmp_dir_ / "fixture.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "~/fixture.mcap"}),
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "traj", "dump", "-i", "~/fixture.mcap", "-t"}),
     "/odom\n/pose\n/pwc\n/tf\n");
 }
 
@@ -464,7 +465,8 @@ TEST_F(CompletionTest, TrajDumpTopicCompletionRespectsPrefix)
   write_traj_dump_mixed_fixture(tmp_dir_ / "fixture.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "~/fixture.mcap", "/p"}),
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "traj", "dump", "-i", "~/fixture.mcap", "-t", "/p"}),
     "/pose\n/pwc\n");
 }
 
@@ -478,7 +480,8 @@ TEST_F(CompletionTest, TrajDumpTopicCompletionExcludesUnsupportedTypeOnPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "~/fixture.mcap", "/poi"}),
+      {"bagwiz", "__complete", "6", "bagwiz", "traj", "dump", "-i", "~/fixture.mcap", "-t",
+       "/poi"}),
     "");
 }
 
@@ -491,10 +494,13 @@ TEST_F(CompletionTest, TrajDumpTopicCompletionEmptyWhenNoSupportedTopics)
   write_mcap_fixture(tmp_dir_ / "unsupported.mcap");  // String + Int32 only
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "~/unsupported.mcap"}),
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "traj", "dump", "-i", "~/unsupported.mcap", "-t"}),
     "");
 }
 
+// `traj join -t <TAB>` names a new topic to embed the trajectory under, not a
+// topic that already exists in the bag, so no bag-topic candidates are offered.
 TEST_F(CompletionTest, TrajJoinTopicCompletionListsBagTopics)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
@@ -504,23 +510,21 @@ TEST_F(CompletionTest, TrajJoinTopicCompletionListsBagTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "traj", "join", "~/fixture.mcap", traj_arg}),
-    "/bar\n/foo\n");
+      {"bagwiz", "__complete", "8", "bagwiz", "traj", "join", "-i", "~/fixture.mcap", "--traj",
+       traj_arg, "-t"}),
+    "");
 }
 
-// The topic-binding table guards against flag interleave in any positional
-// slot before the topic. Pre-refactor walk would have blindly called the
-// reader on whatever sat at words[1]; post-refactor the binding rejects it
-// before the io call. End-user output stays empty either way, but this
-// test pins the new gate so a regression cannot silently re-enable a
-// reader call on a flag-shaped path.
+// With the flag-only surface, topic completion requires an explicit -i/--input.
+// Completing a -t/--topic value when no -i is given must stay empty so the
+// shell's file completion takes over instead of trying to open a non-existent bag.
 TEST_F(CompletionTest, WalkTopicCompletionSuppressedWhenInputSlotIsFlag)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
   write_mcap_fixture(tmp_dir_ / "fixture.mcap");
 
-  EXPECT_EQ(run_completion({"bagwiz", "__complete", "3", "bagwiz", "walk", "--unknown-flag"}), "");
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "3", "bagwiz", "walk", "-t"}), "");
 }
 
 TEST_F(CompletionTest, TrajDumpTopicCompletionSuppressedWhenInputSlotIsFlag)
@@ -529,11 +533,13 @@ TEST_F(CompletionTest, TrajDumpTopicCompletionSuppressedWhenInputSlotIsFlag)
 
   write_mcap_fixture(tmp_dir_ / "fixture.mcap");
 
-  // A flag in the input slot must not cause the topic binding to call the
-  // bag reader on a flag-shaped path; the binding's earlier-slot guard
-  // bails out and produces no topic candidates.
+  // With the flag-only surface, a flag value in the -i/--input slot must not
+  // be treated as a bag path. Topic completion for -t/--topic must bail out
+  // and produce no candidates.
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "traj", "dump", "--unknown-flag"}), "");
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "traj", "dump", "-i", "--unknown-flag", "-t"}),
+    "");
 }
 
 TEST_F(CompletionTest, TrajDumpFormatFlagValueCompletes)
@@ -547,7 +553,7 @@ TEST_F(CompletionTest, TrajDumpFormatFlagValueCompletes)
   // supported format.
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "traj", "dump", "~/fixture.mcap", "--format"}),
+      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", "-i", "~/fixture.mcap", "--format"}),
     "tum\n");
 }
 
@@ -561,8 +567,8 @@ TEST_F(CompletionTest, TrajDumpRefFlagListsBagFrameIds)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", "~/tf.mcap", "/tf", "out.tum",
-       "--ref"}),
+      {"bagwiz", "__complete", "10", "bagwiz", "traj", "dump", "-i", "~/tf.mcap", "-t", "/tf", "-o",
+       "out.tum", "--ref"}),
     "base_link\nlidar\nmap\nodom\n");
 }
 
@@ -576,8 +582,8 @@ TEST_F(CompletionTest, TrajDumpOfFlagListsBagFrameIds)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", "~/tf.mcap", "/tf", "out.tum",
-       "--of"}),
+      {"bagwiz", "__complete", "10", "bagwiz", "traj", "dump", "-i", "~/tf.mcap", "-t", "/tf", "-o",
+       "out.tum", "--of"}),
     "base_link\nlidar\nmap\nodom\n");
 }
 
@@ -592,8 +598,8 @@ TEST_F(CompletionTest, TrajDumpRefFlagRespectsPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", "~/tf.mcap", "/tf", "out.tum",
-       "--ref", "ba"}),
+      {"bagwiz", "__complete", "10", "bagwiz", "traj", "dump", "-i", "~/tf.mcap", "-t", "/tf", "-o",
+       "out.tum", "--ref", "ba"}),
     "base_link\n");
 }
 
@@ -609,8 +615,8 @@ TEST_F(CompletionTest, TrajJoinRefFlagListsBagFrameIds)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "8", "bagwiz", "traj", "join", "~/tf.mcap", "in.tum", "/tf",
-       "--ref"}),
+      {"bagwiz", "__complete", "10", "bagwiz", "traj", "join", "-i", "~/tf.mcap", "--traj",
+       "in.tum", "-t", "/tf", "--ref"}),
     "base_link\nlidar\nmap\nodom\n");
 }
 
@@ -625,8 +631,8 @@ TEST_F(CompletionTest, TrajDumpRefFlagEmptyWhenBagHasNoTf)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", "~/no_tf.mcap", "/tf", "out.tum",
-       "--ref"}),
+      {"bagwiz", "__complete", "10", "bagwiz", "traj", "dump", "-i", "~/no_tf.mcap", "-t", "/tf",
+       "-o", "out.tum", "--ref"}),
     "");
 }
 
@@ -640,8 +646,8 @@ TEST_F(CompletionTest, TrajDumpRefFlagEmptyForMissingBag)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", "~/missing.mcap", "/tf", "out.tum",
-       "--ref"}),
+      {"bagwiz", "__complete", "10", "bagwiz", "traj", "dump", "-i", "~/missing.mcap", "-t", "/tf",
+       "-o", "out.tum", "--ref"}),
     "");
 }
 
@@ -656,8 +662,8 @@ TEST_F(CompletionTest, TrajDumpRefFlagSuppressedWhenBagSlotIsFlag)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", "--unknown-flag", "/tf", "out.tum",
-       "--ref"}),
+      {"bagwiz", "__complete", "9", "bagwiz", "traj", "dump", "--unknown-flag", "-t", "/tf", "-o",
+       "out.tum", "--ref"}),
     "");
 }
 
@@ -674,7 +680,8 @@ TEST(FlagCompletionTest, TopLevelDashListsHelpAndVersion)
 TEST(FlagCompletionTest, LsDashListsLsFlags)
 {
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "2", "bagwiz", "ls", "-"}), "--help\n--long\n-h\n-l\n");
+    run_completion({"bagwiz", "__complete", "2", "bagwiz", "ls", "-"}),
+    "--help\n--input\n--long\n-h\n-i\n-l\n");
 }
 
 // `trim` surfaces its window and output flags plus the implicit help flags,
@@ -683,16 +690,15 @@ TEST(FlagCompletionTest, TrimDashListsTrimFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "2", "bagwiz", "trim", "-"}),
-    "--align\n--both\n--duration\n--end\n--help\n--output\n--overwrite\n--stamp\n--start\n-h\n-o"
-    "\n-w\n");
+    "--align\n--both\n--duration\n--end\n--help\n--input\n--output\n--overwrite\n--stamp\n--"
+    "start\n-h\n-i\n-o\n-w\n");
 }
 
 // The value of `--stamp` completes to its two clock choices.
 TEST(FlagCompletionTest, TrimStampValueCompletes)
 {
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "3", "bagwiz", "trim", "--stamp", ""}),
-    "header\nrecv\n");
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "trim", "--stamp"}), "header\nrecv\n");
 }
 
 // `walk` surfaces its own `--cam-info` flag plus the implicit help flags, sorted.
@@ -702,7 +708,7 @@ TEST(FlagCompletionTest, WalkDashListsWalkFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "2", "bagwiz", "walk", "-"}),
-    "--cam-info\n--help\n-h\n");
+    "--cam-info\n--help\n--input\n--topic\n-h\n-i\n-t\n");
 }
 
 // The `complete` subcommand defines two flags of its own; with help merged
@@ -711,11 +717,11 @@ TEST(FlagCompletionTest, CompleteDashListsCompleteFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "2", "bagwiz", "complete", "-"}),
-    "--help\n--install\n--overwrite\n-h\n-w\n");
+    "--help\n--install\n--overwrite\n--shell\n-h\n-w\n");
 }
 
 // `convert` has no parent-level flags; the `format` subcommand owns
-// -w/--overwrite/--storage/-s. Both contexts must respond to `-`.
+// -w/--overwrite/--storage. Both contexts must respond to `-`.
 TEST(FlagCompletionTest, ConvertParentDashListsHelpFlags)
 {
   EXPECT_EQ(
@@ -726,7 +732,7 @@ TEST(FlagCompletionTest, ConvertFormatDashListsFormatFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "convert", "format", "-"}),
-    "--help\n--overwrite\n--storage\n-h\n-s\n-w\n");
+    "--help\n--input\n--output\n--overwrite\n--storage\n-h\n-i\n-o\n-w\n");
 }
 
 // `bagwiz convert <TAB>` lists both subcommands, sorted.
@@ -747,8 +753,8 @@ TEST(FlagCompletionTest, ConvertMsgGeoDashListsGeoFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "convert", "msg", "geo", "-"}),
-    "--crs\n--dst\n--frame-id\n--help\n--origin\n--output\n--overwrite\n--src\n--topic\n-h\n-o\n-"
-    "w\n");
+    "--crs\n--dst\n--frame-id\n--help\n--input\n--origin\n--output\n--overwrite\n--src\n--topic\n-"
+    "h\n-i\n-o\n-w\n");
 }
 
 // `--src` completes from the source snake_case choice set (no bag access).
@@ -756,7 +762,7 @@ TEST(FlagCompletionTest, ConvertMsgGeoSrcFlagListsChoices)
 {
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "convert", "msg", "geo", "in.mcap", "--src"}),
+      {"bagwiz", "__complete", "7", "bagwiz", "convert", "msg", "geo", "-i", "in.mcap", "--src"}),
     "nav_sat_fix\n");
 }
 
@@ -765,7 +771,7 @@ TEST(FlagCompletionTest, ConvertMsgGeoDstFlagListsChoices)
 {
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "convert", "msg", "geo", "in.mcap", "--dst"}),
+      {"bagwiz", "__complete", "7", "bagwiz", "convert", "msg", "geo", "-i", "in.mcap", "--dst"}),
     "pose_stamped\npose_with_covariance_stamped\n");
 }
 
@@ -774,7 +780,7 @@ TEST(FlagCompletionTest, ConvertMsgGeoCrsFlagListsChoices)
 {
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "convert", "msg", "geo", "in.mcap", "--crs"}),
+      {"bagwiz", "__complete", "7", "bagwiz", "convert", "msg", "geo", "-i", "in.mcap", "--crs"}),
     "enu\nutm\n");
 }
 
@@ -788,15 +794,16 @@ TEST(FlagCompletionTest, TrajDumpDashListsDumpFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "traj", "dump", "-"}),
-    "--format\n--help\n--of\n--overwrite\n--ref\n-f\n-h\n-w\n");
+    "--format\n--help\n--input\n--of\n--output\n--overwrite\n--ref\n--topic\n-f\n-h\n-i\n-o\n-t\n-"
+    "w\n");
 }
 
 TEST(FlagCompletionTest, TrajJoinDashListsJoinFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "traj", "join", "-"}),
-    "--force\n--format\n--help\n--msg-type\n--of\n--output\n--overwrite\n--ref\n-f\n-h\n-o\n-t\n-"
-    "w\n");
+    "--force\n--format\n--help\n--input\n--msg-type\n--of\n--output\n--overwrite\n--ref\n--topic\n-"
+    "-traj\n-h\n-i\n-m\n-o\n-t\n-w\n");
 }
 
 TEST(FlagCompletionTest, TfParentDashListsHelpFlags)
@@ -810,7 +817,7 @@ TEST(FlagCompletionTest, TfTreeDashListsHelpFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "tree", "-"}),
-    "--help\n--topics\n-h\n-t\n");
+    "--help\n--input\n--topics\n-h\n-i\n-t\n");
 }
 
 // `bagwiz tf <TAB>` lists all subcommands, sorted.
@@ -841,7 +848,7 @@ TEST(FlagCompletionTest, TfStaticCalcDashListsStaticFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "calc", "-"}),
-    "--help\n--json\n--of\n--ref\n-h\n");
+    "--help\n--input\n--json\n--of\n--ref\n-h\n-i\n");
 }
 
 // `tf static cp -` surfaces the copy action's flags (--output/-o, -w/--overwrite)
@@ -851,7 +858,7 @@ TEST(FlagCompletionTest, TfStaticCpDashListsCpFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "cp", "-"}),
-    "--help\n--output\n--overwrite\n-h\n-o\n-w\n");
+    "--dst\n--help\n--output\n--overwrite\n--src\n-d\n-h\n-o\n-s\n-w\n");
 }
 
 // `tf walk -` surfaces its --of/--ref flags alongside the implicit help flags,
@@ -860,7 +867,7 @@ TEST(FlagCompletionTest, TfWalkDashListsWalkFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "walk", "-"}),
-    "--help\n--of\n--ref\n-h\n");
+    "--help\n--input\n--of\n--ref\n-h\n-i\n");
 }
 
 // `tf static calc <bag> --of <TAB>` lists only frame ids from the bag's static
@@ -874,7 +881,8 @@ TEST_F(CompletionTest, TfStaticCalcOfFlagListsStaticFrameIds)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "tf", "static", "calc", "~/mixed.mcap", "--of"}),
+      {"bagwiz", "__complete", "7", "bagwiz", "tf", "static", "calc", "-i", "~/mixed.mcap",
+       "--of"}),
     "base_link\nmap\nodom\n");
 }
 
@@ -887,7 +895,8 @@ TEST_F(CompletionTest, TfStaticCalcRefFlagListsStaticFrameIds)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "tf", "static", "calc", "~/mixed.mcap", "--ref"}),
+      {"bagwiz", "__complete", "7", "bagwiz", "tf", "static", "calc", "-i", "~/mixed.mcap",
+       "--ref"}),
     "base_link\nmap\nodom\n");
 }
 
@@ -900,7 +909,7 @@ TEST_F(CompletionTest, TfStaticCalcOfFlagRespectsPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "tf", "static", "calc", "~/mixed.mcap", "--of",
+      {"bagwiz", "__complete", "7", "bagwiz", "tf", "static", "calc", "-i", "~/mixed.mcap", "--of",
        "ba"}),
     "base_link\n");
 }
@@ -921,7 +930,7 @@ TEST_F(CompletionTest, TfStaticCalcOfFlagExcludesDynamicOnlyFrames)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "tf", "static", "calc", "~/tf.mcap", "--of"}),
+      {"bagwiz", "__complete", "7", "bagwiz", "tf", "static", "calc", "-i", "~/tf.mcap", "--of"}),
     "");
 }
 
@@ -935,7 +944,8 @@ TEST_F(CompletionTest, TfWalkOfFlagListsFrameIds)
   write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "walk", "~/tf.mcap", "--of"}),
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "tf", "walk", "-i", "~/tf.mcap", "--of"}),
     "base_link\nlidar\nmap\nodom\n");
 }
 
@@ -947,7 +957,8 @@ TEST_F(CompletionTest, TfWalkRefFlagListsFrameIds)
   write_tf_mcap_fixture(tmp_dir_ / "tf.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "walk", "~/tf.mcap", "--ref"}),
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "tf", "walk", "-i", "~/tf.mcap", "--ref"}),
     "base_link\nlidar\nmap\nodom\n");
 }
 
@@ -960,7 +971,8 @@ TEST_F(CompletionTest, TfTreeTopicsFlagListsOnlyTfMessageTopics)
   write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "tree", "~/mixed.mcap", "-t"}),
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "tf", "tree", "-i", "~/mixed.mcap", "-t"}),
     "/tf\n/tf_static\n");
 }
 
@@ -975,7 +987,7 @@ TEST_F(CompletionTest, TfTreeTopicsFlagRespectsPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "tf", "tree", "~/mixed.mcap", "-t", "/tf_"}),
+      {"bagwiz", "__complete", "6", "bagwiz", "tf", "tree", "-i", "~/mixed.mcap", "-t", "/tf_"}),
     "/tf_static\n");
 }
 
@@ -988,7 +1000,8 @@ TEST_F(CompletionTest, TfTreeTopicsFlagEmptyWhenBagHasNoTf)
   write_mcap_fixture(tmp_dir_ / "no_tf.mcap");  // String + Int32, no TF
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "tree", "~/no_tf.mcap", "-t"}),
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "tf", "tree", "-i", "~/no_tf.mcap", "-t"}),
     "");
 }
 
@@ -1004,7 +1017,8 @@ TEST_F(CompletionTest, TfTreeInputSlotDoesNotListTopics)
   write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "3", "bagwiz", "tf", "tree", "~/mixed.mcap"}), "");
+    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "tree", "-i", "~/mixed.mcap"}),
+    "");
 }
 
 // THE DISCRIMINATOR. Under the old positional binding (topic_word=3, variadic)
@@ -1016,7 +1030,8 @@ TEST_F(CompletionTest, TfTreeBareSlotAfterInputOffersNoTopics)
   write_mixed_tf_mcap_fixture(tmp_dir_ / "mixed.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "tree", "~/mixed.mcap"}), "");
+    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "tree", "-i", "~/mixed.mcap"}),
+    "");
 }
 
 // A bag path that does not exist yields no candidates: the reader throws and
@@ -1027,7 +1042,8 @@ TEST_F(CompletionTest, TfTreeTopicsFlagEmptyForMissingBag)
   const HomeEnvGuard home_guard(tmp_dir_);
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "5", "bagwiz", "tf", "tree", "~/missing.mcap", "-t"}),
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "tf", "tree", "-i", "~/missing.mcap", "-t"}),
     "");
 }
 
@@ -1040,7 +1056,7 @@ TEST_F(CompletionTest, TfTreeTopicsFlagCompletesEveryValueSlot)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "tf", "tree", "~/mixed.mcap", "-t", "/tf"}),
+      {"bagwiz", "__complete", "7", "bagwiz", "tf", "tree", "-i", "~/mixed.mcap", "-t", "/tf"}),
     "/tf\n/tf_static\n");
 }
 
@@ -1050,7 +1066,7 @@ TEST(FlagCompletionTest, TrajDumpDoubleDashOPrefixSelectsOfAndOverwrite)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "traj", "dump", "--o"}),
-    "--of\n--overwrite\n");
+    "--of\n--output\n--overwrite\n");
 }
 
 // `topic drop <input> -t <TAB>` offers every topic in the bag -- drop takes
@@ -1063,7 +1079,7 @@ TEST_F(CompletionTest, TopicDropTopicsFlagListsAllTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "topic", "drop", "~/fixture.mcap", "-t"}),
+      {"bagwiz", "__complete", "6", "bagwiz", "topic", "drop", "-i", "~/fixture.mcap", "-t"}),
     "/bar\n/foo\n");
 }
 
@@ -1076,7 +1092,7 @@ TEST_F(CompletionTest, TopicDropLongTopicsFlagCompletes)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "topic", "drop", "~/fixture.mcap", "--topics"}),
+      {"bagwiz", "__complete", "6", "bagwiz", "topic", "drop", "-i", "~/fixture.mcap", "--topics"}),
     "/bar\n/foo\n");
 }
 
@@ -1089,7 +1105,8 @@ TEST_F(CompletionTest, TopicDropTopicsFlagCompletesEveryValueSlot)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "topic", "drop", "~/fixture.mcap", "-t", "/foo"}),
+      {"bagwiz", "__complete", "7", "bagwiz", "topic", "drop", "-i", "~/fixture.mcap", "-t",
+       "/foo"}),
     "/bar\n/foo\n");
 }
 
@@ -1102,7 +1119,7 @@ TEST_F(CompletionTest, TopicDropTopicsFlagRespectsPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "topic", "drop", "~/fixture.mcap", "-t", "/f"}),
+      {"bagwiz", "__complete", "6", "bagwiz", "topic", "drop", "-i", "~/fixture.mcap", "-t", "/f"}),
     "/foo\n");
 }
 
@@ -1117,7 +1134,9 @@ TEST_F(CompletionTest, TopicDropBareSlotAfterInputOffersNoTopics)
   write_mcap_fixture(tmp_dir_ / "fixture.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "topic", "drop", "~/fixture.mcap"}), "");
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "topic", "drop", "-i", "~/fixture.mcap"}),
+    "");
 }
 
 // `bagwiz topic <TAB>` lists the command group's action verbs, sorted.
@@ -1144,7 +1163,7 @@ TEST(FlagCompletionTest, MapSubcommandPrefixNarrowsToViewer)
 // completion, so no candidates are emitted.
 TEST(FlagCompletionTest, MapViewerMapSlotDefersToShell)
 {
-  EXPECT_EQ(run_completion({"bagwiz", "__complete", "3", "bagwiz", "map", "viewer", ""}), "");
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "4", "bagwiz", "map", "viewer", "-m", ""}), "");
 }
 
 // `map viewer -` surfaces only the implicit help flags (viewer has no other
@@ -1152,7 +1171,8 @@ TEST(FlagCompletionTest, MapViewerMapSlotDefersToShell)
 TEST(FlagCompletionTest, MapViewerDashListsHelpFlags)
 {
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "3", "bagwiz", "map", "viewer", "-"}), "--help\n-h\n");
+    run_completion({"bagwiz", "__complete", "3", "bagwiz", "map", "viewer", "-"}),
+    "--help\n--map\n-h\n-m\n");
 }
 
 // `map slam -` surfaces the slam action's flags plus the implicit help flags,
@@ -1161,19 +1181,18 @@ TEST(FlagCompletionTest, MapSlamDashListsSlamFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "map", "slam", "-"}),
-    "--backend\n--cam\n--cam-info\n--dynamic-dp\n--dynamic-ds\n--dynamic-res\n"
-    "--fill-min-inliers\n--frame\n--gnss\n--help\n--imu\n"
-    "--input-res\n--max-range\n--min-range\n--no-color-propagate\n--no-cooldown-fill\n"
-    "--no-progress\n--no-warmup-fill\n--outlier-k\n--outlier-r\n"
-    "--overwrite\n--remove-dynamic\n--remove-outliers\n--submap-keyframes\n--threads\n"
-    "--viewer\n-h\n-j\n-w\n");
+    "--backend\n--cam\n--cam-info\n--dynamic-dp\n--dynamic-ds\n--dynamic-res\n--fill-min-inliers\n-"
+    "-frame\n--gnss\n--help\n--imu\n--input\n--input-res\n--max-range\n--min-range\n--no-color-"
+    "propagate\n--no-cooldown-fill\n--no-progress\n--no-warmup-fill\n--outlier-k\n--outlier-r\n--"
+    "output\n--overwrite\n--pcd\n--remove-dynamic\n--remove-outliers\n--submap-keyframes\n--"
+    "threads\n--viewer\n-h\n-i\n-j\n-o\n-w\n");
 }
 
 // `map slam --backend <TAB>` lists the three backend modes.
 TEST(FlagCompletionTest, MapSlamBackendListsModes)
 {
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "map", "slam", "--backend", ""}),
+    run_completion({"bagwiz", "__complete", "5", "bagwiz", "map", "slam", "--backend"}),
     "auto\ncpu\ncuda\n");
 }
 
@@ -1185,7 +1204,8 @@ TEST_F(CompletionTest, MapSlamTopicCompletionListsOnlyPointCloud2)
   write_pointcloud2_fixture(tmp_dir_ / "fixture.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "map", "slam", "~/fixture.mcap"}),
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "map", "slam", "-i", "~/fixture.mcap", "--pcd"}),
     "/points\n");
 }
 
@@ -1196,8 +1216,8 @@ TEST(FlagCompletionTest, PcdConcatDashListsConcatFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "pcd", "concat", "-"}),
-    "--drop-inputs\n--force\n--frame\n--help\n--output\n--overwrite\n--pcd\n"
-    "--stamp-offset\n--threads\n--tolerance\n-h\n-j\n-o\n-w\n");
+    "--drop-inputs\n--force\n--frame\n--help\n--input\n--output\n--overwrite\n--pcd\n--stamp-"
+    "offset\n--threads\n--tolerance\n--topic\n-h\n-i\n-j\n-o\n-t\n-w\n");
 }
 
 // `pcd concat <bag> <out> --stamp-offset <TAB>` completes the <topic> half of the
@@ -1210,7 +1230,7 @@ TEST_F(CompletionTest, PcdConcatStampOffsetCompletesPointCloud2TopicsWithEquals)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
+      {"bagwiz", "__complete", "8", "bagwiz", "pcd", "concat", "-i", "~/fixture.mcap", "-o", "/out",
        "--stamp-offset"}),
     "/points=\n");
 }
@@ -1223,7 +1243,7 @@ TEST_F(CompletionTest, PcdConcatStampOffsetRespectsPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
+      {"bagwiz", "__complete", "8", "bagwiz", "pcd", "concat", "-i", "~/fixture.mcap", "-o", "/out",
        "--stamp-offset", "/po"}),
     "/points=\n");
 }
@@ -1237,7 +1257,7 @@ TEST_F(CompletionTest, PcdConcatStampOffsetOffersNothingAfterEquals)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
+      {"bagwiz", "__complete", "8", "bagwiz", "pcd", "concat", "-i", "~/fixture.mcap", "-o", "/out",
        "--stamp-offset", "/points=50"}),
     "");
 }
@@ -1250,7 +1270,7 @@ TEST_F(CompletionTest, PcdConcatStampOffsetUnknownBagYieldsNoCandidates)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "pcd", "concat", "~/missing.mcap", "/out",
+      {"bagwiz", "__complete", "8", "bagwiz", "pcd", "concat", "-i", "~/missing.mcap", "-o", "/out",
        "--stamp-offset"}),
     "");
 }
@@ -1264,7 +1284,7 @@ TEST_F(CompletionTest, PcdConcatStampOffsetCompletesSecondValueInSameRun)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
+      {"bagwiz", "__complete", "9", "bagwiz", "pcd", "concat", "-i", "~/fixture.mcap", "-o", "/out",
        "--stamp-offset", "/points=50"}),
     "/points=\n");
 }
@@ -1277,8 +1297,8 @@ TEST_F(CompletionTest, PcdConcatStampOffsetSecondValueRespectsPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "8", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
-       "--stamp-offset", "/points=50", "/po"}),
+      {"bagwiz", "__complete", "10", "bagwiz", "pcd", "concat", "-i", "~/fixture.mcap", "-o",
+       "/out", "--stamp-offset", "/points=50", "/po"}),
     "/points=\n");
 }
 
@@ -1290,8 +1310,8 @@ TEST_F(CompletionTest, PcdConcatStampOffsetCompletesThirdValueInSameRun)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "8", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
-       "--stamp-offset", "/points=50", "/points2=100"}),
+      {"bagwiz", "__complete", "10", "bagwiz", "pcd", "concat", "-i", "~/fixture.mcap", "-o",
+       "/out", "--stamp-offset", "/points=50", "/points2=100"}),
     "/points=\n");
 }
 
@@ -1304,8 +1324,8 @@ TEST_F(CompletionTest, PcdConcatStampOffsetCompletesAfterBashSplitValue)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "9", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
-       "--stamp-offset", "/points", "=", "50"}),
+      {"bagwiz", "__complete", "11", "bagwiz", "pcd", "concat", "-i", "~/fixture.mcap", "-o",
+       "/out", "--stamp-offset", "/points", "=", "50"}),
     "/points=\n");
 }
 
@@ -1319,8 +1339,8 @@ TEST_F(CompletionTest, PcdConcatStampOffsetOffersNothingOnBashSplitValueHalf)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "8", "bagwiz", "pcd", "concat", "~/fixture.mcap", "/out",
-       "--stamp-offset", "/points", "="}),
+      {"bagwiz", "__complete", "10", "bagwiz", "pcd", "concat", "-i", "~/fixture.mcap", "-o",
+       "/out", "--stamp-offset", "/points", "="}),
     "");
 }
 
@@ -1337,7 +1357,8 @@ TEST(FlagCompletionTest, PcdUndistortDashListsUndistortFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "pcd", "undistort", "-"}),
-    "--help\n--of\n--output\n--overwrite\n--pcd\n--ref\n--threads\n-h\n-j\n-o\n-w\n");
+    "--help\n--input\n--of\n--output\n--overwrite\n--pcd\n--pose\n--ref\n--threads\n-h\n-i\n-j\n-"
+    "o\n-w\n");
 }
 
 // `pcd undistort <bag> <pose_topic> --pcd <TAB>` completes PointCloud2 topics
@@ -1349,8 +1370,8 @@ TEST_F(CompletionTest, PcdUndistortPcdCompletesPointCloud2Topics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "pcd", "undistort", "~/fixture.mcap", "/pose",
-       "--pcd", ""}),
+      {"bagwiz", "__complete", "8", "bagwiz", "pcd", "undistort", "-i", "~/fixture.mcap", "--pose",
+       "/pose", "--pcd", ""}),
     "/points\n");
 }
 
@@ -1365,7 +1386,8 @@ TEST_F(CompletionTest, PcdUndistortRefFlagListsBagFrameIds)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "pcd", "undistort", "~/tf.mcap", "/pose", "--ref"}),
+      {"bagwiz", "__complete", "8", "bagwiz", "pcd", "undistort", "-i", "~/tf.mcap", "--pose",
+       "/pose", "--ref"}),
     "base_link\nlidar\nmap\nodom\n");
 }
 
@@ -1379,7 +1401,8 @@ TEST_F(CompletionTest, PcdUndistortOfFlagListsBagFrameIds)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "pcd", "undistort", "~/tf.mcap", "/pose", "--of"}),
+      {"bagwiz", "__complete", "8", "bagwiz", "pcd", "undistort", "-i", "~/tf.mcap", "--pose",
+       "/pose", "--of"}),
     "base_link\nlidar\nmap\nodom\n");
 }
 
@@ -1396,7 +1419,7 @@ TEST(FlagCompletionTest, TopicDropDashListsDropFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "topic", "drop", "-"}),
-    "--help\n--output\n--overwrite\n--topics\n-h\n-o\n-t\n-w\n");
+    "--help\n--input\n--output\n--overwrite\n--topics\n-h\n-i\n-o\n-t\n-w\n");
 }
 
 // `keep` binds the same way as `drop`.
@@ -1408,7 +1431,7 @@ TEST_F(CompletionTest, TopicKeepTopicsFlagListsAllTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "topic", "keep", "~/fixture.mcap", "-t"}),
+      {"bagwiz", "__complete", "6", "bagwiz", "topic", "keep", "-i", "~/fixture.mcap", "-t"}),
     "/bar\n/foo\n");
 }
 
@@ -1420,7 +1443,8 @@ TEST_F(CompletionTest, TopicKeepTopicsFlagCompletesEveryValueSlot)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "topic", "keep", "~/fixture.mcap", "-t", "/foo"}),
+      {"bagwiz", "__complete", "7", "bagwiz", "topic", "keep", "-i", "~/fixture.mcap", "-t",
+       "/foo"}),
     "/bar\n/foo\n");
 }
 
@@ -1435,7 +1459,9 @@ TEST_F(CompletionTest, TopicKeepBareSlotAfterInputOffersNoTopics)
   write_mcap_fixture(tmp_dir_ / "fixture.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "topic", "keep", "~/fixture.mcap"}), "");
+    run_completion(
+      {"bagwiz", "__complete", "5", "bagwiz", "topic", "keep", "-i", "~/fixture.mcap"}),
+    "");
 }
 
 // `topic rename <bag> <TAB>` (the <src_topic> slot) lists every topic in the
@@ -1447,7 +1473,8 @@ TEST_F(CompletionTest, TopicRenameSrcSlotListsAllTopics)
   write_mcap_fixture(tmp_dir_ / "fixture.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "topic", "rename", "~/fixture.mcap"}),
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "topic", "rename", "-i", "~/fixture.mcap", "-s"}),
     "/bar\n/foo\n");
 }
 
@@ -1462,7 +1489,8 @@ TEST_F(CompletionTest, TopicRenameDstSlotOffersNothing)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "topic", "rename", "~/fixture.mcap", "/foo"}),
+      {"bagwiz", "__complete", "8", "bagwiz", "topic", "rename", "-i", "~/fixture.mcap", "-s",
+       "/foo", "-d"}),
     "");
 }
 
@@ -1472,7 +1500,7 @@ TEST(FlagCompletionTest, TopicRenameDashListsRenameFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "topic", "rename", "-"}),
-    "--help\n--output\n--overwrite\n-h\n-o\n-w\n");
+    "--dst-topic\n--help\n--input\n--output\n--overwrite\n--src-topic\n-d\n-h\n-i\n-o\n-s\n-w\n");
 }
 
 // `topic keep -` surfaces the action's flags (--output/-o, --overwrite,
@@ -1481,7 +1509,7 @@ TEST(FlagCompletionTest, TopicKeepDashListsKeepFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "topic", "keep", "-"}),
-    "--help\n--output\n--overwrite\n--topics\n-h\n-o\n-t\n-w\n");
+    "--help\n--input\n--output\n--overwrite\n--topics\n-h\n-i\n-o\n-t\n-w\n");
 }
 
 // `bagwiz generate <TAB>` lists the command group's single subcommand.
@@ -1504,15 +1532,15 @@ TEST(FlagCompletionTest, GenerateVideoDashListsVideoFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "generate", "video", "-"}),
-    "--alpha\n--cam-info\n--field\n--help\n--max\n--min\n--overwrite\n--pcd\n--point-size\n"
-    "--resize\n--scheme\n--undistort\n-h\n-w\n");
+    "--alpha\n--cam-info\n--field\n--help\n--input\n--max\n--min\n--output\n--overwrite\n--pcd\n--"
+    "point-size\n--resize\n--scheme\n--topic\n--undistort\n-h\n-i\n-o\n-t\n-w\n");
 }
 
 // `--field <TAB>` offers the valid point-cloud field choices, sorted.
 TEST(FlagCompletionTest, GenerateVideoFieldFlagListsChoices)
 {
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "--field"}),
+    run_completion({"bagwiz", "__complete", "5", "bagwiz", "generate", "video", "--field"}),
     "distance\nintensity\nx\ny\nz\n");
 }
 
@@ -1520,7 +1548,7 @@ TEST(FlagCompletionTest, GenerateVideoFieldFlagListsChoices)
 TEST(FlagCompletionTest, GenerateVideoSchemeFlagListsChoices)
 {
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "--scheme"}),
+    run_completion({"bagwiz", "__complete", "5", "bagwiz", "generate", "video", "--scheme"}),
     "inferno\njet\nmagma\nplasma\nrainbow\nturbo\nviridis\n");
 }
 
@@ -1534,7 +1562,8 @@ TEST_F(CompletionTest, GenerateVideoTopicSlotListsOnlyImageTopics)
   write_image_topics_fixture(tmp_dir_ / "images.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "~/images.mcap"}),
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "generate", "video", "-i", "~/images.mcap", "-t"}),
     "/image\n/image/compressed\n");
 }
 
@@ -1547,7 +1576,8 @@ TEST_F(CompletionTest, GenerateVideoTopicSlotRespectsPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "~/images.mcap", "/image/"}),
+      {"bagwiz", "__complete", "6", "bagwiz", "generate", "video", "-i", "~/images.mcap", "-t",
+       "/image/"}),
     "/image/compressed\n");
 }
 
@@ -1561,7 +1591,8 @@ TEST_F(CompletionTest, GenerateVideoTopicSlotExcludesUnsupportedTypeOnPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "~/images.mcap", "/p"}),
+      {"bagwiz", "__complete", "6", "bagwiz", "generate", "video", "-i", "~/images.mcap", "-t",
+       "/p"}),
     "");
 }
 
@@ -1575,8 +1606,8 @@ TEST_F(CompletionTest, GenerateVideoCameraInfoFlagListsOnlyCameraInfoTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "generate", "video", "~/cameras.mcap",
-       "/cam/image_raw/compressed", "out.avi", "--cam-info"}),
+      {"bagwiz", "__complete", "10", "bagwiz", "generate", "video", "-i", "~/cameras.mcap", "-t",
+       "/cam/image_raw/compressed", "-o", "out.avi", "--cam-info"}),
     "/cam/camera_info\n");
 }
 
@@ -1589,8 +1620,8 @@ TEST_F(CompletionTest, GenerateVideoCameraInfoFlagRespectsPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "generate", "video", "~/cameras.mcap",
-       "/cam/image_raw/compressed", "out.avi", "--cam-info", "/cam/c"}),
+      {"bagwiz", "__complete", "10", "bagwiz", "generate", "video", "-i", "~/cameras.mcap", "-t",
+       "/cam/image_raw/compressed", "-o", "out.avi", "--cam-info", "/cam/c"}),
     "/cam/camera_info\n");
 }
 
@@ -1603,8 +1634,8 @@ TEST_F(CompletionTest, GenerateVideoCameraInfoFlagEmptyWhenNoCameraInfoTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "generate", "video", "~/images.mcap", "/image",
-       "out.avi", "--cam-info"}),
+      {"bagwiz", "__complete", "10", "bagwiz", "generate", "video", "-i", "~/images.mcap", "-t",
+       "/image", "-o", "out.avi", "--cam-info"}),
     "");
 }
 
@@ -1617,7 +1648,8 @@ TEST_F(CompletionTest, GenerateVideoTopicSlotEmptyWhenNoImageTopics)
   write_mcap_fixture(tmp_dir_ / "no_image.mcap");  // String + Int32, no image
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "~/no_image.mcap"}),
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "generate", "video", "-i", "~/no_image.mcap", "-t"}),
     "");
 }
 
@@ -1629,9 +1661,7 @@ TEST_F(CompletionTest, GenerateVideoTopicSlotSuppressedWhenInputSlotIsFlag)
 
   write_image_topics_fixture(tmp_dir_ / "images.mcap");
 
-  EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "--unknown-flag"}),
-    "");
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "4", "bagwiz", "generate", "video", "-t"}), "");
 }
 
 // `walk <input> <topic> --cam-info <TAB>` offers only the bag's
@@ -1644,8 +1674,8 @@ TEST_F(CompletionTest, WalkCameraInfoFlagListsOnlyCameraInfoTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "walk", "~/cameras.mcap", "/cam/image_raw/compressed",
-       "--cam-info"}),
+      {"bagwiz", "__complete", "7", "bagwiz", "walk", "-i", "~/cameras.mcap", "-t",
+       "/cam/image_raw/compressed", "--cam-info"}),
     "/cam/camera_info\n");
 }
 
@@ -1658,8 +1688,8 @@ TEST_F(CompletionTest, WalkCameraInfoFlagRespectsPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "walk", "~/cameras.mcap", "/cam/image_raw/compressed",
-       "--cam-info", "/cam/c"}),
+      {"bagwiz", "__complete", "7", "bagwiz", "walk", "-i", "~/cameras.mcap", "-t",
+       "/cam/image_raw/compressed", "--cam-info", "/cam/c"}),
     "/cam/camera_info\n");
 }
 
@@ -1674,7 +1704,7 @@ TEST_F(CompletionTest, CamInfoRecomputePTopicsFlagListsOnlyCameraInfoTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "recompute-p", "~/cameras.mcap",
+      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "recompute-p", "-i", "~/cameras.mcap",
        "--topics"}),
     "/cam/camera_info\n");
 }
@@ -1688,7 +1718,8 @@ TEST_F(CompletionTest, CamInfoRecomputePShortTopicsFlagCompletes)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "recompute-p", "~/cameras.mcap", "-t"}),
+      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "recompute-p", "-i", "~/cameras.mcap",
+       "-t"}),
     "/cam/camera_info\n");
 }
 
@@ -1702,7 +1733,7 @@ TEST_F(CompletionTest, CamInfoRecomputePTopicsFlagCompletesEveryValueSlot)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "recompute-p", "~/cameras.mcap",
+      {"bagwiz", "__complete", "7", "bagwiz", "cam-info", "recompute-p", "-i", "~/cameras.mcap",
        "--topics", "/cam/camera_info"}),
     "/cam/camera_info\n");
 }
@@ -1716,7 +1747,7 @@ TEST_F(CompletionTest, CamInfoRecomputePTopicsFlagRespectsPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "recompute-p", "~/cameras.mcap",
+      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "recompute-p", "-i", "~/cameras.mcap",
        "--topics", "/cam/c"}),
     "/cam/camera_info\n");
 }
@@ -1730,7 +1761,7 @@ TEST_F(CompletionTest, CamInfoRecomputePOtherFlagValueOffersNoTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "recompute-p", "~/cameras.mcap",
+      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "recompute-p", "-i", "~/cameras.mcap",
        "--alpha"}),
     "");
 }
@@ -1743,7 +1774,8 @@ TEST_F(CompletionTest, CamInfoRecomputePListsItsOwnFlags)
   write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
 
   const auto out = run_completion(
-    {"bagwiz", "__complete", "4", "bagwiz", "cam-info", "recompute-p", "~/cameras.mcap", "-"});
+    {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "recompute-p", "-i", "~/cameras.mcap",
+     "-"});
   EXPECT_NE(out.find("--topics"), std::string::npos) << out;
   EXPECT_NE(out.find("--alpha"), std::string::npos) << out;
   EXPECT_EQ(out.find("--frame-id"), std::string::npos) << out;
@@ -1759,7 +1791,8 @@ TEST_F(CompletionTest, WalkCameraInfoFlagEmptyWhenNoCameraInfoTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "walk", "~/images.mcap", "/image", "--cam-info"}),
+      {"bagwiz", "__complete", "7", "bagwiz", "walk", "-i", "~/images.mcap", "-t", "/image",
+       "--cam-info"}),
     "");
 }
 
@@ -1784,10 +1817,10 @@ TEST(FlagCompletionTest, CamInfoReplaceDashListsReplaceFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "cam-info", "replace", "-"}),
-    "--frame-id\n--help\n--output\n--overwrite\n--topics\n-h\n-o\n-t\n-w\n");
+    "--frame-id\n--help\n--input\n--output\n--overwrite\n--topics\n--yaml\n-h\n-i\n-o\n-t\n-w\n");
 }
 
-// `cam-info replace <input> <calib_yaml> -t <TAB>` offers only the bag's
+// `cam-info replace <input> <yaml> -t <TAB>` offers only the bag's
 // CameraInfo topics -- not the CompressedImage or PointCloud2 topics the same
 // fixture carries.
 TEST_F(CompletionTest, CamInfoReplaceTopicsFlagListsOnlyCameraInfoTopics)
@@ -1798,8 +1831,8 @@ TEST_F(CompletionTest, CamInfoReplaceTopicsFlagListsOnlyCameraInfoTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "replace", "~/cameras.mcap", "calib.yaml",
-       "-t"}),
+      {"bagwiz", "__complete", "8", "bagwiz", "cam-info", "replace", "-i", "~/cameras.mcap",
+       "--yaml", "calib.yaml", "-t"}),
     "/cam/camera_info\n");
 }
 
@@ -1812,8 +1845,8 @@ TEST_F(CompletionTest, CamInfoReplaceLongTopicsFlagCompletes)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "replace", "~/cameras.mcap", "calib.yaml",
-       "--topics"}),
+      {"bagwiz", "__complete", "8", "bagwiz", "cam-info", "replace", "-i", "~/cameras.mcap",
+       "--yaml", "calib.yaml", "--topics"}),
     "/cam/camera_info\n");
 }
 
@@ -1826,14 +1859,14 @@ TEST_F(CompletionTest, CamInfoReplaceTopicsFlagCompletesEveryValueSlot)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "cam-info", "replace", "~/cameras.mcap", "calib.yaml",
-       "-t", "/cam/camera_info"}),
+      {"bagwiz", "__complete", "9", "bagwiz", "cam-info", "replace", "-i", "~/cameras.mcap",
+       "--yaml", "calib.yaml", "-t", "/cam/camera_info"}),
     "/cam/camera_info\n");
 }
 
-// The <calib_yaml> slot is a path, not a topic list: it must not offer topics
+// The <yaml> slot is a path, not a topic list: it must not offer topics
 // now that they are no longer positional there.
-TEST_F(CompletionTest, CamInfoReplaceCalibYamlSlotOffersNoTopics)
+TEST_F(CompletionTest, CamInfoReplaceYamlSlotOffersNoTopics)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
@@ -1841,15 +1874,15 @@ TEST_F(CompletionTest, CamInfoReplaceCalibYamlSlotOffersNoTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "4", "bagwiz", "cam-info", "replace", "~/cameras.mcap"}),
+      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "replace", "-i", "~/cameras.mcap",
+       "--yaml"}),
     "");
 }
 
 // THE DISCRIMINATOR. Under the old positional binding (topic_word=4, variadic)
-// this slot offered the CameraInfo topics; under the flag binding it must offer
-// nothing. Without it, the -t tests above pass under BOTH bindings -- they only
-// prove "some binding exists", not that the positional slot is gone.
-TEST_F(CompletionTest, CamInfoReplaceBareSlotAfterCalibYamlOffersNoTopics)
+// this slot offered the CameraInfo topics; under the flag binding there is no
+// bare topic slot after the --yaml value, so completion offers nothing.
+TEST_F(CompletionTest, CamInfoReplaceBareSlotAfterYamlOffersNoTopics)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
 
@@ -1857,8 +1890,8 @@ TEST_F(CompletionTest, CamInfoReplaceBareSlotAfterCalibYamlOffersNoTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "replace", "~/cameras.mcap",
-       "calib.yaml"}),
+      {"bagwiz", "__complete", "7", "bagwiz", "cam-info", "replace", "-i", "~/cameras.mcap",
+       "--yaml", "calib.yaml"}),
     "");
 }
 
@@ -1872,7 +1905,8 @@ TEST_F(CompletionTest, CamInfoDumpTopicSlotListsOnlyCameraInfoTopics)
   write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "4", "bagwiz", "cam-info", "dump", "~/cameras.mcap"}),
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "dump", "-i", "~/cameras.mcap", "-t"}),
     "/cam/camera_info\n");
 }
 
@@ -1885,12 +1919,14 @@ TEST_F(CompletionTest, CamInfoDumpTopicSlotRespectsPrefix)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "4", "bagwiz", "cam-info", "dump", "~/cameras.mcap", "/cam/c"}),
+      {"bagwiz", "__complete", "6", "bagwiz", "cam-info", "dump", "-i", "~/cameras.mcap", "-t",
+       "/cam/c"}),
     "/cam/camera_info\n");
 }
 
 // Unlike replace's, dump's binding is non-variadic: a camera_calibration YAML
-// holds one calibration, so the slot after <topic> offers nothing.
+// holds one calibration. With a non-topic flag following `-t`, the cursor leaves
+// the topic value slot and nothing is suggested.
 TEST_F(CompletionTest, CamInfoDumpTopicSlotIsNotVariadic)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
@@ -1899,8 +1935,8 @@ TEST_F(CompletionTest, CamInfoDumpTopicSlotIsNotVariadic)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "5", "bagwiz", "cam-info", "dump", "~/cameras.mcap",
-       "/cam/camera_info"}),
+      {"bagwiz", "__complete", "9", "bagwiz", "cam-info", "dump", "-i", "~/cameras.mcap", "-t",
+       "/cam/camera_info", "-o", "out"}),
     "");
 }
 
@@ -1922,7 +1958,7 @@ TEST(FlagCompletionTest, CheckBrokenDashListsBrokenFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "check", "broken", "-"}),
-    "--deep\n--help\n--rm\n-h\n");
+    "--deep\n--help\n--input\n--rm\n-h\n-i\n");
 }
 
 TEST(SupportedShellsTest, ListsBashZshAndFish)
@@ -2179,7 +2215,8 @@ TEST_F(CompletionTest, WalkTopicCompletionSkipsBareSingleFileZstd)
   const auto zstd_path = make_file_mode_zstd(bag);
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "3", "bagwiz", "walk", zstd_path.string()}), "");
+    run_completion({"bagwiz", "__complete", "5", "bagwiz", "walk", "-i", zstd_path.string(), "-t"}),
+    "");
 }
 
 // A directory bag (even FILE-mode) serves its topic list from metadata.yaml
@@ -2192,7 +2229,8 @@ TEST_F(CompletionTest, WalkTopicCompletionListsSqlite3DirectoryTopics)
   write_sqlite3_dir_bag(bag, {{"/foo", "std_msgs/msg/String"}, {"/bar", "std_msgs/msg/Int32"}});
 
   EXPECT_EQ(
-    run_completion({"bagwiz", "__complete", "3", "bagwiz", "walk", bag.string()}), "/bar\n/foo\n");
+    run_completion({"bagwiz", "__complete", "5", "bagwiz", "walk", "-i", bag.string(), "-t"}),
+    "/bar\n/foo\n");
 }
 
 // frame-id discovery iterates TF messages; on a FILE-mode zstd bag the first read
@@ -2207,7 +2245,7 @@ TEST_F(CompletionTest, TrajDumpRefFlagSkipsFileModeZstd)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "7", "bagwiz", "traj", "dump", bag.string(), "/tf", "out.tum",
-       "--ref"}),
+      {"bagwiz", "__complete", "10", "bagwiz", "traj", "dump", "-i", bag.string(), "-t", "/tf",
+       "-o", "out.tum", "--ref"}),
     "");
 }

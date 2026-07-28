@@ -15,7 +15,7 @@
 namespace bagwiz::commands
 {
 
-// Implements `bagwiz tf walk <input> --of <of> --ref <ref>`: merge every
+// Implements `bagwiz tf walk -i <input> --of <of> --ref <ref>`: merge every
 // tf2_msgs/msg/TFMessage topic in the bag into one tf2 buffer and step through
 // the distinct times at which the merged TF changed, rendering <of>'s pose in
 // <ref> at each in an interactive pager (the same UX as `bagwiz walk`). The

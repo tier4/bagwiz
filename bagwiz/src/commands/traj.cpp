@@ -383,12 +383,13 @@ private:
       "dump",
       "Dump a topic's trajectory to a file. Every row is the pose of --of expressed in "
       "--ref, resolved through the bag's TF tree (static + dynamic).");
-    sub->add_option("input", dump_args_.input_path, "Bag path (file or directory)")
+    sub->add_option("-i,--input", dump_args_.input_path, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
-    sub->add_option("topic", dump_args_.topic, "Topic to sample (e.g. /tf, /localization/pose)")
+    sub
+      ->add_option("-t,--topic", dump_args_.topic, "Topic to sample (e.g. /tf, /localization/pose)")
       ->required();
-    sub->add_option("output", dump_args_.output_path, "Output file path")->required();
+    sub->add_option("-o,--output", dump_args_.output_path, "Output file path")->required();
     sub
       ->add_option(
         "-f,--format", dump_args_.format,
@@ -761,7 +762,7 @@ private:
     if (ext.empty()) {
       BAGWIZ_LOG_ERROR(
         kLogger,
-        "Trajectory format is not set (-f/--format) and the trajectory path '%s' has no usable "
+        "Trajectory format is not set (--format) and the trajectory path '%s' has no usable "
         "extension; use e.g. '*.tum' or pass --format %s.",
         traj_path.c_str(), kFormatTum);
       return false;
@@ -773,7 +774,7 @@ private:
 
     BAGWIZ_LOG_ERROR(
       kLogger,
-      "Trajectory format is not set (-f/--format) and extension '.%s' is not recognized; "
+      "Trajectory format is not set (--format) and extension '.%s' is not recognized; "
       "use '*.tum' or pass --format %s.",
       ext.c_str(), kFormatTum);
     return false;
@@ -786,19 +787,19 @@ private:
       "Embed a trajectory file into a bag as a new topic. Each row in the trajectory becomes "
       "one ROS message published on <topic>; both the message's receive time and the in-message "
       "header.stamp are taken from the trajectory's per-row timestamp.");
-    sub->add_option("input", join_args_.input_path, "Bag path (file or directory)")
+    sub->add_option("-i,--input", join_args_.input_path, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     sub
       ->add_option(
-        "traj_file", join_args_.traj_path,
-        "Trajectory file. Format is selected by -f/--format, or inferred from the file extension "
-        "when -f is omitted.")
+        "--traj", join_args_.traj_path,
+        "Trajectory file. Format is selected by --format, or inferred from the file extension "
+        "when --format is omitted.")
       ->required()
       ->check(CLI::ExistingFile);
     sub
       ->add_option(
-        "topic", join_args_.topic,
+        "-t,--topic", join_args_.topic,
         "Topic name to embed the trajectory under. When the topic already exists in <input>, "
         "pass --force to drop its existing messages and replace them.")
       ->required();
@@ -807,12 +808,12 @@ private:
       "Output bag path. When omitted, <input> is replaced in place via a sibling tmp directory.");
     sub
       ->add_option(
-        "-f,--format", join_args_.format,
+        "--format", join_args_.format,
         "Trajectory format id. When omitted, inferred from the trajectory file's extension.")
       ->check(CLI::IsMember({kFormatTum}));
     sub
       ->add_option(
-        "-t,--msg-type", join_args_.msg_type,
+        "-m,--msg-type", join_args_.msg_type,
         "ROS message type to publish under <topic>. Only 'tf' (tf2_msgs/msg/TFMessage) is "
         "supported today.")
       ->check(CLI::IsMember({kJoinMsgTypeTf}));

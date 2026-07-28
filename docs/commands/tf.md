@@ -1,6 +1,6 @@
 # `bagwiz tf`
 
-TF inspection on a ROS 2 rosbag.
+TF inspection and static-TF editing on a ROS 2 rosbag.
 
 - [`tree`](#bagwiz-tf-tree) — merge one or more `tf2_msgs/msg/TFMessage` topics into one TF frame tree, colored by static vs dynamic (`static` / `dynamic` selectors supported).
 - [`static calc`](#bagwiz-tf-static-calc) — resolve the pose of `--of` expressed in `--ref` using only the bag's static TF tree; print translation/quaternion/RPY or JSON. (`static` is a command group; `calc` is its action.)
@@ -28,8 +28,8 @@ names:
 - `dynamic` — expands to every non-static TF topic in the bag.
 
 They compose with each other and with literal names. For example
-`tf tree bag -t dynamic /extra_tf` merges all dynamic TF topics plus
-`/extra_tf`, and `tf tree bag -t static` shows the merged static tree alone.
+`tf tree -i bag -t dynamic /extra_tf` merges all dynamic TF topics plus
+`/extra_tf`, and `tf tree -i bag -t static` shows the merged static tree alone.
 (ROS topic names start with `/`, so the bare words `static` / `dynamic` never
 collide with a real topic.) When `-t`/`--topics` is omitted, bagwiz defaults to **every**
 `tf2_msgs/msg/TFMessage` topic in the bag.
@@ -100,19 +100,14 @@ Colors are also omitted when stdout is not a TTY (same effect as `NO_COLOR` for 
 ### Usage
 
 ```text
-bagwiz tf tree <input> [-t <topic-or-selector>...]
+bagwiz tf tree -i <input> [-t|--topics <topic-or-selector>...]
 ```
-
-### Positional arguments
-
-| Name    | Description                                                             |
-| ------- | ----------------------------------------------------------------------- |
-| `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). |
 
 ### Options
 
 | Flag                    | Description                                                                                                                                                                                       |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-i`, `--input <input>` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).                                                                                                                           |
 | `-t`, `--topics <t>...` | Zero or more `tf2_msgs/msg/TFMessage` topics and/or the selectors `static` / `dynamic` (e.g. `/tf /tf_static`, `static`, `dynamic /extra_tf`). When omitted, all TF topics in the bag are merged. |
 
 ### Behavior
@@ -131,32 +126,14 @@ bagwiz tf tree <input> [-t <topic-or-selector>...]
 ### Examples
 
 ```bash
-bagwiz tf tree capture.mcap                       # merge every TF topic in the bag
-bagwiz tf tree capture.mcap -t static             # only the static (*tf_static) tree
-bagwiz tf tree capture.mcap -t dynamic            # only the dynamic tree
-bagwiz tf tree capture.mcap -t dynamic /extra_tf  # all dynamic topics + /extra_tf
-bagwiz tf tree capture.mcap -t /tf /tf_static     # explicit merge
+bagwiz tf tree -i capture.mcap                       # merge every TF topic in the bag
+bagwiz tf tree -i capture.mcap -t static             # only the static (*tf_static) tree
+bagwiz tf tree -i capture.mcap -t dynamic            # only the dynamic tree
+bagwiz tf tree -i capture.mcap -t dynamic /extra_tf  # all dynamic topics + /extra_tf
+bagwiz tf tree -i capture.mcap -t /tf /tf_static     # explicit merge
 ```
 
-### Migration: topics moved behind `-t`
-
-`<topics>` used to be a variadic positional. It is now `-t` / `--topics`,
-matching the rest of bagwiz, but it stays **optional** — omitting it still
-merges every TF topic, exactly as before:
-
-```bash
-bagwiz tf tree capture.mcap             # unchanged: still merges every TF topic
-bagwiz tf tree capture.mcap /tf         # before — now an error
-bagwiz tf tree capture.mcap -t /tf      # after
-```
-
-Unlike `topic drop`/`keep` (where `-t`/`--topics` is required), the old form
-here does **not** fail with a `--topics` message — CLI11 rejects the unexpected
-positional before `run()` sees anything: `The following argument was not
-expected: /tf`. It no longer silently falls back to merging every TF topic;
-the invocation is now rejected outright.
-
-Single-category output, e.g. `tf tree capture.mcap -t dynamic` (plain):
+Single-category output, e.g. `tf tree -i capture.mcap -t dynamic` (plain):
 
 ```text
 ═══ TF tree (dynamic) ═══
@@ -165,7 +142,7 @@ Single-category output, e.g. `tf tree capture.mcap -t dynamic` (plain):
     └── base_link
 ```
 
-Mixed output for `tf tree capture.mcap -t /tf /tf_static`, where `map → base_link`
+Mixed output for `tf tree -i capture.mcap -t /tf /tf_static`, where `map → base_link`
 is dynamic and the sensor mounts are static (on a TTY the names are also colored
 cyan/yellow):
 
@@ -229,30 +206,20 @@ ros2 run tf2_ros tf2_echo <ref> <of>
 Note the operand order: `tf2_echo` takes the **reference frame first**, so its
 arguments are the reverse of the `--of` / `--ref` reading order.
 
-> **Renamed in this release.** The former `<from>` / `<to>` positionals are gone.
-> `<from>` is now `--of` and `<to>` is now `--ref`; the numbers are unchanged.
-> `bagwiz tf static calc <bag> A B` becomes
-> `bagwiz tf static calc <bag> --of A --ref B`.
-
 ### Usage
 
 ```text
-bagwiz tf static calc <input> --of <frame> --ref <frame> [--json]
+bagwiz tf static calc -i <input> --of <frame> --ref <frame> [--json]
 ```
-
-### Positional arguments
-
-| Name    | Description                                                             |
-| ------- | ----------------------------------------------------------------------- |
-| `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). |
 
 ### Options
 
-| Flag     | Description                                         |
-| -------- | --------------------------------------------------- |
-| `--of`   | Frame whose pose is resolved (`<of>`).              |
-| `--ref`  | Reference frame the pose is expressed in (`<ref>`). |
-| `--json` | Emit the transform as JSON instead of human text.   |
+| Flag                    | Description                                                             |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `-i`, `--input <input>` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). |
+| `--of <frame>`          | Frame whose pose is resolved (`<of>`).                                  |
+| `--ref <frame>`         | Reference frame the pose is expressed in (`<ref>`).                     |
+| `--json`                | Emit the transform as JSON instead of human text.                       |
 
 `--of` and `--ref` support TAB completion. Because `tf static calc` resolves
 only the static tree, the candidates are restricted to frame ids found in the
@@ -328,8 +295,8 @@ consumers should not rely on key ordering:
 ### Examples
 
 ```bash
-bagwiz tf static calc capture.mcap --of base_link --ref lidar
-bagwiz tf static calc capture.mcap --of base_link --ref lidar --json
+bagwiz tf static calc -i capture.mcap --of base_link --ref lidar
+bagwiz tf static calc -i capture.mcap --of base_link --ref lidar --json
 ```
 
 ### Exit status
@@ -385,32 +352,26 @@ of the flag.
 ### Usage
 
 ```text
-bagwiz tf static cp <src> <dst> [-o <output>] [-w|--overwrite]
+bagwiz tf static cp -s|--src <src> -d|--dst <dst> [-o <output>] [-w|--overwrite]
 ```
 
-`<src>` and `<dst>` are read; `<dst>` (or `<output>`) is the write target —
-source-before-destination, like `cp src dst`.
-
-### Positional arguments
-
-| Name  | Description                                                                       |
-| ----- | --------------------------------------------------------------------------------- |
-| `src` | Source rosbag to copy static TF from (rosbag2 directory, `*.mcap`, `*.db3`, ...). |
-| `dst` | Destination rosbag to copy static TF into (rewritten in place unless `-o`).       |
+`<src>` is read; `<dst>` (or `<output>`) is the write target.
 
 ### Options
 
 | Flag                | Description                                                                                             |
 | ------------------- | ------------------------------------------------------------------------------------------------------- |
+| `-s`, `--src <src>` | Source rosbag to copy static TF from (rosbag2 directory, `*.mcap`, `*.db3`, ...).                       |
+| `-d`, `--dst <dst>` | Destination rosbag to copy static TF into (rewritten in place unless `-o`).                             |
 | `-o`, `--output`    | Write the result to this new bag instead of rewriting `<dst>` in place.                                 |
 | `-w`, `--overwrite` | Replace an existing `-o`/`--output` path, and replace any colliding static topic's messages in `<dst>`. |
 
 ### Examples
 
 ```bash
-bagwiz tf static cp donor.mcap target.mcap              # rewrite target.mcap in place
-bagwiz tf static cp donor.mcap target.mcap -o merged.mcap  # write a new bag
-bagwiz tf static cp donor.mcap target.mcap -w  # replace a colliding /tf_static
+bagwiz tf static cp -s donor.mcap -d target.mcap              # rewrite target.mcap in place
+bagwiz tf static cp -s donor.mcap -d target.mcap -o merged.mcap  # write a new bag
+bagwiz tf static cp -s donor.mcap -d target.mcap -w  # replace a colliding /tf_static
 ```
 
 ### Exit status
@@ -440,30 +401,21 @@ Each step shows the **pose of `--of` expressed in the `--ref` frame** —
 to `ros2 run tf2_ros tf2_echo <ref> <of>`: the translation is `<of>`'s origin
 expressed in the `<ref>` frame.
 
-> **Renamed in this release.** The former `<from>` / `<to>` positionals are gone.
-> `<from>` is now `--of` and `<to>` is now `--ref`; the numbers are unchanged.
-> `bagwiz tf walk <bag> A B` becomes `bagwiz tf walk <bag> --of A --ref B`.
-
 ### Usage
 
 ```text
-bagwiz tf walk <input> --of <frame> --ref <frame>
+bagwiz tf walk -i <input> --of <frame> --ref <frame>
 ```
 
 `tf walk` requires an interactive terminal (stdin and stdout must be a TTY).
 
-### Positional arguments
-
-| Name    | Description                                                             |
-| ------- | ----------------------------------------------------------------------- |
-| `input` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). |
-
 ### Options
 
-| Flag    | Description                                         |
-| ------- | --------------------------------------------------- |
-| `--of`  | Frame whose pose is resolved (`<of>`).              |
-| `--ref` | Reference frame the pose is expressed in (`<ref>`). |
+| Flag                    | Description                                                             |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `-i`, `--input <input>` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). |
+| `--of <frame>`          | Frame whose pose is resolved (`<of>`).                                  |
+| `--ref <frame>`         | Reference frame the pose is expressed in (`<ref>`).                     |
 
 Both `--of` and `--ref` support TAB completion from the bag's TF frame ids
 across **all** TF topics (static + dynamic, since `tf walk` merges them; see
@@ -521,8 +473,8 @@ the tf2 reason instead of a transform, and navigation continues.
 ### Examples
 
 ```bash
-bagwiz tf walk capture.mcap --of base_link --ref lidar
-bagwiz tf walk capture.mcap --of map --ref base_link
+bagwiz tf walk -i capture.mcap --of base_link --ref lidar
+bagwiz tf walk -i capture.mcap --of map --ref base_link
 ```
 
 ### Exit status
@@ -531,3 +483,24 @@ bagwiz tf walk capture.mcap --of map --ref base_link
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | The pager ran and the user quit.                                                                                                                                                                                                                                                    |
 | `1`  | Not a TTY, the bag could not be opened, it has no `tf2_msgs/msg/TFMessage` topic, the TF topics carry no decodable transforms, a `--of`/`--ref` frame absent from the bag's merged TF tree (available frames are listed on stderr), an empty frame id, or a TF load/decode failure. |
+
+## Migration
+
+The bag operand is now `-i` / `--input` on every `tf` subcommand.
+`tf static cp` operands are now `-s` / `--src` and `-d` / `--dst`.
+The frame operands on `tf static calc` and `tf walk` have long been `--of` /
+`--ref`; the only change is that the bag is no longer positional:
+
+```bash
+bagwiz tf tree capture.mcap                           # before — now an error
+bagwiz tf tree -i capture.mcap                      # after
+
+bagwiz tf static calc capture.mcap --of base_link --ref lidar   # before — now an error
+bagwiz tf static calc -i capture.mcap --of base_link --ref lidar # after
+
+bagwiz tf static cp donor.mcap target.mcap            # before — now an error
+bagwiz tf static cp -s donor.mcap -d target.mcap      # after
+
+bagwiz tf walk capture.mcap --of base_link --ref lidar  # before — now an error
+bagwiz tf walk -i capture.mcap --of base_link --ref lidar # after
+```

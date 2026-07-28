@@ -115,10 +115,12 @@ TEST(WalkCommand, NonTtyInvocationExitsWithGuardMessage)
   // access: the input path does not need to exist for this check, but CLI11
   // validates ExistingPath at parse time, so use a real one.
   const std::string argv0 = "bagwiz";
-  const std::string argv1 = "/tmp";
-  const std::string argv2 = "/topic";
-  const char * argv[] = {argv0.c_str(), argv1.c_str(), argv2.c_str()};
-  ASSERT_NO_THROW(app.parse(3, argv));
+  const std::string argv1 = "-i";
+  const std::string argv2 = "/tmp";
+  const std::string argv3 = "-t";
+  const std::string argv4 = "/topic";
+  const char * argv[] = {argv0.c_str(), argv1.c_str(), argv2.c_str(), argv3.c_str(), argv4.c_str()};
+  ASSERT_NO_THROW(app.parse(5, argv));
 
   EXPECT_EQ(walk->run(), 1);
   EXPECT_NE(

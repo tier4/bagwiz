@@ -681,7 +681,7 @@ public:
 
   void configure(CLI::App & app) override
   {
-    app.add_option("input", args_.input_path, "Input ROS 2 rosbag (file or directory)")
+    app.add_option("-i,--input", args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     auto * start_opt = app.add_option(

@@ -523,7 +523,7 @@ private:
   {
     auto * sub = app.add_subcommand(
       "tree", "Merge one or more tf2_msgs/msg/TFMessage topics into one TF frame tree");
-    sub->add_option("input", tree_args_.input_path, "Bag path (file or directory)")
+    sub->add_option("-i,--input", tree_args_.input_path, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     sub->add_option(
@@ -690,7 +690,7 @@ private:
       "Pose of <of> expressed in <ref>, resolved from the bag's static TF tree. "
       "Equivalent to `ros2 run tf2_ros tf2_echo <ref> <of>` (tf2_echo takes the "
       "reference frame first).");
-    sub->add_option("input", static_args_.input_path, "Bag path (file or directory)")
+    sub->add_option("-i,--input", static_args_.input_path, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     sub->add_option("--of", static_args_.of_frame, "Frame whose pose is resolved (<of>)")
@@ -709,10 +709,10 @@ private:
       "cp",
       "Copy every static TF topic from <src> into <dst>, preserving topic names. Each copied "
       "topic is written as one TFMessage stamped at <dst>'s start time.");
-    sub->add_option("src", static_cp_args_.src_path, "Source bag to copy static TF from")
+    sub->add_option("-s,--src", static_cp_args_.src_path, "Source bag to copy static TF from")
       ->required()
       ->check(CLI::ExistingPath);
-    sub->add_option("dst", static_cp_args_.dst_path, "Destination bag to copy static TF into")
+    sub->add_option("-d,--dst", static_cp_args_.dst_path, "Destination bag to copy static TF into")
       ->required()
       ->check(CLI::ExistingPath);
     sub->add_option(
@@ -843,7 +843,7 @@ private:
       "walk",
       "Step interactively through the times the merged TF changed, showing "
       "<of>'s pose in <ref> at each (merges every TF topic in the bag)");
-    sub->add_option("input", walk_args_.input_path, "Bag path (file or directory)")
+    sub->add_option("-i,--input", walk_args_.input_path, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     sub->add_option("--of", walk_args_.of_frame, "Frame whose pose is resolved (<of>)")->required();

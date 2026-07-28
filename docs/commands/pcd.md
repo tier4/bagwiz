@@ -16,24 +16,25 @@ sweeps are placed by the static extrinsic only. Run `pcd undistort` beforehand
 if you need per-cloud deskew; per-point timestamps are preserved so a downstream
 undistort still sees correct absolute times.
 
+### Usage
+
 ```text
-bagwiz pcd concat <input> <output_topic_name> --pcd <t1> <t2> [<t3> ...] \
-    [--frame <frame>] [-o|--output <path>] [--tolerance <val>] \
-    [--stamp-offset <topic>=<val>]... [--drop-inputs] [--force] [-w|--overwrite] \
-    [-j|--threads <N>]
+bagwiz pcd concat -i <input> -t <output_topic> --pcd <topic>... [OPTIONS]
 ```
 
-| Argument / option              | Required | Description                                                                                                                                                                                                                                                                                                                    |
+### Options
+
+| Flag / option                  | Required | Description                                                                                                                                                                                                                                                                                                                    |
 | ------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `<input>`                      | ✔        | Input bag (file or directory).                                                                                                                                                                                                                                                                                                 |
-| `<output_topic_name>`          | ✔        | Name of the new concatenated PointCloud2 topic.                                                                                                                                                                                                                                                                                |
+| `-i`, `--input <input>`        | ✔        | Input bag (file or directory).                                                                                                                                                                                                                                                                                                 |
+| `-t`, `--topic <output_topic>` | ✔        | Name of the new concatenated PointCloud2 topic.                                                                                                                                                                                                                                                                                |
 | `--pcd <t...>`                 | ✔        | PointCloud2 topics to concatenate (2 or more). The first topic is the reference; concatenation order follows this list.                                                                                                                                                                                                        |
 | `--frame <frame>`              |          | Target frame all clouds are transformed into. Default: `base_link`. Required when the default is not reachable from every `--pcd` frame via the bag's static TF.                                                                                                                                                               |
 | `-o, --output <path>`          |          | Output bag. When omitted, the input bag is rewritten in place (atomic tmp swap).                                                                                                                                                                                                                                               |
 | `--tolerance <val>`            |          | Nearest-match tolerance for pairing the other topics to the first `--pcd` topic. Takes an optional unit `ns`/`us`/`ms`/`s` (no unit = ms), e.g. `50ms`. Default: half the first topic's median header-stamp period, or 50 ms when that period cannot be measured (fewer than two reference messages, or a zero median period). |
 | `--stamp-offset <topic>=<val>` |          | Per-topic offset **added to `header.stamp` for matching only** (the real stamp and per-point times are never rewritten). `<val>` takes an optional unit `ns`/`us`/`ms`/`s` (no unit = ms), signed, e.g. `=-50ms`, `=500ns`. Repeatable. Use it when a sensor triggers early/late relative to the first topic.                  |
 | `--drop-inputs`                |          | Drop the source `--pcd` topics from the output (default: keep them).                                                                                                                                                                                                                                                           |
-| `--force`                      |          | Proceed even if `<output_topic_name>` already exists in the bag (replaces that topic).                                                                                                                                                                                                                                         |
+| `--force`                      |          | Proceed even if `<output_topic>` already exists in the bag (replaces that topic).                                                                                                                                                                                                                                              |
 | `-w, --overwrite`              |          | Overwrite an existing `-o/--output` path.                                                                                                                                                                                                                                                                                      |
 | `-j, --threads <N>`            |          | Number of worker threads (default: `8`). Accepts `0`–`256`; `0` uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; in-range values above hardware concurrency are capped to it.                                                                                                                      |
 
@@ -67,7 +68,7 @@ Concatenate four Seyond LiDARs (front/rear/left/right) into `base_link`, with
 the left/right sensors triggering ~50 ms early:
 
 ```bash
-bagwiz pcd concat drive.mcap /sensing/lidar/concatenated/points \
+bagwiz pcd concat -i drive.mcap -t /sensing/lidar/concatenated/points \
   --frame base_link \
   --pcd /sensing/lidar/front/seyond_points /sensing/lidar/rear/seyond_points \
         /sensing/lidar/left/seyond_points  /sensing/lidar/right/seyond_points \
@@ -93,29 +94,24 @@ compensate for motion at all. Since deskew rewrites only xyz and per-point
 time, running `undistort` before `concat` still leaves per-point timestamps
 intact for the downstream merge.
 
+### Usage
+
 ```text
-bagwiz pcd undistort <input> <pose_topic> --pcd <t1> [<t2> ...] [--pcd <topic>]... \
-    [--ref <frame>] [--of <frame>] [-o|--output <path>] [-w|--overwrite] \
-    [-j|--threads <N>]
+bagwiz pcd undistort -i <input> --pose <pose_topic> --pcd <topic>... [OPTIONS]
 ```
-
-### Positional arguments
-
-| Name         | Description                                                                                                                                                                                           |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `input`      | Input bag (file or directory).                                                                                                                                                                        |
-| `pose_topic` | Self-position source topic already in the bag. Type must be one of `tf2_msgs/msg/TFMessage`, `nav_msgs/msg/Odometry`, `geometry_msgs/msg/PoseStamped`, `geometry_msgs/msg/PoseWithCovarianceStamped`. |
 
 ### Options
 
-| Flag                  | Default      | Description                                                                                                                                                                                           |
-| --------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--pcd <topic>`       | _(required)_ | PointCloud2 topic(s) to deskew. Variadic and repeatable — `--pcd /a /b` and `--pcd /a --pcd /b` are equivalent. At least one is required.                                                             |
-| `--ref <frame>`       | `map`        | Reference frame the trajectory is resolved in (same convention as `traj dump`).                                                                                                                       |
-| `--of <frame>`        | `base_link`  | Tracked body frame. The trajectory is obtained as `T_ref_of` (e.g. `T_map_base_link`).                                                                                                                |
-| `-o, --output <path>` | _(unset)_    | Output bag. When omitted, `<input>` is rewritten in place (atomic tmp swap).                                                                                                                          |
-| `-w, --overwrite`     | `false`      | Replace `-o/--output` if it already exists. Has no effect in in-place mode.                                                                                                                           |
-| `-j, --threads <N>`   | `8`          | Number of worker threads for Pass 2. Accepts `0`–`256`; `0` uses `std::thread::hardware_concurrency()`; `1` forces the synchronous path; in-range values above hardware concurrency are capped to it. |
+| Flag                    | Default      | Description                                                                                                                                                                                           |
+| ----------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-i`, `--input <input>` | _(required)_ | Input bag (file or directory).                                                                                                                                                                        |
+| `--pose <pose_topic>`   | _(required)_ | Self-position source topic already in the bag. Type must be one of `tf2_msgs/msg/TFMessage`, `nav_msgs/msg/Odometry`, `geometry_msgs/msg/PoseStamped`, `geometry_msgs/msg/PoseWithCovarianceStamped`. |
+| `--pcd <topic>`         | _(required)_ | PointCloud2 topic(s) to deskew. Variadic and repeatable — `--pcd /a /b` and `--pcd /a --pcd /b` are equivalent. At least one is required.                                                             |
+| `--ref <frame>`         | `map`        | Reference frame the trajectory is resolved in (same convention as `traj dump`).                                                                                                                       |
+| `--of <frame>`          | `base_link`  | Tracked body frame. The trajectory is obtained as `T_ref_of` (e.g. `T_map_base_link`).                                                                                                                |
+| `-o, --output <path>`   | _(unset)_    | Output bag. When omitted, `<input>` is rewritten in place (atomic tmp swap).                                                                                                                          |
+| `-w, --overwrite`       | `false`      | Replace `-o/--output` if it already exists. Has no effect in in-place mode.                                                                                                                           |
+| `-j, --threads <N>`     | `8`          | Number of worker threads for Pass 2. Accepts `0`–`256`; `0` uses the host's hardware concurrency(); `1` forces the synchronous path; in-range values above hardware concurrency are capped to it.     |
 
 > **Renamed in this release.** `--from` is now `--ref` and `--to` is now `--of`;
 > the values and results are unchanged. Note the mapping is **crossed** —
@@ -180,8 +176,8 @@ bagwiz pcd undistort <input> <pose_topic> --pcd <t1> [<t2> ...] [--pcd <topic>].
 4. **Output.** `-o` writes a new bag inheriting `<input>`'s storage format;
    omitting it rewrites `<input>` in place through a tmp file and an atomic
    swap, so a mid-pass failure leaves the original bag untouched.
-5. **Determinism.** No SLAM is involved, and the same input always produces
-   the same output. When `--threads` is greater than 1, deskew work runs in
+5. **Determinism.** No SLAM is involved, and the same input always produces the
+   same output. When `--threads` is greater than 1, deskew work runs in
    parallel but a single collector thread serializes output, so bag message
    order is preserved.
 
@@ -194,19 +190,19 @@ embed it into the bag as a topic, then point `pcd undistort` at that topic
 
 ```bash
 # Deskew one topic in place, using an existing localization pose (Odometry).
-bagwiz pcd undistort drive.mcap /localization/kinematic_state \
+bagwiz pcd undistort -i drive.mcap --pose /localization/kinematic_state \
   --pcd /sensing/lidar/top/pointcloud
 
 # Deskew multiple topics against the same pose, into a new bag.
-bagwiz pcd undistort drive.mcap /localization/kinematic_state \
+bagwiz pcd undistort -i drive.mcap --pose /localization/kinematic_state \
   --pcd /sensing/lidar/top/pointcloud --pcd /sensing/lidar/left/pointcloud \
   -o undistorted.mcap
 
 # Composition workflow: derive a trajectory with SLAM, embed it as a topic,
 # then deskew against it.
-bagwiz map slam drive.mcap /points out/                 # -> out/traj.tum
-bagwiz traj join drive.mcap out/traj.tum /slam/tf --ref map --of base_link
-bagwiz pcd undistort drive.mcap /slam/tf --pcd /points -o undistorted.mcap
+bagwiz map slam -i drive.mcap --pcd /points -o out/                 # -> out/traj.tum
+bagwiz traj join -i drive.mcap --traj out/traj.tum -t /slam/tf --ref map --of base_link
+bagwiz pcd undistort -i drive.mcap --pose /slam/tf --pcd /points -o undistorted.mcap
 ```
 
 ### Errors
@@ -230,3 +226,17 @@ bagwiz pcd undistort drive.mcap /slam/tf --pcd /points -o undistorted.mcap
 | ---- | ------------------------------------------------------------------------------------------------------- |
 | `0`  | The rewrite completed: every `--pcd` topic validated in Pass 1, and Pass 2 finished.                    |
 | `1`  | Any of the error/fatal conditions above, a writer/I/O failure, or a cloud that failed the rewrite step. |
+
+## Migration
+
+All operands are now flags. The output-topic argument on `pcd concat` is now
+`-t` / `--topic`, and the pose-topic argument on `pcd undistort` is now
+`--pose`:
+
+```bash
+bagwiz pcd concat drive.mcap /sensing/lidar/concatenated/points --pcd /front/points /rear/points  # before — now an error
+bagwiz pcd concat -i drive.mcap -t /sensing/lidar/concatenated/points --pcd /front/points /rear/points # after
+
+bagwiz pcd undistort drive.mcap /localization/kinematic_state --pcd /points  # before — now an error
+bagwiz pcd undistort -i drive.mcap --pose /localization/kinematic_state --pcd /points # after
+```

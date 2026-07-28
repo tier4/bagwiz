@@ -150,8 +150,8 @@ int run_cam_info_dump(const CamInfoDumpArgs & args)
 
   if (!args.output_path.has_value()) {
     // The calibration is this command's data output, so it goes to stdout while
-    // every diagnostic above went to stderr -- `bagwiz cam-info dump <bag>
-    // <topic> > calib.yaml` is pipe-clean. See core/base/logging.hpp.
+    // every diagnostic above went to stderr -- `bagwiz cam-info dump -i <bag>
+    // -t <topic> > calib.yaml` is pipe-clean. See core/base/logging.hpp.
     fmt::print(stdout, "{}", yaml);
     BAGWIZ_LOG_INFO(
       kLogger, "cam-info dump: wrote '%s' from '%s' to stdout (%" PRIu64 " message(s) read).",

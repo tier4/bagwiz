@@ -118,7 +118,7 @@ private:
       "treated as broken.");
     sub
       ->add_option(
-        "input", broken_args_.input_path,
+        "-i,--input", broken_args_.input_path,
         "Bag path or directory to scan. A directory is walked recursively and the check is applied "
         "to every rosbag found within it.")
       ->required()

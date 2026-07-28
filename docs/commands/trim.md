@@ -7,27 +7,22 @@ conversion is performed.
 ## Usage
 
 ```text
-bagwiz trim [OPTIONS] <input> {[--start <offset>] [--end <offset> | --duration <length>] | --both <offset> | --align <topics>...}
+bagwiz trim -i <input> [OPTIONS]
 ```
-
-## Positional arguments
-
-| Name    | Description                                                |
-| ------- | ---------------------------------------------------------- |
-| `input` | Input ROS 2 rosbag (directory or single-file). Must exist. |
 
 ## Options
 
-| Flag                  | Description                                                                                                                                                                                                                 |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--start <bound>`     | Window start: an offset from the bag start (e.g. `5s`, `500ms`) or a message count (`100msg` skips the first 100 messages). Default: bag start.                                                                             |
-| `--end <bound>`       | Window end, exclusive: an offset from the bag start (e.g. `90s`) or a message count (`500msg` keeps the first 500 messages). Default: bag end.                                                                              |
-| `--duration <len>`    | Window length measured from the window start (e.g. `30s`). Time only — no `msg`. Mutually exclusive with `--end`.                                                                                                           |
-| `--both <bound>`      | Trim this much from both the bag start and the bag end: a time offset (`5s`) or a message count (`50msg`). Mutually exclusive with `--start`, `--end`, and `--duration`.                                                    |
-| `--align <topics>...` | Trim to the common time span of these topics — from their latest first message to their earliest last message, both included. Literal names or `*` globs (as in `topic drop -t`). Mutually exclusive with the offset flags. |
-| `--stamp <clock>`     | Reference clock for the window: `header` (default — `header.stamp`, with per-message fallback to receive time) or `recv` (record time). See Reference clock below.                                                          |
-| `-o`, `--output <p>`  | Write the result to a new bag instead of rewriting `<input>` in place.                                                                                                                                                      |
-| `-w`, `--overwrite`   | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place.                                                                                                                       |
+| Flag                    | Description                                                                                                                                                                                                                 |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-i`, `--input <input>` | Input ROS 2 rosbag (directory or single-file). Must exist.                                                                                                                                                                  |
+| `--start <bound>`       | Window start: an offset from the bag start (e.g. `5s`, `500ms`) or a message count (`100msg` skips the first 100 messages). Default: bag start.                                                                             |
+| `--end <bound>`         | Window end, exclusive: an offset from the bag start (e.g. `90s`) or a message count (`500msg` keeps the first 500 messages). Default: bag end.                                                                              |
+| `--duration <len>`      | Window length measured from the window start (e.g. `30s`). Time only — no `msg`. Mutually exclusive with `--end`.                                                                                                           |
+| `--both <bound>`        | Trim this much from both the bag start and the bag end: a time offset (`5s`) or a message count (`50msg`). Mutually exclusive with `--start`, `--end`, and `--duration`.                                                    |
+| `--align <topics>...`   | Trim to the common time span of these topics — from their latest first message to their earliest last message, both included. Literal names or `*` globs (as in `topic drop -t`). Mutually exclusive with the offset flags. |
+| `--stamp <clock>`       | Reference clock for the window: `header` (default — `header.stamp`, with per-message fallback to receive time) or `recv` (record time). See Reference clock below.                                                          |
+| `-o`, `--output <p>`    | Write the result to a new bag instead of rewriting `<input>` in place.                                                                                                                                                      |
+| `-w`, `--overwrite`     | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place.                                                                                                                       |
 
 At least one of `--start`, `--end`, `--duration`, `--both`, or `--align` must be
 given — a windowless trim would be a plain copy, which is `cp -r`'s job.
@@ -125,30 +120,39 @@ even when pipeline latency pushed its record time outside it.
   re-encoded and the output MCAP is written with `compression=none`;
   re-compress afterwards with `ros2 bag convert` if needed.
 
-## Example
+## Examples
 
 ```bash
 # Keep seconds 5..90 of the bag (message at exactly 90s excluded).
-bagwiz trim drive.mcap --start 5s --end 90s -o drive_cut.mcap
+bagwiz trim -i drive.mcap --start 5s --end 90s -o drive_cut.mcap
 
 # The same window, expressed as a length.
-bagwiz trim drive.mcap --start 5s --duration 85s -o drive_cut.mcap
+bagwiz trim -i drive.mcap --start 5s --duration 85s -o drive_cut.mcap
 
 # Drop the first 10 seconds, rewriting the bag in place.
-bagwiz trim drive_dir/ --start 10s
+bagwiz trim -i drive_dir/ --start 10s
 
 # Keep only the first half-second.
-bagwiz trim drive.mcap --end 500ms -o head.mcap
+bagwiz trim -i drive.mcap --end 500ms -o head.mcap
 
 # Cut 5 seconds off each end of the bag.
-bagwiz trim drive.mcap --both 5s -o drive_inner.mcap
+bagwiz trim -i drive.mcap --both 5s -o drive_inner.mcap
 
 # Keep messages 101..1000 (skip the first 100, end after the 1000th).
-bagwiz trim drive.mcap --start 100msg --end 1000msg -o drive_head.mcap
+bagwiz trim -i drive.mcap --start 100msg --end 1000msg -o drive_head.mcap
 
 # Keep only the span where the lidar topic has data (its first to its last
 # message, both included).
-bagwiz trim drive.db3 --align /sensing/lidar/concatenated/pointcloud -o aligned.db3
+bagwiz trim -i drive.db3 --align /sensing/lidar/concatenated/pointcloud -o aligned.db3
+```
+
+## Migration
+
+`<input>` used to be a positional argument. It is now `-i` / `--input`:
+
+```bash
+bagwiz trim drive.mcap --start 5s --end 90s          # before — now an error
+bagwiz trim -i drive.mcap --start 5s --end 90s       # after
 ```
 
 ## Exit status

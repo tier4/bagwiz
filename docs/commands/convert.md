@@ -13,7 +13,7 @@ conversions lives under its own leaf (today: `geo` for position-related types).
 ## Common notes
 
 - Target storage backend resolution order (first match wins):
-  1. `-s/--storage` if given.
+  1. `--storage` if given.
   2. Output path's extension (`.mcap` → MCAP, `.db3` → SQLite3).
   3. Input bag's detected storage backend. Directory-layout outputs
      without `--storage` therefore inherit the input's backend — handy
@@ -31,29 +31,24 @@ conversions lives under its own leaf (today: `geo` for position-related types).
 
 Repack a ROS 2 rosbag2. The subcommand handles two independent
 conversions in one pass — choose the target storage backend (MCAP ↔
-SQLite3) via `-s/--storage`, and choose the on-disk layout
+SQLite3) via `--storage`, and choose the on-disk layout
 (single-file ↔ directory) via the shape of `<output>`. Messages are
 copied verbatim; no deserialization or type conversion is performed.
 
 ### Usage
 
 ```text
-bagwiz convert format [OPTIONS] <input> <output>
+bagwiz convert format -i <input> -o <output> [OPTIONS]
 ```
-
-### Positional arguments
-
-| Name     | Description                                                   |
-| -------- | ------------------------------------------------------------- |
-| `input`  | Input ROS 2 rosbag2 (directory or single-file). Must exist.   |
-| `output` | Output rosbag2 directory or single-file (`*.mcap` / `*.db3`). |
 
 ### Options
 
-| Flag                  | Description                                                                                                                                      |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `-s`, `--storage <S>` | Target storage backend. One of `mcap`, `sqlite3`. Default: inferred from the output extension; otherwise inherited from the input bag's storage. |
-| `-w`, `--overwrite`   | Replace `<output>` if it already exists. Without this flag, an existing output path stops the run.                                               |
+| Flag                      | Description                                                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `-i`, `--input <input>`   | Input ROS 2 rosbag2 (directory or single-file). Must exist.                                                                                      |
+| `-o`, `--output <output>` | Output rosbag2 directory or single-file (`*.mcap` / `*.db3`).                                                                                    |
+| `--storage <S>`           | Target storage backend. One of `mcap`, `sqlite3`. Default: inferred from the output extension; otherwise inherited from the input bag's storage. |
+| `-w`, `--overwrite`       | Replace `<output>` if it already exists. Without this flag, an existing output path stops the run.                                               |
 
 ### Behavior
 
@@ -101,14 +96,14 @@ bagwiz convert format [OPTIONS] <input> <output>
 
 ```bash
 # MCAP file -> SQLite3 file (extension picks the backend).
-bagwiz convert format drive.mcap drive.db3
+bagwiz convert format -i drive.mcap -o drive.db3
 
 # SQLite3 directory -> directory-layout MCAP.
-bagwiz convert format drive_dir/ drive_mcap_dir/ --storage mcap
+bagwiz convert format -i drive_dir/ -o drive_mcap_dir/ --storage mcap
 
 # Layout change without storage change: single-file MCAP -> directory MCAP.
 # --storage is optional here — the directory output inherits MCAP from the input.
-bagwiz convert format drive.mcap drive_dir/
+bagwiz convert format -i drive.mcap -o drive_dir/
 ```
 
 ---
@@ -134,21 +129,16 @@ Whitelisted routes (`--src` → `--dst`):
 ### Usage
 
 ```text
-bagwiz convert msg geo [OPTIONS] <input> --dst <type>
+bagwiz convert msg geo -i <input> --dst <type> [OPTIONS]
 ```
-
-### Positional arguments
-
-| Name    | Description                                                |
-| ------- | ---------------------------------------------------------- |
-| `input` | Input ROS 2 rosbag (directory or single-file). Must exist. |
 
 ### Options
 
 | Flag                     | Description                                                                                                           |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| `--src <type>`           | Source message type (snake_case). Required unless `--topic` is given; **ignored** when it is.                         |
+| `-i`, `--input <input>`  | Input ROS 2 rosbag (directory or single-file). Must exist.                                                            |
 | `--dst <type>`           | Target message type (snake_case). Required.                                                                           |
+| `--src <type>`           | Source message type (snake_case). Required unless `--topic` is given; **ignored** when it is.                         |
 | `--topic <t>...`         | Convert exactly these topic(s) instead of every topic matching `--src`. All named topics must share one message type. |
 | `--crs <enu\|utm>`       | Target Cartesian coordinate system. Optional; defaults to `enu`.                                                      |
 | `--origin <lat,lon,alt>` | WGS84 datum. Required for ENU unless it can be derived from the first `NavSatFix`; an optional offset for UTM.        |
@@ -190,11 +180,11 @@ bagwiz convert msg geo [OPTIONS] <input> --dst <type>
 ```bash
 # Convert every NavSatFix topic to PoseWithCovarianceStamped in a local ENU
 # frame (the default CRS), deriving the origin from the first fix; new bag.
-bagwiz convert msg geo drive.mcap \
+bagwiz convert msg geo -i drive.mcap \
   --src nav_sat_fix --dst pose_with_covariance_stamped -o drive_pose.mcap
 
 # Convert one specific topic to PoseStamped in UTM, in place.
-bagwiz convert msg geo drive.mcap \
+bagwiz convert msg geo -i drive.mcap \
   --topic /sensing/gnss/fix --dst pose_stamped --crs utm --origin 35.68,139.76,40.0
 ```
 
@@ -204,3 +194,15 @@ bagwiz convert msg geo drive.mcap \
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | Repack finished successfully. `convert msg geo` still logs a tally of messages that failed to decode/convert and were skipped; `convert format` fails the run outright on any read/write error, and logs a warning per topic whose declaration or message definition could not be resolved. |
 | `1`  | Argument resolution failed (bad `--storage`, ambiguous output path), the input could not be opened or used a rejected compression mode, the output could not be opened, or a fatal read/write/close error occurred.                                                                         |
+
+## Migration
+
+All operands are now flags:
+
+```bash
+bagwiz convert format drive.mcap drive.db3          # before — now an error
+bagwiz convert format -i drive.mcap -o drive.db3    # after
+
+bagwiz convert msg geo drive.mcap --dst pose_stamped  # before — now an error
+bagwiz convert msg geo -i drive.mcap --dst pose_stamped # after
+```

@@ -69,12 +69,12 @@ private:
       "Merge multiple PointCloud2 topics into one new topic. Each topic is rigidly "
       "transformed into --frame using the bag's static TF, and messages are matched against "
       "the first --pcd topic within --tolerance (nearest-in-time).");
-    sub->add_option("input", concat_args_.input_path, "Bag path (file or directory)")
+    sub->add_option("-i,--input", concat_args_.input_path, "Bag path (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
     sub
       ->add_option(
-        "output_topic", concat_args_.output_topic, "Name of the new concatenated PointCloud2 topic")
+        "-t,--topic", concat_args_.output_topic, "Name of the new concatenated PointCloud2 topic")
       ->required();
     sub
       ->add_option(
@@ -120,12 +120,12 @@ private:
   {
     auto * sub = app.add_subcommand(
       "undistort", "Motion-deskew PointCloud2 topic(s) using an external pose topic + tf_static.");
-    sub->add_option("input", undistort_args_.input_path, "Input bag (file or directory).")
+    sub->add_option("-i,--input", undistort_args_.input_path, "Input bag (file or directory).")
       ->required()
       ->check(CLI::ExistingPath);
     sub
       ->add_option(
-        "pose_topic", undistort_args_.pose_topic,
+        "--pose", undistort_args_.pose_topic,
         "Self-position topic (TFMessage / Odometry / PoseStamped / PoseWithCovarianceStamped).")
       ->required();
     sub
