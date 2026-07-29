@@ -192,8 +192,31 @@ TEST(MapColorizer, AveragesObservationsAcrossImages)
 
   const auto result = colorizer.finish();
   // Both observations sit within the trim band of the lit-mode anchor, so the
-  // final color is their plain (equal-weight) average.
-  EXPECT_EQ(result.colors[0], (std::array<std::uint8_t, 3>{235, 20, 35}));
+  // final color is their equal-weight average in linear light: each channel is
+  // decoded sRGB -> linear, averaged, and re-encoded, which lands brighter
+  // than the sRGB-value midpoint (e.g. 236 for the red pair, not 235).
+  EXPECT_EQ(result.colors[0], (std::array<std::uint8_t, 3>{236, 22, 38}));
+  EXPECT_EQ(result.images_used, 2U);
+}
+
+TEST(MapColorizer, AveragesExposuresInLinearLight)
+{
+  // One surface seen at two exposures a factor of ~4.6 apart in linear light
+  // (sRGB 40 and 88 — a deviation of exactly 48 code values, the widest pair
+  // the trim band keeps). The mean of the underlying radiance re-encodes to
+  // 69; averaging the gamma-encoded values instead would give
+  // (40 + 88) / 2 = 64, a systematically darker result (Jensen's inequality:
+  // the sRGB encode is concave, so an sRGB-space mean always lands at or
+  // below the true mean).
+  const std::vector<std::array<float, 3>> points = {{0.0F, 0.0F, 5.0F}};
+  const std::vector<TrajectoryPose> trajectory = {make_pose(0), make_pose(1'000'000'000)};
+  slam::MapColorizer colorizer(make_config(), points, trajectory);
+
+  EXPECT_TRUE(colorizer.add_image(0, make_raster(100, 100, {40, 40, 40}), 100, 100));
+  EXPECT_TRUE(colorizer.add_image(1'000'000'000, make_raster(100, 100, {88, 88, 88}), 100, 100));
+
+  const auto result = colorizer.finish();
+  EXPECT_EQ(result.colors[0], (std::array<std::uint8_t, 3>{69, 69, 69}));
   EXPECT_EQ(result.images_used, 2U);
 }
 
@@ -362,7 +385,9 @@ TEST(MapColorizer, BilinearlySamplesBetweenPixels)
   EXPECT_TRUE(colorizer.add_image(0, raster, 100, 100));
 
   const auto result = colorizer.finish();
-  EXPECT_EQ(result.colors[0], (std::array<std::uint8_t, 3>{128, 128, 128}));
+  // The blend runs in linear light: halfway between black and white radiance
+  // re-encodes to sRGB 188, not to the sRGB code midpoint 128.
+  EXPECT_EQ(result.colors[0], (std::array<std::uint8_t, 3>{188, 188, 188}));
 }
 
 TEST(MapColorizer, InterpolatesCameraPoseBetweenTrajectoryPoints)
@@ -569,8 +594,9 @@ TEST(MapColorizerMerge, BlendsObservedPointsByWeight)
 
   const auto merged = slam::merge_colorize_results(results);
   ASSERT_EQ(merged.colors.size(), 3U);
-  // (3 * 100 + 1 * 200) / 4 = 125 per channel.
-  EXPECT_EQ(merged.colors[0], (std::array<std::uint8_t, 3>{125, 125, 125}));
+  // The blend runs in linear light: (3 * linear(100) + 1 * linear(200)) / 4
+  // re-encodes to 134 per channel (an sRGB-space blend would give 125).
+  EXPECT_EQ(merged.colors[0], (std::array<std::uint8_t, 3>{134, 134, 134}));
   EXPECT_EQ(merged.colors[1], (std::array<std::uint8_t, 3>{30, 31, 32}));
   EXPECT_EQ(merged.colors[2], kGray);
   EXPECT_EQ(merged.observed, (std::vector<std::uint8_t>{1, 1, 0}));

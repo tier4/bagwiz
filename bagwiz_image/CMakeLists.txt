@@ -59,6 +59,7 @@ add_library(bagwiz_image
   src/core/image/projection_matrix.cpp
   src/core/image/raw_image.cpp
   src/core/image/sampling.cpp
+  src/core/image/srgb.cpp
   src/core/image/undistort.cpp
 )
 target_include_directories(bagwiz_image
@@ -150,6 +151,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_image_sampling_test test/core/image/sampling_test.cpp)
   target_link_libraries(bagwiz_image_sampling_test bagwiz_image)
+
+  ament_add_gtest(bagwiz_image_srgb_test test/core/image/srgb_test.cpp)
+  target_link_libraries(bagwiz_image_srgb_test bagwiz_image)
 
   ament_add_gtest(bagwiz_image_gradient_test test/core/image/gradient_test.cpp)
   target_link_libraries(bagwiz_image_gradient_test bagwiz_image)

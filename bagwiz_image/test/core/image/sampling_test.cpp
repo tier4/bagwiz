@@ -8,6 +8,8 @@
 
 #include "bagwiz/core/image/sampling.hpp"
 
+#include "bagwiz/core/image/srgb.hpp"
+
 #include <gtest/gtest.h>
 
 #include <array>
@@ -141,6 +143,40 @@ TEST(BilinearSampleBgr, LinearRampMatchesClosedForm)
     EXPECT_NEAR(c[1], 200.0 - 4.0 * u, kTol);
     EXPECT_NEAR(c[2], 17.0 + 6.0 * u, kTol);
   }
+}
+
+TEST(BilinearSampleBgrLinear, IntegerCoordinatesGiveTheExactDecode)
+{
+  const auto raster = make_solid_bgr(2, 2, 60, 120, 180);
+  const auto sample = image::bilinear_sample_bgr_linear(raster, 2, 2, 1.0, 1.0);
+  EXPECT_DOUBLE_EQ(sample[0], image::srgb_u8_to_linear(60));
+  EXPECT_DOUBLE_EQ(sample[1], image::srgb_u8_to_linear(120));
+  EXPECT_DOUBLE_EQ(sample[2], image::srgb_u8_to_linear(180));
+}
+
+TEST(BilinearSampleBgrLinear, MidpointBlendsInLinearLightNotInCodeValues)
+{
+  // 2x1 raster: black pixel left, white pixel right. The linear-light blend
+  // at the midpoint is exactly half radiance; a code-value blend would give
+  // the linear decode of 127.5 instead, which is far darker (~0.212).
+  const auto raster = make_bgr(2, 1, [](std::uint32_t x, std::uint32_t) {
+    const auto v = static_cast<std::uint8_t>(x == 0 ? 0 : 255);
+    return std::array<std::uint8_t, 3>{v, v, v};
+  });
+  const auto sample = image::bilinear_sample_bgr_linear(raster, 2, 1, 0.5, 0.0);
+  EXPECT_DOUBLE_EQ(sample[0], 0.5);
+  EXPECT_DOUBLE_EQ(sample[1], 0.5);
+  EXPECT_DOUBLE_EQ(sample[2], 0.5);
+}
+
+TEST(BilinearSampleBgrLinear, InvalidInputReturnsZero)
+{
+  const auto raster = make_solid_bgr(2, 2, 10, 20, 30);
+  const auto short_buffer = std::span<const std::byte>(raster).first(raster.size() - 1);
+  const auto sample = image::bilinear_sample_bgr_linear(short_buffer, 2, 2, 0.5, 0.5);
+  EXPECT_DOUBLE_EQ(sample[0], 0.0);
+  EXPECT_DOUBLE_EQ(sample[1], 0.0);
+  EXPECT_DOUBLE_EQ(sample[2], 0.0);
 }
 
 TEST(BilinearSampleBgr, InvalidInputReturnsZero)

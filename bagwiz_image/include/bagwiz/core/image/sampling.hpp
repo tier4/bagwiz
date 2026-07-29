@@ -26,6 +26,15 @@ namespace bagwiz::core::image
 [[nodiscard]] std::array<double, 3> bilinear_sample_bgr(
   std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height, double u, double v);
 
+// Same sample in linear light: each of the four neighboring pixels is decoded
+// sRGB -> linear (see srgb.hpp) before interpolation, so the result is the
+// mean of the underlying radiance rather than of the gamma-encoded values
+// (which would land darker across any edge). Identical coordinate, clamping,
+// and validation semantics to bilinear_sample_bgr; returns {b, g, r} with
+// each channel in linear light, in [0, 1].
+[[nodiscard]] std::array<double, 3> bilinear_sample_bgr_linear(
+  std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height, double u, double v);
+
 }  // namespace bagwiz::core::image
 
 #endif  // BAGWIZ__CORE__IMAGE__SAMPLING_HPP_

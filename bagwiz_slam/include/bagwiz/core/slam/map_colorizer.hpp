@@ -27,7 +27,11 @@
 // --cam`). For each image the camera pose is interpolated from the optimized
 // trajectory and a ColorizeRasterizer projects the map points onto the raw
 // image with the camera's lens-distortion model, splatting a per-pixel depth
-// buffer to reject occluded points. Each surviving observation is weighted
+// buffer to reject occluded points. All color arithmetic — the per-image
+// samples, the gain ratios, and every average — runs in linear light (sRGB
+// decoded on read, re-encoded on store and export), so blending observations
+// estimates the surface's radiance instead of the systematically darker
+// gamma-space mean. Each surviving observation is weighted
 // (depth distance, surface incidence, image sharpness, image border),
 // corrected by a per-image gain estimate that tracks auto-exposure / white
 // balance drift (the gain only lifts underexposed frames toward the
@@ -158,11 +162,12 @@ struct MapColorizeResult
 
 // Merge per-camera colorize results (`map slam --cam` given more than once).
 // Cameras are first aligned in gain: for each result after the first, the
-// per-channel median color ratio over the points observed by both that
-// camera and the FIRST result (span order — alignment is always against the
-// first result, never chained) scales its colors toward the first camera;
-// fewer than 64 shared well-exposed samples leaves the camera unscaled.
-// Then each point blends the cameras that observed it by their weights:
+// per-channel median linear-light color ratio over the points observed by
+// both that camera and the FIRST result (span order — alignment is always
+// against the first result, never chained) scales its colors toward the
+// first camera; fewer than 64 shared well-exposed samples leaves the camera
+// unscaled. Then each point blends the cameras that observed it by their
+// weights, in linear light:
 // color = sum(w_c * color_c) / sum(w_c). A point no camera observed keeps
 // the neutral gray with observed = 0 and weight 0.
 // `results` must be parallel (same point count; the first result's size is
@@ -234,7 +239,9 @@ private:
   {
     // Packed observations per point, most-significant byte first:
     // bits 31..24 = weight quantized to 8 bits linear (w * 255 rounded),
-    // bits 23..16 = r, 15..8 = g, 7..0 = b.
+    // bits 23..16 = r, 15..8 = g, 7..0 = b. The color bytes are sRGB code
+    // values (the perceptually allocated encoding the images arrive in, so
+    // 8 bits lose nothing); the linear-light math decodes them on read.
     std::array<std::array<std::uint32_t, kMaxObservations>, kPageSize> slots{};
     // Total observations offered per point (grows past kMaxObservations;
     // the reservoir-sampling rule needs the full count).
@@ -303,6 +310,8 @@ private:
   struct PendingObservation
   {
     std::uint32_t index = 0;
+    // Linear light, nominally in [0, 1] (the per-image gain may lift a value
+    // above 1; the sRGB re-encode on storage clips it).
     double r = 0.0;
     double g = 0.0;
     double b = 0.0;

@@ -9,6 +9,7 @@
 #include "bagwiz/core/slam/map_colorizer.hpp"
 
 #include "bagwiz/core/image/sampling.hpp"
+#include "bagwiz/core/image/srgb.hpp"
 #include "bagwiz/core/pointcloud/cloud_transform.hpp"
 #include "bagwiz/core/pointcloud/normals.hpp"
 #include "bagwiz/core/slam/colorize_weight.hpp"
@@ -40,12 +41,16 @@ constexpr std::array<std::uint8_t, 3> kUncoloredGray{128, 128, 128};
 // observations of one surface cluster well inside this band.
 constexpr double kTrimDeviation = 48.0;
 
-// merge_colorize_results clamps its per-camera alignment to this range: wider
-// swings mean the estimate locked onto something other than exposure drift.
-constexpr double kGainMin = 0.5;
-constexpr double kGainMax = 2.0;
+// merge_colorize_results clamps its per-camera alignment to this range of
+// linear-light ratios: wider swings mean the estimate locked onto something
+// other than exposure drift. The bounds cover the reach of a factor-two swing
+// in sRGB code values, which is a linear-light ratio of up to ~4.7 in the
+// highlights (and less in the shadows).
+constexpr double kGainMin = 0.2;
+constexpr double kGainMax = 5.0;
 
-// The per-image gain is clamped to [1, kGainImageMax] rather than
+// The per-image gain (also a linear-light ratio) is clamped to
+// [1, kGainImageMax] rather than
 // [kGainMin, kGainMax]: it may only LIFT an underexposed frame toward the
 // established reference, never pull a brighter frame down. A scene that
 // genuinely brightens (driving out of shade) would otherwise drag the
@@ -55,7 +60,7 @@ constexpr double kGainMax = 2.0;
 // the scene's best-lit exposure, which the lit-mode anchor in finish()
 // prefers anyway.
 constexpr double kGainImageMin = 1.0;
-constexpr double kGainImageMax = 2.0;
+constexpr double kGainImageMax = 5.0;
 
 // Maximum per-channel spread (max - min over the stored observations, gray
 // levels) for a point's reservoir to vote on an image's gain. A reservoir
@@ -131,7 +136,9 @@ double median_of(std::vector<double> & values)
   return 0.5 * (values[mid - 1] + values[mid]);
 }
 
-// Round-to-nearest into [0, 255], for colors, gains, and weight quantization.
+// Round-to-nearest into [0, 255], for weight quantization (colors go through
+// image::linear_to_srgb_u8 instead, which quantizes and gamma-encodes in one
+// step).
 std::uint32_t quantize8(double value)
 {
   return static_cast<std::uint32_t>(std::clamp(value, 0.0, 255.0) + 0.5);
@@ -329,7 +336,10 @@ void MapColorizer::weight_and_sample(
           continue;
         }
       }
-      const auto sample = image::bilinear_sample_bgr(bgr, width, height, vp.u, vp.v);
+      // Linear-light sample: color arithmetic downstream (gain ratios, the
+      // reservoir means) is only meaningful on the radiance underneath the
+      // gamma-encoded pixel values.
+      const auto sample = image::bilinear_sample_bgr_linear(bgr, width, height, vp.u, vp.v);
       out.push_back(PendingObservation{vp.index, sample[2], sample[1], sample[0], weight});
     }
   };
@@ -369,28 +379,35 @@ std::array<double, 3> MapColorizer::estimate_image_gain()
       if (stored < config_.gain_min_prior_obs) {
         continue;
       }
-      std::array<double, 3> mean{0.0, 0.0, 0.0};
-      std::array<double, 3> cmin{255.0, 255.0, 255.0};
+      std::array<double, 3> mean{0.0, 0.0, 0.0};        // linear light
+      std::array<double, 3> cmin{255.0, 255.0, 255.0};  // sRGB code values
       std::array<double, 3> cmax{0.0, 0.0, 0.0};
       for (std::size_t s = 0; s < stored; ++s) {
         const std::uint32_t packed = page->slots[offset][s];
-        const std::array<double, 3> value{
-          static_cast<double>((packed >> 16) & 0xFFU), static_cast<double>((packed >> 8) & 0xFFU),
-          static_cast<double>(packed & 0xFFU)};
+        const std::array<std::uint8_t, 3> value{
+          static_cast<std::uint8_t>((packed >> 16) & 0xFFU),
+          static_cast<std::uint8_t>((packed >> 8) & 0xFFU),
+          static_cast<std::uint8_t>(packed & 0xFFU)};
         for (std::size_t c = 0; c < 3; ++c) {
-          mean[c] += value[c];
-          cmin[c] = std::min(cmin[c], value[c]);
-          cmax[c] = std::max(cmax[c], value[c]);
+          mean[c] += image::srgb_u8_to_linear(value[c]);
+          cmin[c] = std::min(cmin[c], static_cast<double>(value[c]));
+          cmax[c] = std::max(cmax[c], static_cast<double>(value[c]));
         }
       }
-      const std::array<double, 3> current{obs.r, obs.g, obs.b};
+      const std::array<double, 3> current{obs.r, obs.g, obs.b};  // linear light
+      // The exposure ratio is linear light (a uniform exposure change scales
+      // every point's radiance by the same factor there, which no single
+      // factor does on gamma-encoded values). The appearance-stability window
+      // stays on the stored sRGB code values: a fixed gray-level band is only
+      // meaningful in the perceptually allocated encoding.
+      const double black_floor = image::srgb_u8_to_linear(8);
       bool usable = true;
       for (std::size_t c = 0; c < 3; ++c) {
         mean[c] /= static_cast<double>(stored);
         // Appearance-unstable reservoirs abstain (see kGainVoteStableRange);
         // near-black channels make the ratio numerically meaningless.
-        usable = usable && cmax[c] - cmin[c] <= kGainVoteStableRange && mean[c] >= 8.0 &&
-                 current[c] >= 8.0;
+        usable = usable && cmax[c] - cmin[c] <= kGainVoteStableRange && mean[c] >= black_floor &&
+                 current[c] >= black_floor;
       }
       if (!usable) {
         continue;
@@ -429,14 +446,15 @@ void MapColorizer::reservoir_add_all(const std::array<double, 3> & gain)
     }
   }
 
-  // Pass B: apply the gain, quantize the weight, and reservoir-add. Points
-  // are unique within an image, so per-point writes never collide.
+  // Pass B: apply the gain in linear light, re-encode to sRGB for storage,
+  // quantize the weight, and reservoir-add. Points are unique within an
+  // image, so per-point writes never collide.
   auto add_chunk = [&](std::size_t begin, std::size_t end, std::size_t /*chunk*/) {
     for (std::size_t j = begin; j < end; ++j) {
       const auto & obs = pending_scratch_[j];
-      const std::uint32_t r = quantize8(obs.r * gain[0]);
-      const std::uint32_t g = quantize8(obs.g * gain[1]);
-      const std::uint32_t b = quantize8(obs.b * gain[2]);
+      const std::uint32_t r = image::linear_to_srgb_u8(obs.r * gain[0]);
+      const std::uint32_t g = image::linear_to_srgb_u8(obs.g * gain[1]);
+      const std::uint32_t b = image::linear_to_srgb_u8(obs.b * gain[2]);
       const std::uint32_t w_q = quantize8(obs.weight * 255.0);
       reservoir_add(obs.index, (w_q << 24) | (r << 16) | (g << 8) | b);
     }
@@ -480,15 +498,23 @@ MapColorizeResult MapColorizer::finish() const
     if (stored == 0) {
       continue;
     }
-    // Decode the kept slots.
+    // Decode the kept slots: the sRGB code values feed the luminance anchor
+    // and the trim (fixed gray-level bands are only meaningful in the
+    // perceptually allocated encoding), the linear-light values feed the mean.
     std::array<double, kMaxObservations> ws;
     std::array<std::array<double, kMaxObservations>, 3> channels;
+    std::array<std::array<double, kMaxObservations>, 3> linear;
     for (std::size_t s = 0; s < stored; ++s) {
       const std::uint32_t packed = page->slots[offset][s];
       ws[s] = static_cast<double>(packed >> 24) / 255.0;
-      channels[0][s] = static_cast<double>((packed >> 16) & 0xFFU);
-      channels[1][s] = static_cast<double>((packed >> 8) & 0xFFU);
-      channels[2][s] = static_cast<double>(packed & 0xFFU);
+      const std::array<std::uint8_t, 3> value{
+        static_cast<std::uint8_t>((packed >> 16) & 0xFFU),
+        static_cast<std::uint8_t>((packed >> 8) & 0xFFU),
+        static_cast<std::uint8_t>(packed & 0xFFU)};
+      for (std::size_t c = 0; c < 3; ++c) {
+        channels[c][s] = static_cast<double>(value[c]);
+        linear[c][s] = image::srgb_u8_to_linear(value[c]);
+      }
     }
     // Per-observation luminance and the index order sorting by it.
     std::array<double, kMaxObservations> lum;
@@ -536,8 +562,10 @@ MapColorizeResult MapColorizer::finish() const
         continue;
       }
       for (std::size_t c = 0; c < 3; ++c) {
-        sum[c] += ws[s] * channels[c][s];
-        plain_sum[c] += channels[c][s];
+        // The mean runs in linear light: averaging gamma-encoded values would
+        // land systematically darker (the sRGB encode is concave).
+        sum[c] += ws[s] * linear[c][s];
+        plain_sum[c] += linear[c][s];
       }
       weight_sum += ws[s];
       ++kept;
@@ -555,9 +583,8 @@ MapColorizeResult MapColorizer::finish() const
       }
     }
     result.colors[i] = {
-      static_cast<std::uint8_t>(quantize8(color[0])),
-      static_cast<std::uint8_t>(quantize8(color[1])),
-      static_cast<std::uint8_t>(quantize8(color[2]))};
+      image::linear_to_srgb_u8(color[0]), image::linear_to_srgb_u8(color[1]),
+      image::linear_to_srgb_u8(color[2])};
     result.observed[i] = 1;
     result.weights[i] = static_cast<float>(weight_sum);
     ++result.colored_points;
@@ -618,7 +645,10 @@ MapColorizeResult merge_colorize_results(std::span<const MapColorizeResult> resu
         continue;
       }
       for (std::size_t c = 0; c < 3; ++c) {
-        ratios[c].push_back(static_cast<double>(reference.colors[i][c]) / current.colors[i][c]);
+        // Exposure alignment is a linear-light ratio, like the per-image gain.
+        ratios[c].push_back(
+          image::srgb_u8_to_linear(reference.colors[i][c]) /
+          image::srgb_u8_to_linear(current.colors[i][c]));
       }
     }
     if (ratios[0].size() < kMinAlignmentSamples) {
@@ -632,7 +662,7 @@ MapColorizeResult merge_colorize_results(std::span<const MapColorizeResult> resu
     copy = current.colors;
     for (auto & color : copy) {
       for (std::size_t c = 0; c < 3; ++c) {
-        color[c] = static_cast<std::uint8_t>(quantize8(static_cast<double>(color[c]) * gain[c]));
+        color[c] = image::linear_to_srgb_u8(image::srgb_u8_to_linear(color[c]) * gain[c]);
       }
     }
     aligned[cam] = copy;
@@ -654,7 +684,8 @@ MapColorizeResult merge_colorize_results(std::span<const MapColorizeResult> resu
         continue;
       }
       for (std::size_t c = 0; c < 3; ++c) {
-        sum[c] += w * static_cast<double>(aligned[cam][i][c]);
+        // Like finish(), the cross-camera blend averages in linear light.
+        sum[c] += w * image::srgb_u8_to_linear(aligned[cam][i][c]);
       }
       weight_sum += w;
     }
@@ -662,9 +693,8 @@ MapColorizeResult merge_colorize_results(std::span<const MapColorizeResult> resu
       continue;
     }
     merged.colors[i] = {
-      static_cast<std::uint8_t>(quantize8(sum[0] / weight_sum)),
-      static_cast<std::uint8_t>(quantize8(sum[1] / weight_sum)),
-      static_cast<std::uint8_t>(quantize8(sum[2] / weight_sum))};
+      image::linear_to_srgb_u8(sum[0] / weight_sum), image::linear_to_srgb_u8(sum[1] / weight_sum),
+      image::linear_to_srgb_u8(sum[2] / weight_sum)};
     merged.observed[i] = 1;
     merged.weights[i] = static_cast<float>(weight_sum);
     ++merged.colored_points;

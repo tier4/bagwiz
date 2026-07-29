@@ -8,6 +8,8 @@
 
 #include "bagwiz/core/image/sampling.hpp"
 
+#include "bagwiz/core/image/srgb.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -18,8 +20,17 @@
 namespace bagwiz::core::image
 {
 
-std::array<double, 3> bilinear_sample_bgr(
-  std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height, double u, double v)
+namespace
+{
+
+// Shared bilinear core: validates the input, clamps the 4-tap footprint, and
+// interpolates whatever per-channel value `to_value` reads from a raster
+// byte — the raw code value for bilinear_sample_bgr, the linear-light decode
+// for bilinear_sample_bgr_linear.
+template <typename PixelToValue>
+std::array<double, 3> bilinear_sample_impl(
+  std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height, double u, double v,
+  PixelToValue && to_value)
 {
   if (width == 0 || height == 0) {
     return {0.0, 0.0, 0.0};
@@ -51,7 +62,7 @@ std::array<double, 3> bilinear_sample_bgr(
   const auto pixel_at = [&](std::uint32_t col, std::uint32_t row, std::size_t channel) {
     const std::size_t i =
       static_cast<std::size_t>(row) * row_stride + static_cast<std::size_t>(col) * 3 + channel;
-    return static_cast<double>(bgr[i]);
+    return to_value(bgr[i]);
   };
 
   std::array<double, 3> sample{};
@@ -64,6 +75,23 @@ std::array<double, 3> bilinear_sample_bgr(
       (1.0 - fu) * (1.0 - fv) * p00 + fu * (1.0 - fv) * p10 + (1.0 - fu) * fv * p01 + fu * fv * p11;
   }
   return sample;
+}
+
+}  // namespace
+
+std::array<double, 3> bilinear_sample_bgr(
+  std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height, double u, double v)
+{
+  return bilinear_sample_impl(
+    bgr, width, height, u, v, [](std::byte value) { return static_cast<double>(value); });
+}
+
+std::array<double, 3> bilinear_sample_bgr_linear(
+  std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height, double u, double v)
+{
+  return bilinear_sample_impl(bgr, width, height, u, v, [](std::byte value) {
+    return srgb_u8_to_linear(static_cast<std::uint8_t>(value));
+  });
 }
 
 }  // namespace bagwiz::core::image
