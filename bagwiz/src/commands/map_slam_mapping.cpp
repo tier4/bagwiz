@@ -43,7 +43,8 @@ std::string imu_suffix(const MapSlamArgs & args, std::int64_t imu_count)
 
 core::slam::CloudMapperConfig build_mapper_config(
   const MapSlamArgs & args, const std::optional<core::slam::SensorTransform> & t_lidar_imu,
-  bool use_gpu, const std::array<double, 3> & gnss_antenna_offset)
+  bool use_gpu, const std::array<double, 3> & gnss_antenna_offset,
+  std::span<const core::slam::SensorTransform> visual_cameras)
 {
   core::slam::CloudMapperConfig config;
   config.input_resolution = args.input_resolution;
@@ -65,6 +66,7 @@ core::slam::CloudMapperConfig build_mapper_config(
   config.fill_start = args.fill_start;
   config.fill_end = args.fill_end;
   config.gnss_antenna_offset = gnss_antenna_offset;
+  config.visual_cameras.assign(visual_cameras.begin(), visual_cameras.end());
   return config;
 }
 
@@ -85,6 +87,12 @@ ScanProgressSetup resolve_scan_progress(
     }
     if (!args.gnss_topic.empty()) {
       progress_topics.push_back(args.gnss_topic);
+    }
+    // The --cam images stream through this same pass (the --color topics do
+    // not: they are read again in the later colorize pass, which has its own
+    // progress reporting).
+    for (const std::string & topic : args.cam_topics) {
+      progress_topics.push_back(topic);
     }
     try {
       const auto topic_counts = reader.compute_topic_counts(progress_topics);
@@ -264,6 +272,28 @@ void log_mapping_summary(
         "without GNSS. Likely too little motion (baseline) or no temporal overlap between GNSS "
         "and the submaps.",
         args.gnss_topic.c_str(), std::to_string(gnss_count).c_str());
+    }
+  }
+
+  if (!args.cam_topics.empty()) {
+    if (map.visual_factor_count > 0) {
+      BAGWIZ_LOG_INFO(
+        logger,
+        "Applied %" PRId64 " visual constraint(s) from %" PRId64
+        " track(s) across %zu --cam "
+        "camera(s); the 'visual constraints:' line above breaks the tracks down",
+        map.visual_factor_count, map.visual_track_count, args.cam_topics.size());
+    } else {
+      // --cam was requested but no track survived to a factor: the map is still
+      // valid, just unconstrained by the cameras. Warn rather than fail, as
+      // GNSS does above.
+      BAGWIZ_LOG_WARN(
+        logger,
+        "--cam camera(s) yielded no visual constraints (%" PRId64
+        " track(s) read); the global optimization ran without them. Likely too little "
+        "parallax, tracks confined to a single submap, or landmarks the LiDAR-support gate "
+        "rejected — see the 'visual constraints:' line above for the breakdown.",
+        map.visual_track_count);
     }
   }
 }

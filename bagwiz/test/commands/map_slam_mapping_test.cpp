@@ -149,7 +149,7 @@ TEST(BuildMapperConfig, CopiesTheArguments)
   bagwiz::core::slam::SensorTransform extrinsic;
   extrinsic.translation = {1.0, 2.0, 3.0};
   extrinsic.rotation_xyzw = {0.0, 0.0, 0.0, 1.0};
-  const auto config = build_mapper_config(args, extrinsic, true, {4.0, 5.0, 6.0});
+  const auto config = build_mapper_config(args, extrinsic, true, {4.0, 5.0, 6.0}, {});
 
   EXPECT_DOUBLE_EQ(config.input_resolution, 0.25);
   EXPECT_DOUBLE_EQ(config.range_min, 2.0);
@@ -178,7 +178,7 @@ TEST(BuildMapperConfig, LidarOnlyWithoutGnss)
   auto args = make_args();
   args.imu_topic.clear();
   args.gnss_topic.clear();
-  const auto config = build_mapper_config(args, std::nullopt, false, {0.0, 0.0, 0.0});
+  const auto config = build_mapper_config(args, std::nullopt, false, {0.0, 0.0, 0.0}, {});
 
   EXPECT_FALSE(config.t_lidar_imu.has_value());
   EXPECT_FALSE(config.enable_gnss);
@@ -188,11 +188,41 @@ TEST(BuildMapperConfig, LidarOnlyWithoutGnss)
   EXPECT_DOUBLE_EQ(config.gnss_antenna_offset[2], 0.0);
 }
 
+// --cam: the extrinsic table is copied verbatim, so a row index stays the
+// VisualObservation::camera_id the frontends stamp.
+TEST(BuildMapperConfig, CopiesVisualCameras)
+{
+  auto args = make_args();
+  args.cam_topics = {"/cam0/image_raw", "/cam1/image_raw"};
+  std::vector<bagwiz::core::slam::SensorTransform> visual_cameras(2);
+  visual_cameras[0].translation = {1.0, 0.0, 0.0};
+  visual_cameras[1].translation = {0.0, 2.0, 0.0};
+  visual_cameras[1].rotation_xyzw = {0.0, 0.0, 1.0, 0.0};
+
+  const auto config =
+    build_mapper_config(args, std::nullopt, false, {0.0, 0.0, 0.0}, visual_cameras);
+
+  ASSERT_EQ(config.visual_cameras.size(), 2U);
+  EXPECT_DOUBLE_EQ(config.visual_cameras[0].translation[0], 1.0);
+  EXPECT_DOUBLE_EQ(config.visual_cameras[0].rotation_xyzw[3], 1.0);
+  EXPECT_DOUBLE_EQ(config.visual_cameras[1].translation[1], 2.0);
+  EXPECT_DOUBLE_EQ(config.visual_cameras[1].rotation_xyzw[2], 1.0);
+}
+
+// Without --cam the table stays empty, which is what switches the visual
+// constraints off inside the mapper.
+TEST(BuildMapperConfig, NoCamTopicsLeavesVisualCamerasEmpty)
+{
+  const auto args = make_args();
+  const auto config = build_mapper_config(args, std::nullopt, false, {0.0, 0.0, 0.0}, {});
+  EXPECT_TRUE(config.visual_cameras.empty());
+}
+
 TEST(BuildMapperConfig, CapsThreadsAtTheHardwareLimit)
 {
   auto args = make_args();
   args.num_threads = std::numeric_limits<int>::max();
-  const auto config = build_mapper_config(args, std::nullopt, false, {0.0, 0.0, 0.0});
+  const auto config = build_mapper_config(args, std::nullopt, false, {0.0, 0.0, 0.0}, {});
   const unsigned int hardware = std::thread::hardware_concurrency();
   if (hardware > 0) {
     EXPECT_EQ(config.num_threads, static_cast<int>(hardware));
@@ -203,7 +233,7 @@ TEST(BuildMapperConfig, ZeroThreadsResolvesToTheHardwareConcurrency)
 {
   auto args = make_args();
   args.num_threads = 0;
-  const auto config = build_mapper_config(args, std::nullopt, false, {0.0, 0.0, 0.0});
+  const auto config = build_mapper_config(args, std::nullopt, false, {0.0, 0.0, 0.0}, {});
   const unsigned int hardware = std::thread::hardware_concurrency();
   EXPECT_EQ(config.num_threads, hardware > 0 ? static_cast<int>(hardware) : 1);
 }
@@ -250,6 +280,35 @@ TEST(ResolveScanProgress, LidarOnlyCountsOnlyTheCloudTopic)
   const auto setup = resolve_scan_progress(reader, args, true, kLogger);
   EXPECT_TRUE(setup.enabled);
   EXPECT_EQ(setup.total_msgs, 10);
+}
+
+// --cam images stream through the SLAM pass, so their counts join the bar's
+// denominator; --color topics are read in the later colorize pass and do not.
+TEST(ResolveScanProgress, CamTopicCountsJoinTheTotal)
+{
+  const EnvVarGuard no_color("NO_COLOR", std::nullopt);
+  auto args = make_args();
+  args.cam_topics = {"/cam0/image_raw"};
+  args.color_topics = {"/cam1/image_raw"};
+  CountsReader reader(
+    {{"/points", 10},
+     {"/imu", 90},
+     {"/fix", 5},
+     {"/cam0/image_raw", 40},
+     {"/cam1/image_raw", 1000}});
+  const auto setup = resolve_scan_progress(reader, args, true, kLogger);
+  EXPECT_TRUE(setup.enabled);
+  EXPECT_EQ(setup.total_msgs, 145);
+}
+
+TEST(ResolveScanProgress, CamTopicCountsAreExcludedWithoutTheFlag)
+{
+  const EnvVarGuard no_color("NO_COLOR", std::nullopt);
+  const auto args = make_args();  // no --cam
+  CountsReader reader({{"/points", 10}, {"/imu", 90}, {"/fix", 5}, {"/cam0/image_raw", 40}});
+  const auto setup = resolve_scan_progress(reader, args, true, kLogger);
+  EXPECT_TRUE(setup.enabled);
+  EXPECT_EQ(setup.total_msgs, 105);
 }
 
 TEST(ResolveScanProgress, StatsFailureFallsBackToAnIndeterminateBar)

@@ -71,12 +71,12 @@ constexpr std::array<std::string_view, 4> kTrajDumpSupportedTypes{{
 constexpr std::array<std::string_view, 1> kTfTreeSupportedTypes{{kTfMessageType}};
 
 // Image topic types the shared to_packed_raster() decoder accepts —
-// `generate video` rendering, `walk`'s image preview, and `map slam --color`
-// colorization all gate on it. This MUST mirror is_supported_image_type() in
-// bagwiz_image/src/core/image/packed_raster.cpp (and is_supported_type() in
-// src/commands/generate_video_common.cpp); keep them in sync. As with `traj dump` /
-// `tf tree`, a topic typed as anything outside this set is rejected by the
-// command, so completion never offers it.
+// `generate video` rendering, `walk`'s image preview, and `map slam`'s
+// `--color` / `--cam` cameras all gate on it. This MUST mirror
+// is_supported_image_type() in bagwiz_image/src/core/image/packed_raster.cpp
+// (and is_supported_type() in src/commands/generate_video_common.cpp); keep them
+// in sync. As with `traj dump` / `tf tree`, a topic typed as anything outside
+// this set is rejected by the command, so completion never offers it.
 constexpr std::array<std::string_view, 2> kImageTopicTypes{{
   "sensor_msgs/msg/Image",
   "sensor_msgs/msg/CompressedImage",
@@ -971,7 +971,8 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //
 //   slam:   `map`(0) `slam`(1) -i|--input <bag> --pcd <topic> -o|--output <root>
 //           [--backend <cpu|cuda|auto>] [--frame <frame_id>] [--imu <topic>]
-//           [--gnss <topic>] [--color <topic>...] [--cam-info <image>=<info>...]
+//           [--gnss <topic>] [--color <topic>...] [--cam <topic>...]
+//           [--cam-info <image>=<info>...] [--visual-max-features <N>]
 //           [--color-min-dist <m>] [--color-keyframe-blur]
 //           [--input-res <m>] [--min-range <m>] [--max-range <m>]
 //           [-j|--threads <N>] [--viewer] [-w|--overwrite]
@@ -985,7 +986,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 // help flags for a `-` word). Past it, the `--pcd` slot for `map slam` is
 // completed earlier by try_topic_completion via kTopicBindings (PointCloud2
 // topics only); here we surface `slam`'s flags for any `-` word and complete the
-// values of `--imu` (Imu topics), `--color` (image topics), and `--cam-info`
+// values of `--imu` (Imu topics), `--color` / `--cam` (image topics), and `--cam-info`
 // (the `<image_topic>` half of each `<image>=<info>` pair, completed as
 // "<topic>="; the `<info_topic>` half offers nothing) from the bag. `viewer`
 // has no value-bearing flags and its `--map` value is a path.
@@ -1017,6 +1018,7 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
     return matching(
       with_help(
         {"--backend",
+         "--cam",
          "--cam-info",
          "--color",
          "--color-keyframe-blur",
@@ -1046,6 +1048,7 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
          "--submap-keyframes",
          "--threads",
          "--viewer",
+         "--visual-max-features",
          "-i",
          "-j",
          "-o",
@@ -1059,10 +1062,10 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
 
   // Topic-bearing flags: complete the value(s) from the bag's topics of the
   // type(s) the flag accepts. --imu takes exactly one value, so it completes
-  // only immediately after the flag. --color and --cam-info accept several
-  // values per occurrence (CLI11 consumes every following non-flag word), so
-  // the governing flag is found by walking left past the values already
-  // typed; any other intervening flag ends that value run.
+  // only immediately after the flag. --color, --cam and --cam-info accept
+  // several values per occurrence (CLI11 consumes every following non-flag
+  // word), so the governing flag is found by walking left past the values
+  // already typed; any other intervening flag ends that value run.
   if (request.cursor_word == 0) {
     return {};
   }
@@ -1079,7 +1082,7 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
         break;
       }
     }
-    if (governing == "--color") {
+    if (governing == "--color" || governing == "--cam") {
       flag_topic_types = kImageTopicTypes;
     } else if (governing == "--cam-info") {
       // --cam-info takes <image_topic>=<info_topic> pairs. Complete the

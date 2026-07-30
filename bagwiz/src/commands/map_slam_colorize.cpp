@@ -51,7 +51,8 @@ CameraInfoOverrides parse_camera_info_overrides(
     const bool listed =
       std::find(image_topics.begin(), image_topics.end(), image_topic) != image_topics.end();
     if (!listed) {
-      result.error = "--cam-info names '" + image_topic + "', which is not a --color topic.";
+      result.error =
+        "--cam-info names '" + image_topic + "', which is not a --color or --cam topic.";
       return result;
     }
     if (!result.by_image_topic.emplace(std::move(image_topic), std::move(info_topic)).second) {

@@ -233,6 +233,7 @@ if(BAGWIZ_WITH_SLAM)
     src/commands/map_slam_colorize.cpp
     src/commands/map_slam_mapping.cpp
     src/commands/map_slam_threads.cpp
+    src/commands/map_slam_visual.cpp
     src/commands/map_viewer.cpp)
   target_link_libraries(bagwiz PRIVATE
     bagwiz_slam::bagwiz_slam_glim

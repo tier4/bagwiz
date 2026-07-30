@@ -96,15 +96,30 @@ private:
       "--cam-info); each camera extrinsic is resolved from the bag's static TF (errors "
       "if that chain is absent). Images are assumed raw (unrectified). A topic listed "
       "more than once is an error.");
+    auto * cam_opt = sub->add_option(
+      "--cam", slam_args_.cam_topics,
+      "Camera image topic(s) (sensor_msgs/msg/Image or CompressedImage) used as SLAM "
+      "visual constraints; list several after one flag and/or repeat the flag. Feature "
+      "tracks from these cameras become co-visibility constraints between submap poses "
+      "in the global optimization, curbing drift. Independent of --color (a topic may "
+      "appear in both). Intrinsics come from each camera's CameraInfo topic (see "
+      "--cam-info); each camera extrinsic is resolved from the bag's static TF (errors "
+      "if that chain is absent). Images are assumed raw (unrectified). A topic listed "
+      "more than once is an error.");
     sub
       ->add_option(
-        "--cam-info", slam_args_.camera_info_overrides,
-        "Explicit CameraInfo topic per camera, as <image_topic>=<info_topic> (several "
-        "after one flag and/or repeated). Cameras without an entry auto-resolve their "
-        "CameraInfo from the image topic name using the standard suffix rules. A "
-        "malformed entry, an <image_topic> that is not a --color topic, and a "
-        "duplicate <image_topic> are errors.")
-      ->needs(color_opt);
+        "--visual-max-features", slam_args_.visual_max_features,
+        "Target live feature-track count per --cam camera (default 200). More features "
+        "= stronger constraints and more CPU; fewer = faster.")
+      ->check(CLI::PositiveNumber)
+      ->needs(cam_opt);
+    sub->add_option(
+      "--cam-info", slam_args_.camera_info_overrides,
+      "Explicit CameraInfo topic per camera, as <image_topic>=<info_topic> (several "
+      "after one flag and/or repeated). Applies to both --color and --cam topics. "
+      "Cameras without an entry auto-resolve their CameraInfo from the image topic "
+      "name using the standard suffix rules. A malformed entry, an <image_topic> that "
+      "is not a --color or --cam topic, and a duplicate <image_topic> are errors.");
     auto * color_min_dist_opt =
       sub
         ->add_option(

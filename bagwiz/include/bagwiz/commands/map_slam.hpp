@@ -52,11 +52,33 @@ struct MapSlamArgs
   // (unrectified): the CameraInfo distortion model is applied during
   // projection.
   std::vector<std::string> color_topics;
+  // Optional camera image topics (sensor_msgs/msg/Image or CompressedImage)
+  // used as SLAM visual constraints (--cam). Empty: no visual constraints,
+  // zero cost. Set: each camera's frames are sparse-feature tracked during the
+  // bag read and the resulting co-visibility observations become
+  // rig-projection factors between submap poses in the global optimization,
+  // curbing the drift LiDAR geometry alone cannot see (long corridors,
+  // tunnels, open fields). Independent of color_topics — a topic may appear in
+  // both, and is then read once for the SLAM pass and once for the later
+  // colorize pass. Intrinsics come from each camera's CameraInfo topic
+  // (camera_info_overrides, or auto-resolved from the image topic name); each
+  // camera extrinsic is resolved from the bag's static TF (cloud frame <-
+  // CameraInfo frame_id) and its absence is an error. Images are assumed RAW
+  // (unrectified): the frontend undistorts the tracked features with the
+  // CameraInfo distortion model. A topic listed more than once is an error.
+  // A camera's position in this list is its VisualObservation::camera_id.
+  std::vector<std::string> cam_topics;
+  // Target live feature-track count per cam_topics camera
+  // (--visual-max-features). More features = stronger constraints and more CPU
+  // per frame; fewer = faster. Must be > 0. No effect without cam_topics.
+  int visual_max_features = 200;
   // Explicit CameraInfo topic overrides, each entry keyed as
-  // "<image_topic>=<info_topic>" (--cam-info). Cameras without an entry
-  // auto-resolve their CameraInfo from the image topic name using the
-  // standard suffix rules. Entries whose key is not a listed camera topic,
-  // malformed entries, and duplicate keys are errors.
+  // "<image_topic>=<info_topic>" (--cam-info). Serves both camera roles
+  // (color_topics and cam_topics). Cameras without an entry auto-resolve their
+  // CameraInfo from the image topic name using the standard suffix rules.
+  // Entries whose key is not a listed camera topic, malformed entries, and
+  // duplicate keys are errors, as is passing any entry with neither camera
+  // list set.
   std::vector<std::string> camera_info_overrides;
   // Keyframe thinning gate for the colorize pass, in meters. 0 (the default)
   // feeds every decoded image to the colorizer; > 0 feeds an image only when

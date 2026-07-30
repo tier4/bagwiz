@@ -1100,11 +1100,12 @@ TEST(FlagCompletionTest, MapSlamDashListsSlamFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "map", "slam", "-"}),
-    "--backend\n--cam-info\n--color\n--color-keyframe-blur\n--color-min-dist\n--dynamic-dp\n--"
-    "dynamic-ds\n--dynamic-res\n--fill-min-inliers\n--frame\n--gnss\n--help\n--imu\n--input\n--"
-    "input-res\n--max-range\n--min-range\n--no-color-propagate\n--no-cooldown-fill\n--no-"
+    "--backend\n--cam\n--cam-info\n--color\n--color-keyframe-blur\n--color-min-dist\n--dynamic-"
+    "dp\n--dynamic-ds\n--dynamic-res\n--fill-min-inliers\n--frame\n--gnss\n--help\n--imu\n--"
+    "input\n--input-res\n--max-range\n--min-range\n--no-color-propagate\n--no-cooldown-fill\n--no-"
     "progress\n--no-warmup-fill\n--outlier-k\n--outlier-r\n--output\n--overwrite\n--pcd\n--remove-"
-    "dynamic\n--remove-outliers\n--submap-keyframes\n--threads\n--viewer\n-h\n-i\n-j\n-o\n-w\n");
+    "dynamic\n--remove-outliers\n--submap-keyframes\n--threads\n--viewer\n--visual-max-features\n"
+    "-h\n-i\n-j\n-o\n-w\n");
 }
 
 // `map slam --backend <TAB>` lists the three backend modes.
@@ -1152,6 +1153,19 @@ TEST_F(CompletionTest, MapSlamColorCompletesSecondValueInSameRun)
     run_completion(
       {"bagwiz", "__complete", "7", "bagwiz", "map", "slam", "-i", "~/images.mcap", "--color",
        "/image"}),
+    "/image\n/image/compressed\n");
+}
+
+// `map slam ... --cam <TAB>` completes the visual-constraint cameras from the
+// same image topics --color offers (the two flags are independent lists).
+TEST_F(CompletionTest, MapSlamCamListsOnlyImageTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_image_topics_fixture(tmp_dir_ / "images.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "map", "slam", "-i", "~/images.mcap", "--cam"}),
     "/image\n/image/compressed\n");
 }
 

@@ -48,9 +48,10 @@ struct CameraInfoOverrides
 };
 
 // Parse and validate the --cam-info entries against the listed camera image
-// topics. Errors: an entry without '=' (or with an empty half), an entry
-// whose <image_topic> is not in `image_topics`, and a duplicate
-// <image_topic>.
+// topics (`image_topics` is the --color ∪ --cam union: one --cam-info entry
+// serves whichever role(s) named the topic). Errors: an entry without '=' (or
+// with an empty half), an entry whose <image_topic> is not in `image_topics`,
+// and a duplicate <image_topic>.
 [[nodiscard]] CameraInfoOverrides parse_camera_info_overrides(
   std::span<const std::string> entries, std::span<const std::string> image_topics);
 

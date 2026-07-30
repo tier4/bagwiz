@@ -34,9 +34,14 @@ namespace bagwiz::commands
 // the caller resolved from the bag's static TF so the GNSS prior constrains
 // the sensor origin, not the antenna; a zero offset (GNSS off, or the TF
 // absent) reproduces the raw-antenna behavior.
+// `visual_cameras` is the --cam extrinsic table (cloud frame <- camera optical
+// frame) in --cam listing order, so a row index is the
+// VisualObservation::camera_id the visual frontends stamp; empty (no --cam)
+// leaves the visual constraints off.
 [[nodiscard]] core::slam::CloudMapperConfig build_mapper_config(
   const MapSlamArgs & args, const std::optional<core::slam::SensorTransform> & t_lidar_imu,
-  bool use_gpu, const std::array<double, 3> & gnss_antenna_offset);
+  bool use_gpu, const std::array<double, 3> & gnss_antenna_offset,
+  std::span<const core::slam::SensorTransform> visual_cameras);
 
 // Inputs for the ScanProgress construction: whether the live bar renders at
 // all, and the total message count it runs against (0 = indeterminate).

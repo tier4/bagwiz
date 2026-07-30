@@ -38,6 +38,7 @@
 #include "map_slam_colorize.hpp"  // NOLINT(build/include_subdir) src-local shared header
 #include "map_slam_mapping.hpp"   // NOLINT(build/include_subdir) src-local shared header
 #include "map_slam_threads.hpp"   // NOLINT(build/include_subdir) src-local shared header
+#include "map_slam_visual.hpp"    // NOLINT(build/include_subdir) src-local shared header
 
 #include <tf2/buffer_core.hpp>
 #include <tf2/time.hpp>
@@ -217,7 +218,18 @@ public:
         return 1;
       }
     }
-    if (!args_.color_topics.empty() && !validate_camera_inputs(*reader)) {
+    // --cam-info names the CameraInfo topic of a listed camera, so it needs at
+    // least one camera role to attach to.
+    if (
+      !args_.camera_info_overrides.empty() && args_.color_topics.empty() &&
+      args_.cam_topics.empty()) {
+      BAGWIZ_LOG_ERROR(kLogger, "--cam-info requires --color or --cam.");
+      return 1;
+    }
+    if (!build_camera_union()) {
+      return 1;
+    }
+    if (!all_camera_topics_.empty() && !validate_camera_inputs(*reader)) {
       return 1;
     }
 
@@ -270,9 +282,10 @@ public:
     }
 
     // Resolve every cloud<-camera extrinsic before feeding GLIM so an absent
-    // TF chain aborts before hours of SLAM, not after. The colorization
-    // itself runs after the global optimization.
-    if (!args_.color_topics.empty() && !resolve_camera_extrinsics()) {
+    // TF chain aborts before hours of SLAM, not after. --cam needs its
+    // extrinsics at mapper construction; --color's colorization runs after the
+    // global optimization but is resolved just as early for the same reason.
+    if (!all_camera_topics_.empty() && !resolve_camera_extrinsics()) {
       return 1;
     }
 
@@ -340,31 +353,82 @@ private:
     return true;
   }
 
-  // Validate every --color image topic and resolve + load its CameraInfo
-  // (into camera_info_topics_ / camera_infos_, parallel to
-  // args_.color_topics). Errors are logged; false aborts before any heavy
+  // Build the camera list every camera-bearing feature works off: the union of
+  // the two roles, --color topics first (in listing order) then the --cam
+  // topics not already listed, with color_indices_ / cam_indices_ indexing
+  // into it in each flag's own listing order. A topic named by BOTH flags is
+  // one union entry — validated, CameraInfo-loaded and TF-resolved once, and
+  // read by each role's own pass. A topic repeated WITHIN one flag is an
+  // error (logged; false aborts).
+  bool build_camera_union()
+  {
+    const auto duplicate_free = [](const std::vector<std::string> & topics, const char * flag) {
+      for (std::size_t i = 0; i < topics.size(); ++i) {
+        for (std::size_t prev = 0; prev < i; ++prev) {
+          if (topics[prev] == topics[i]) {
+            BAGWIZ_LOG_ERROR(
+              kLogger, "%s topic '%s' was given more than once.", flag, topics[i].c_str());
+            return false;
+          }
+        }
+      }
+      return true;
+    };
+    if (
+      !duplicate_free(args_.color_topics, "--color") ||
+      !duplicate_free(args_.cam_topics, "--cam")) {
+      return false;
+    }
+
+    for (const std::string & topic : args_.color_topics) {
+      color_indices_.push_back(all_camera_topics_.size());
+      all_camera_topics_.push_back(topic);
+    }
+    for (const std::string & topic : args_.cam_topics) {
+      const auto existing = std::find(all_camera_topics_.begin(), all_camera_topics_.end(), topic);
+      if (existing != all_camera_topics_.end()) {
+        cam_indices_.push_back(
+          static_cast<std::size_t>(std::distance(all_camera_topics_.begin(), existing)));
+        continue;
+      }
+      cam_indices_.push_back(all_camera_topics_.size());
+      all_camera_topics_.push_back(topic);
+    }
+    return true;
+  }
+
+  // The flag(s) that put camera `cam` (an all_camera_topics_ index) on the
+  // camera list, for error messages naming what the user asked for.
+  std::string camera_role_flags(std::size_t cam) const
+  {
+    const bool color =
+      std::find(color_indices_.begin(), color_indices_.end(), cam) != color_indices_.end();
+    const bool visual =
+      std::find(cam_indices_.begin(), cam_indices_.end(), cam) != cam_indices_.end();
+    if (color && visual) {
+      return "--color/--cam";
+    }
+    return color ? "--color" : "--cam";
+  }
+
+  // Validate every camera image topic in the union and resolve + load its
+  // CameraInfo (into camera_info_topics_ / camera_infos_, parallel to
+  // all_camera_topics_). Errors are logged; false aborts before any heavy
   // work.
   bool validate_camera_inputs(io::BagReader & reader)
   {
     // Parse the --cam-info overrides ("<image_topic>=<info_topic>") into a
     // lookup keyed by image topic. Malformed entries, duplicate keys, and
-    // keys naming no --color topic are errors.
+    // keys naming no listed camera topic are errors.
     const auto overrides =
-      parse_camera_info_overrides(args_.camera_info_overrides, args_.color_topics);
+      parse_camera_info_overrides(args_.camera_info_overrides, all_camera_topics_);
     if (!overrides.error.empty()) {
       BAGWIZ_LOG_ERROR(kLogger, "%s", overrides.error.c_str());
       return false;
     }
 
-    for (std::size_t cam = 0; cam < args_.color_topics.size(); ++cam) {
-      const std::string & image_topic = args_.color_topics[cam];
-      for (std::size_t prev = 0; prev < cam; ++prev) {
-        if (args_.color_topics[prev] == image_topic) {
-          BAGWIZ_LOG_ERROR(
-            kLogger, "--color topic '%s' was given more than once.", image_topic.c_str());
-          return false;
-        }
-      }
+    for (std::size_t cam = 0; cam < all_camera_topics_.size(); ++cam) {
+      const std::string & image_topic = all_camera_topics_[cam];
 
       const io::TopicInfo * info = nullptr;
       for (const auto & t : reader.topics()) {
@@ -380,14 +444,14 @@ private:
         return false;
       }
       // Gate on the shared to_packed_raster() decoder's type set — the same
-      // check `walk`'s image preview uses — so --color and the preview can
-      // never drift apart in what they accept.
+      // check `walk`'s image preview uses — so the camera flags and the preview
+      // can never drift apart in what they accept.
       if (!core::image::is_supported_image_type(info->type)) {
         BAGWIZ_LOG_ERROR(
           kLogger,
-          "Topic '%s' is %s, which map slam --color cannot decode; supported types are "
+          "Topic '%s' is %s, which map slam %s cannot decode; supported types are "
           "sensor_msgs/msg/Image and sensor_msgs/msg/CompressedImage.",
-          image_topic.c_str(), info->type.c_str());
+          image_topic.c_str(), info->type.c_str(), camera_role_flags(cam).c_str());
         return false;
       }
 
@@ -426,8 +490,8 @@ private:
       if (!(loaded.info->k[0] > 0.0) || !(loaded.info->k[4] > 0.0)) {
         BAGWIZ_LOG_ERROR(
           kLogger,
-          "CameraInfo on '%s' has a degenerate intrinsic matrix (fx=%g, fy=%g); cannot project "
-          "the map for colorization.",
+          "CameraInfo on '%s' has a degenerate intrinsic matrix (fx=%g, fy=%g); nothing can be "
+          "projected through this camera.",
           camera_info_topic.c_str(), loaded.info->k[0], loaded.info->k[4]);
         return false;
       }
@@ -437,12 +501,13 @@ private:
     return true;
   }
 
-  // Resolve T_cloud_cam (cloud frame <- camera optical frame) for every
-  // --color camera from the bag's static TF, into t_cloud_cams_ (parallel to
-  // color_topics).
-  // Mirrors resolve_extrinsic: --color is an explicit request, so any failure is
-  // fatal rather than silently writing an uncolored map. The cloud frame and
-  // the static TF buffer are resolved once and shared across cameras.
+  // Resolve T_cloud_cam (cloud frame <- camera optical frame) for every camera
+  // in the union from the bag's static TF, into t_cloud_cams_ (parallel to
+  // all_camera_topics_).
+  // Mirrors resolve_extrinsic: --color/--cam are explicit requests, so any
+  // failure is fatal rather than silently writing an uncolored map or dropping
+  // the visual constraints. The cloud frame and the static TF buffer are
+  // resolved once and shared across cameras.
   bool resolve_camera_extrinsics()
   {
     std::string cloud_frame;
@@ -806,14 +871,17 @@ private:
     }
   }
 
-  // Read the cloud (and, in IMU mode, IMU) topic in log order, dispatching each
-  // message by type. Returns false on a fatal read error or when no scan decoded
-  // (both logged); otherwise fills the counters.
-  template <typename ScanFn, typename ImuFn, typename GnssFn>
+  // Read the cloud topic — plus, when requested, the IMU, GNSS and --cam image
+  // topics — in log order, dispatching each message by type. `on_image` is
+  // called with the camera's index into args_.cam_topics (its
+  // VisualObservation::camera_id) and the raw message, whose payload it must
+  // copy if it outlives the call. Returns false on a fatal read error or when
+  // no scan decoded (both logged); otherwise fills the counters.
+  template <typename ScanFn, typename ImuFn, typename GnssFn, typename ImageFn>
   bool process_messages(
     io::BagReader & reader, ScanFn && on_scan, ImuFn && on_imu, GnssFn && on_gnss,
-    core::slam::ScanProgress & progress, std::int64_t & scans, std::int64_t & skipped,
-    std::int64_t & imu_count, std::int64_t & gnss_count)
+    ImageFn && on_image, core::slam::ScanProgress & progress, std::int64_t & scans,
+    std::int64_t & skipped, std::int64_t & imu_count, std::int64_t & gnss_count)
   {
     io::ReadFilter filter;
     filter.topics.push_back(args_.cloud_topic);
@@ -822,6 +890,15 @@ private:
     }
     if (!args_.gnss_topic.empty()) {
       filter.topics.push_back(args_.gnss_topic);
+    }
+    // The --cam images ride this same pass (a second pass would double the read
+    // cost), dispatched to their camera by exact topic name. A topic that is
+    // also a --color topic is consumed here for its visual role only; the
+    // colorize pass reads the images again later, after the optimization.
+    std::unordered_map<std::string, std::size_t> visual_cameras;
+    for (std::size_t cam = 0; cam < args_.cam_topics.size(); ++cam) {
+      filter.topics.push_back(args_.cam_topics[cam]);
+      visual_cameras.emplace(args_.cam_topics[cam], cam);
     }
     reader.set_filter(filter);
 
@@ -863,6 +940,11 @@ private:
           }
           on_gnss(*parsed.sample);
           ++gnss_count;
+        } else if (!visual_cameras.empty()) {
+          const auto camera = visual_cameras.find(raw.topic->name);
+          if (camera != visual_cameras.end()) {
+            on_image(camera->second, raw);
+          }
         }
         progress.update(processed, scans);
       }
@@ -913,7 +995,7 @@ private:
   // Apply a cloud-frame -> output-frame static transform to every pose. The
   // incoming poses are T_world_cloud; right-multiplying by T_cloud_output yields
   // T_world_output, i.e. the requested frame's pose in the SLAM world.
-  void transform_trajectory_to_frame(
+  static void transform_trajectory_to_frame(
     std::vector<core::TrajectoryPose> & poses, const geometry_msgs::msg::Transform & t_cloud_output)
   {
     for (auto & p : poses) {
@@ -1039,8 +1121,15 @@ private:
     if (!args_.gnss_topic.empty()) {
       gnss_antenna_offset = resolve_gnss_offset();
     }
+    // --cam extrinsic table, in --cam listing order: its row index is the
+    // VisualObservation::camera_id the frontends stamp (see VisualFeed).
+    std::vector<core::slam::SensorTransform> visual_cameras;
+    visual_cameras.reserve(cam_indices_.size());
+    for (const std::size_t cam : cam_indices_) {
+      visual_cameras.push_back(t_cloud_cams_[cam]);
+    }
     const core::slam::CloudMapperConfig config =
-      build_mapper_config(args_, t_lidar_imu, use_gpu_, gnss_antenna_offset);
+      build_mapper_config(args_, t_lidar_imu, use_gpu_, gnss_antenna_offset, visual_cameras);
 
     // Resolve the optional --frame remapping up front. The trajectory is expressed
     // in the PointCloud2 frame_id by default; a requested --frame is resolved
@@ -1069,6 +1158,20 @@ private:
       mapper.insert_gnss(point);
     };
 
+    // --cam: one feature-tracking worker per camera, fed from the read loop
+    // below. Built after the mapper (its workers insert into it) and drained
+    // before finish(), which turns the observations into factors.
+    std::unique_ptr<VisualFeed> visual_feed;
+    if (!cam_indices_.empty()) {
+      std::vector<core::image::CameraInfo> visual_camera_infos;
+      visual_camera_infos.reserve(cam_indices_.size());
+      for (const std::size_t cam : cam_indices_) {
+        visual_camera_infos.push_back(camera_infos_[cam]);
+      }
+      visual_feed = std::make_unique<VisualFeed>(
+        args_.cam_topics, visual_camera_infos, args_.visual_max_features, mapper, kLogger);
+    }
+
     const auto progress_setup =
       resolve_scan_progress(reader, args_, ::isatty(STDERR_FILENO) != 0, kLogger);
     const bool progress_on = progress_setup.enabled;
@@ -1080,11 +1183,24 @@ private:
     std::int64_t gnss_count = 0;
     if (!process_messages(
           reader, [&](const core::slam::LidarScan & s) { mapper.insert(s); },
-          [&](const core::slam::ImuSample & i) { mapper.insert_imu(i); }, on_gnss, progress, scans,
-          skipped, imu_count, gnss_count)) {
+          [&](const core::slam::ImuSample & i) { mapper.insert_imu(i); }, on_gnss,
+          // Only reached when --cam was given, i.e. when visual_feed exists.
+          // The stamp is read here because the frontend needs its frames in
+          // capture order, which only this loop can guarantee.
+          [&](std::size_t cam, const io::RawMessage & raw) {
+            visual_feed->push(
+              cam,
+              core::image::image_capture_stamp_ns(raw.topic->type, raw.payload, raw.timestamp_ns),
+              raw.topic->type, std::vector<std::byte>(raw.payload.begin(), raw.payload.end()));
+          },
+          progress, scans, skipped, imu_count, gnss_count)) {
       return 1;
     }
     progress.done();
+    // Every image is tracked and inserted before finish() reads the buffer.
+    if (visual_feed) {
+      visual_feed->finish();
+    }
 
     auto finalized = finalize_with_spinner(mapper, progress_on, kLogger);
     core::slam::CloudMap map = std::move(finalized.map);
@@ -1193,9 +1309,20 @@ private:
     // independent and the kd-tree build is the expensive part, so build it
     // once and share it between every camera's MapColorizer.
     const auto geometry = build_shared_colorize_geometry(map.points, threads);
+    // The camera state is keyed by the --color ∪ --cam union; the colorize pass
+    // runs over the --color role only, in --color listing order (its first
+    // topic is the gain-alignment reference), so pick that subset out.
+    std::vector<core::image::CameraInfo> color_camera_infos;
+    std::vector<core::slam::SensorTransform> color_t_cloud_cams;
+    color_camera_infos.reserve(cam_count);
+    color_t_cloud_cams.reserve(cam_count);
+    for (const std::size_t cam : color_indices_) {
+      color_camera_infos.push_back(camera_infos_[cam]);
+      color_t_cloud_cams.push_back(t_cloud_cams_[cam]);
+    }
     auto colorizers = build_camera_colorizers(
-      camera_infos_, t_cloud_cams_, args_.range_max, sweep_threads, use_gpu, geometry, map.points,
-      map.trajectory);
+      color_camera_infos, color_t_cloud_cams, args_.range_max, sweep_threads, use_gpu, geometry,
+      map.points, map.trajectory);
 
     std::unique_ptr<io::BagReader> reader;
     try {
@@ -1479,9 +1606,16 @@ private:
   std::filesystem::path map_path_;     // <output_root>/map.pcd (mapping mode only)
   // Effective backend resolved by resolve_backend() from --backend.
   bool use_gpu_ = false;
-  // --color state, parallel to args_.color_topics (listing order; the first
-  // topic is the gain-alignment reference when the per-camera results are
-  // blended), filled by validate_camera_inputs / resolve_camera_extrinsics.
+  // The --color ∪ --cam camera list built by build_camera_union(): --color
+  // topics first (in listing order; the first is the colorize gain-alignment
+  // reference), then the --cam topics not already listed. color_indices_ and
+  // cam_indices_ index into it in their own flag's listing order — a
+  // cam_indices_ position is the camera's VisualObservation::camera_id.
+  std::vector<std::string> all_camera_topics_;
+  std::vector<std::size_t> color_indices_;
+  std::vector<std::size_t> cam_indices_;
+  // Per-camera state parallel to all_camera_topics_, filled by
+  // validate_camera_inputs / resolve_camera_extrinsics.
   std::vector<std::string> camera_info_topics_;            // resolved CameraInfo topics
   std::vector<core::image::CameraInfo> camera_infos_;      // first CameraInfo message on each
   std::vector<core::slam::SensorTransform> t_cloud_cams_;  // cloud <- camera optical frames
