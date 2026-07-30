@@ -11,7 +11,11 @@
 #include "bagwiz/core/image/camera_distortion.hpp"
 
 #include <opencv2/core.hpp>
-#include <opencv2/features.hpp>
+// goodFeaturesToTrack lives in imgproc on OpenCV 4 but moved to the features
+// module on OpenCV 5; features2d.hpp is the one name both ship (a compat shim
+// forwarding to features.hpp on 5). The conda humble/jazzy envs resolve
+// OpenCV 4.13 while *-cuda resolves 5.0, so this TU must compile against both.
+#include <opencv2/features2d.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/video/tracking.hpp>
 
