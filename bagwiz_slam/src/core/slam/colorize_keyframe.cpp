@@ -79,7 +79,8 @@ std::optional<core::TrajectoryPose> ColorizeKeyframePicker::gate_pose(std::int64
 {
   // Mirror MapColorizer::resolve_colorize_view's span rejection exactly: a
   // stamp the colorizer will reject (and count as skipped) must bypass the
-  // gate, so a gated run's images_skipped accounting matches the ungated one.
+  // gate, so a gated run's images_skipped accounting matches a run without
+  // the gate.
   if (trajectory_.empty()) {
     return std::nullopt;
   }

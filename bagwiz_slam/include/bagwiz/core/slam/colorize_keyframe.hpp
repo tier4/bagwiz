@@ -28,8 +28,8 @@
 // the current bucket, and with the blur refinement each bucket dispatches its
 // SHARPEST member instead of its first (a motion-blurred frame is worse than
 // a redundant one). Decisions depend only on the frame sequence of one
-// camera, never on thread count, so a gated run is deterministic like the
-// ungated one. GLIM-free plain data throughout, like point_cloud_io.
+// camera, never on thread count, so a gated run is deterministic like a run
+// without the gate. GLIM-free plain data throughout, like point_cloud_io.
 namespace bagwiz::core::slam
 {
 
@@ -78,7 +78,7 @@ struct ColorizeKeyframeConfig
 // Frames whose stamp the colorizer would reject anyway (outside the
 // trajectory span, or an empty trajectory) pass straight through without
 // touching the gate state or the counters, so MapColorizer's images_skipped
-// accounting is identical to an ungated run.
+// accounting is identical to a run without the gate.
 //
 // Not thread-safe: each camera's picker is driven from one thread in frame
 // arrival order (the reader loop, or that camera's worker).
