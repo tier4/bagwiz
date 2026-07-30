@@ -11,10 +11,12 @@
 #include "bagwiz/core/slam/imu_sample.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
+#include "bagwiz/core/slam/visual_observation.hpp"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -667,6 +669,75 @@ TEST(CloudMapper, PipelineFinishWithoutInsertIsEmpty)
   const slam::CloudMap map = mapper.finish();
   EXPECT_TRUE(map.trajectory.empty());
   EXPECT_TRUE(map.points.empty());
+}
+
+slam::VisualObservation make_visual_observation(
+  std::int64_t stamp_ns, std::int32_t camera_id, std::uint64_t track_id, double x, double y)
+{
+  slam::VisualObservation obs;
+  obs.camera_id = camera_id;
+  obs.track_id = track_id;
+  obs.stamp_ns = stamp_ns;
+  obs.x = x;
+  obs.y = y;
+  return obs;
+}
+
+// insert_visual_observations() must be a pure no-op when config.visual_cameras
+// is empty (the default): no factors, no tracked ids, and an otherwise-normal
+// map. Mirrors GnssDisabledIgnoresFixes for the visual ingest gate. The CPU
+// mapping pipeline is not run-to-run reproducible even for identical input (see
+// the module comment), so this compares the point count against a separate
+// no-observation baseline run with a loose tolerance instead of exact equality.
+TEST(CloudMapper, VisualObservationsIgnoredWithoutCameras)
+{
+  slam::CloudMapper mapper;                    // visual_cameras defaults to empty
+  constexpr std::int64_t kDtNs = 100'000'000;  // 10 Hz
+  std::int64_t stamp = 1'000'000'000'000'000'000LL;
+  for (int i = 0; i < 120; ++i) {
+    mapper.insert(make_room_scan(stamp));
+    const auto obs = make_visual_observation(stamp, 0, static_cast<std::uint64_t>(i), 0.01, 0.02);
+    mapper.insert_visual_observations(std::array{obs});
+    stamp += kDtNs;
+  }
+  const slam::CloudMap map = mapper.finish();
+  EXPECT_EQ(map.visual_factor_count, 0);
+  EXPECT_EQ(map.visual_track_count, 0);
+  ASSERT_FALSE(map.points.empty());
+
+  slam::CloudMapper baseline_mapper;  // identical feed, no visual observations at all
+  feed_room_only(baseline_mapper);
+  const slam::CloudMap baseline_map = baseline_mapper.finish();
+  ASSERT_FALSE(baseline_map.points.empty());
+
+  const auto count = static_cast<double>(map.points.size());
+  const auto baseline_count = static_cast<double>(baseline_map.points.size());
+  EXPECT_NEAR(count, baseline_count, baseline_count * 0.2);
+}
+
+// One configured camera (identity extrinsic): insert_visual_observations must
+// accumulate observations, and finish() must report the number of distinct
+// track ids received, independent of whether any factor was built from them
+// (rig-factor construction is Task 8; visual_factor_count may still be 0 here).
+TEST(CloudMapper, VisualObservationCountIsReported)
+{
+  slam::CloudMapperConfig config;
+  config.visual_cameras.push_back(slam::SensorTransform{});  // identity extrinsic
+  slam::CloudMapper mapper(config);
+
+  constexpr std::int64_t kDtNs = 100'000'000;  // 10 Hz
+  std::int64_t stamp = 1'000'000'000'000'000'000LL;
+  for (int i = 0; i < 120; ++i) {
+    mapper.insert(make_room_scan(stamp));
+    const auto track_id = static_cast<std::uint64_t>(i % 3);  // 3 distinct tracks
+    const auto obs = make_visual_observation(stamp, 0, track_id, 0.01, 0.02);
+    mapper.insert_visual_observations(std::array{obs});
+    stamp += kDtNs;
+  }
+
+  const slam::CloudMap map = mapper.finish();
+  EXPECT_EQ(map.visual_track_count, 3);
+  ASSERT_FALSE(map.points.empty());
 }
 
 }  // namespace

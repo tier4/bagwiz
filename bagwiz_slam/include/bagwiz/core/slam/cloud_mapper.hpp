@@ -12,6 +12,7 @@
 #include "bagwiz/core/slam/imu_sample.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
+#include "bagwiz/core/slam/visual_observation.hpp"
 #include "bagwiz/core/tf/trajectory.hpp"
 
 #include <array>
@@ -19,6 +20,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 // LiDAR-only optimized mapping over a sequence of scans. Extends the M1
@@ -185,6 +187,21 @@ struct CloudMapperConfig
   // using t_lidar_imu.
   std::array<double, 3> gnss_antenna_offset{0.0, 0.0, 0.0};
 
+  // Visual-constraint cameras (map slam --cam): per-camera cloud<-camera
+  // optical extrinsic, indexed by VisualObservation::camera_id. Empty (the
+  // default): no visual constraints, zero overhead.
+  std::vector<SensorTransform> visual_cameras;
+
+  // Isotropic measurement sigma in normalized image units (~pixel sigma / fx).
+  double visual_obs_sigma = 1.0e-3;
+
+  // Per-track cap on observations kept for the factor (evenly subsampled).
+  int visual_max_obs_per_track = 16;
+
+  // LiDAR-support gate: a triangulated landmark must fall within this distance
+  // of the involved submaps' points (voxel hash lookup). <= 0 disables.
+  double visual_gate_distance = 1.0;
+
   // Number of CPU threads passed to GLIM and to the scan-matching endpoint
   // fill's per-registration work (covariance estimation + GICP
   // correspondences). Must be positive. 1 is the deterministic path.
@@ -267,6 +284,18 @@ struct CloudMap
   std::size_t dynamic_removed_point_count = 0;
   double dynamic_removal_seconds = 0.0;
 
+  // Number of visual rig-projection factors injected during global
+  // optimization (config.visual_cameras; map slam --cam). 0 when no cameras
+  // were configured or no track survived triangulation + the LiDAR-support
+  // gate. Always 0 until factor construction lands.
+  std::int64_t visual_factor_count = 0;
+
+  // Number of distinct VisualObservation::track_id values received via
+  // insert_visual_observations(), regardless of whether a factor was built
+  // from them. 0 when config.visual_cameras is empty (observations are
+  // ignored at ingest).
+  std::int64_t visual_track_count = 0;
+
   // Wall-clock breakdown of finish(), for the command layer's log line: the
   // global iSAM2 optimization, the scan-matching endpoint fill (start + end
   // windows together), and the export map fill. Diagnostic only — without the
@@ -302,6 +331,13 @@ public:
   // and turned into submap translation priors in finish(); they should arrive
   // in non-decreasing timestamp order.
   void insert_gnss(const GnssPoint & gnss);
+
+  // Feed a batch of visual feature observations (map slam --cam). Thread-safe:
+  // safe to call concurrently with insert()/insert_imu()/insert_gnss(), e.g.
+  // from a dedicated visual-frontend thread. Buffered and turned into
+  // rig-projection factors in finish(); a no-op when config.visual_cameras is
+  // empty (no cameras configured, so the ingest cost is skipped entirely).
+  void insert_visual_observations(std::span<const VisualObservation> observations);
 
   // Feed one scan. Scans must arrive in non-decreasing timestamp order. A scan
   // with no per-point time is fed with explicit zero per-point times (treated

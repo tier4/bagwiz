@@ -60,6 +60,7 @@
 #include <optional>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -493,6 +494,16 @@ struct CloudMapper::Impl
   // GNSS fixes collected via insert_gnss (config.enable_gnss only), consumed by
   // build_gnss_factors() in finish().
   std::vector<GnssMetric> gnss_points;
+
+  // Visual observations collected via insert_visual_observations
+  // (config.visual_cameras only). Guarded by visual_mutex because, unlike
+  // gnss_points, the visual frontend may run on its own thread and call
+  // insert_visual_observations concurrently with insert()/insert_imu() on the
+  // feed thread. Consumed only in finish(), after drain_pipeline_and_rethrow()
+  // has joined every producer thread, so no lock is needed there.
+  std::mutex visual_mutex;
+  std::vector<VisualObservation> visual_observations;
+
   // GNSS translation-prior factors built in finish() and injected into the
   // global factor graph via the on_smoother_update callback during optimize().
   std::vector<gtsam::NonlinearFactor::shared_ptr> gnss_factors;
@@ -2061,6 +2072,18 @@ void CloudMapper::insert_gnss(const GnssPoint & gnss)
   impl_->enqueue_odom(std::move(event), 0);
 }
 
+void CloudMapper::insert_visual_observations(std::span<const VisualObservation> observations)
+{
+  // No cameras configured -> visual constraints are entirely disabled; skip
+  // the lock so this stays zero-overhead for callers that never use --cam.
+  if (impl_->config.visual_cameras.empty()) {
+    return;
+  }
+  const std::lock_guard<std::mutex> lock(impl_->visual_mutex);
+  impl_->visual_observations.insert(
+    impl_->visual_observations.end(), observations.begin(), observations.end());
+}
+
 void CloudMapper::insert(const LidarScan & scan)
 {
   if (impl_->config.disable_pipeline) {
@@ -2114,6 +2137,17 @@ CloudMap CloudMapper::finish()
 
   CloudMap result;
   result.gnss_factor_count = gnss_injection.factor_count;
+
+  // Visual rig-projection factors are wired in Task 8; for now only the
+  // distinct-track count is reported. drain_pipeline_and_rethrow() above has
+  // already joined every producer thread, so visual_observations has no
+  // concurrent writer here and reading it needs no lock.
+  std::unordered_set<std::uint64_t> visual_track_ids;
+  for (const auto & obs : impl_->visual_observations) {
+    visual_track_ids.insert(obs.track_id);
+  }
+  result.visual_track_count = static_cast<std::int64_t>(visual_track_ids.size());
+
   impl_->optimize_and_export(result);
   return result;
 }
