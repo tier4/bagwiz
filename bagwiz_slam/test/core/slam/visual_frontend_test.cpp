@@ -8,14 +8,17 @@
 
 #include "bagwiz/core/slam/visual_frontend.hpp"
 
+#include "bagwiz/core/image/camera_distortion.hpp"
 #include "bagwiz/core/image/camera_info.hpp"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -32,6 +35,14 @@ image::CameraInfo make_pinhole(std::uint32_t w = 640, std::uint32_t h = 480)
   info.distortion_model = "plumb_bob";
   info.d = {0, 0, 0, 0, 0};
   info.k = {500, 0, 320, 0, 500, 240, 0, 0, 1};
+  return info;
+}
+
+image::CameraInfo make_rational_polynomial(std::uint32_t w = 640, std::uint32_t h = 480)
+{
+  image::CameraInfo info = make_pinhole(w, h);
+  info.distortion_model = "rational_polynomial";
+  info.d = {-0.1, 0.02, 0, 0, 0, -0.05, 0.01, 0};
   return info;
 }
 
@@ -246,6 +257,149 @@ TEST(VisualFrontend, NormalizedCoordsMatchPinhole)
   EXPECT_NEAR(obs[0].y, (300.0 - 240.0) / 500.0, 0.005);
   EXPECT_EQ(obs[0].camera_id, cfg.camera_id);
   EXPECT_EQ(obs[0].stamp_ns, 1);
+}
+
+// Two independent frontends see the exact same raster stream, one configured
+// with zero distortion (so its emitted coords are the detector's raw
+// normalized coords: undistort_normalized is the identity map when d is all
+// zero) and one with the real rational_polynomial coefficients. Detection is
+// deterministic given identical pixels, so the two frontends' tracks line up
+// 1:1; matching by nearest coordinate (rather than track_id) keeps the test
+// honest about that alignment instead of assuming id parity across separate
+// instances. The rational frontend's observation must equal
+// undistort_normalized applied to the zero-distortion frontend's observation,
+// to the same precision as the production code path (same function, same
+// inputs) — this guards the wiring, not the distortion math itself.
+TEST(VisualFrontend, RationalPolynomialUndistortsObservations)
+{
+  slam::VisualFrontendConfig zero_cfg;
+  zero_cfg.camera = make_pinhole();  // plumb_bob, d = {0,0,0,0,0}
+  zero_cfg.tracking_width = 640;     // native: no scale-induced detection jitter
+  slam::VisualFrontend zero_fe(zero_cfg);
+
+  slam::VisualFrontendConfig rational_cfg;
+  rational_cfg.camera = make_rational_polynomial();
+  rational_cfg.tracking_width = 640;
+  slam::VisualFrontend rational_fe(rational_cfg);
+
+  std::vector<std::array<int, 2>> centers;
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 4; ++col) {
+      centers.push_back({100 + col * 120, 100 + row * 120});
+    }
+  }
+  const auto frame = render_dots(640, 480, centers);
+
+  EXPECT_TRUE(zero_fe.track(0, frame, 640, 480).empty());
+  EXPECT_TRUE(rational_fe.track(0, frame, 640, 480).empty());
+  const auto raw_obs = zero_fe.track(1, frame, 640, 480);
+  const auto rational_obs = rational_fe.track(1, frame, 640, 480);
+
+  ASSERT_GE(raw_obs.size(), 10U);
+  ASSERT_GE(rational_obs.size(), 10U);
+
+  const auto model = image::select_distortion_model(rational_cfg.camera.distortion_model);
+  int matched = 0;
+  for (const auto & raw : raw_obs) {
+    const slam::VisualObservation * nearest = nullptr;
+    double nearest_dist = std::numeric_limits<double>::max();
+    for (const auto & ro : rational_obs) {
+      const double dist = std::hypot(ro.x - raw.x, ro.y - raw.y);
+      if (dist < nearest_dist) {
+        nearest_dist = dist;
+        nearest = &ro;
+      }
+    }
+    ASSERT_NE(nearest, nullptr);
+
+    const image::NormalizedPoint expected =
+      image::undistort_normalized(raw.x, raw.y, model, rational_cfg.camera.d);
+    EXPECT_NEAR(nearest->x, expected.x, 1e-9);
+    EXPECT_NEAR(nearest->y, expected.y, 1e-9);
+    ++matched;
+  }
+  EXPECT_GE(matched, 10);
+}
+
+TEST(VisualFrontend, DimensionMismatchReturnsEmpty)
+{
+  slam::VisualFrontendConfig cfg;
+  cfg.camera = make_pinhole();
+  cfg.tracking_width = 640;  // native: no scale error in the displacement check
+  slam::VisualFrontend fe(cfg);
+
+  std::vector<std::array<int, 2>> centers;
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 4; ++col) {
+      centers.push_back({100 + col * 120, 100 + row * 120});
+    }
+  }
+  std::vector<std::array<int, 2>> shifted;
+  for (const auto & c : centers) shifted.push_back({c[0] + 8, c[1]});
+
+  const auto frame1 = render_dots(640, 480, centers);
+  const auto frame2 = render_dots(640, 480, shifted);
+  // Sized for 320x240 but claimed as 640x480: width*height*3 does not match
+  // the buffer, so this must be rejected without touching internal state.
+  const auto undersized_frame = black(320, 240);
+
+  EXPECT_TRUE(fe.track(0, frame1, 640, 480).empty());
+  const auto obs1 = fe.track(1, frame1, 640, 480);
+  ASSERT_GE(obs1.size(), 10U);
+
+  EXPECT_TRUE(fe.track(2, undersized_frame, 640, 480).empty());
+
+  // prev_gray must still hold frame1: if the rejected call had clobbered it,
+  // tracking against frame2 below would restart from garbage instead of
+  // following the translation.
+  const auto obs2 = fe.track(3, frame2, 640, 480);
+  ASSERT_GE(obs2.size(), 10U);
+
+  const double fx = cfg.camera.k[0];
+  int matched = 0;
+  for (const auto & o1 : obs1) {
+    const auto * o2 = find_by_id(obs2, o1.track_id);
+    if (o2 == nullptr) continue;
+    ++matched;
+    EXPECT_NEAR((o2->x - o1.x) * fx, 8.0, 1.0) << "track_id=" << o1.track_id;
+  }
+  EXPECT_GE(matched, 10);
+}
+
+TEST(VisualFrontend, DownscaleKeepsPixelAccuracy)
+{
+  slam::VisualFrontendConfig cfg;
+  cfg.camera = make_pinhole();
+  cfg.tracking_width = 320;  // 2x downscale from the 640-wide input frames
+  slam::VisualFrontend fe(cfg);
+
+  std::vector<std::array<int, 2>> centers;
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 4; ++col) {
+      centers.push_back({100 + col * 120, 100 + row * 120});
+    }
+  }
+  std::vector<std::array<int, 2>> shifted;
+  for (const auto & c : centers) shifted.push_back({c[0] + 8, c[1]});
+
+  const auto frame1 = render_dots(640, 480, centers);
+  const auto frame2 = render_dots(640, 480, shifted);
+
+  EXPECT_TRUE(fe.track(0, frame1, 640, 480).empty());
+  const auto obs1 = fe.track(1, frame1, 640, 480);
+  const auto obs2 = fe.track(2, frame2, 640, 480);
+
+  ASSERT_GE(obs2.size(), 10U);
+
+  const double fx = cfg.camera.k[0];
+  int matched = 0;
+  for (const auto & o1 : obs1) {
+    const auto * o2 = find_by_id(obs2, o1.track_id);
+    if (o2 == nullptr) continue;
+    ++matched;
+    EXPECT_NEAR((o2->x - o1.x) * fx, 8.0, 1.5) << "track_id=" << o1.track_id;
+  }
+  EXPECT_GE(matched, 10);
 }
 
 }  // namespace
