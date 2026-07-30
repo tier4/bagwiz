@@ -23,6 +23,8 @@ find_package(bagwiz_msg REQUIRED)
 find_package(bagwiz_image REQUIRED)
 find_package(bagwiz_tf REQUIRED)
 find_package(bagwiz_pointcloud REQUIRED)
+# Linked PRIVATE so OpenCV never enters the ament export set (mirrors bagwiz_image).
+find_package(OpenCV REQUIRED)
 
 # GeographicLib provides the WGS84 -> ENU / UTM projections used by
 # gnss_projector.cpp. It is consumed PRIVATE — an implementation detail that
@@ -132,6 +134,7 @@ add_library(bagwiz_slam
   src/core/slam/propagation_radius.cpp
   src/core/slam/scan_image_pairer.cpp
   src/core/slam/scan_to_world.cpp
+  src/core/slam/visual_frontend.cpp
 )
 target_include_directories(bagwiz_slam
   PUBLIC
@@ -150,6 +153,9 @@ target_link_libraries(bagwiz_slam
 # GeographicLib (WGS84 -> ENU/UTM projection) is private to gnss_projector.cpp.
 target_include_directories(bagwiz_slam PRIVATE ${GeographicLib_INCLUDE_DIRS})
 target_link_libraries(bagwiz_slam PRIVATE ${GeographicLib_LIBRARIES})
+# OpenCV (visual_frontend.cpp) is private like bagwiz_image/bagwiz_pointcloud, so it
+# never leaks into bagwiz_slam's export set.
+target_link_libraries(bagwiz_slam PRIVATE ${OpenCV_LIBS})
 
 # ---------------------------------------------------------------------------
 # bagwiz_slam_glim: the GLIM-bearing production objects, kept in a separate
@@ -414,6 +420,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_slam_scan_to_world_test test/core/slam/scan_to_world_test.cpp)
   target_link_libraries(bagwiz_slam_scan_to_world_test bagwiz_slam)
+
+  ament_add_gtest(bagwiz_slam_visual_frontend_test test/core/slam/visual_frontend_test.cpp)
+  target_link_libraries(bagwiz_slam_visual_frontend_test bagwiz_slam)
 
   ament_add_gtest(bagwiz_slam_scan_image_pairer_test test/core/slam/scan_image_pairer_test.cpp)
   target_link_libraries(bagwiz_slam_scan_image_pairer_test bagwiz_slam)
