@@ -111,7 +111,7 @@ esac
 
 echo "[install] Installing ${completion_shell} completion"
 # --overwrite so a stale completion file from a previous version is replaced.
-"${built_binary}" complete "${completion_shell}" --install --overwrite
+"${built_binary}" complete --shell "${completion_shell}" --install --overwrite
 
 # ---------------------------------------------------------------------------
 # 3. PATH hint: the launcher is only usable (and completion only fires) once its
