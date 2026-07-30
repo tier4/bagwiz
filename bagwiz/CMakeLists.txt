@@ -180,6 +180,7 @@ add_executable(bagwiz
   src/commands/traj_common.cpp
   src/commands/tf.cpp
   src/commands/tf_static_cp.cpp
+  src/commands/tf_static_dump.cpp
   src/commands/topic.cpp
   src/commands/topic_drop.cpp
   src/commands/topic_keep.cpp
@@ -321,6 +322,14 @@ if(BUILD_TESTING)
     src/commands/tf_static_cp.cpp)
   target_include_directories(bagwiz_tf_static_cp_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(bagwiz_tf_static_cp_test ${bagwiz_test_libs} fmt::fmt)
+
+  # yaml-cpp is linked only so the test can parse the emitted YAML back; the
+  # command emits it directly (see core/tf/tf_static_tree_yaml.cpp).
+  ament_add_gtest(bagwiz_tf_static_dump_test
+    test/commands/tf_static_dump_test.cpp
+    src/commands/tf_static_dump.cpp)
+  target_include_directories(bagwiz_tf_static_dump_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(bagwiz_tf_static_dump_test ${bagwiz_test_libs} fmt::fmt yaml-cpp)
 
   ament_add_gtest(bagwiz_pcd_concat_command_test
     test/commands/pcd_concat_test.cpp

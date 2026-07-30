@@ -12,10 +12,8 @@
 #include "bagwiz/core/bag/bag_topic_plan.hpp"
 #include "bagwiz/core/bag/rewrite.hpp"
 #include "bagwiz/core/base/logging.hpp"
-#include "bagwiz/core/decoder/decoder.hpp"
 #include "bagwiz/core/tf/tf_message_wire.hpp"
-#include "bagwiz/core/tf/tf_topics.hpp"
-#include "bagwiz/core/tf/tf_value_extract.hpp"
+#include "bagwiz/core/tf/tf_static_collect.hpp"
 #include "bagwiz/io/bag_io.hpp"
 #include "bagwiz/io/bag_open.hpp"
 
@@ -30,11 +28,9 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <utility>
 #include <vector>
 
 namespace bagwiz::commands
@@ -45,112 +41,6 @@ namespace
 
 constexpr const char * kLogger = "bagwiz.cmd.tf.static.cp";
 constexpr const char * kTfMessageType = "tf2_msgs/msg/TFMessage";
-
-// The transforms gathered from one source static TF topic, ready to be written
-// into the destination under the same name. `transforms` is deduplicated by
-// child_frame_id (last value wins) so a republished static topic collapses to
-// the single latched set it represents; first-seen order is preserved.
-struct StaticTopicTransforms
-{
-  std::string name;
-  std::vector<geometry_msgs::msg::TransformStamped> transforms;
-};
-
-// Open one decoder per static TF topic in `reader`. Throws std::runtime_error
-// if a decoder cannot be constructed (no embedded schema and no typesupport).
-std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> open_static_tf_decoders(
-  const io::BagReader & reader)
-{
-  std::unordered_map<std::string, std::unique_ptr<core::decoder::Decoder>> decoder_by_topic;
-  for (const auto & topic_info : reader.topics()) {
-    if (topic_info.type != kTfMessageType || !core::is_static_tf_topic(topic_info.name)) {
-      continue;
-    }
-    auto open = core::decoder::open_decoder(topic_info);
-    if (!open.ok()) {
-      throw std::runtime_error(
-        "Could not open decoder for static TF topic '" + topic_info.name + "': " + open.error);
-    }
-    decoder_by_topic.emplace(topic_info.name, std::move(open.decoder));
-  }
-  return decoder_by_topic;
-}
-
-// Merge one message's transforms into a topic's accumulator: a child_frame_id
-// already seen is overwritten in place (last wins) so a re-published static
-// topic collapses to its latched set; a new one is appended (first-seen order).
-void merge_transforms(
-  std::vector<geometry_msgs::msg::TransformStamped> & transforms,
-  std::unordered_map<std::string, std::size_t> & child_index,
-  const std::vector<geometry_msgs::msg::TransformStamped> & incoming)
-{
-  for (const auto & t : incoming) {
-    const auto ins = child_index.emplace(t.child_frame_id, transforms.size());
-    if (ins.second) {
-      transforms.push_back(t);
-    } else {
-      transforms[ins.first->second] = t;
-    }
-  }
-}
-
-// Read every static TF topic from `src_path` and return the deduplicated
-// transforms per topic, in the order the topics appear in the bag. Topics that
-// yield no transforms are dropped. Throws std::runtime_error on open / decoder
-// / decode failure.
-std::vector<StaticTopicTransforms> collect_src_static_tf(const std::filesystem::path & src_path)
-{
-  auto reader = io::open_read(src_path);
-  reader->populate_schemas();
-
-  std::vector<std::string> static_topics;
-  for (const auto & t : reader->topics()) {
-    if (t.type == kTfMessageType && core::is_static_tf_topic(t.name)) {
-      static_topics.push_back(t.name);
-    }
-  }
-  if (static_topics.empty()) {
-    return {};
-  }
-
-  auto decoder_by_topic = open_static_tf_decoders(*reader);
-
-  io::ReadFilter filter;
-  filter.topics = static_topics;
-  reader->set_filter(filter);
-
-  // Per topic: the accumulating transform list plus a child_frame_id -> index
-  // map (see merge_transforms) keyed by topic name.
-  std::unordered_map<std::string, std::vector<geometry_msgs::msg::TransformStamped>> by_topic;
-  std::unordered_map<std::string, std::unordered_map<std::string, std::size_t>>
-    child_index_by_topic;
-
-  io::RawMessage raw;
-  while (reader->next(raw)) {
-    auto it = decoder_by_topic.find(raw.topic->name);
-    if (it == decoder_by_topic.end()) {
-      continue;
-    }
-    const auto decoded = it->second->decode(raw.payload);
-    if (!decoded.ok()) {
-      throw std::runtime_error(
-        "Failed to decode static TF message on '" + raw.topic->name + "': " + decoded.error);
-    }
-    merge_transforms(
-      by_topic[raw.topic->name], child_index_by_topic[raw.topic->name],
-      core::extract_tf_message(*decoded.value));
-  }
-
-  std::vector<StaticTopicTransforms> out;
-  for (const auto & name : static_topics) {
-    auto found = by_topic.find(name);
-    if (found == by_topic.end() || found->second.empty()) {
-      continue;
-    }
-    out.push_back({name, std::move(found->second)});
-  }
-  return out;
-}
 
 // Set every transform's header.stamp to `stamp_ns` so the copied static TF
 // carries the destination's start time rather than its source timestamps.
@@ -179,7 +69,8 @@ struct TopicWritePlan
 bool plan_topic_writes(
   std::span<const io::TopicInfo> dst_topics,
   const std::unordered_map<std::string, std::int64_t> & dst_counts,
-  const std::vector<StaticTopicTransforms> & src_topics, bool force, TopicWritePlan & plan_out)
+  const std::vector<core::StaticTopicTransforms> & src_topics, bool force,
+  TopicWritePlan & plan_out)
 {
   for (const auto & st : src_topics) {
     std::int64_t existing_count = 0;
@@ -215,8 +106,9 @@ bool plan_topic_writes(
 // factory is parameterised so the rewrite dispatch (core::run_bag_rewrite)
 // can hand in a tmp path.
 int execute_cp_pass(
-  const std::filesystem::path & dst_path, const std::vector<StaticTopicTransforms> & src_topics,
-  bool overwrite, const io::WriterFactory & open_writer)
+  const std::filesystem::path & dst_path,
+  const std::vector<core::StaticTopicTransforms> & src_topics, bool overwrite,
+  const io::WriterFactory & open_writer)
 {
   auto reader = io::open_read_or_log(dst_path, kLogger);
   if (!reader) {
@@ -351,9 +243,11 @@ int run_tf_static_cp(
   const std::optional<std::filesystem::path> & output_path, bool overwrite)
 {
   // 1. Gather the static TF topics + transforms from the source bag.
-  std::vector<StaticTopicTransforms> src_topics;
+  std::vector<core::StaticTopicTransforms> src_topics;
   try {
-    src_topics = collect_src_static_tf(src_path);
+    // Whole-topic: a copy must carry every edge the source declares, including
+    // one a second broadcaster only added on a later message.
+    src_topics = core::collect_static_tf(src_path, core::StaticTfRead::kWholeTopic);
   } catch (const std::exception & e) {
     BAGWIZ_LOG_ERROR(kLogger, "Failed to read static TF from %s: %s", src_path.c_str(), e.what());
     return 1;

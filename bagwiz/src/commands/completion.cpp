@@ -770,17 +770,19 @@ std::vector<std::string> complete_traj(const CompletionRequest & request)
   return {};
 }
 
-// `tf static` is a command group with two actions, `calc` and `cp`. The action
-// verb adds one positional slot, shifting every argument one word to the right
-// of the flat `tf` subcommands.
+// `tf static` is a command group with three actions, `calc`, `cp`, and `dump`.
+// The action verb adds one positional slot, shifting every argument one word to
+// the right of the flat `tf` subcommands.
 //
 //   calc: `tf`(0) `static`(1) `calc`(2) -i|--input <bag> --of <frame> --ref <frame> [--json]
 //   cp:   `tf`(0) `static`(1) `cp`(2)   --src <bag> --dst <bag> [-o <out>] [-w|--overwrite]
+//   dump: `tf`(0) `static`(1) `dump`(2) -i|--input <bag> [-o <out>] [-w|--overwrite]
 //
-// At the action slot (word 2) the candidates are `calc` / `cp`. For `calc`,
-// `-i`/`--input`/`--json`/`--of`/`--ref` are offered for any `-` word, and the
-// `--of`/`--ref` value slots complete from the bag's static `*tf_static` frame
-// ids only. For `cp`, the `--src`/`--dst`/`--output` flags are surfaced.
+// At the action slot (word 2) the candidates are `calc` / `cp` / `dump`. For
+// `calc`, `-i`/`--input`/`--json`/`--of`/`--ref` are offered for any `-` word,
+// and the `--of`/`--ref` value slots complete from the bag's static `*tf_static`
+// frame ids only. For `cp`, the `--src`/`--dst`/`--output` flags are surfaced;
+// for `dump`, `--input`/`--output`/`--overwrite`.
 std::vector<std::string> complete_tf_static(
   const CompletionRequest & request, const std::string & current)
 {
@@ -788,7 +790,7 @@ std::vector<std::string> complete_tf_static(
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"calc", "cp"}, current);
+    return matching({"calc", "cp", "dump"}, current);
   }
 
   // Reaching here implies cursor_word > kSecondCommandArgWord, so words[2]
@@ -816,6 +818,13 @@ std::vector<std::string> complete_tf_static(
     if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
       return matching(
         with_help({"--dst", "--output", "--overwrite", "--src", "-o", "-w"}), current);
+    }
+    return {};
+  }
+
+  if (action == "dump") {
+    if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
+      return matching(with_help({"--input", "--output", "--overwrite", "-i", "-o", "-w"}), current);
     }
     return {};
   }

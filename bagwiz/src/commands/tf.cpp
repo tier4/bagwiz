@@ -9,6 +9,7 @@
 #include "CLI/CLI.hpp"
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/tf_static_cp.hpp"
+#include "bagwiz/commands/tf_static_dump.hpp"
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/base/str_utils.hpp"
 #include "bagwiz/core/tf/tf_buffer_loader.hpp"
@@ -450,6 +451,11 @@ std::string format_category_legend(bool use_color)
 //   static cp    Copy every static TF topic from <src> into <dst> (in place, or
 //                to a new bag via -o), preserving topic names and stamping each
 //                at <dst>'s start time.
+//   static dump  Write the bag's static TF tree as nested
+//                parent -> child -> {x,y,z,roll,pitch,yaw} YAML (RPY in radians,
+//                tf2 fixed-axis) to -o, or to stdout when -o is omitted. Every
+//                static topic is merged; two topics giving one child different
+//                parents aborts the run.
 class TfCommand : public Command
 {
 public:
@@ -472,6 +478,8 @@ public:
         return run_static_calc();
       case Subcommand::kStaticCp:
         return run_static_cp();
+      case Subcommand::kStaticDump:
+        return run_static_dump();
       case Subcommand::kNone:
         BAGWIZ_LOG_ERROR(kLogger, "no subcommand selected");
         return 1;
@@ -480,7 +488,7 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kTree, kStaticCalc, kStaticCp };
+  enum class Subcommand { kNone, kTree, kStaticCalc, kStaticCp, kStaticDump };
   Subcommand selected_ = Subcommand::kNone;
 
   struct TreeArgs
@@ -504,6 +512,13 @@ private:
     std::optional<std::filesystem::path> output_path;
     bool overwrite = false;
   } static_cp_args_;
+
+  struct StaticDumpArgs
+  {
+    std::filesystem::path input_path;
+    std::optional<std::filesystem::path> output_path;
+    bool overwrite = false;
+  } static_dump_args_;
 
   void configure_tree(CLI::App & app)
   {
@@ -657,16 +672,17 @@ private:
   }
 
   // `static` is a command group, not a leaf: its actions live under
-  // `static calc` (resolve a transform) and `static cp` (copy static TF between
-  // bags). Modeling it as a group (require_subcommand(1)) keeps room for further
-  // static-tree queries and keeps `bagwiz tf static` from doing anything without
-  // an explicit verb.
+  // `static calc` (resolve a transform), `static cp` (copy static TF between
+  // bags), and `static dump` (write the static tree as YAML). Modeling it as a
+  // group (require_subcommand(1)) keeps room for further static-tree queries and
+  // keeps `bagwiz tf static` from doing anything without an explicit verb.
   void configure_static(CLI::App & app)
   {
     auto * group = app.add_subcommand("static", "Static TF tree queries");
     group->require_subcommand(1);
     configure_static_calc(*group);
     configure_static_cp(*group);
+    configure_static_dump(*group);
   }
 
   void configure_static_calc(CLI::App & group)
@@ -709,6 +725,24 @@ private:
       "Permit clobbering: replace an existing -o/--output path, and replace any static topic in "
       "<dst> whose name collides with one being copied. Without it, either conflict aborts.");
     sub->callback([this]() { selected_ = Subcommand::kStaticCp; });
+  }
+
+  void configure_static_dump(CLI::App & group)
+  {
+    auto * sub = group.add_subcommand(
+      "dump",
+      "Write the bag's static TF tree as nested parent -> child -> {x,y,z,roll,pitch,yaw} YAML "
+      "(RPY in radians). Prints to stdout when -o is omitted.");
+    sub->add_option("-i,--input", static_dump_args_.input_path, "Bag path (file or directory)")
+      ->required()
+      ->check(CLI::ExistingPath);
+    sub->add_option(
+      "-o,--output", static_dump_args_.output_path,
+      "Write the YAML to this file instead of stdout.");
+    sub->add_flag(
+      "-w,--overwrite", static_dump_args_.overwrite,
+      "Replace an existing -o/--output path. Without it, an existing path aborts the run.");
+    sub->callback([this]() { selected_ = Subcommand::kStaticDump; });
   }
 
   int run_static_calc()
@@ -821,6 +855,12 @@ private:
   {
     const auto & args = static_cp_args_;
     return run_tf_static_cp(args.src_path, args.dst_path, args.output_path, args.overwrite);
+  }
+
+  int run_static_dump()
+  {
+    const auto & args = static_dump_args_;
+    return run_tf_static_dump(args.input_path, args.output_path, args.overwrite);
   }
 };
 

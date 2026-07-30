@@ -58,6 +58,8 @@ add_library(bagwiz_tf
   src/core/tf/tf_chain.cpp
   src/core/tf/tf_merge_check.cpp
   src/core/tf/tf_message_wire.cpp
+  src/core/tf/tf_static_collect.cpp
+  src/core/tf/tf_static_tree_yaml.cpp
   src/core/tf/tf_topics.cpp
   src/core/tf/tf_trajectory_sample.cpp
   src/core/tf/tf_transform_format.cpp
@@ -147,6 +149,13 @@ if(BUILD_TESTING)
   find_package(diagnostic_msgs REQUIRED)
   find_package(builtin_interfaces REQUIRED)
 
+  # yaml-cpp is not a dependency of bagwiz_tf: tf_static_tree_yaml.cpp emits its
+  # YAML directly. Its test links yaml-cpp only to parse the emitted text back,
+  # which is what proves the output is well-formed rather than merely
+  # well-indented. yaml_cpp_vendor sets yaml-cpp_DIR so the real package is found.
+  find_package(yaml_cpp_vendor REQUIRED)
+  find_package(yaml-cpp REQUIRED)
+
   ament_add_gtest(bagwiz_tf_buffer_loader_test test/core/tf/tf_buffer_loader_test.cpp)
   target_link_libraries(bagwiz_tf_buffer_loader_test bagwiz_tf)
 
@@ -167,6 +176,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_tf_message_wire_test test/core/tf/tf_message_wire_test.cpp)
   target_link_libraries(bagwiz_tf_message_wire_test bagwiz_tf)
+
+  ament_add_gtest(bagwiz_tf_static_tree_yaml_test test/core/tf/tf_static_tree_yaml_test.cpp)
+  target_link_libraries(bagwiz_tf_static_tree_yaml_test bagwiz_tf yaml-cpp)
 
   ament_add_gtest(bagwiz_tf_transform_format_test test/core/tf/tf_transform_format_test.cpp)
   target_link_libraries(

@@ -5,6 +5,7 @@ TF inspection and static-TF editing on a ROS 2 rosbag.
 - [`tree`](#bagwiz-tf-tree) — merge one or more `tf2_msgs/msg/TFMessage` topics into one TF frame tree, colored by static vs dynamic (`static` / `dynamic` selectors supported).
 - [`static calc`](#bagwiz-tf-static-calc) — resolve the pose of `--of` expressed in `--ref` using only the bag's static TF tree; print translation/quaternion/RPY or JSON. (`static` is a command group; `calc` is its action.)
 - [`static cp`](#bagwiz-tf-static-cp) — copy every static TF topic from `<src>` into `<dst>` (in place, or to a new bag via `-o`), preserving topic names and stamping each at `<dst>`'s start time.
+- [`static dump`](#bagwiz-tf-static-dump) — write the bag's static TF tree as nested `parent: child: {x, y, z, roll, pitch, yaw}` YAML (RPY in radians) to `-o`, or to stdout.
 
 ROS 1 `*.bag` inputs are not supported.
 
@@ -379,6 +380,136 @@ bagwiz tf static cp --src donor.mcap --dst target.mcap -w  # replace a colliding
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | Static TF copied; `<dst>` rewritten or `<output>` written.                                                                                                                                                                              |
 | `1`  | A bag could not be opened, `<src>` has no static TF topic carrying transforms, a decode/serialize failure, an unresolved conflict (existing output or colliding topic without `-w`/`--overwrite`, or a type mismatch), or an I/O error. |
+
+---
+
+## `bagwiz tf static dump`
+
+Writes the bag's static TF tree (every `tf2_msgs/msg/TFMessage` topic whose name
+ends with `tf_static`) as the nested `parent: child: {x, y, z, roll, pitch, yaw}`
+YAML that static-transform publisher configs use — the inverse of reading such a
+config and broadcasting it. Dynamic `/tf` topics are ignored.
+
+The output is a config you can hand back to a static-transform publisher, which
+makes this the way to recover a recorded rig's calibration from a bag, or to diff
+a bag against the config it was supposedly recorded with.
+
+```yaml
+base_link:
+  drs_base_link:
+    x: 0.796
+    y: 0.0
+    z: 1.826
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+
+drs_base_link:
+  lidar_left:
+    x: -0.002254
+    y: 0.508026
+    z: 0.013543
+    roll: 0.005816
+    pitch: 0.018911
+    yaw: 1.574117
+```
+
+### Rotation convention
+
+Rotations are **roll/pitch/yaw in radians**, in tf2's fixed-axis convention —
+what `tf2::Matrix3x3::getRPY` produces and `tf2::Quaternion::setRPY(roll, pitch,
+yaw)` consumes. Feeding a dumped value back through `setRPY` reproduces the
+quaternion the bag carried.
+
+### Precision
+
+Numbers carry 14 significant digits and always show a decimal point (`0.0`, never
+`0`, so a consumer that demands a float does not trip over an integer). This is
+deliberately not a bit-exact copy: converting a quaternion back to RPY costs a
+few ULP, which a full-precision rendering would expose as
+`roll: -0.0027009999999999795` where the calibration said `-0.002701`. 14 digits
+folds that away, at a cost of ~1e-14 relative error — far below what any
+calibration resolves. Use [`tf static calc --json`](#bagwiz-tf-static-calc) for
+the full-precision view of a single transform.
+
+### Which messages are read
+
+Only the **first message** of each static topic. Static TF is latched: a
+broadcaster sends its whole set in one message and republishes that same set (so
+that each split file of a long recording carries it), so the first message is the
+complete tree and the rest of the bag is skipped. This keeps the command fast on
+large bags.
+
+The consequence is that an edge introduced only by a _later_ message is not
+dumped, which happens when several broadcasters publish disjoint subsets to one
+topic. Compare against [`tf tree -t static`](#bagwiz-tf-tree), which reads the
+whole topic, if you suspect that.
+
+### Merging and dropped data
+
+- **All static topics merge into one tree.** The schema has no topic dimension,
+  so `/tf_static` and `/sensing/tf_static` fuse. Two topics naming the same
+  parent for a child is fine and collapses to one entry; two topics giving one
+  child **different** parents is a contradiction one tree cannot hold, and the
+  run aborts with an error naming both topics and both parents. This matches the
+  merge-and-detect-conflicts behavior of [`tf tree`](#bagwiz-tf-tree) and
+  [`tf static calc`](#bagwiz-tf-static-calc).
+- **`header.stamp` is dropped.** The schema has nowhere to put it, and a static
+  transform's stamp carries no information a config needs.
+- Everything else in the bag's static TF is written, including
+  `camera_link → camera_optical_link` edges that a publisher may be configured to
+  regenerate itself. A dump does not silently discard bag content.
+
+### Ordering
+
+Parent groups are ordered breadth-first from the tree's roots (a parent frame
+that is never a child), children in first-seen order within a parent, so the base
+frame heads the file and it reads top-down. A parent unreachable from any root —
+only possible for a cyclic input, which a valid TF tree never is — is written
+after the reachable ones, so no transform is ever lost.
+
+### Frame ids
+
+Frame ids come from the bag, so they are not assumed safe. A name outside a
+conservative plain-scalar set, or one a YAML reader would resolve as a bool or
+null rather than a string (`no`, `y`, `true`, `null`), is emitted as an escaped
+double-quoted scalar. Ordinary ROS frame ids (`base_link`,
+`camera0/camera_link`) stay unquoted.
+
+### Usage
+
+```text
+bagwiz tf static dump -i <input> [-o <output>] [-w|--overwrite]
+```
+
+### Options
+
+| Flag                    | Description                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------- |
+| `-i`, `--input <input>` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).                |
+| `-o`, `--output <path>` | Write the YAML to this file. When omitted, it goes to stdout.                          |
+| `-w`, `--overwrite`     | Replace an existing `-o`/`--output` path. Without it, an existing path aborts the run. |
+
+Without `-o` the YAML is written to stdout and every diagnostic to stderr, so
+`bagwiz tf static dump -i <bag> > tf_static.yaml` is pipe-clean. The output path
+is claimed only after the read succeeds, so a bag with no static TF cannot
+destroy an existing `-o` file under `-w`/`--overwrite`.
+
+### Examples
+
+```bash
+bagwiz tf static dump -i capture.mcap                          # print to stdout
+bagwiz tf static dump -i capture.mcap -o tf_static.yaml        # write a file
+bagwiz tf static dump -i capture.mcap -o tf_static.yaml -w     # replace it
+bagwiz tf static dump -i capture.mcap > tf_static.yaml         # equivalent to -o
+```
+
+### Exit status
+
+| Code | Meaning                                                                                                                                                                                                         |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Static TF tree written to `<output>` or stdout.                                                                                                                                                                 |
+| `1`  | Bag could not be opened, has no static TF topic carrying transforms, a decode failure, two static topics giving one child different parents, an existing `-o` path without `-w`/`--overwrite`, or an I/O error. |
 
 ## Migration
 

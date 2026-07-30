@@ -141,7 +141,7 @@ source ~/.config/fish/completions/bagwiz.fish
     (`cam-info replace`, `cam-info recompute-p`, `cam-info dump`, `check broken`,
     `convert format`, `generate video`, `map slam`, `map viewer`,
     `pcd concat`, `pcd undistort`, `tf static calc`, `tf static cp`,
-    `tf tree`, `topic drop`, `topic keep`, `topic rename`,
+    `tf static dump`, `tf tree`, `topic drop`, `topic keep`, `topic rename`,
     `traj dump`, `traj join`);
     `cam-info replace -<TAB>` surfaces `--frame-id`, `--output`/`-o`,
     `--topics`/`-t`, and `-w`/`--overwrite`; `check broken -<TAB>` surfaces
@@ -152,9 +152,11 @@ source ~/.config/fish/completions/bagwiz.fish
     `tf tree -<TAB>` surfaces `--input`/`-i` and `--topics`/`-t` (the flag is optional there —
     omitting it merges every TF topic); `tf static calc -<TAB>` also surfaces
     `--json`, `--of`, `--ref`, and `tf static cp -<TAB>` surfaces `--src`, `--dst`
-    (long-form only — neither has a short form), `--output`/`-o` and `-w`/`--overwrite`.
+    (long-form only — neither has a short form), `--output`/`-o` and `-w`/`--overwrite`;
+    `tf static dump -<TAB>` surfaces `--input`/`-i`, `--output`/`-o` and
+    `-w`/`--overwrite`.
     `tf static` is itself a command group, so `tf static <TAB>` completes its
-    actions (`calc`, `cp`) and `tf static -<TAB>` lists just the help flags.
+    actions (`calc`, `cp`, `dump`) and `tf static -<TAB>` lists just the help flags.
     `cam-info`, `check`, `generate`, `map`, `pcd`, and `topic` are likewise
     command groups: `cam-info <TAB>` completes `replace`, `recompute-p`, `dump`, `check <TAB>`
     completes `broken`, `generate <TAB>` completes `video`, `map <TAB>`
