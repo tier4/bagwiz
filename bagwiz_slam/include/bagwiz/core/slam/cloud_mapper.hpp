@@ -285,9 +285,9 @@ struct CloudMap
   double dynamic_removal_seconds = 0.0;
 
   // Number of visual rig-projection factors injected during global
-  // optimization (config.visual_cameras; map slam --cam). 0 when no cameras
-  // were configured or no track survived triangulation + the LiDAR-support
-  // gate. Always 0 until factor construction lands.
+  // optimization (config.visual_cameras; map slam --cam) — one per track that
+  // was seen from two or more submaps and survived triangulation and the
+  // LiDAR-support gate. 0 when no cameras were configured or no track qualified.
   std::int64_t visual_factor_count = 0;
 
   // Number of distinct VisualObservation::track_id values received via

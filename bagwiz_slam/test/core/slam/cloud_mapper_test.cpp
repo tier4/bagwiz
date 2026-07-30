@@ -13,6 +13,8 @@
 #include "bagwiz/core/slam/sensor_transform.hpp"
 #include "bagwiz/core/slam/visual_observation.hpp"
 
+#include <Eigen/Geometry>
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -717,8 +719,10 @@ TEST(CloudMapper, VisualObservationsIgnoredWithoutCameras)
 
 // One configured camera (identity extrinsic): insert_visual_observations must
 // accumulate observations, and finish() must report the number of distinct
-// track ids received, independent of whether any factor was built from them
-// (rig-factor construction is Task 8; visual_factor_count may still be 0 here).
+// track ids received, independent of whether any factor was built from them —
+// this stationary run yields a single submap, so nothing here is co-visible and
+// visual_factor_count stays 0 (VisualObservationsProduceFactors covers the
+// factor path).
 TEST(CloudMapper, VisualObservationCountIsReported)
 {
   slam::CloudMapperConfig config;
@@ -765,6 +769,190 @@ TEST(CloudMapper, VisualTrackCountSeparatesCamerasReusingTrackIds)
   const slam::CloudMap map = mapper.finish();
   EXPECT_EQ(map.visual_track_count, 6);
   ASSERT_FALSE(map.points.empty());
+}
+
+// ---------------------------------------------------------------------------
+// Co-visibility scene for the visual factor injection.
+//
+// A rig-projection factor ties the submaps that saw one landmark together, so
+// it needs two things the fixtures above deliberately avoid, and the scene
+// below arranges both:
+//
+//   * More than one submap. GLIM finalizes a submap once it holds
+//     submap_max_keyframes keyframes, and it only cuts a keyframe when a scan's
+//     overlap with the last one drops below 0.8. The room is fully visible from
+//     every point inside it, so that overlap never drops and the stock 15
+//     yields exactly ONE submap however long the sequence (the same reason the
+//     GNSS NOTE above gives for its missing case). submap_max_keyframes = 1
+//     closes one submap per odometry frame instead.
+//   * Parallax. Triangulating a landmark needs a baseline between the views, so
+//     the sensor slides along +y — perpendicular to the line of sight of the
+//     camera watching the +x wall, which is where the parallax per metre
+//     travelled is largest.
+//
+// The room stays fixed in the world and the sensor starts at the world origin,
+// which is also where GLIM anchors its estimate, so the ground-truth poses the
+// observations are projected through are the poses SLAM converges to.
+// ---------------------------------------------------------------------------
+
+// 60 scans at 10 Hz. The LiDAR-only (CT) backend hands sub mapping only the
+// frames its 5 s fixed-lag smoother has marginalized — it has no
+// end-of-sequence flush, unlike the LiDAR-IMU backend — so a 6 s run passes on
+// only its first ten frames or so, which at one keyframe per submap is a handful
+// of submaps. That is plenty of co-visibility while keeping the global graph's
+// submap matching (fully connected here, since every submap sees this whole
+// room) small enough for the test to stay fast.
+constexpr std::int64_t kVisualBaseStamp = 1'000'000'000'000'000'000LL;
+constexpr std::int64_t kVisualScanDtNs = 100'000'000;  // 10 Hz
+constexpr int kVisualScanCount = 60;
+constexpr double kVisualStepY = 0.05;  // sensor slide per scan [m]
+constexpr double kWallX = 5.0;         // the room's +x wall, the camera's target
+
+// The room fixture seen from a sensor displaced by `sensor_y`: subtracting the
+// displacement from the sensor-frame coordinates keeps the room's world points
+// exactly where make_room_scan puts them.
+slam::LidarScan make_room_scan_shifted(std::int64_t stamp_ns, double sensor_y)
+{
+  slam::LidarScan scan = make_room_scan(stamp_ns);
+  for (auto & p : scan.points) {
+    p[1] -= sensor_y;
+  }
+  return scan;
+}
+
+// T_lidar_cam for a forward-looking optical frame (z forward, x right, y down)
+// on the LiDAR body frame (x forward, y left, z up): body x = optical z, body
+// y = -optical x, body z = -optical y. Same convention as visual_factors_test.
+Eigen::Isometry3d forward_camera_pose()
+{
+  Eigen::Isometry3d extrinsic = Eigen::Isometry3d::Identity();
+  extrinsic.linear() << 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, 0.0, -1.0, 0.0;
+  return extrinsic;
+}
+
+// The same extrinsic as the Eigen-free POD CloudMapperConfig carries.
+slam::SensorTransform forward_camera_extrinsic()
+{
+  const Eigen::Quaterniond q(forward_camera_pose().rotation());
+  slam::SensorTransform extrinsic;
+  extrinsic.rotation_xyzw = {q.x(), q.y(), q.z(), q.w()};
+  extrinsic.translation = {0.0, 0.0, 0.0};
+  return extrinsic;
+}
+
+// Ten landmarks on the +x wall, one per track. None sits on either optical axis:
+// a point dead ahead of a sideways-sliding camera keeps the same image position
+// and so carries no parallax to triangulate from.
+std::vector<Eigen::Vector3d> wall_landmarks()
+{
+  std::vector<Eigen::Vector3d> landmarks;
+  for (int i = 0; i < 10; ++i) {
+    const double y = -1.8 + 0.4 * static_cast<double>(i);  // -1.8 .. 1.8, never 0
+    const double z = (i % 2 == 0) ? 0.5 : 1.2;
+    landmarks.emplace_back(kWallX, y, z);
+  }
+  return landmarks;
+}
+
+// One forward-looking camera, one submap per odometry frame, and a measurement
+// sigma loose enough (1e-2 normalized ~ 5 cm at the wall's 5 m range, and the
+// triangulation outlier gate is 3x that) to absorb the SLAM estimate's
+// deviation from the ground-truth poses the observations are projected through.
+slam::CloudMapperConfig make_visual_config()
+{
+  slam::CloudMapperConfig config;
+  config.visual_cameras.push_back(forward_camera_extrinsic());
+  config.visual_obs_sigma = 1e-2;
+  config.visual_gate_distance = 1.0;
+  config.submap_max_keyframes = 1;
+  // Keep every observation. Only the run's opening scans reach a finalized
+  // submap (see kVisualScanCount), and thinning each track's 60 observations to
+  // the default 16 BEFORE they are associated would leave only about three of
+  // them inside a submap span — the bare minimum a factor needs.
+  config.visual_max_obs_per_track = 0;
+  return config;
+}
+
+// Feed the sliding-sensor room sequence, plus one observation per landmark per
+// scan: every landmark becomes a track seen from every submap of the run.
+// Observations carry the scan stamps verbatim, which is what the one-frame
+// submaps' frame stamps are (GLIM passes the frame timestamp through untouched),
+// so each one lands inside a submap's span rather than in a gap between them.
+// With `with_gnss` the same run also gets a GNSS fix per scan.
+void feed_room_with_visual_tracks(slam::CloudMapper & mapper, bool with_gnss)
+{
+  const Eigen::Isometry3d T_lidar_cam = forward_camera_pose();
+  const std::vector<Eigen::Vector3d> landmarks = wall_landmarks();
+
+  for (int i = 0; i < kVisualScanCount; ++i) {
+    const std::int64_t stamp = kVisualBaseStamp + static_cast<std::int64_t>(i) * kVisualScanDtNs;
+    const double sensor_y = kVisualStepY * static_cast<double>(i);
+    mapper.insert(make_room_scan_shifted(stamp, sensor_y));
+    if (with_gnss) {
+      mapper.insert_gnss(make_gnss_point(stamp, 0.0, sensor_y, 0.0));
+    }
+
+    Eigen::Isometry3d T_world_lidar = Eigen::Isometry3d::Identity();
+    T_world_lidar.translation() = Eigen::Vector3d(0.0, sensor_y, 0.0);
+    const Eigen::Isometry3d T_cam_world = (T_world_lidar * T_lidar_cam).inverse();
+
+    std::vector<slam::VisualObservation> batch;
+    batch.reserve(landmarks.size());
+    for (std::size_t track = 0; track < landmarks.size(); ++track) {
+      const Eigen::Vector3d p_cam = T_cam_world * landmarks[track];
+      ASSERT_GT(p_cam.z(), 0.0) << "landmark " << track << " is behind the camera";
+      batch.push_back(
+        make_visual_observation(stamp, 0, track, p_cam.x() / p_cam.z(), p_cam.y() / p_cam.z()));
+    }
+    mapper.insert_visual_observations(batch);
+  }
+}
+
+// The end-to-end claim of the visual path: observations consistent with the
+// LiDAR trajectory turn into rig-projection factors in the global graph, and
+// the run still produces a sane map.
+TEST(CloudMapper, VisualObservationsProduceFactors)
+{
+  slam::CloudMapper mapper(make_visual_config());
+  feed_room_with_visual_tracks(mapper, /*with_gnss=*/false);
+
+  const slam::CloudMap map = mapper.finish();
+
+  EXPECT_EQ(map.visual_track_count, 10);
+  // A track yields at most one factor, and at least one must survive
+  // triangulation and the LiDAR-support gate. Not == 10: a track is dropped
+  // when its observations all land in one submap, and which frames reach a
+  // finalized submap is GLIM's scheduling decision, not this test's.
+  EXPECT_GE(map.visual_factor_count, 1);
+  EXPECT_LE(map.visual_factor_count, 10);
+
+  ASSERT_FALSE(map.points.empty());
+  ASSERT_FALSE(map.trajectory.empty());
+  for (const auto & p : map.points) {
+    ASSERT_TRUE(std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]));
+  }
+}
+
+// GNSS priors and visual factors share one pending-factor vector and one
+// on_smoother_update slot, so a regression in that plumbing shows up as one kind
+// silencing the other. Here GNSS is enabled and its fixes cover every submap,
+// but the baseline between them is sub-metre — far under the 10 m gate — so it
+// contributes nothing, and the visual factors must still reach the graph.
+TEST(CloudMapper, GnssAndVisualCoexist)
+{
+  slam::CloudMapperConfig config = make_visual_config();
+  config.enable_gnss = true;
+  slam::CloudMapper mapper(config);
+  feed_room_with_visual_tracks(mapper, /*with_gnss=*/true);
+
+  const slam::CloudMap map = mapper.finish();
+
+  EXPECT_EQ(map.gnss_factor_count, 0u);
+  EXPECT_EQ(map.visual_track_count, 10);
+  EXPECT_GE(map.visual_factor_count, 1);
+  EXPECT_LE(map.visual_factor_count, 10);
+  ASSERT_FALSE(map.points.empty());
+  ASSERT_FALSE(map.trajectory.empty());
 }
 
 }  // namespace

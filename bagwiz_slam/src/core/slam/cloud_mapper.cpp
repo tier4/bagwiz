@@ -8,6 +8,7 @@
 
 #include "bagwiz/core/slam/cloud_mapper.hpp"
 
+#include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/slam/cloud_filters.hpp"
 #ifdef BAGWIZ_WITH_SLAM_CUDA
 #include "bagwiz/core/slam/cloud_voxelize_gpu.hpp"
@@ -69,6 +70,8 @@ namespace bagwiz::core::slam
 {
 namespace
 {
+constexpr const char * kLogger = "bagwiz.cmd.map.slam";
+
 // Variance [m^2] for an "unconstrained" axis of a Gaussian prior: large enough
 // that its information (1/variance) is negligible next to the LiDAR/IMU factors,
 // emulating the fixed-precision path's zero z-information without an actual
@@ -505,18 +508,21 @@ struct CloudMapper::Impl
   std::mutex visual_mutex;
   std::vector<VisualObservation> visual_observations;
 
-  // GNSS translation-prior factors built in finish() and injected into the
-  // global factor graph via the on_smoother_update callback during optimize().
-  std::vector<gtsam::NonlinearFactor::shared_ptr> gnss_factors;
+  // Global-graph-only factors built in finish() — GNSS translation priors and
+  // visual rig-projection factors — and injected into the global factor graph
+  // together via the on_smoother_update callback during optimize(). One vector
+  // and one callback for both kinds: they enter the same graph in the same
+  // single update, and neither has anything to say to odometry or sub mapping.
+  std::vector<gtsam::NonlinearFactor::shared_ptr> pending_global_factors;
 
-  // RAII removal of the process-global on_smoother_update slot the GNSS injector
-  // is registered under (see inject_gnss_factors). id is the slot handle from
-  // the registration (or -1 when no injector was registered), so the
-  // destructor's guard is genuinely conditional.
-  struct ScopedGnssCallback
+  // RAII removal of the process-global on_smoother_update slot the injector is
+  // registered under (see inject_global_factors). id is the slot handle from the
+  // registration (or -1 when no injector was registered), so the destructor's
+  // guard is genuinely conditional.
+  struct ScopedGlobalFactorCallback
   {
     int id;
-    ~ScopedGnssCallback()
+    ~ScopedGlobalFactorCallback()
     {
       if (id >= 0) {
         glim::GlobalMappingCallbacks::on_smoother_update.remove(id);
@@ -524,14 +530,15 @@ struct CloudMapper::Impl
     }
   };
 
-  // What inject_gnss_factors() hands finish(): the number of GNSS priors built
-  // (reported as CloudMap::gnss_factor_count) plus the RAII slot guard, which
-  // must stay alive until the global optimize() that consumes the priors has
-  // run.
-  struct GnssInjection
+  // What inject_global_factors() hands finish(): how many factors of each kind
+  // were built (reported as CloudMap::gnss_factor_count /
+  // CloudMap::visual_factor_count) plus the RAII slot guard, which must stay
+  // alive until the global optimize() that consumes the factors has run.
+  struct GlobalFactorInjection
   {
-    std::size_t factor_count;
-    ScopedGnssCallback guard;
+    std::size_t gnss_count;
+    std::size_t visual_count;
+    ScopedGlobalFactorCallback guard;
   };
 
   // The GNSS-constrainable submaps collected by collect_constrained_submaps():
@@ -1125,12 +1132,12 @@ struct CloudMapper::Impl
 
   // Build GNSS translation-prior factors from the collected submaps + fixes
   // (ported from glim_ext's gnss_global backend, run synchronously instead of in
-  // a background thread). Leaves gnss_factors empty unless at least two submaps
-  // are fully covered by the GNSS timespan and the SLAM baseline between the
-  // first and last of them exceeds config.gnss_min_baseline.
+  // a background thread) and APPEND them to pending_global_factors. Adds nothing
+  // unless at least two submaps are fully covered by the GNSS timespan and the
+  // SLAM baseline between the first and last of them exceeds
+  // config.gnss_min_baseline.
   void build_gnss_factors()
   {
-    gnss_factors.clear();
     if (gnss_points.size() < 2 || entries.empty()) {
       return;
     }
@@ -1167,7 +1174,7 @@ struct CloudMapper::Impl
     }
 
     using gtsam::symbol_shorthand::X;
-    gnss_factors.reserve(constrained.ids.size());
+    pending_global_factors.reserve(pending_global_factors.size() + constrained.ids.size());
     for (std::size_t i = 0; i < constrained.ids.size(); ++i) {
       const gtsam::Point3 target(
         aligned.targets[i][0], aligned.targets[i][1], aligned.targets[i][2]);
@@ -1175,8 +1182,77 @@ struct CloudMapper::Impl
         make_gnss_noise_model(constrained.covs[i], constrained.cov_types[i], aligned, config);
       gtsam::NonlinearFactor::shared_ptr factor(
         new gtsam::PoseTranslationPrior<gtsam::Pose3>(X(constrained.ids[i]), target, model));
-      gnss_factors.push_back(factor);
+      pending_global_factors.push_back(factor);
     }
+  }
+
+  // Snapshot the captured submaps as the views visual factor construction reads:
+  // the submap's current (pre-global-optimization) world pose as the
+  // triangulation seed, its per-frame LiDAR trajectory in the submap's own
+  // origin frame, and the merged submap cloud for the LiDAR-support gate. A
+  // submap with no frames carries no trajectory to hang an observation on, so it
+  // is dropped. Sorted by span start because build_visual_factors binary-searches
+  // the spans; `entries` is already in submap-completion (ascending stamp) order,
+  // so the sort is defensive.
+  std::vector<visual::SubmapView> build_submap_views() const
+  {
+    std::vector<visual::SubmapView> views;
+    views.reserve(entries.size());
+    for (const auto & entry : entries) {
+      if (!entry.submap || entry.frames.empty()) {
+        continue;
+      }
+      visual::SubmapView view;
+      view.id = static_cast<std::uint64_t>(entry.submap->id);
+      view.T_world_origin = entry.submap->T_world_origin;
+      view.frame_stamps.reserve(entry.frames.size());
+      view.T_origin_frames.reserve(entry.frames.size());
+      for (const auto & ref : entry.frames) {
+        view.frame_stamps.push_back(ref.stamp);
+        view.T_origin_frames.push_back(ref.T_origin_frame);
+      }
+      view.cloud = entry.submap->frame.get();
+      views.push_back(std::move(view));
+    }
+    std::sort(
+      views.begin(), views.end(), [](const visual::SubmapView & a, const visual::SubmapView & b) {
+        return a.frame_stamps.front() < b.frame_stamps.front();
+      });
+    return views;
+  }
+
+  // Turn the buffered visual observations into co-visibility rig-projection
+  // factors (see visual_factors.hpp) and APPEND them to pending_global_factors,
+  // returning how many were built. A no-op without configured cameras or
+  // observations. Called from finish() after every producer thread joined, so
+  // visual_observations needs no lock here.
+  std::size_t build_visual_factors_from_buffer()
+  {
+    if (config.visual_cameras.empty() || visual_observations.empty()) {
+      return 0;
+    }
+
+    std::vector<Eigen::Isometry3d> t_lidar_cams;
+    t_lidar_cams.reserve(config.visual_cameras.size());
+    for (const SensorTransform & extrinsic : config.visual_cameras) {
+      t_lidar_cams.push_back(detail::to_isometry(extrinsic));
+    }
+
+    const std::vector<visual::SubmapView> views = build_submap_views();
+    visual::Params params;
+    params.obs_sigma = config.visual_obs_sigma;
+    params.max_obs_per_track = config.visual_max_obs_per_track;
+    params.gate_distance = config.visual_gate_distance;
+
+    const visual::Stats stats = visual::build_visual_factors(
+      visual_observations, t_lidar_cams, views, params, pending_global_factors);
+    BAGWIZ_LOG_INFO(
+      kLogger,
+      "visual constraints: %zu factors from %zu tracks over %zu submaps (dropped: %zu "
+      "single-submap, %zu too-short, %zu untriangulable, %zu unsupported by LiDAR)",
+      stats.factors, stats.tracks_total, views.size(), stats.tracks_single_submap,
+      stats.tracks_too_short, stats.tracks_triangulation_failed, stats.tracks_gated);
+    return stats.factors;
   }
 
   // ---- finish() phases (called in order by CloudMapper::finish()) -------------
@@ -1239,40 +1315,45 @@ struct CloudMapper::Impl
     }
   }
 
-  // Build GNSS translation priors (config.enable_gnss) from the collected
-  // submaps + fixes and register the injector that adds them to the global
-  // factor graph during optimize() via the on_smoother_update callback. The
+  // Build the global-graph-only factors — GNSS translation priors
+  // (config.enable_gnss) from the collected submaps + fixes, then visual
+  // rig-projection factors (config.visual_cameras) from the buffered
+  // observations — and register the injector that adds them to the global factor
+  // graph during optimize() via the on_smoother_update callback. The
   // on_smoother_update slot is process-global, so the injector is registered
   // only around our own optimize() and removed right after, via the returned
   // RAII guard. The guard also protects against a throwing optimize() leaving a
   // dangling callback bound to this Impl on the slot (which would fire — and
   // dereference freed memory — for any later mapper instance in the same
   // process, e.g. across tests).
-  GnssInjection inject_gnss_factors()
+  GlobalFactorInjection inject_global_factors()
   {
+    // Both builders append, so the vector is cleared here (not by them) and GNSS
+    // runs first: that makes its factor count the vector's size afterwards.
+    pending_global_factors.clear();
     std::size_t gnss_count = 0;
     if (config.enable_gnss) {
       build_gnss_factors();
-      gnss_count = gnss_factors.size();
+      gnss_count = pending_global_factors.size();
     }
+    const std::size_t visual_count = build_visual_factors_from_buffer();
 
-    int gnss_slot_id = -1;
-    if (gnss_count > 0) {
-      gnss_slot_id = glim::GlobalMappingCallbacks::on_smoother_update.add(
+    int slot_id = -1;
+    if (!pending_global_factors.empty()) {
+      slot_id = glim::GlobalMappingCallbacks::on_smoother_update.add(
         [this](
           gtsam_points::ISAM2Ext &, gtsam::NonlinearFactorGraph & new_factors, gtsam::Values &) {
           // GlobalMapping::optimize() fires on_smoother_update exactly once, and
-          // all submap poses X(i) already exist in iSAM2 by now, so the
-          // translation priors are valid. Clearing after adding is a
-          // belt-and-suspenders guard so they enter the graph exactly once even
-          // if GLIM's call count changes.
-          if (!gnss_factors.empty()) {
-            new_factors.add(gnss_factors);
-            gnss_factors.clear();
+          // all submap poses X(i) already exist in iSAM2 by now, so the factors
+          // are valid. Clearing after adding is a belt-and-suspenders guard so
+          // they enter the graph exactly once even if GLIM's call count changes.
+          if (!pending_global_factors.empty()) {
+            new_factors.add(pending_global_factors);
+            pending_global_factors.clear();
           }
         });
     }
-    return GnssInjection{gnss_count, ScopedGnssCallback{gnss_slot_id}};
+    return GlobalFactorInjection{gnss_count, visual_count, ScopedGlobalFactorCallback{slot_id}};
   }
 
   // Heavy step: global matching-based iSAM2 optimization, then the trajectory,
@@ -2055,7 +2136,8 @@ void CloudMapper::insert_imu(const ImuSample & imu)
 
 void CloudMapper::insert_gnss(const GnssPoint & gnss)
 {
-  // GNSS factors live only in the global graph, so a fix is meaningful only when
+  // Like the visual constraints, GNSS factors live only in the global graph
+  // (odometry and sub mapping never see them), so a fix is meaningful only when
   // global mapping runs; ignore otherwise. Buffered now, turned into submap
   // priors in finish().
   if (!impl_->config.enable_gnss) {
@@ -2075,8 +2157,10 @@ void CloudMapper::insert_gnss(const GnssPoint & gnss)
 
 void CloudMapper::insert_visual_observations(std::span<const VisualObservation> observations)
 {
-  // No cameras configured -> visual constraints are entirely disabled; skip
-  // the lock so this stays zero-overhead for callers that never use --cam.
+  // Visual factors live only in the global graph, so observations are buffered
+  // here and turned into rig-projection factors in finish(). No cameras
+  // configured -> visual constraints are entirely disabled; skip the lock so
+  // this stays zero-overhead for callers that never use --cam.
   if (impl_->config.visual_cameras.empty()) {
     return;
   }
@@ -2121,8 +2205,9 @@ CloudMap CloudMapper::finish()
 {
   // Finalization phases (see the Impl helpers for the per-phase details): drain
   // the feed pipeline, flush the odometry smoother window into sub/global
-  // mapping, build the GNSS priors and register their injector, then run the
-  // global optimization and export the map + trajectory.
+  // mapping, build the global-graph-only factors (GNSS priors + visual
+  // constraints) and register their injector, then run the global optimization
+  // and export the map + trajectory.
   impl_->drain_pipeline_and_rethrow();
 
   // Mute GLIM's std::cout chatter for the whole flush + global optimization (same
@@ -2131,20 +2216,20 @@ CloudMap CloudMapper::finish()
 
   impl_->flush_odometry_window();
 
-  // The guard keeps the GNSS injector registered exactly across the global
+  // The guard keeps the factor injector registered exactly across the global
   // optimize() inside optimize_and_export(): it destructs — removing the
   // process-global callback — at the end of finish(), after the optimization.
-  const auto gnss_injection = impl_->inject_gnss_factors();
+  const auto injection = impl_->inject_global_factors();
 
   CloudMap result;
-  result.gnss_factor_count = gnss_injection.factor_count;
+  result.gnss_factor_count = injection.gnss_count;
+  result.visual_factor_count = static_cast<std::int64_t>(injection.visual_count);
 
-  // Visual rig-projection factors are wired in Task 8; for now only the
-  // distinct-track count is reported. drain_pipeline_and_rethrow() above has
-  // already joined every producer thread, so visual_observations has no
-  // concurrent writer here and reading it needs no lock. Counted by
-  // (camera_id, track_id) — the same key build_visual_factors groups on, since
-  // track ids restart at 0 for every camera.
+  // How many distinct tracks were received, whether or not a factor came out of
+  // them. drain_pipeline_and_rethrow() above has already joined every producer
+  // thread, so visual_observations has no concurrent writer here and reading it
+  // needs no lock. Counted by (camera_id, track_id) — the same key
+  // build_visual_factors groups on, since track ids restart at 0 per camera.
   std::unordered_set<visual::TrackKey, visual::TrackKeyHash> visual_track_ids;
   for (const auto & obs : impl_->visual_observations) {
     visual_track_ids.insert(visual::track_key(obs));
