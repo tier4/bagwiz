@@ -195,6 +195,7 @@ if(BAGWIZ_WITH_SLAM)
     src/core/slam/cloud_mapper.cpp
     src/core/slam/warmup_fill.cpp
     src/core/slam/scan_match_fill.cpp
+    src/core/slam/visual_factors.cpp
     src/core/slam/cuda_device.cpp
     src/core/slam/progress_bar.cpp
   )
@@ -486,6 +487,15 @@ if(BUILD_TESTING)
     ament_add_gtest(bagwiz_slam_cloud_mapper_test test/core/slam/cloud_mapper_test.cpp)
     target_link_libraries(bagwiz_slam_cloud_mapper_test
       bagwiz_slam_glim glim::glim gtsam_points::gtsam_points gtsam)
+
+    # Submap association + pose interpolation helpers for the visual-factor
+    # builder. Src-local (visual_factors.hpp lives beside its .cpp, not under
+    # include/), so the test needs an extra include path to reach it.
+    ament_add_gtest(bagwiz_slam_visual_factors_test test/core/slam/visual_factors_test.cpp)
+    target_link_libraries(bagwiz_slam_visual_factors_test
+      bagwiz_slam_glim glim::glim gtsam_points::gtsam_points gtsam)
+    target_include_directories(bagwiz_slam_visual_factors_test
+      PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core/slam)
 
     # gtsam_points-linked (GLIM-free) registration core for the scan-matching
     # warmup/cooldown fill.
