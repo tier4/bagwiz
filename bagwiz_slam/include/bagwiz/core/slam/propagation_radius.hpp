@@ -13,7 +13,7 @@
 #include <span>
 
 // The automatic radius for filling the map points no camera observed with the
-// color of their nearest observed neighbor (`map slam --cam`, see
+// color of their nearest observed neighbor (`map slam --color`, see
 // pointcloud/color_propagation.hpp). The radius follows the data — 4x the
 // median local point spacing, clamped to [0.05, 5] m — so it tracks the map
 // density instead of an absolute guess. GLIM-free plain data throughout, like

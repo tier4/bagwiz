@@ -37,24 +37,27 @@ struct MapSlamArgs
   // not the antenna; if that TF is absent the run still proceeds (warned) using
   // the raw antenna position.
   std::string gnss_topic;
-  // Optional camera image topics (sensor_msgs/msg/Image or CompressedImage).
-  // Empty: no colorization. Set: after the global optimization, the map points
-  // are colorized by splatting them into each camera's images and map.pcd
-  // gains an rgb field. Each point's color is a robust weighted average over
-  // its observations; a point observed by several cameras gets a weighted
-  // blend of them after per-camera gain alignment against the FIRST listed
-  // topic. Points no image observed inherit the color of the nearest observed
-  // neighbor (see color_propagate). Intrinsics come from each camera's
-  // CameraInfo topic (camera_info_topics, or auto-resolved from the image
-  // topic name); each camera extrinsic is resolved from the bag's static TF
-  // (cloud frame <- CameraInfo frame_id) and its absence is an error. Images
-  // are assumed RAW (unrectified): the CameraInfo distortion model is applied
-  // during projection.
-  std::vector<std::string> image_topics;
-  // Explicit CameraInfo topics for image_topics. Either empty (auto-resolve
-  // every camera from its image topic name using the standard suffix rules)
-  // or exactly one entry per image topic, in the same order.
-  std::vector<std::string> camera_info_topics;
+  // Optional camera image topics (sensor_msgs/msg/Image or CompressedImage)
+  // to colorize the map from (--color). Empty: no colorization. Set: after
+  // the global optimization, the map points are colorized by splatting them
+  // into each camera's images and map.pcd gains an rgb field. Each point's
+  // color is a robust weighted average over its observations; a point
+  // observed by several cameras gets a weighted blend of them after
+  // per-camera gain alignment against the FIRST listed topic. Points no image
+  // observed inherit the color of the nearest observed neighbor (see
+  // color_propagate). Intrinsics come from each camera's CameraInfo topic
+  // (camera_info_overrides, or auto-resolved from the image topic name); each
+  // camera extrinsic is resolved from the bag's static TF (cloud frame <-
+  // CameraInfo frame_id) and its absence is an error. Images are assumed RAW
+  // (unrectified): the CameraInfo distortion model is applied during
+  // projection.
+  std::vector<std::string> color_topics;
+  // Explicit CameraInfo topic overrides, each entry keyed as
+  // "<image_topic>=<info_topic>" (--cam-info). Cameras without an entry
+  // auto-resolve their CameraInfo from the image topic name using the
+  // standard suffix rules. Entries whose key is not a listed camera topic,
+  // malformed entries, and duplicate keys are errors.
+  std::vector<std::string> camera_info_overrides;
   // Keyframe thinning gate for the colorize pass, in meters. 0 (the default)
   // feeds every decoded image to the colorizer; > 0 feeds an image only when
   // the interpolated body pose moved at least this far — or rotated at least
@@ -63,20 +66,20 @@ struct MapSlamArgs
   // near-duplicates (a stopped platform contributes hundreds of identical
   // frames), so thinning cuts colorize cost roughly linearly with the frames
   // dropped while the per-point observation reservoirs stay well fed.
-  // Deterministic. Has no effect without image_topics.
-  double cam_min_dist = 0.0;
-  // Blur refinement of the keyframe gate (requires cam_min_dist > 0): instead
-  // of keeping the FIRST image of each gate bucket, decode and score every
-  // image in the bucket (mean Sobel gradient magnitude) and keep the
+  // Deterministic. Has no effect without color_topics.
+  double color_min_dist = 0.0;
+  // Blur refinement of the keyframe gate (requires color_min_dist > 0):
+  // instead of keeping the FIRST image of each gate bucket, decode and score
+  // every image in the bucket (mean Sobel gradient magnitude) and keep the
   // sharpest, so motion-blurred frames are dropped rather than merely
   // down-weighted. Costs a decode per candidate image; the rasterize/sweep
   // work is still saved. Deterministic.
-  bool cam_keyframe_blur = false;
+  bool color_keyframe_blur = false;
   // Fill map points no camera observed with the color of the nearest observed
   // neighbor within an automatic radius (4x the median local point spacing,
   // clamped to [0.05, 5] m), so map.pcd comes out fully colored. Disabled by
   // --no-color-propagate, in which case unobserved points keep a neutral
-  // gray. Has no effect without image_topics.
+  // gray. Has no effect without color_topics.
   bool color_propagate = true;
   // Output root directory; receives traj.tum and map.pcd.
   std::filesystem::path output_root;
@@ -174,7 +177,7 @@ struct MapSlamArgs
   //  - cuda: force the CUDA GPU backend; error on a non-CUDA build or no device.
   // The GPU backend = GLIM's GPU LiDAR-IMU odometry (with --imu; CT without it,
   // since GLIM has no GPU LiDAR-only backend), GPU VGICP registration in
-  // sub/global mapping, GPU export-map voxelization, and GPU --cam colorization
+  // sub/global mapping, GPU export-map voxelization, and GPU --color colorization
   // (the CUDA colorize rasterizer). It is OUTSIDE the CPU reproducibility
   // guarantee. The effective choice is resolved in run_map_slam.
   std::string backend = "auto";

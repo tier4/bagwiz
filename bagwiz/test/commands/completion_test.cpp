@@ -1100,11 +1100,11 @@ TEST(FlagCompletionTest, MapSlamDashListsSlamFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "map", "slam", "-"}),
-    "--backend\n--cam\n--cam-info\n--cam-keyframe-blur\n--cam-min-dist\n--dynamic-dp\n--dynamic-"
-    "ds\n--dynamic-res\n--fill-min-inliers\n--frame\n--gnss\n--help\n--imu\n--input\n--input-"
-    "res\n--max-range\n--min-range\n--no-color-propagate\n--no-cooldown-fill\n--no-progress\n--no-"
-    "warmup-fill\n--outlier-k\n--outlier-r\n--output\n--overwrite\n--pcd\n--remove-dynamic\n--"
-    "remove-outliers\n--submap-keyframes\n--threads\n--viewer\n-h\n-i\n-j\n-o\n-w\n");
+    "--backend\n--cam-info\n--color\n--color-keyframe-blur\n--color-min-dist\n--dynamic-dp\n--"
+    "dynamic-ds\n--dynamic-res\n--fill-min-inliers\n--frame\n--gnss\n--help\n--imu\n--input\n--"
+    "input-res\n--max-range\n--min-range\n--no-color-propagate\n--no-cooldown-fill\n--no-"
+    "progress\n--no-warmup-fill\n--outlier-k\n--outlier-r\n--output\n--overwrite\n--pcd\n--remove-"
+    "dynamic\n--remove-outliers\n--submap-keyframes\n--threads\n--viewer\n-h\n-i\n-j\n-o\n-w\n");
 }
 
 // `map slam --backend <TAB>` lists the three backend modes.
@@ -1126,6 +1126,74 @@ TEST_F(CompletionTest, MapSlamTopicCompletionListsOnlyPointCloud2)
     run_completion(
       {"bagwiz", "__complete", "6", "bagwiz", "map", "slam", "-i", "~/fixture.mcap", "--pcd"}),
     "/points\n");
+}
+
+// `map slam ... --color <TAB>` offers only the bag's image topics (raw and
+// compressed), excluding every non-image type.
+TEST_F(CompletionTest, MapSlamColorListsOnlyImageTopics)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_image_topics_fixture(tmp_dir_ / "images.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "map", "slam", "-i", "~/images.mcap", "--color"}),
+    "/image\n/image/compressed\n");
+}
+
+// `--color` is variadic: the second value in the same run still completes
+// image topics (the governing flag is found by walking left past the values).
+TEST_F(CompletionTest, MapSlamColorCompletesSecondValueInSameRun)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_image_topics_fixture(tmp_dir_ / "images.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "7", "bagwiz", "map", "slam", "-i", "~/images.mcap", "--color",
+       "/image"}),
+    "/image\n/image/compressed\n");
+}
+
+// `map slam ... --cam-info <TAB>` offers the bag's image topics with a
+// trailing '=' — the <image_topic> key half of <image_topic>=<info_topic>.
+TEST_F(CompletionTest, MapSlamCamInfoCompletesImageKeysWithEquals)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "map", "slam", "-i", "~/cameras.mcap", "--cam-info"}),
+    "/cam/image_raw/compressed=\n");
+}
+
+// Once the --cam-info value word contains '=', the key is chosen and the
+// <info_topic> half offers nothing (zsh/fish keep the word unsplit).
+TEST_F(CompletionTest, MapSlamCamInfoOffersNothingAfterEquals)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "6", "bagwiz", "map", "slam", "-i", "~/cameras.mcap", "--cam-info",
+       "/cam/image_raw/compressed=/cam"}),
+    "");
+}
+
+// bash splits a typed --cam-info value at '=', leaving a bare '=' as the word
+// right before the cursor; the <info_topic> half offers nothing there either.
+TEST_F(CompletionTest, MapSlamCamInfoOffersNothingOnBashSplitValueHalf)
+{
+  const HomeEnvGuard home_guard(tmp_dir_);
+  write_camera_info_fixture(tmp_dir_ / "cameras.mcap");
+
+  EXPECT_EQ(
+    run_completion(
+      {"bagwiz", "__complete", "8", "bagwiz", "map", "slam", "-i", "~/cameras.mcap", "--cam-info",
+       "/cam/image_raw/compressed", "="}),
+    "");
 }
 
 // `pcd concat -` surfaces concat's flags plus the implicit help flags, sorted.

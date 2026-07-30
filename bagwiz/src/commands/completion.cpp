@@ -71,7 +71,7 @@ constexpr std::array<std::string_view, 4> kTrajDumpSupportedTypes{{
 constexpr std::array<std::string_view, 1> kTfTreeSupportedTypes{{kTfMessageType}};
 
 // Image topic types the shared to_packed_raster() decoder accepts —
-// `generate video` rendering, `walk`'s image preview, and `map slam --cam`
+// `generate video` rendering, `walk`'s image preview, and `map slam --color`
 // colorization all gate on it. This MUST mirror is_supported_image_type() in
 // bagwiz_image/src/core/image/packed_raster.cpp (and is_supported_type() in
 // src/commands/generate_video_common.cpp); keep them in sync. As with `traj dump` /
@@ -971,8 +971,8 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //
 //   slam:   `map`(0) `slam`(1) -i|--input <bag> --pcd <topic> -o|--output <root>
 //           [--backend <cpu|cuda|auto>] [--frame <frame_id>] [--imu <topic>]
-//           [--gnss <topic>] [--cam <topic>...] [--cam-info <topic>...]
-//           [--cam-min-dist <m>] [--cam-keyframe-blur]
+//           [--gnss <topic>] [--color <topic>...] [--cam-info <image>=<info>...]
+//           [--color-min-dist <m>] [--color-keyframe-blur]
 //           [--input-res <m>] [--min-range <m>] [--max-range <m>]
 //           [-j|--threads <N>] [--viewer] [-w|--overwrite]
 //           [--no-progress] [--no-warmup-fill] [--no-cooldown-fill]
@@ -985,9 +985,10 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 // help flags for a `-` word). Past it, the `--pcd` slot for `map slam` is
 // completed earlier by try_topic_completion via kTopicBindings (PointCloud2
 // topics only); here we surface `slam`'s flags for any `-` word and complete the
-// values of `--imu` (Imu topics), `--cam` (image topics), and `--cam-info`
-// (CameraInfo topics) from the bag. `viewer` has no value-bearing flags and its
-// `--map` value is a path.
+// values of `--imu` (Imu topics), `--color` (image topics), and `--cam-info`
+// (the `<image_topic>` half of each `<image>=<info>` pair, completed as
+// "<topic>="; the `<info_topic>` half offers nothing) from the bag. `viewer`
+// has no value-bearing flags and its `--map` value is a path.
 
 std::vector<std::string> complete_map(const CompletionRequest & request)
 {
@@ -1016,10 +1017,10 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
     return matching(
       with_help(
         {"--backend",
-         "--cam",
          "--cam-info",
-         "--cam-keyframe-blur",
-         "--cam-min-dist",
+         "--color",
+         "--color-keyframe-blur",
+         "--color-min-dist",
          "--dynamic-dp",
          "--dynamic-ds",
          "--dynamic-res",
@@ -1058,7 +1059,7 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
 
   // Topic-bearing flags: complete the value(s) from the bag's topics of the
   // type(s) the flag accepts. --imu takes exactly one value, so it completes
-  // only immediately after the flag. --cam and --cam-info accept several
+  // only immediately after the flag. --color and --cam-info accept several
   // values per occurrence (CLI11 consumes every following non-flag word), so
   // the governing flag is found by walking left past the values already
   // typed; any other intervening flag ends that value run.
@@ -1078,10 +1079,27 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
         break;
       }
     }
-    if (governing == "--cam") {
+    if (governing == "--color") {
       flag_topic_types = kImageTopicTypes;
     } else if (governing == "--cam-info") {
-      flag_topic_types = kCameraInfoType;
+      // --cam-info takes <image_topic>=<info_topic> pairs. Complete the
+      // <image_topic> half with a trailing '=' so the shell scripts drop the
+      // auto-space and leave the cursor on the <info_topic> half; that half
+      // offers nothing, mirroring `pcd concat --stamp-offset` (bash splits a
+      // typed value at '=', leaving a bare '=' before the cursor; zsh/fish
+      // keep it unsplit, showing up as a current word containing '=').
+      if (current.find('=') != std::string::npos || request.words[request.cursor_word - 1] == "=") {
+        return {};
+      }
+      const auto bag_arg = find_flag_value(request, kInputFlags);
+      if (!bag_arg || bag_arg->empty() || bag_arg->starts_with("-")) {
+        return {};
+      }
+      auto topics = complete_topics(expand_current_user_home(*bag_arg), current, kImageTopicTypes);
+      for (auto & topic : topics) {
+        topic += '=';
+      }
+      return topics;
     } else {
       return {};
     }

@@ -19,7 +19,7 @@
 #include <vector>
 
 // Rotation of an extracted LiDAR scan into the SLAM world frame for the
-// colorize pass (`map slam --cam`): each scan is the scene's occluder geometry
+// colorize pass (`map slam --color`): each scan is the scene's occluder geometry
 // at its own time, handed to MapColorizer::add_image as `dynamic_points` so
 // map points sitting behind vehicles and pedestrians that left nothing in the
 // accumulated map are rejected. GLIM-free plain data throughout, like

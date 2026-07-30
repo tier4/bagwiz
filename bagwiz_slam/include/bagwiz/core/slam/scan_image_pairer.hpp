@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-// Pairs each camera image of the colorize pass (`map slam --cam`) with the
+// Pairs each camera image of the colorize pass (`map slam --color`) with the
 // temporally NEAREST LiDAR scan, whose world-frame points act as the scene's
 // occluder geometry at the image's own time (see MapColorizer::add_image's
 // `dynamic_points`). The pairing must be tight, but the recording pipeline

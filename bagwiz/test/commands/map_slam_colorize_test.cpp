@@ -27,6 +27,7 @@ namespace
 using bagwiz::commands::build_camera_colorizers;
 using bagwiz::commands::build_shared_colorize_geometry;
 using bagwiz::commands::colorize_thread_count;
+using bagwiz::commands::parse_camera_info_overrides;
 using bagwiz::commands::resolve_threads;
 using bagwiz::core::TrajectoryPose;
 
@@ -228,7 +229,7 @@ TEST(ColorizeOneImage, BlurPathDispatchesPerBucketAndFlushEmitsTheLast)
 {
   RoutingFixture fx;
   // The blur-configured picker the worker/serial shells hand in under
-  // --cam-keyframe-blur: 2 m gate over the fixture's 1 m/s trajectory.
+  // --color-keyframe-blur: 2 m gate over the fixture's 1 m/s trajectory.
   bagwiz::core::slam::ColorizeKeyframePicker picker({.min_dist = 2.0, .blur = true}, fx.trajectory);
 
   // Bucket 1: frames at 0 s and 1 s (equal sharpness; the earlier wins the
@@ -258,6 +259,69 @@ TEST(ColorizeFlushKeyframes, NullPickerIsANoop)
   RoutingFixture fx;
   bagwiz::commands::colorize_flush_keyframes(*fx.colorizers[0], nullptr);
   EXPECT_EQ(fx.colorizers[0]->finish().images_used, 0U);
+}
+
+// No --cam-info entries: every camera auto-resolves (empty map, no error).
+TEST(ParseCameraInfoOverrides, EmptyEntriesYieldEmptyMap)
+{
+  const std::vector<std::string> topics{"/cam0/image_raw", "/cam1/image_raw"};
+  const auto parsed = parse_camera_info_overrides({}, topics);
+  EXPECT_TRUE(parsed.error.empty());
+  EXPECT_TRUE(parsed.by_image_topic.empty());
+}
+
+// A subset of cameras may carry an override; the rest are absent from the map
+// (they auto-resolve).
+TEST(ParseCameraInfoOverrides, SubsetOfCamerasMayBeKeyed)
+{
+  const std::vector<std::string> topics{"/cam0/image_raw", "/cam1/image_raw"};
+  const std::vector<std::string> entries{"/cam1/image_raw=/cam1/info"};
+  const auto parsed = parse_camera_info_overrides(entries, topics);
+  EXPECT_TRUE(parsed.error.empty());
+  ASSERT_EQ(parsed.by_image_topic.size(), 1U);
+  EXPECT_EQ(parsed.by_image_topic.at("/cam1/image_raw"), "/cam1/info");
+}
+
+// Every camera keyed, in any order relative to the topic list.
+TEST(ParseCameraInfoOverrides, AllCamerasKeyedInAnyOrder)
+{
+  const std::vector<std::string> topics{"/cam0/image_raw", "/cam1/image_raw"};
+  const std::vector<std::string> entries{
+    "/cam1/image_raw=/cam1/info", "/cam0/image_raw=/cam0/info"};
+  const auto parsed = parse_camera_info_overrides(entries, topics);
+  EXPECT_TRUE(parsed.error.empty());
+  ASSERT_EQ(parsed.by_image_topic.size(), 2U);
+  EXPECT_EQ(parsed.by_image_topic.at("/cam0/image_raw"), "/cam0/info");
+  EXPECT_EQ(parsed.by_image_topic.at("/cam1/image_raw"), "/cam1/info");
+}
+
+// An entry without '=' — and one with an empty half — is malformed.
+TEST(ParseCameraInfoOverrides, MalformedEntriesError)
+{
+  const std::vector<std::string> topics{"/cam0/image_raw"};
+  for (const char * bad : {"/cam0/image_raw", "=/cam0/info", "/cam0/image_raw="}) {
+    const auto parsed = parse_camera_info_overrides(std::vector<std::string>{bad}, topics);
+    EXPECT_NE(parsed.error.find("<image_topic>=<info_topic>"), std::string::npos) << bad;
+  }
+}
+
+// A key naming no listed camera topic is an error.
+TEST(ParseCameraInfoOverrides, UnknownImageTopicErrors)
+{
+  const std::vector<std::string> topics{"/cam0/image_raw"};
+  const std::vector<std::string> entries{"/other/image_raw=/other/info"};
+  const auto parsed = parse_camera_info_overrides(entries, topics);
+  EXPECT_NE(parsed.error.find("/other/image_raw"), std::string::npos);
+}
+
+// The same camera keyed twice is an error, even with an identical value.
+TEST(ParseCameraInfoOverrides, DuplicateKeyErrors)
+{
+  const std::vector<std::string> topics{"/cam0/image_raw"};
+  const std::vector<std::string> entries{
+    "/cam0/image_raw=/cam0/info", "/cam0/image_raw=/cam0/info"};
+  const auto parsed = parse_camera_info_overrides(entries, topics);
+  EXPECT_NE(parsed.error.find("more than once"), std::string::npos);
 }
 
 }  // namespace

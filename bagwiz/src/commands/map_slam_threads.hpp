@@ -9,7 +9,7 @@
 #ifndef COMMANDS__MAP_SLAM_THREADS_HPP_
 #define COMMANDS__MAP_SLAM_THREADS_HPP_
 
-// The `map slam` thread-count rule, shared by the mapping run and the `--cam`
+// The `map slam` thread-count rule, shared by the mapping run and the `--color`
 // colorize pass. Deliberately a LEAF header: it pulls in no SLAM types, so the
 // colorize unit — which needs nothing else from the mapping internals — does
 // not have to drag in the GLIM-coupled map_slam_mapping.hpp. CLI-internal:

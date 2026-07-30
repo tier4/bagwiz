@@ -167,9 +167,13 @@ source ~/.config/fish/completions/bagwiz.fish
   - `bagwiz generate video -i <input> ... --cam-info <topic>` — `sensor_msgs/msg/CameraInfo` topics
   - `bagwiz generate video -i <input> ... --pcd <topic>` — `sensor_msgs/msg/PointCloud2` topics
   - `bagwiz map slam -i <input> ... --imu <topic>` — `sensor_msgs/msg/Imu` topics
-  - `bagwiz map slam -i <input> ... --cam <topic>` — `sensor_msgs/msg/Image` or
-    `sensor_msgs/msg/CompressedImage` topics
-  - `bagwiz map slam -i <input> ... --cam-info <topic>` — `sensor_msgs/msg/CameraInfo` topics
+  - `bagwiz map slam -i <input> ... --color <topic>...` — `sensor_msgs/msg/Image` or
+    `sensor_msgs/msg/CompressedImage` topics, offered at every value of the
+    variadic run
+  - `bagwiz map slam -i <input> ... --cam-info <image>=<info>...` — the
+    `<image_topic>` half is completed to the same image topics (as
+    `<topic>=`) at every value of the run; once the cursor moves past `=`,
+    the `<info_topic>` half has nothing to suggest
   - `bagwiz walk -i <input> -t <topic> --cam-info <topic>` — `sensor_msgs/msg/CameraInfo` topics
   - `bagwiz pcd concat -i <input> ... --pcd <topic>...` —
     `sensor_msgs/msg/PointCloud2` topics, offered at every value of the variadic

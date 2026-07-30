@@ -20,10 +20,12 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
-// Construction internals of the `map slam --cam` colorize pass, split out of
+// Construction internals of the `map slam --color` colorize pass, split out of
 // map_slam.cpp so the thread-count rule and the per-camera colorizer setup
 // can be unit-tested without driving a SLAM run. CLI-internal: this header
 // lives with the command sources and is not installed.
@@ -34,6 +36,23 @@ namespace bagwiz::commands
 // way as the mapping run (0 = hardware concurrency, positive values capped at
 // it).
 [[nodiscard]] int colorize_thread_count(int num_threads);
+
+// --cam-info override entries ("<image_topic>=<info_topic>") parsed into a
+// lookup keyed by image topic, or a human-readable error (empty on success).
+// Image topics without an entry are absent from the map (their CameraInfo
+// auto-resolves from the topic name).
+struct CameraInfoOverrides
+{
+  std::unordered_map<std::string, std::string> by_image_topic;
+  std::string error;
+};
+
+// Parse and validate the --cam-info entries against the listed camera image
+// topics. Errors: an entry without '=' (or with an empty half), an entry
+// whose <image_topic> is not in `image_topics`, and a duplicate
+// <image_topic>.
+[[nodiscard]] CameraInfoOverrides parse_camera_info_overrides(
+  std::span<const std::string> entries, std::span<const std::string> image_topics);
 
 // The camera-independent geometry pre-pass (kd-tree, normals, spacings),
 // built once and shared between every camera's MapColorizer (the kd-tree
@@ -60,7 +79,7 @@ namespace bagwiz::commands
 
 // Decode one camera image message (`type` + `payload`, exactly what the bag
 // delivered) and hand the frame to `colorizer` — routed through
-// `blur_picker`'s best-of-bucket path when non-null (--cam-keyframe-blur; the
+// `blur_picker`'s best-of-bucket path when non-null (--color-keyframe-blur; the
 // picker must be blur-configured), else straight to add_image. The frame is
 // stamped with the decoded header.stamp, falling back to `fallback_stamp_ns`
 // (the bag record time) when the publisher left it unset. `dynamic_points` is

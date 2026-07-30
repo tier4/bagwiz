@@ -16,7 +16,7 @@
 #include <memory>
 #include <span>
 
-// CUDA-backed ColorizeRasterizer for `bagwiz map slam --cam --backend cuda`.
+// CUDA-backed ColorizeRasterizer for `bagwiz map slam --color --backend cuda`.
 // The header is CUDA-free; the implementation lives in colorize_rasterizer_gpu.cu
 // and is compiled only when BAGWIZ_WITH_SLAM_CUDA is on. Callers should guard
 // the factory with #ifdef BAGWIZ_WITH_SLAM_CUDA (or query_cuda_device) and fall

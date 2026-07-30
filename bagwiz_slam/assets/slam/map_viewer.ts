@@ -1071,7 +1071,7 @@ function onLoad(points: THREE.Points): void {
   const intensityAttr = geometry.getAttribute("intensity");
   state.intensity = intensityAttr ? intensityAttr.array : null;
 
-  // PCDLoader exposes an rgb field (map slam --cam) as a normalized 'color'
+  // PCDLoader exposes an rgb field (map slam --color) as a normalized 'color'
   // attribute; keep a copy before installing our own colormap buffer under the
   // same attribute name, and default to showing the true colors.
   const rgbAttr = geometry.getAttribute("color");

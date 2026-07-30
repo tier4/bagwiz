@@ -16,7 +16,7 @@
 #include <cstdint>
 #include <span>
 
-// Per-observation weight math for the SLAM map colorizer (`map slam --cam`),
+// Per-observation weight math for the SLAM map colorizer (`map slam --color`),
 // extracted from MapColorizer's weight-and-sample pass so each term is unit
 // testable in isolation. Every visible point's observation is weighted by how
 // trustworthy it is — depth distance, surface incidence, image sharpness, and

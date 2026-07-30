@@ -24,7 +24,7 @@
 #include <vector>
 
 // Colorize a world-frame SLAM map from a stream of camera images (`map slam
-// --cam`). For each image the camera pose is interpolated from the optimized
+// --color`). For each image the camera pose is interpolated from the optimized
 // trajectory and a ColorizeRasterizer projects the map points onto the raw
 // image with the camera's lens-distortion model, splatting a per-pixel depth
 // buffer to reject occluded points. All color arithmetic — the per-image
@@ -160,7 +160,7 @@ struct MapColorizeResult
   std::size_t images_skipped = 0;  // images rejected (span/raster mismatch)
 };
 
-// Merge per-camera colorize results (`map slam --cam` given more than once).
+// Merge per-camera colorize results (`map slam --color` given more than once).
 // Cameras are first aligned in gain: for each result after the first, the
 // per-channel median linear-light color ratio over the points observed by
 // both that camera and the FIRST result (span order — alignment is always

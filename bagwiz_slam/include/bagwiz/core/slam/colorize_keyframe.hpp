@@ -18,8 +18,8 @@
 #include <span>
 #include <vector>
 
-// Keyframe selection for the SLAM map colorizer (`map slam --cam
-// --cam-min-dist`). Consecutive vehicle-camera frames are near-duplicates —
+// Keyframe selection for the SLAM map colorizer (`map slam --color
+// --color-min-dist`). Consecutive vehicle-camera frames are near-duplicates —
 // at 10 km/h a 10 Hz camera moves 28 cm per frame, and a platform stopped at
 // a light contributes hundreds of frames of identical information — while
 // colorize cost is linear in the frame count. The picker thins each camera's
@@ -35,7 +35,7 @@ namespace bagwiz::core::slam
 
 // Rotation half of the pose gate: a frame whose interpolated body pose
 // rotated at least this many degrees since the current bucket anchor opens a
-// new bucket even before covering --cam-min-dist, so a platform turning in
+// new bucket even before covering --color-min-dist, so a platform turning in
 // place keeps contributing new viewpoints. Not surfaced on the CLI; the
 // distance knob is the driving one on vehicle data.
 inline constexpr double kKeyframeMinRotationDeg = 10.0;
@@ -112,7 +112,7 @@ public:
   // Pose-only gate for the blur-off path, called before the frame is
   // decoded. True = dispatch the frame to the colorizer now (it opens a new
   // bucket, or it bypasses the gate: disabled gate / out-of-span stamp /
-  // empty trajectory); false = drop it (within --cam-min-dist and the
+  // empty trajectory); false = drop it (within --color-min-dist and the
   // rotation gate of the current bucket anchor).
   [[nodiscard]] bool accept(std::int64_t stamp_ns);
 

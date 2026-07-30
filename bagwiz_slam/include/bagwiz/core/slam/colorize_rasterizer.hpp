@@ -19,7 +19,7 @@
 #include <vector>
 
 // Projection + occlusion backend seam for the SLAM map colorizer (`map slam
-// --cam`). Rasterizing the map into a per-image depth buffer and deciding
+// --color`). Rasterizing the map into a per-image depth buffer and deciding
 // which points are visible is the O(points x images) hot part of the
 // colorizer; it is isolated behind the ColorizeRasterizer interface so the
 // MapColorizer itself (weighting, gain compensation, robust aggregation)

@@ -12,7 +12,7 @@
 #include <array>
 
 // Screen-space splat footprint for the SLAM map colorizer's depth buffer
-// (`map slam --cam`), extracted from the rasterizers so the projection
+// (`map slam --color`), extracted from the rasterizers so the projection
 // geometry is unit testable on its own.
 //
 // The colorizer's occlusion buffer does not stamp a projected map point into

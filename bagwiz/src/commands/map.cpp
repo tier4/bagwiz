@@ -87,42 +87,46 @@ private:
       "Optional NavSatFix topic; adds GNSS global constraints during global mapping "
       "(horizontal translation priors on submap poses) to curb drift. The antenna "
       "lever-arm is resolved from the bag's static TF (a missing TF only warns).");
-    auto * cam_opt = sub->add_option(
-      "--cam", slam_args_.image_topics,
-      "Camera image topic(s) (sensor_msgs/msg/Image or CompressedImage); list several "
-      "after one flag and/or repeat the flag. After the global optimization, map points "
-      "are colorized from each camera's images and map.pcd gains an rgb field. "
-      "Intrinsics come from each camera's CameraInfo topic (see --cam-info); each "
-      "camera extrinsic is resolved from the bag's static TF (errors if that chain is "
-      "absent). Images are assumed raw (unrectified).");
+    auto * color_opt = sub->add_option(
+      "--color", slam_args_.color_topics,
+      "Camera image topic(s) (sensor_msgs/msg/Image or CompressedImage) to colorize the "
+      "map from; list several after one flag and/or repeat the flag. After the global "
+      "optimization, map points are colorized from each camera's images and map.pcd "
+      "gains an rgb field. Intrinsics come from each camera's CameraInfo topic (see "
+      "--cam-info); each camera extrinsic is resolved from the bag's static TF (errors "
+      "if that chain is absent). Images are assumed raw (unrectified). A topic listed "
+      "more than once is an error.");
     sub
       ->add_option(
-        "--cam-info", slam_args_.camera_info_topics,
-        "Explicit CameraInfo topic(s) for --cam: either omit entirely (auto-resolve every "
-        "camera from its image topic name using the standard suffix rules) or pass exactly "
-        "one per --cam topic, in the same order (several after one flag and/or repeated).")
-      ->needs(cam_opt);
-    auto * cam_min_dist_opt =
+        "--cam-info", slam_args_.camera_info_overrides,
+        "Explicit CameraInfo topic per camera, as <image_topic>=<info_topic> (several "
+        "after one flag and/or repeated). Cameras without an entry auto-resolve their "
+        "CameraInfo from the image topic name using the standard suffix rules. A "
+        "malformed entry, an <image_topic> that is not a --color topic, and a "
+        "duplicate <image_topic> are errors.")
+      ->needs(color_opt);
+    auto * color_min_dist_opt =
       sub
         ->add_option(
-          "--cam-min-dist", slam_args_.cam_min_dist,
-          "Keyframe gate for --cam colorization in meters (default 0 = use every image): "
+          "--color-min-dist", slam_args_.color_min_dist,
+          "Keyframe gate for --color colorization in meters (default 0 = use every image): "
           "an image is colorized only when the interpolated pose moved at least this far "
-          "— or rotated at least 10 degrees — since the last kept image on that topic. "
+          "— or rotated at least 10 degrees — since the image that opened the current "
+          "gate interval on that topic. "
           "Consecutive frames are near-duplicates on vehicle data, so thinning cuts "
           "colorize time roughly in proportion without visible quality loss; 1-2 m is a "
           "good starting point. Deterministic.")
         ->check(CLI::NonNegativeNumber)
-        ->needs(cam_opt);
+        ->needs(color_opt);
     sub
       ->add_flag(
-        "--cam-keyframe-blur", slam_args_.cam_keyframe_blur,
-        "Refine the --cam-min-dist gate by sharpness: instead of keeping the FIRST image "
+        "--color-keyframe-blur", slam_args_.color_keyframe_blur,
+        "Refine the --color-min-dist gate by sharpness: instead of keeping the FIRST image "
         "of each gate interval, score every candidate (mean Sobel gradient magnitude) and "
         "keep the sharpest, so motion-blurred frames are dropped rather than merely "
         "down-weighted. Costs a decode per candidate image; the projection/sweep work is "
         "still saved. Deterministic.")
-      ->needs(cam_min_dist_opt);
+      ->needs(color_min_dist_opt);
     sub->add_flag(
       "!--no-color-propagate", slam_args_.color_propagate,
       "Do not propagate colors to map points no camera observed; with this flag they "

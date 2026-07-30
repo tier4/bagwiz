@@ -198,7 +198,7 @@ public:
         kLogger,
         "GPU backend without --imu: odometry runs on CPU (CT; GLIM has no GPU LiDAR-only "
         "backend); GPU acceleration applies to mapping registration, export voxelization, and "
-        "--cam colorization.");
+        "--color colorization.");
     }
 
     auto reader = io::open_read_or_log(args_.input_path, kLogger);
@@ -217,7 +217,7 @@ public:
         return 1;
       }
     }
-    if (!args_.image_topics.empty() && !validate_camera_inputs(*reader)) {
+    if (!args_.color_topics.empty() && !validate_camera_inputs(*reader)) {
       return 1;
     }
 
@@ -272,7 +272,7 @@ public:
     // Resolve every cloud<-camera extrinsic before feeding GLIM so an absent
     // TF chain aborts before hours of SLAM, not after. The colorization
     // itself runs after the global optimization.
-    if (!args_.image_topics.empty() && !resolve_camera_extrinsics()) {
+    if (!args_.color_topics.empty() && !resolve_camera_extrinsics()) {
       return 1;
     }
 
@@ -340,28 +340,28 @@ private:
     return true;
   }
 
-  // Validate every --cam image topic and resolve + load its CameraInfo (into
-  // camera_info_topics_ / camera_infos_, parallel to args_.image_topics).
-  // Errors are logged; false aborts before any heavy work.
+  // Validate every --color image topic and resolve + load its CameraInfo
+  // (into camera_info_topics_ / camera_infos_, parallel to
+  // args_.color_topics). Errors are logged; false aborts before any heavy
+  // work.
   bool validate_camera_inputs(io::BagReader & reader)
   {
-    if (
-      !args_.camera_info_topics.empty() &&
-      args_.camera_info_topics.size() != args_.image_topics.size()) {
-      BAGWIZ_LOG_ERROR(
-        kLogger,
-        "--cam-info was given %zu time(s) for %zu --cam topic(s); pass exactly one --cam-info "
-        "per --cam (in the same order), or none to auto-resolve all of them.",
-        args_.camera_info_topics.size(), args_.image_topics.size());
+    // Parse the --cam-info overrides ("<image_topic>=<info_topic>") into a
+    // lookup keyed by image topic. Malformed entries, duplicate keys, and
+    // keys naming no --color topic are errors.
+    const auto overrides =
+      parse_camera_info_overrides(args_.camera_info_overrides, args_.color_topics);
+    if (!overrides.error.empty()) {
+      BAGWIZ_LOG_ERROR(kLogger, "%s", overrides.error.c_str());
       return false;
     }
 
-    for (std::size_t cam = 0; cam < args_.image_topics.size(); ++cam) {
-      const std::string & image_topic = args_.image_topics[cam];
+    for (std::size_t cam = 0; cam < args_.color_topics.size(); ++cam) {
+      const std::string & image_topic = args_.color_topics[cam];
       for (std::size_t prev = 0; prev < cam; ++prev) {
-        if (args_.image_topics[prev] == image_topic) {
+        if (args_.color_topics[prev] == image_topic) {
           BAGWIZ_LOG_ERROR(
-            kLogger, "--cam topic '%s' was given more than once.", image_topic.c_str());
+            kLogger, "--color topic '%s' was given more than once.", image_topic.c_str());
           return false;
         }
       }
@@ -380,20 +380,21 @@ private:
         return false;
       }
       // Gate on the shared to_packed_raster() decoder's type set — the same
-      // check `walk`'s image preview uses — so --cam and the preview can never
-      // drift apart in what they accept.
+      // check `walk`'s image preview uses — so --color and the preview can
+      // never drift apart in what they accept.
       if (!core::image::is_supported_image_type(info->type)) {
         BAGWIZ_LOG_ERROR(
           kLogger,
-          "Topic '%s' is %s, which map slam --cam cannot decode; supported types are "
+          "Topic '%s' is %s, which map slam --color cannot decode; supported types are "
           "sensor_msgs/msg/Image and sensor_msgs/msg/CompressedImage.",
           image_topic.c_str(), info->type.c_str());
         return false;
       }
 
       std::string camera_info_topic;
-      if (!args_.camera_info_topics.empty()) {
-        camera_info_topic = args_.camera_info_topics[cam];
+      const auto override_it = overrides.by_image_topic.find(image_topic);
+      if (override_it != overrides.by_image_topic.end()) {
+        camera_info_topic = override_it->second;
         const auto error =
           core::camera_info::validate_camera_info_topic(args_.input_path, camera_info_topic);
         if (error.has_value()) {
@@ -407,9 +408,9 @@ private:
           BAGWIZ_LOG_ERROR(
             kLogger,
             "Could not auto-resolve a CameraInfo topic for '%s'%s%s. Pass it explicitly "
-            "with --cam-info.",
+            "with --cam-info %s=<info_topic>.",
             image_topic.c_str(), resolved.error.has_value() ? ": " : "",
-            resolved.error.has_value() ? resolved.error->c_str() : "");
+            resolved.error.has_value() ? resolved.error->c_str() : "", image_topic.c_str());
           return false;
         }
         camera_info_topic = *resolved.topic;
@@ -436,9 +437,10 @@ private:
     return true;
   }
 
-  // Resolve T_cloud_cam (cloud frame <- camera optical frame) for every --cam
-  // from the bag's static TF, into t_cloud_cams_ (parallel to image_topics).
-  // Mirrors resolve_extrinsic: --cam is an explicit request, so any failure is
+  // Resolve T_cloud_cam (cloud frame <- camera optical frame) for every
+  // --color camera from the bag's static TF, into t_cloud_cams_ (parallel to
+  // color_topics).
+  // Mirrors resolve_extrinsic: --color is an explicit request, so any failure is
   // fatal rather than silently writing an uncolored map. The cloud frame and
   // the static TF buffer are resolved once and shared across cameras.
   bool resolve_camera_extrinsics()
@@ -1129,7 +1131,7 @@ private:
     // which at this point still expresses the cloud frame the camera
     // extrinsic was resolved against.
     std::vector<std::array<std::uint8_t, 3>> map_colors;
-    if (!args_.image_topics.empty()) {
+    if (!args_.color_topics.empty()) {
       core::slam::FinalizeSpinner spinner("Colorizing map", progress_on);
       colorize_map(map, map_colors, use_gpu_);
     }
@@ -1164,7 +1166,7 @@ private:
     return 0;
   }
 
-  // Colorize the optimized map from the --cam image topics: stream every
+  // Colorize the optimized map from the --color image topics: stream every
   // camera's images through its own MapColorizer in a single bag pass,
   // gain-align the per-camera results and blend them by observation weight,
   // then fill the points no camera observed from their nearest observed
@@ -1177,7 +1179,7 @@ private:
     const core::slam::CloudMap & map, std::vector<std::array<std::uint8_t, 3>> & colors,
     bool use_gpu)
   {
-    const std::size_t cam_count = args_.image_topics.size();
+    const std::size_t cam_count = args_.color_topics.size();
     const int threads = colorize_thread_count(args_.num_threads);
     // With several cameras the per-image work (decode + add_image) is
     // parallelized across one worker thread per camera below, so each camera's
@@ -1205,7 +1207,7 @@ private:
       return;
     }
     io::ReadFilter filter;
-    filter.topics = args_.image_topics;
+    filter.topics = args_.color_topics;
     // The SLAM LiDAR stream rides along: each scan is the scene's occluder
     // geometry at its own time, so the colorizer can reject map points that
     // sit behind vehicles and pedestrians which left nothing in the
@@ -1220,18 +1222,18 @@ private:
     // pairing must be tight (see ScanImagePairer for the queuing rule).
     core::slam::ScanImagePairer pairer;
 
-    // Keyframe gate (--cam-min-dist): one picker per camera thins that
+    // Keyframe gate (--color-min-dist): one picker per camera thins that
     // camera's stream before the colorizer sees it. Without the blur
     // refinement the gate is decided from the pose alone BEFORE decode (in
-    // feed_image below); with --cam-keyframe-blur every candidate is decoded
+    // feed_image below); with --color-keyframe-blur every candidate is decoded
     // and scored, so the gate runs where the decode happens (this camera's
     // worker, or the serial path). Either way a picker is driven from
     // exactly one thread in frame order, so the result is deterministic.
-    const bool keyframe_gate = args_.cam_min_dist > 0.0;
-    const bool blur_gate = keyframe_gate && args_.cam_keyframe_blur;
+    const bool keyframe_gate = args_.color_min_dist > 0.0;
+    const bool blur_gate = keyframe_gate && args_.color_keyframe_blur;
     core::slam::ColorizeKeyframeConfig keyframe_config;
-    keyframe_config.min_dist = args_.cam_min_dist;
-    keyframe_config.blur = args_.cam_keyframe_blur;
+    keyframe_config.min_dist = args_.color_min_dist;
+    keyframe_config.blur = args_.color_keyframe_blur;
     std::vector<std::unique_ptr<core::slam::ColorizeKeyframePicker>> pickers;
     if (keyframe_gate) {
       pickers.reserve(cam_count);
@@ -1268,7 +1270,7 @@ private:
                 kLogger,
                 "Colorizing an image on '%s' failed: %s (further failures on this topic are "
                 "only counted)",
-                args_.image_topics[cam].c_str(), e.what());
+                args_.color_topics[cam].c_str(), e.what());
             }
             ++failures;
           };
@@ -1300,7 +1302,7 @@ private:
     auto feed_image = [&](
                         core::slam::ScanImagePairer::PendingImage & img,
                         std::span<const std::array<float, 3>> dynamic) {
-      // Pose-only keyframe gate (--cam-min-dist without the blur
+      // Pose-only keyframe gate (--color-min-dist without the blur
       // refinement): decided BEFORE the decode, so a thinned frame costs
       // neither the decode nor, in the parallel path, the queue transfer.
       if (keyframe_gate && !blur_gate && !pickers[img.cam]->accept(img.stamp_ns)) {
@@ -1354,7 +1356,7 @@ private:
         // camera, dispatched by topic name.
         std::size_t cam = cam_count;
         for (std::size_t i = 0; i < cam_count; ++i) {
-          if (raw.topic->name == args_.image_topics[i]) {
+          if (raw.topic->name == args_.color_topics[i]) {
             cam = i;
             break;
           }
@@ -1375,7 +1377,7 @@ private:
     } catch (const std::exception & e) {
       BAGWIZ_LOG_WARN(
         kLogger,
-        "Error reading the --cam topic(s) for colorization (%s); continuing with the images "
+        "Error reading the --color topic(s) for colorization (%s); continuing with the images "
         "read so far.",
         e.what());
     }
@@ -1397,7 +1399,7 @@ private:
         } catch (const std::exception & e) {
           BAGWIZ_LOG_WARN(
             kLogger, "Flushing the last keyframe on '%s' failed: %s",
-            args_.image_topics[cam].c_str(), e.what());
+            args_.color_topics[cam].c_str(), e.what());
           ++decode_failures[cam];
         }
       }
@@ -1412,9 +1414,9 @@ private:
         BAGWIZ_LOG_INFO(
           kLogger,
           "Colorize: %zu of %zu map points observed via '%s' (%zu image(s) used, %zu thinned "
-          "by --cam-min-dist, %zu outside the trajectory span, %" PRId64
+          "by --color-min-dist, %zu outside the trajectory span, %" PRId64
           " failed to decode or colorize)",
-          result.colored_points, map.points.size(), args_.image_topics[cam].c_str(),
+          result.colored_points, map.points.size(), args_.color_topics[cam].c_str(),
           result.images_used, pickers[cam]->skipped(), result.images_skipped, decode_failures[cam]);
         continue;
       }
@@ -1422,7 +1424,7 @@ private:
         kLogger,
         "Colorize: %zu of %zu map points observed via '%s' (%zu image(s) used, %zu outside "
         "the trajectory span, %" PRId64 " failed to decode or colorize)",
-        result.colored_points, map.points.size(), args_.image_topics[cam].c_str(),
+        result.colored_points, map.points.size(), args_.color_topics[cam].c_str(),
         result.images_used, result.images_skipped, decode_failures[cam]);
     }
 
@@ -1432,7 +1434,7 @@ private:
     if (merged.images_used == 0) {
       BAGWIZ_LOG_WARN(
         kLogger,
-        "No usable image on any --cam topic for colorization; map.pcd is written without "
+        "No usable image on any --color topic for colorization; map.pcd is written without "
         "colors.");
       return;
     }
@@ -1477,7 +1479,7 @@ private:
   std::filesystem::path map_path_;     // <output_root>/map.pcd (mapping mode only)
   // Effective backend resolved by resolve_backend() from --backend.
   bool use_gpu_ = false;
-  // --cam state, parallel to args_.image_topics (listing order; the first
+  // --color state, parallel to args_.color_topics (listing order; the first
   // topic is the gain-alignment reference when the per-camera results are
   // blended), filled by validate_camera_inputs / resolve_camera_extrinsics.
   std::vector<std::string> camera_info_topics_;            // resolved CameraInfo topics

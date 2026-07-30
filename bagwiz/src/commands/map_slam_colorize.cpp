@@ -16,11 +16,13 @@
 #include "bagwiz/core/slam/colorize_rasterizer_gpu.hpp"
 #endif
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -31,6 +33,33 @@ namespace bagwiz::commands
 int colorize_thread_count(int num_threads)
 {
   return resolve_threads(num_threads);
+}
+
+CameraInfoOverrides parse_camera_info_overrides(
+  std::span<const std::string> entries, std::span<const std::string> image_topics)
+{
+  CameraInfoOverrides result;
+  for (const std::string & entry : entries) {
+    const auto sep = entry.find('=');
+    if (sep == std::string::npos || sep == 0 || sep + 1 == entry.size()) {
+      result.error =
+        "--cam-info entry '" + entry + "' is not of the form <image_topic>=<info_topic>.";
+      return result;
+    }
+    std::string image_topic = entry.substr(0, sep);
+    std::string info_topic = entry.substr(sep + 1);
+    const bool listed =
+      std::find(image_topics.begin(), image_topics.end(), image_topic) != image_topics.end();
+    if (!listed) {
+      result.error = "--cam-info names '" + image_topic + "', which is not a --color topic.";
+      return result;
+    }
+    if (!result.by_image_topic.emplace(std::move(image_topic), std::move(info_topic)).second) {
+      result.error = "--cam-info was given more than once for '" + entry.substr(0, sep) + "'.";
+      return result;
+    }
+  }
+  return result;
 }
 
 std::shared_ptr<const core::slam::ColorizeGeometry> build_shared_colorize_geometry(
