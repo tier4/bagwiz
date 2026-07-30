@@ -8,8 +8,12 @@
 
 #include "bagwiz/core/slam/visual_frontend.hpp"
 
+#include "bagwiz/core/image/camera_distortion.hpp"
+
 #include <opencv2/core.hpp>
+#include <opencv2/features.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/video/tracking.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -33,8 +37,16 @@ struct VisualFrontend::Impl
 
   VisualFrontendConfig config;
 
+  // Distortion model selected from config.camera at construction, shared by
+  // every emitted observation's undistort_normalized call. Declared after
+  // config so its initializer (which reads config.camera) runs after config
+  // is constructed: member init order follows declaration order regardless
+  // of the constructor's mem-initializer list.
+  const image::DistortionModel model =
+    image::select_distortion_model(config.camera.distortion_model);
+
   // Previous frame, downscaled to config.tracking_width, kept for the KLT
-  // optical-flow step a later task adds.
+  // optical-flow step.
   cv::Mat prev_gray;
 
   // Downscale factor applied to reach config.tracking_width:
@@ -42,9 +54,7 @@ struct VisualFrontend::Impl
   // caller's frame size changes.
   double scale = 1.0;
 
-  // One live feature track, in tracking-scale pixel coordinates. Detection
-  // and KLT propagation land in a later task; for now this table never
-  // gains an entry, so track() always returns no observations.
+  // One live feature track, in tracking-scale pixel coordinates.
   struct Track
   {
     std::uint64_t id = 0;
@@ -56,9 +66,11 @@ struct VisualFrontend::Impl
 };
 
 std::vector<VisualObservation> VisualFrontend::Impl::track(
-  std::int64_t /*stamp_ns*/, std::span<const std::byte> bgr, std::uint32_t width,
-  std::uint32_t height)
+  std::int64_t stamp_ns, std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height)
 {
+  if (width == 0 || height == 0) {
+    return {};
+  }
   if (bgr.size() != static_cast<std::size_t>(width) * height * 3) {
     return {};
   }
@@ -79,13 +91,98 @@ std::vector<VisualObservation> VisualFrontend::Impl::track(
   cv::Mat resized;
   cv::resize(gray, resized, cv::Size(tracking_width, tracking_height), 0, 0, cv::INTER_AREA);
 
+  // The very first frame this instance ever sees has no prior frame to flow
+  // from, so it only seeds the detector below and reports no observations.
+  const bool have_prev_frame = !prev_gray.empty();
+
+  if (have_prev_frame && !tracks.empty()) {
+    std::vector<cv::Point2f> prev_pts;
+    prev_pts.reserve(tracks.size());
+    for (const auto & t : tracks) {
+      prev_pts.emplace_back(t.x, t.y);
+    }
+
+    std::vector<cv::Point2f> next_pts;
+    std::vector<uchar> status;
+    std::vector<float> err;
+    cv::calcOpticalFlowPyrLK(
+      prev_gray, resized, prev_pts, next_pts, status, err, cv::Size(21, 21), 3);
+
+    // Forward-backward check: flow next_pts back into prev_gray and drop any
+    // track whose round trip misses its origin by more than the configured
+    // tolerance, along with anything OpenCV itself marked lost or that left
+    // the tracking-scale frame.
+    std::vector<cv::Point2f> back_pts;
+    std::vector<uchar> back_status;
+    std::vector<float> back_err;
+    cv::calcOpticalFlowPyrLK(
+      resized, prev_gray, next_pts, back_pts, back_status, back_err, cv::Size(21, 21), 3);
+
+    std::vector<Track> surviving;
+    surviving.reserve(tracks.size());
+    for (std::size_t i = 0; i < tracks.size(); ++i) {
+      if (status[i] == 0 || back_status[i] == 0) {
+        continue;
+      }
+      if (cv::norm(prev_pts[i] - back_pts[i]) > config.forward_backward_max) {
+        continue;
+      }
+      const cv::Point2f & p = next_pts[i];
+      if (
+        p.x < 0.0F || p.y < 0.0F || p.x >= static_cast<float>(resized.cols) ||
+        p.y >= static_cast<float>(resized.rows)) {
+        continue;
+      }
+      surviving.push_back(Track{tracks[i].id, p.x, p.y});
+    }
+    tracks = std::move(surviving);
+  }
+  // Otherwise there is nothing to flow: either this is the first frame ever
+  // (prev_gray empty) or every prior track was already lost (tracks empty),
+  // and in both cases `tracks` is already the empty table detection tops up
+  // below.
+
+  // Top off with fresh corners when there is room, masking out a
+  // min_feature_distance disc around every surviving track so detection
+  // does not just rediscover the same corners.
+  if (static_cast<int>(tracks.size()) < config.max_features) {
+    cv::Mat mask(resized.size(), CV_8UC1, cv::Scalar(255));
+    const int mask_radius = static_cast<int>(std::lround(config.min_feature_distance));
+    for (const auto & t : tracks) {
+      cv::circle(
+        mask, cv::Point(static_cast<int>(std::lround(t.x)), static_cast<int>(std::lround(t.y))),
+        mask_radius, cv::Scalar(0), cv::FILLED);
+    }
+
+    std::vector<cv::Point2f> corners;
+    const int wanted = config.max_features - static_cast<int>(tracks.size());
+    cv::goodFeaturesToTrack(
+      resized, corners, wanted, /*qualityLevel=*/0.01, config.min_feature_distance, mask);
+    for (const auto & c : corners) {
+      tracks.push_back(Track{next_track_id++, c.x, c.y});
+    }
+  }
+
   std::vector<VisualObservation> observations;
-  if (prev_gray.empty() || tracks.empty()) {
-    // No previous frame to flow from, or no live tracks to propagate:
-    // detection/KLT tracking are added in a later task, so every frame
-    // still yields nothing.
-    prev_gray = std::move(resized);
-    return observations;
+  if (have_prev_frame) {
+    const double fx = config.camera.k[0];
+    const double cx = config.camera.k[2];
+    const double fy = config.camera.k[4];
+    const double cy = config.camera.k[5];
+    observations.reserve(tracks.size());
+    for (const auto & t : tracks) {
+      const double u = static_cast<double>(t.x) * scale;
+      const double v = static_cast<double>(t.y) * scale;
+      const image::NormalizedPoint p =
+        image::undistort_normalized((u - cx) / fx, (v - cy) / fy, model, config.camera.d);
+      VisualObservation obs;
+      obs.camera_id = config.camera_id;
+      obs.track_id = t.id;
+      obs.stamp_ns = stamp_ns;
+      obs.x = p.x;
+      obs.y = p.y;
+      observations.push_back(obs);
+    }
   }
 
   prev_gray = std::move(resized);
