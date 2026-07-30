@@ -17,6 +17,8 @@
 
 #include <cmath>
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <numbers>
 #include <span>
@@ -250,9 +252,10 @@ TEST(TfStaticTreeYamlTest, EmitsEveryGroupWhenTheTreeIsCyclic)
 // were emitted as a plain scalar.
 TEST(TfStaticTreeYamlTest, QuotesFrameIdsThatWouldNotSurviveAsPlainScalars)
 {
-  for (const std::string & name :
+  for (const char * raw :
        {"no", "yes", "true", "NULL", "y", "1.0", "42", "a: b", "#x", "", " leading", "with'quote",
         "with\"quote", "tab\there"}) {
+    const std::string name(raw);
     const std::string yaml = emit({make_edge("base_link", name)});
     YAML::Node doc;
     ASSERT_NO_THROW(doc = YAML::Load(yaml)) << "unparseable for " << name << ":\n" << yaml;
@@ -312,6 +315,277 @@ TEST(TfStaticTreeYamlTest, EmitsAParseableDocumentForNoTransforms)
 
   EXPECT_NO_THROW(YAML::Load(yaml));
   EXPECT_NE(yaml.find("# Source bag: test.mcap\n"), std::string::npos) << yaml;
+}
+
+// ---------------------------------------------------------------------------
+// parse_static_tf_tree_yaml
+// ---------------------------------------------------------------------------
+
+using bagwiz::core::parse_static_tf_tree_yaml;
+
+class StaticTfTreeParseTest : public ::testing::Test
+{
+protected:
+  void SetUp() override
+  {
+    dir_ = std::filesystem::temp_directory_path() /
+           ("bagwiz_tf_tree_parse_" +
+            std::to_string(::testing::UnitTest::GetInstance()->current_test_info()->line()));
+    std::filesystem::remove_all(dir_);
+    std::filesystem::create_directories(dir_);
+  }
+  void TearDown() override { std::filesystem::remove_all(dir_); }
+
+  std::filesystem::path write(const std::string & contents) const
+  {
+    const auto path = dir_ / "tree.yaml";
+    std::ofstream(path) << contents;
+    return path;
+  }
+
+  // Parse `contents` and return the error, asserting that it failed.
+  std::string error_for(const std::string & contents) const
+  {
+    const auto result = parse_static_tf_tree_yaml(write(contents));
+    EXPECT_FALSE(result.ok()) << "expected a rejection for:\n" << contents;
+    EXPECT_FALSE(result.transforms.has_value());
+    return result.error;
+  }
+
+  std::filesystem::path dir_;
+};
+
+TEST_F(StaticTfTreeParseTest, ReadsTheEmittedSchema)
+{
+  const auto result = parse_static_tf_tree_yaml(write(
+    "base_link:\n"
+    "  drs_base_link:\n"
+    "    x: 0.796\n"
+    "    y: 0.0\n"
+    "    z: 1.826\n"
+    "    roll: 0.0\n"
+    "    pitch: 0.0\n"
+    "    yaw: 1.5707963267948966\n"));
+
+  ASSERT_TRUE(result.ok()) << result.error;
+  ASSERT_EQ(result.transforms->size(), 1U);
+  const auto & t = result.transforms->front();
+  EXPECT_EQ(t.header.frame_id, "base_link");
+  EXPECT_EQ(t.child_frame_id, "drs_base_link");
+  EXPECT_DOUBLE_EQ(t.transform.translation.x, 0.796);
+  EXPECT_DOUBLE_EQ(t.transform.translation.z, 1.826);
+  // The schema has no stamp; the caller supplies one for the bag it writes into.
+  EXPECT_EQ(t.header.stamp.sec, 0);
+  EXPECT_EQ(t.header.stamp.nanosec, 0U);
+  // yaw = pi/2 about z.
+  EXPECT_NEAR(t.transform.rotation.z, std::sin(std::numbers::pi / 4.0), 1e-12);
+  EXPECT_NEAR(t.transform.rotation.w, std::cos(std::numbers::pi / 4.0), 1e-12);
+}
+
+// Recovering RPY from a quaternion cannot hold an exact zero next to a right
+// angle: the camera_optical rotation (roll = -pi/2, yaw = -pi/2) returns
+// pitch = -5.55e-17. Without the angle floor, a config written by `dump`, joined
+// into a bag, and dumped again would not match itself.
+TEST_F(StaticTfTreeParseTest, FoldsSubResolutionAnglesToZeroSoRightAnglesRoundTrip)
+{
+  auto optical = make_edge("camera0/camera_link", "camera0/camera_optical_link");
+  optical.transform.rotation.x = 0.5;
+  optical.transform.rotation.y = -0.5;
+  optical.transform.rotation.z = 0.5;
+  optical.transform.rotation.w = -0.5;
+
+  const std::string first = emit({optical});
+  EXPECT_NE(first.find("    pitch: 0.0\n"), std::string::npos) << first;
+
+  const auto parsed = parse_static_tf_tree_yaml(write(first));
+  ASSERT_TRUE(parsed.ok()) << parsed.error;
+  EXPECT_EQ(emit(*parsed.transforms), first);
+
+  // Folding that component must not have moved the rotation itself.
+  const auto & q = parsed.transforms->front().transform.rotation;
+  const tf2::Quaternion reloaded(q.x, q.y, q.z, q.w);
+  const tf2::Quaternion original(0.5, -0.5, 0.5, -0.5);
+  EXPECT_NEAR(std::abs(reloaded.dot(original)), 1.0, 1e-12);
+}
+
+// The reason the two functions live together: a config written by `dump` must
+// read back to the same transforms, and re-emit to the same bytes.
+TEST_F(StaticTfTreeParseTest, EmitParseEmitIsAFixedPoint)
+{
+  const std::vector<geometry_msgs::msg::TransformStamped> original{
+    make_edge_rpy("base_link", "drs_base_link", 0.0, 0.0, 0.0),
+    make_edge_rpy("drs_base_link", "lidar_left", -0.019885, 0.450969, 0.477995),
+    make_edge_rpy("lidar_left", "camera6/camera_link", 0.1, -0.2, 0.3),
+  };
+  const std::string first = emit(original);
+
+  const auto parsed = parse_static_tf_tree_yaml(write(first));
+  ASSERT_TRUE(parsed.ok()) << parsed.error;
+  ASSERT_EQ(parsed.transforms->size(), original.size());
+
+  const std::string second = emit(*parsed.transforms);
+  EXPECT_EQ(second, first);
+
+  // And the rotations survive as rotations, not just as text.
+  for (std::size_t i = 0; i < original.size(); ++i) {
+    const auto & a = original[i].transform.rotation;
+    const auto & b = (*parsed.transforms)[i].transform.rotation;
+    const tf2::Quaternion qa(a.x, a.y, a.z, a.w);
+    const tf2::Quaternion qb(b.x, b.y, b.z, b.w);
+    EXPECT_NEAR(std::abs(qa.dot(qb)), 1.0, 1e-12) << "edge " << i;
+  }
+}
+
+TEST_F(StaticTfTreeParseTest, ReadsAMultiParentTree)
+{
+  const auto result = parse_static_tf_tree_yaml(write(
+    "base_link:\n"
+    "  a:\n"
+    "    x: 1.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n"
+    "  b:\n"
+    "    x: 2.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n"
+    "a:\n"
+    "  c:\n"
+    "    x: 3.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n"));
+
+  ASSERT_TRUE(result.ok()) << result.error;
+  EXPECT_EQ(result.transforms->size(), 3U);
+}
+
+TEST_F(StaticTfTreeParseTest, RejectsAMissingFile)
+{
+  const auto result = parse_static_tf_tree_yaml(dir_ / "absent.yaml");
+  EXPECT_FALSE(result.ok());
+  EXPECT_NE(result.error.find("failed to parse"), std::string::npos) << result.error;
+}
+
+TEST_F(StaticTfTreeParseTest, RejectsMalformedYaml)
+{
+  EXPECT_NE(
+    error_for("base_link:\n  - not: a mapping\n   bad indent\n").find("failed to parse"),
+    std::string::npos);
+}
+
+TEST_F(StaticTfTreeParseTest, RejectsANonMappingDocument)
+{
+  EXPECT_NE(error_for("- a\n- b\n").find("not a top-level mapping"), std::string::npos);
+  EXPECT_NE(error_for("").find("empty or not a top-level mapping"), std::string::npos);
+}
+
+TEST_F(StaticTfTreeParseTest, RejectsAMissingKey)
+{
+  // Every one of the six is required: a pose missing one is underspecified, and
+  // defaulting it to 0 would invent a transform the author did not write.
+  for (const char * omit : {"x", "y", "z", "roll", "pitch", "yaw"}) {
+    std::string body;
+    for (const char * key : {"x", "y", "z", "roll", "pitch", "yaw"}) {
+      if (std::string(key) != omit) {
+        body += std::string("    ") + key + ": 0.0\n";
+      }
+    }
+    const std::string err = error_for("base_link:\n  lidar:\n" + body);
+    EXPECT_NE(err.find(std::string("missing key '") + omit + "'"), std::string::npos) << err;
+  }
+}
+
+// A typo would otherwise leave the mistyped axis silently at 0.
+TEST_F(StaticTfTreeParseTest, RejectsAnUnknownKey)
+{
+  const std::string err = error_for(
+    "base_link:\n  lidar:\n"
+    "    x: 0.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n"
+    "    pich: 0.5\n");
+  EXPECT_NE(err.find("unknown key 'pich'"), std::string::npos) << err;
+}
+
+TEST_F(StaticTfTreeParseTest, RejectsANonNumericValue)
+{
+  const std::string err = error_for(
+    "base_link:\n  lidar:\n"
+    "    x: forward\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n");
+  EXPECT_NE(err.find("key 'x' must be a number"), std::string::npos) << err;
+}
+
+// The reference publisher recurses and silently drops the enclosing key, which
+// would put the transform under the wrong parent.
+TEST_F(StaticTfTreeParseTest, RejectsDeeperNesting)
+{
+  const std::string err = error_for(
+    "group:\n  base_link:\n    drs_base_link:\n"
+    "      x: 0.0\n      y: 0.0\n      z: 0.0\n      roll: 0.0\n      pitch: 0.0\n      yaw: "
+    "0.0\n");
+  EXPECT_NE(err.find("nests a further level"), std::string::npos) << err;
+}
+
+TEST_F(StaticTfTreeParseTest, RejectsAScalarWhereAMappingBelongs)
+{
+  EXPECT_NE(
+    error_for("base_link: 5\n").find("must hold a mapping of child frames"), std::string::npos);
+  EXPECT_NE(
+    error_for("base_link:\n  lidar: 5\n").find("must be a mapping with x, y, z"),
+    std::string::npos);
+}
+
+TEST_F(StaticTfTreeParseTest, RejectsAnEmptyDocumentBody)
+{
+  EXPECT_NE(error_for("base_link: {}\n").find("declares no child frames"), std::string::npos);
+}
+
+TEST_F(StaticTfTreeParseTest, RejectsASelfEdge)
+{
+  const std::string err = error_for(
+    "base_link:\n  base_link:\n"
+    "    x: 0.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n");
+  EXPECT_NE(err.find("is its own parent"), std::string::npos) << err;
+}
+
+// The structural checks come from validate_tf_forest, the same validation
+// `bagwiz tf tree` applies to a bag's merged tree.
+TEST_F(StaticTfTreeParseTest, RejectsAChildWithTwoParents)
+{
+  const std::string err = error_for(
+    "a:\n  shared:\n"
+    "    x: 0.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n"
+    "b:\n  shared:\n"
+    "    x: 1.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n");
+  EXPECT_NE(err.find("has parent"), std::string::npos) << err;
+}
+
+TEST_F(StaticTfTreeParseTest, RejectsOppositeEdges)
+{
+  const std::string err = error_for(
+    "a:\n  b:\n"
+    "    x: 0.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n"
+    "b:\n  a:\n"
+    "    x: 0.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n");
+  EXPECT_NE(err.find("opposite edges"), std::string::npos) << err;
+}
+
+TEST_F(StaticTfTreeParseTest, RejectsACycle)
+{
+  const std::string err = error_for(
+    "a:\n  b:\n"
+    "    x: 0.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n"
+    "b:\n  c:\n"
+    "    x: 0.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n"
+    "c:\n  a:\n"
+    "    x: 0.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n");
+  EXPECT_NE(err.find("directed cycle"), std::string::npos) << err;
+}
+
+// The emitter quotes awkward frame ids; the parser has to give the same string
+// back, or a round trip would rename frames.
+TEST_F(StaticTfTreeParseTest, ReadsQuotedFrameIds)
+{
+  const std::vector<geometry_msgs::msg::TransformStamped> original{
+    make_edge("base_link", "no"), make_edge("no", "1.0")};
+  const auto parsed = parse_static_tf_tree_yaml(write(emit(original)));
+
+  ASSERT_TRUE(parsed.ok()) << parsed.error;
+  ASSERT_EQ(parsed.transforms->size(), 2U);
+  EXPECT_EQ((*parsed.transforms)[0].child_frame_id, "no");
+  EXPECT_EQ((*parsed.transforms)[1].header.frame_id, "no");
+  EXPECT_EQ((*parsed.transforms)[1].child_frame_id, "1.0");
 }
 
 }  // namespace

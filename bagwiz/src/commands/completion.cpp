@@ -770,19 +770,24 @@ std::vector<std::string> complete_traj(const CompletionRequest & request)
   return {};
 }
 
-// `tf static` is a command group with three actions, `calc`, `cp`, and `dump`.
-// The action verb adds one positional slot, shifting every argument one word to
-// the right of the flat `tf` subcommands.
+// `tf static` is a command group with four actions, `calc`, `cp`, `dump`, and
+// `join`. The action verb adds one positional slot, shifting every argument one
+// word to the right of the flat `tf` subcommands.
 //
 //   calc: `tf`(0) `static`(1) `calc`(2) -i|--input <bag> --of <frame> --ref <frame> [--json]
 //   cp:   `tf`(0) `static`(1) `cp`(2)   --src <bag> --dst <bag> [-o <out>] [-w|--overwrite]
 //   dump: `tf`(0) `static`(1) `dump`(2) -i|--input <bag> [-o <out>] [-w|--overwrite]
+//   join: `tf`(0) `static`(1) `join`(2) -i|--input <bag> --yaml <file> [-t <topic>]
+//                                       [-o <out>] [--force] [-w|--overwrite]
 //
-// At the action slot (word 2) the candidates are `calc` / `cp` / `dump`. For
-// `calc`, `-i`/`--input`/`--json`/`--of`/`--ref` are offered for any `-` word,
+// At the action slot (word 2) the candidates are `calc` / `cp` / `dump` / `join`.
+// For `calc`, `-i`/`--input`/`--json`/`--of`/`--ref` are offered for any `-` word,
 // and the `--of`/`--ref` value slots complete from the bag's static `*tf_static`
 // frame ids only. For `cp`, the `--src`/`--dst`/`--output` flags are surfaced;
-// for `dump`, `--input`/`--output`/`--overwrite`.
+// for `dump`, `--input`/`--output`/`--overwrite`; for `join`, those plus
+// `--yaml`, `--topic`, and `--force`. `join`'s `--yaml` and `--topic` values are
+// a file path and a new topic name respectively, so neither carries bagwiz
+// candidates: both fall through to the shell's own completion.
 std::vector<std::string> complete_tf_static(
   const CompletionRequest & request, const std::string & current)
 {
@@ -790,7 +795,7 @@ std::vector<std::string> complete_tf_static(
     if (current.starts_with("-")) {
       return matching({kCommonHelpFlags.begin(), kCommonHelpFlags.end()}, current);
     }
-    return matching({"calc", "cp", "dump"}, current);
+    return matching({"calc", "cp", "dump", "join"}, current);
   }
 
   // Reaching here implies cursor_word > kSecondCommandArgWord, so words[2]
@@ -825,6 +830,17 @@ std::vector<std::string> complete_tf_static(
   if (action == "dump") {
     if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
       return matching(with_help({"--input", "--output", "--overwrite", "-i", "-o", "-w"}), current);
+    }
+    return {};
+  }
+
+  if (action == "join") {
+    if (request.cursor_word >= kThirdCommandArgWord && current.starts_with("-")) {
+      return matching(
+        with_help(
+          {"--force", "--input", "--output", "--overwrite", "--topic", "--yaml", "-i", "-o", "-t",
+           "-w"}),
+        current);
     }
     return {};
   }

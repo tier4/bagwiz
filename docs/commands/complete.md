@@ -141,7 +141,7 @@ source ~/.config/fish/completions/bagwiz.fish
     (`cam-info replace`, `cam-info recompute-p`, `cam-info dump`, `check broken`,
     `convert format`, `generate video`, `map slam`, `map viewer`,
     `pcd concat`, `pcd undistort`, `tf static calc`, `tf static cp`,
-    `tf static dump`, `tf tree`, `topic drop`, `topic keep`, `topic rename`,
+    `tf static dump`, `tf static join`, `tf tree`, `topic drop`, `topic keep`, `topic rename`,
     `traj dump`, `traj join`);
     `cam-info replace -<TAB>` surfaces `--frame-id`, `--output`/`-o`,
     `--topics`/`-t`, and `-w`/`--overwrite`; `check broken -<TAB>` surfaces
@@ -154,9 +154,12 @@ source ~/.config/fish/completions/bagwiz.fish
     `--json`, `--of`, `--ref`, and `tf static cp -<TAB>` surfaces `--src`, `--dst`
     (long-form only — neither has a short form), `--output`/`-o` and `-w`/`--overwrite`;
     `tf static dump -<TAB>` surfaces `--input`/`-i`, `--output`/`-o` and
-    `-w`/`--overwrite`.
+    `-w`/`--overwrite`; `tf static join -<TAB>` adds `--yaml`, `--topic`/`-t` and
+    `--force` to that set (its `--yaml` value is a file path and `--topic` names a
+    topic being created, so neither carries bagwiz candidates — both fall through
+    to the shell).
     `tf static` is itself a command group, so `tf static <TAB>` completes its
-    actions (`calc`, `cp`, `dump`) and `tf static -<TAB>` lists just the help flags.
+    actions (`calc`, `cp`, `dump`, `join`) and `tf static -<TAB>` lists just the help flags.
     `cam-info`, `check`, `generate`, `map`, `pcd`, and `topic` are likewise
     command groups: `cam-info <TAB>` completes `replace`, `recompute-p`, `dump`, `check <TAB>`
     completes `broken`, `generate <TAB>` completes `video`, `map <TAB>`

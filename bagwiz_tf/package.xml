@@ -19,6 +19,7 @@
   <depend>std_msgs</depend>
   <depend>tf2</depend>
   <depend>tf2_msgs</depend>
+  <depend>yaml_cpp_vendor</depend>
 
   <!-- Runtime-only: never find_package()'d and no headers are included.
        tf_message_wire.cpp calls rmw_serialize, which routes through

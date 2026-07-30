@@ -22,7 +22,8 @@
 // Wire-level helpers for tf2_msgs/msg/TFMessage: the canonical schema
 // text, TopicInfo synthesis for declaring a *new* TF topic in a
 // destination bag, and CDR serialisation of a TFMessage payload. Used
-// when writing TF topics into a bag (e.g. by `bagwiz traj join`).
+// when writing TF topics into a bag (e.g. by `bagwiz traj join` and
+// `bagwiz tf static cp` / `join`).
 namespace bagwiz::core
 {
 

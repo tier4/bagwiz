@@ -6,6 +6,7 @@ TF inspection and static-TF editing on a ROS 2 rosbag.
 - [`static calc`](#bagwiz-tf-static-calc) — resolve the pose of `--of` expressed in `--ref` using only the bag's static TF tree; print translation/quaternion/RPY or JSON. (`static` is a command group; `calc` is its action.)
 - [`static cp`](#bagwiz-tf-static-cp) — copy every static TF topic from `<src>` into `<dst>` (in place, or to a new bag via `-o`), preserving topic names and stamping each at `<dst>`'s start time.
 - [`static dump`](#bagwiz-tf-static-dump) — write the bag's static TF tree as nested `parent: child: {x, y, z, roll, pitch, yaw}` YAML (RPY in radians) to `-o`, or to stdout.
+- [`static join`](#bagwiz-tf-static-join) — the inverse of `static dump`: embed such a YAML into the bag as one latched `/tf_static` message stamped at the bag's start time.
 
 ROS 1 `*.bag` inputs are not supported.
 
@@ -432,6 +433,14 @@ folds that away, at a cost of ~1e-14 relative error — far below what any
 calibration resolves. Use [`tf static calc --json`](#bagwiz-tf-static-calc) for
 the full-precision view of a single transform.
 
+Angles are additionally snapped to `0.0` below 1e-12 rad. Relative precision
+cannot clean up a component whose true value is zero, and recovering RPY from a
+quaternion cannot hold an exact zero beside a right angle — the
+`camera_link → camera_optical_link` rotation comes back with
+`pitch: -5.55e-17`. The floor sits three orders above that noise and six below the
+microradian any real calibration resolves, so it only ever erases noise. It is not
+applied to translations, which never pass through this conversion.
+
 ### Which messages are read
 
 Only the **first message** of each static topic. Static TF is latched: a
@@ -510,6 +519,147 @@ bagwiz tf static dump -i capture.mcap > tf_static.yaml         # equivalent to -
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | Static TF tree written to `<output>` or stdout.                                                                                                                                                                 |
 | `1`  | Bag could not be opened, has no static TF topic carrying transforms, a decode failure, two static topics giving one child different parents, an existing `-o` path without `-w`/`--overwrite`, or an I/O error. |
+
+---
+
+## `bagwiz tf static join`
+
+The inverse of [`static dump`](#bagwiz-tf-static-dump): reads a static-transform
+publisher config — the nested `parent: child: {x, y, z, roll, pitch, yaw}` YAML,
+rotations as RPY in radians — and embeds it into the bag as a single latched
+`tf2_msgs/msg/TFMessage`.
+
+Together the two close the loop: `dump` recovers a config from a recorded rig, and
+`join` puts a config into a bag that is missing its static TF, or replaces one that
+is wrong. A bag trimmed to start after `/tf_static` was last published, for
+instance, has no static tree at all until you join one back in.
+
+### Rotation convention
+
+The YAML's `roll`/`pitch`/`yaw` are radians in tf2's fixed-axis convention and are
+converted to a quaternion with `tf2::Quaternion::setRPY` — exactly what a
+static-transform publisher does with the same file, and the inverse of the
+`getRPY` that [`static dump`](#bagwiz-tf-static-dump) applies.
+
+So `dump` → `join` reproduces the bag it came from: **translations exactly**, and
+rotations to within the precision `dump` writes (see its
+[Precision](#precision) section). Measured over a 21-edge vehicle rig, the worst
+rotation deviation was 2.5e-15 rad — a picometre over a 100 m lever arm. And
+`dump` → `join` → `dump` is byte-identical, so a config survives any number of
+trips through a bag unchanged.
+
+### Accepted input
+
+Strict, because this is a hand-edited file and a silently-ignored key becomes a
+silently-wrong sensor pose. The document must be a mapping of parent frames, each
+holding a mapping of child frames, each holding **exactly** the six keys `x`, `y`,
+`z`, `roll`, `pitch`, `yaw` with numeric values. Rejected, with the offending
+frame or key named:
+
+- A missing key. There is no default: a pose missing `pitch` is underspecified,
+  and filling in `0` would invent a transform the author did not write.
+- Any other key. A mistyped `pich` would otherwise leave pitch silently at `0`.
+- A non-numeric value, an empty frame id, or a frame that is its own parent.
+- **A third level of nesting.** Note this is stricter than
+  `multi_transform_publisher`, which recurses and silently drops the enclosing
+  key — so `group: {base_link: {lidar: {...}}}` publishes `base_link → lidar` there
+  and is an error here, because dropping a level puts the transform under the
+  wrong parent.
+- An edge set that is not a forest: a child claimed by two parents, both `A → B`
+  and `B → A`, or a cycle. This is the same validation
+  [`tf tree`](#bagwiz-tf-tree) applies to a bag's merged tree.
+- An empty document — there would be nothing to write.
+
+Note also that unlike `multi_transform_publisher`, `join` does **not** synthesize
+`camera_link → camera_optical_link` edges. It writes exactly the transforms the
+file declares; if you want those edges in the bag, put them in the file (which is
+what `static dump` produces, since it reads them from the bag).
+
+### Timestamp
+
+The message is stamped at `<input>`'s earliest message time — both the message's
+receive time and the `header.stamp` of every transform it carries. That places the
+latched static TF at the very start of the timeline, where a static transform is
+expected to already hold. It is also written ahead of the copied messages, so its
+storage position agrees with its timestamp: a consumer that reads a `.db3` in row
+order rather than by timestamp (Foxglove's readers issue their message query
+without an `ORDER BY`) still receives it first.
+
+### Output modes
+
+- Default (no `-o`): `<input>` is rewritten in place via an atomic tmp-swap that
+  preserves its storage format and layout. If the pass fails, `<input>` is left
+  untouched.
+- `-o <output>`: `<input>` is left untouched and the result (its messages plus the
+  embedded static TF) is written to `<output>`. The storage format and layout
+  follow `<output>`: a `.mcap` or `.db3` extension picks that single-file backend,
+  and any other path produces a **directory-layout MCAP** bag.
+
+### `--force` vs `-w`, `--overwrite`
+
+Two separate permissions, matching [`bagwiz traj join`](traj.md#bagwiz-traj-join)
+rather than [`static cp`](#bagwiz-tf-static-cp)'s combined flag:
+
+- `--force` — `<topic>` already carries messages in `<input>`. Its existing
+  messages are dropped and replaced by the config's. Without it, this aborts:
+  silently replacing a bag's real static TF with a config would be
+  unrecoverable. A collision with a topic of a **different** message type is
+  always an error, `--force` or not.
+- `-w`, `--overwrite` — the `-o <output>` path already exists; it is replaced. No
+  effect in in-place mode, where `<input>` is the target by definition.
+
+### Topic
+
+`-t`/`--topic` defaults to `/tf_static`, the name a static transform broadcaster
+publishes under. The YAML carries no topic name, so a default is needed; pass
+`-t` to write e.g. `/sensing/tf_static` instead. A name that does not end with
+`tf_static` is accepted but warns, because every bagwiz static-TF reader
+(`tf static dump`, `tf static calc`, `tf tree -t static`, `tf static cp`) selects
+topics by that suffix and would treat the topic as dynamic.
+
+### Usage
+
+```text
+bagwiz tf static join -i <input> --yaml <file> [-t <topic>] [-o <output>] [--force] [-w|--overwrite]
+```
+
+### Options
+
+| Flag                    | Default      | Description                                                                                 |
+| ----------------------- | ------------ | ------------------------------------------------------------------------------------------- |
+| `-i`, `--input <input>` | _(required)_ | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).                     |
+| `--yaml <file>`         | _(required)_ | Static TF YAML to embed, in the schema `tf static dump` writes.                             |
+| `-t`, `--topic <topic>` | `/tf_static` | Topic to embed the transforms under.                                                        |
+| `-o`, `--output <OUT>`  | _(unset)_    | Write the result to this new bag instead of rewriting `<input>` in place.                   |
+| `--force`               | `false`      | Replace `<topic>`'s existing messages in `<input>`; otherwise a populated `<topic>` aborts. |
+| `-w`, `--overwrite`     | `false`      | Replace an existing `-o`/`--output` path. No effect in in-place mode.                       |
+
+### Examples
+
+```bash
+# Rewrite capture.mcap in place, embedding the config on /tf_static.
+bagwiz tf static join -i capture.mcap --yaml multi_tf_static.yaml
+
+# Write a new bag instead of touching the input.
+bagwiz tf static join -i capture.mcap --yaml multi_tf_static.yaml -o with_tf.mcap
+
+# Replace a /tf_static the bag already carries.
+bagwiz tf static join -i capture.mcap --yaml multi_tf_static.yaml --force
+
+# Embed under a different static topic.
+bagwiz tf static join -i capture.mcap --yaml sensing.yaml -t /sensing/tf_static
+
+# Round trip: recover a rig's config from one bag, put it into another.
+bagwiz tf static dump -i donor.mcap -o rig.yaml
+bagwiz tf static join -i target.mcap --yaml rig.yaml
+```
+
+### Exit status
+
+| Code | Meaning                                                                                                                                                                                                                                                                |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Static TF embedded; `<input>` rewritten or `<output>` written.                                                                                                                                                                                                         |
+| `1`  | The YAML could not be read or was rejected (see [Accepted input](#accepted-input)), the bag could not be opened, `<topic>` is populated without `--force` or has another type, an existing `-o` path without `-w`/`--overwrite`, a serialize failure, or an I/O error. |
 
 ## Migration
 

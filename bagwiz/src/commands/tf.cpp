@@ -10,10 +10,12 @@
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/tf_static_cp.hpp"
 #include "bagwiz/commands/tf_static_dump.hpp"
+#include "bagwiz/commands/tf_static_join.hpp"
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/base/str_utils.hpp"
 #include "bagwiz/core/tf/tf_buffer_loader.hpp"
 #include "bagwiz/core/tf/tf_chain.hpp"
+#include "bagwiz/core/tf/tf_forest_check.hpp"
 #include "bagwiz/core/tf/tf_merge_check.hpp"
 #include "bagwiz/core/tf/tf_topics.hpp"
 #include "bagwiz/core/tf/tf_transform_format.hpp"
@@ -159,66 +161,6 @@ std::string tf_tree_edge_line(
   return out;
 }
 
-// Validates an edge set as a forest (unique parent per child, no A→B together
-// with B→A, no self edges, no cycles). `context` describes the source for the
-// error messages, e.g. "for topic '/tf'" or "for the merged topics".
-std::optional<std::string> validate_union_edge_set(
-  const std::set<std::pair<std::string, std::string>> & edges, const std::string & context)
-{
-  for (const auto & pr : edges) {
-    if (pr.first == pr.second) {
-      return fmt::format(
-        "TF tree {}: self-referential edge '{}' -> '{}' is not allowed.", context, pr.first,
-        pr.second);
-    }
-  }
-
-  for (const auto & pr : edges) {
-    if (pr.first >= pr.second) {
-      continue;
-    }
-    if (edges.count({pr.second, pr.first}) != 0) {
-      return fmt::format(
-        "TF tree {}: opposite edges '{}' -> '{}' and '{}' -> '{}' cannot both appear.", context,
-        pr.first, pr.second, pr.second, pr.first);
-    }
-  }
-
-  std::unordered_map<std::string, std::string> child_to_parent;
-  for (const auto & pr : edges) {
-    auto ins = child_to_parent.emplace(pr.second, pr.first);
-    if (!ins.second && ins.first->second != pr.first) {
-      return fmt::format(
-        "TF tree {}: child frame '{}' has parent '{}' in one transform and '{}' in another.",
-        context, pr.second, ins.first->second, pr.first);
-    }
-  }
-
-  std::unordered_set<std::string> all_nodes;
-  for (const auto & pr : edges) {
-    all_nodes.insert(pr.first);
-    all_nodes.insert(pr.second);
-  }
-
-  for (const auto & start : all_nodes) {
-    std::unordered_set<std::string> seen_on_path;
-    std::string cur = start;
-    for (;;) {
-      auto pit = child_to_parent.find(cur);
-      if (pit == child_to_parent.end()) {
-        break;
-      }
-      cur = pit->second;
-      if (!seen_on_path.insert(cur).second) {
-        return fmt::format(
-          "TF tree {}: edges contain a directed cycle (revisited frame '{}').", context, cur);
-      }
-    }
-  }
-
-  return std::nullopt;
-}
-
 // Render a forest from an adjacency map (parent → sorted children) and sorted
 // roots: bold root line, dim branch glyphs, and " (cycle)" on a frame already
 // on the current path (rather than recursing). When `show_category` is set,
@@ -290,7 +232,7 @@ std::string format_parent_map_forest(
 }
 
 // Build the adjacency map + sorted roots from the merged edge set and render the
-// forest. `validate_union_edge_set` runs before this, so a non-empty edge set
+// forest. `core::validate_tf_forest` runs before this, so a non-empty edge set
 // always has at least one root. `edge_to_category` / `show_category` are
 // forwarded to the renderer for static/dynamic coloring (see
 // format_parent_map_forest).
@@ -456,6 +398,10 @@ std::string format_category_legend(bool use_color)
 //                tf2 fixed-axis) to -o, or to stdout when -o is omitted. Every
 //                static topic is merged; two topics giving one child different
 //                parents aborts the run.
+//   static join  The inverse of `static dump`: read that YAML and embed it into
+//                the bag as one latched TFMessage on -t (default /tf_static),
+//                stamped at the bag's start time. In place, or to a new bag
+//                via -o.
 class TfCommand : public Command
 {
 public:
@@ -480,6 +426,8 @@ public:
         return run_static_cp();
       case Subcommand::kStaticDump:
         return run_static_dump();
+      case Subcommand::kStaticJoin:
+        return run_static_join();
       case Subcommand::kNone:
         BAGWIZ_LOG_ERROR(kLogger, "no subcommand selected");
         return 1;
@@ -488,7 +436,7 @@ public:
   }
 
 private:
-  enum class Subcommand { kNone, kTree, kStaticCalc, kStaticCp, kStaticDump };
+  enum class Subcommand { kNone, kTree, kStaticCalc, kStaticCp, kStaticDump, kStaticJoin };
   Subcommand selected_ = Subcommand::kNone;
 
   struct TreeArgs
@@ -519,6 +467,16 @@ private:
     std::optional<std::filesystem::path> output_path;
     bool overwrite = false;
   } static_dump_args_;
+
+  struct StaticJoinArgs
+  {
+    std::filesystem::path input_path;
+    std::filesystem::path yaml_path;
+    std::string topic = kDefaultStaticTfTopic;
+    std::optional<std::filesystem::path> output_path;
+    bool force = false;
+    bool overwrite = false;
+  } static_join_args_;
 
   void configure_tree(CLI::App & app)
   {
@@ -641,7 +599,7 @@ private:
 
     // The merged set must also form a valid forest (no cycles, opposite edges,
     // self edges, or multi-parent); this complements the conflict checker.
-    if (const auto err = validate_union_edge_set(merged, "for the merged topics")) {
+    if (const auto err = core::validate_tf_forest(merged, "for the merged topics")) {
       BAGWIZ_LOG_ERROR(kLogger, "%s", err->c_str());
       return 1;
     }
@@ -673,9 +631,10 @@ private:
 
   // `static` is a command group, not a leaf: its actions live under
   // `static calc` (resolve a transform), `static cp` (copy static TF between
-  // bags), and `static dump` (write the static tree as YAML). Modeling it as a
-  // group (require_subcommand(1)) keeps room for further static-tree queries and
-  // keeps `bagwiz tf static` from doing anything without an explicit verb.
+  // bags), `static dump` (write the static tree as YAML), and `static join`
+  // (read that YAML back into a bag). Modeling it as a group
+  // (require_subcommand(1)) keeps room for further static-tree queries and keeps
+  // `bagwiz tf static` from doing anything without an explicit verb.
   void configure_static(CLI::App & app)
   {
     auto * group = app.add_subcommand("static", "Static TF tree queries");
@@ -683,6 +642,7 @@ private:
     configure_static_calc(*group);
     configure_static_cp(*group);
     configure_static_dump(*group);
+    configure_static_join(*group);
   }
 
   void configure_static_calc(CLI::App & group)
@@ -743,6 +703,40 @@ private:
       "-w,--overwrite", static_dump_args_.overwrite,
       "Replace an existing -o/--output path. Without it, an existing path aborts the run.");
     sub->callback([this]() { selected_ = Subcommand::kStaticDump; });
+  }
+
+  void configure_static_join(CLI::App & group)
+  {
+    auto * sub = group.add_subcommand(
+      "join",
+      "Embed a static-transform publisher config (the YAML `static dump` writes: nested parent -> "
+      "child -> {x,y,z,roll,pitch,yaw}, RPY in radians) into the bag as one latched TFMessage "
+      "stamped at the bag's start time.");
+    sub->add_option("-i,--input", static_join_args_.input_path, "Bag path (file or directory)")
+      ->required()
+      ->check(CLI::ExistingPath);
+    sub
+      ->add_option(
+        "--yaml", static_join_args_.yaml_path,
+        "Static TF YAML to embed, in the schema `tf static dump` writes.")
+      ->required()
+      ->check(CLI::ExistingFile);
+    sub
+      ->add_option(
+        "-t,--topic", static_join_args_.topic,
+        "Topic to embed the transforms under. When it already carries messages, pass --force to "
+        "replace them.")
+      ->capture_default_str();
+    sub->add_option(
+      "-o,--output", static_join_args_.output_path,
+      "Write the result to this new bag instead of rewriting <input> in place.");
+    sub->add_flag(
+      "--force", static_join_args_.force,
+      "Replace <topic>'s existing messages in <input>; otherwise a populated <topic> aborts.");
+    sub->add_flag(
+      "-w,--overwrite", static_join_args_.overwrite,
+      "Replace an existing -o/--output path. Has no effect in in-place mode.");
+    sub->callback([this]() { selected_ = Subcommand::kStaticJoin; });
   }
 
   int run_static_calc()
@@ -861,6 +855,13 @@ private:
   {
     const auto & args = static_dump_args_;
     return run_tf_static_dump(args.input_path, args.output_path, args.overwrite);
+  }
+
+  int run_static_join()
+  {
+    const auto & args = static_join_args_;
+    return run_tf_static_join(
+      args.input_path, args.yaml_path, args.topic, args.output_path, args.force, args.overwrite);
   }
 };
 

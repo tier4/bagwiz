@@ -8,19 +8,25 @@
 
 #include "bagwiz/core/tf/tf_static_tree_yaml.hpp"
 
+#include "bagwiz/core/tf/tf_forest_check.hpp"
 #include "bagwiz/core/tf/tf_transform_format.hpp"
+
+#include <yaml-cpp/yaml.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <filesystem>
 #include <iomanip>
+#include <set>
 #include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace bagwiz::core
@@ -42,6 +48,22 @@ namespace
 // hundredths of a picometre, far below what any calibration resolves.
 // `bagwiz tf static calc --json` is the full-precision view.
 constexpr int kSignificantDigits = 14;
+
+// Absolute floor below which an emitted ANGLE is treated as zero, in radians.
+//
+// kSignificantDigits folds noise that scales with the value, but a component
+// whose true value is 0 gets absolute error instead, which no relative precision
+// removes. Recovering RPY from a quaternion cannot represent an exact zero next
+// to a right angle: the camera_optical rotation (roll = -pi/2, yaw = -pi/2) comes
+// back with pitch = -5.55e-17 rather than 0, so a config written by `dump`, read
+// by a publisher, and dumped again would not match itself.
+//
+// 1e-12 rad sits three orders above the ~1e-15 worst case for a few ULP of a
+// right angle, and six below the microradian that is the finest any real
+// extrinsic calibration resolves — so it can only ever erase noise. It is
+// deliberately NOT applied to translations, which reach the emitter straight from
+// the bag and never pass through this conversion.
+constexpr double kAngleZeroFloor = 1e-12;
 
 // The transforms sharing one parent frame, in first-seen order. Pointers alias
 // the caller's span, which outlives the emit call.
@@ -180,6 +202,12 @@ std::string format_double(double v)
   return s;
 }
 
+// format_double for an angle: see kAngleZeroFloor.
+std::string format_angle(double v)
+{
+  return format_double(std::abs(v) < kAngleZeroFloor ? 0.0 : v);
+}
+
 // Group the transforms by parent frame, preserving the order parents and
 // children were first seen. `children_seen` collects every child_frame_id, which
 // is what identifies the roots (a parent that is nobody's child).
@@ -248,6 +276,80 @@ std::string single_line(std::string_view label)
   return out;
 }
 
+// The six keys a transform mapping must carry, and only these. Order matches the
+// emitted order.
+constexpr std::array<std::string_view, 6> kTransformKeys{"x", "y", "z", "roll", "pitch", "yaw"};
+
+// `parent -> child` for error messages, matching the arrow the emitter's docs
+// and `tf tree` use.
+std::string edge_label(const std::string & parent, const std::string & child)
+{
+  return "'" + parent + "' -> '" + child + "'";
+}
+
+// Read one transform mapping into `out`. Returns false and sets `error` when a
+// key is missing, unknown, or not a number. Unknown keys are rejected rather
+// than ignored: a mistyped `pich` would otherwise leave pitch silently at 0.
+bool read_transform_mapping(
+  const YAML::Node & node, const std::string & parent, const std::string & child,
+  geometry_msgs::msg::TransformStamped & out, std::string & error)
+{
+  double values[kTransformKeys.size()] = {};
+  for (std::size_t i = 0; i < kTransformKeys.size(); ++i) {
+    const std::string key(kTransformKeys[i]);
+    const YAML::Node value = node[key];
+    if (!value) {
+      error = "transform " + edge_label(parent, child) + " is missing key '" + key + "'";
+      return false;
+    }
+    if (!value.IsScalar()) {
+      error = "transform " + edge_label(parent, child) + " key '" + key + "' must be a number";
+      return false;
+    }
+    try {
+      values[i] = value.as<double>();
+    } catch (const YAML::Exception & e) {
+      error = "transform " + edge_label(parent, child) + " key '" + key +
+              "' must be a number: " + e.what();
+      return false;
+    }
+  }
+
+  for (const auto & entry : node) {
+    const auto key = entry.first.as<std::string>();
+    const bool known =
+      std::find(kTransformKeys.begin(), kTransformKeys.end(), key) != kTransformKeys.end();
+    if (!known) {
+      error = "transform " + edge_label(parent, child) + " has unknown key '" + key +
+              "'; only x, y, z, roll, pitch, yaw are allowed";
+      return false;
+    }
+  }
+
+  out.header.frame_id = parent;
+  out.child_frame_id = child;
+  out.transform.translation.x = values[0];
+  out.transform.translation.y = values[1];
+  out.transform.translation.z = values[2];
+  out.transform.rotation = rpy_to_quaternion({values[3], values[4], values[5]});
+  return true;
+}
+
+// True when `node` is a mapping that carries none of the six transform keys,
+// i.e. a further nesting level rather than a transform. The reference publisher
+// recurses into such a node and silently drops the enclosing key; this parser
+// reports it instead, since a dropped level means a transform lands under the
+// wrong parent.
+bool is_deeper_nesting(const YAML::Node & node)
+{
+  if (!node.IsMap()) {
+    return false;
+  }
+  return std::none_of(kTransformKeys.begin(), kTransformKeys.end(), [&node](std::string_view key) {
+    return static_cast<bool>(node[std::string(key)]);
+  });
+}
+
 }  // namespace
 
 std::string emit_static_tf_tree_yaml(
@@ -279,12 +381,106 @@ std::string emit_static_tf_tree_yaml(
       oss << "    x: " << format_double(tr.x) << "\n";
       oss << "    y: " << format_double(tr.y) << "\n";
       oss << "    z: " << format_double(tr.z) << "\n";
-      oss << "    roll: " << format_double(rpy.roll) << "\n";
-      oss << "    pitch: " << format_double(rpy.pitch) << "\n";
-      oss << "    yaw: " << format_double(rpy.yaw) << "\n";
+      oss << "    roll: " << format_angle(rpy.roll) << "\n";
+      oss << "    pitch: " << format_angle(rpy.pitch) << "\n";
+      oss << "    yaw: " << format_angle(rpy.yaw) << "\n";
     }
   }
   return oss.str();
+}
+
+StaticTfTreeParseResult parse_static_tf_tree_yaml(const std::filesystem::path & yaml_path)
+{
+  StaticTfTreeParseResult result;
+  YAML::Node root;
+  try {
+    root = YAML::LoadFile(yaml_path.string());
+  } catch (const YAML::Exception & e) {
+    result.error = "failed to parse static TF YAML '" + yaml_path.string() + "': " + e.what();
+    return result;
+  }
+  if (!root || !root.IsMap()) {
+    result.error =
+      "static TF YAML '" + yaml_path.string() + "' is empty or not a top-level mapping";
+    return result;
+  }
+
+  std::vector<geometry_msgs::msg::TransformStamped> transforms;
+  std::set<std::pair<std::string, std::string>> edges;
+  try {
+    for (const auto & parent_entry : root) {
+      const auto parent = parent_entry.first.as<std::string>();
+      if (parent.empty()) {
+        result.error = "a parent frame id is empty";
+        return result;
+      }
+      const YAML::Node & children = parent_entry.second;
+      if (!children.IsMap()) {
+        result.error = "parent frame '" + parent +
+                       "' must hold a mapping of child frames, each with x, y, z, roll, pitch, yaw";
+        return result;
+      }
+      if (children.size() == 0) {
+        result.error = "parent frame '" + parent + "' declares no child frames";
+        return result;
+      }
+
+      for (const auto & child_entry : children) {
+        const auto child = child_entry.first.as<std::string>();
+        if (child.empty()) {
+          result.error = "a child frame id under parent '" + parent + "' is empty";
+          return result;
+        }
+        const YAML::Node & body = child_entry.second;
+        if (!body.IsMap()) {
+          result.error = "transform " + edge_label(parent, child) +
+                         " must be a mapping with x, y, z, roll, pitch, yaw";
+          return result;
+        }
+        // A third level means the file nests deeper than this schema. The
+        // reference publisher would flatten it and drop `parent`, putting the
+        // transform under the wrong frame, so refuse instead of guessing.
+        if (is_deeper_nesting(body)) {
+          result.error = "'" + parent + "' -> '" + child +
+                         "' nests a further level; this schema is exactly two levels deep "
+                         "(parent, then child holding x, y, z, roll, pitch, yaw)";
+          return result;
+        }
+        if (parent == child) {
+          result.error = "frame '" + parent + "' is its own parent";
+          return result;
+        }
+
+        geometry_msgs::msg::TransformStamped transform;
+        if (!read_transform_mapping(body, parent, child, transform, result.error)) {
+          return result;
+        }
+        transforms.push_back(transform);
+        edges.emplace(parent, child);
+      }
+    }
+  } catch (const YAML::Exception & e) {
+    // A non-scalar mapping key (`? [a, b] : ...`) is the remaining way a
+    // well-formed document can still fail .as<std::string>().
+    result.error =
+      "static TF YAML '" + yaml_path.string() + "' has a malformed frame id: " + e.what();
+    return result;
+  }
+
+  if (transforms.empty()) {
+    result.error = "static TF YAML '" + yaml_path.string() + "' declares no transforms";
+    return result;
+  }
+  // Everything above is per-edge; this is the only check on the set as a whole,
+  // and it is what rejects a child claimed by two parents, opposite edges, and
+  // cycles. Same validation `bagwiz tf tree` applies to a merged bag tree.
+  if (const auto err = validate_tf_forest(edges, "in '" + yaml_path.string() + "'")) {
+    result.error = *err;
+    return result;
+  }
+
+  result.transforms = std::move(transforms);
+  return result;
 }
 
 }  // namespace bagwiz::core

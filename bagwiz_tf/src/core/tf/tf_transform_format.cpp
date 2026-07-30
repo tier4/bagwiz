@@ -92,6 +92,26 @@ RollPitchYaw quaternion_to_rpy(const geometry_msgs::msg::Quaternion & q)
   return {roll, pitch, yaw};
 }
 
+geometry_msgs::msg::Quaternion rpy_to_quaternion(const RollPitchYaw & rpy)
+{
+  // setRPY composes the three fixed-axis rotations in the same order
+  // Matrix3x3::getRPY decomposes them, which is what makes the two functions
+  // inverses. It builds a unit quaternion from half-angle sines/cosines, so no
+  // normalisation is needed, but normalize() costs nothing here and keeps the
+  // result exactly unit-length under accumulated rounding — tf2::BufferCore
+  // rejects a transform whose quaternion has drifted too far from unit.
+  tf2::Quaternion tf_q;
+  tf_q.setRPY(rpy.roll, rpy.pitch, rpy.yaw);
+  tf_q.normalize();
+
+  geometry_msgs::msg::Quaternion q;
+  q.x = tf_q.x();
+  q.y = tf_q.y();
+  q.z = tf_q.z();
+  q.w = tf_q.w();
+  return q;
+}
+
 std::string format_transform_human(
   const geometry_msgs::msg::TransformStamped & tf, const std::vector<std::string> & path,
   const std::string & annotation)

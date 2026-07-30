@@ -37,6 +37,17 @@ struct RollPitchYaw
 // result from normalisation.
 RollPitchYaw quaternion_to_rpy(const geometry_msgs::msg::Quaternion & q);
 
+// The inverse of quaternion_to_rpy: build a normalised unit quaternion from
+// roll/pitch/yaw in radians via tf2's fixed-axis convention
+// (tf2::Quaternion::setRPY). Round-tripping through quaternion_to_rpy returns
+// the same rotation, though not necessarily the same components — q and -q
+// denote one rotation, and getRPY picks a single branch of the two RPY triples
+// that describe it.
+//
+// Used when reading a static-transform publisher config back into a bag
+// (`bagwiz tf static join`), whose YAML stores rotations as RPY.
+geometry_msgs::msg::Quaternion rpy_to_quaternion(const RollPitchYaw & rpy);
+
 // Human-readable rendering of `tf` as the rigid transform along `path` — the
 // chain of frames running of (path.front()) -> ... -> ref (path.back()), i.e.
 // the result of lookupTransform(target=path.back(), source=path.front()). The

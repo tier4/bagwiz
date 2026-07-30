@@ -11,9 +11,12 @@
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
+#include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // Renders a static TF tree as the nested parent -> child -> {x,y,z,roll,pitch,
 // yaw} YAML that static-transform publisher configs use, i.e. the inverse of
@@ -48,6 +51,39 @@ namespace bagwiz::core
 // cannot escape the comment). The result ends with a newline.
 std::string emit_static_tf_tree_yaml(
   std::span<const geometry_msgs::msg::TransformStamped> transforms, std::string_view source_label);
+
+// Outcome of parse_static_tf_tree_yaml(). On success `transforms` is set and
+// `error` is empty; on any problem `transforms` is empty and `error` explains
+// why (unreadable file, wrong shape, missing or unknown key, non-numeric value,
+// a frame with two parents, a cycle, ...). Never throws.
+struct StaticTfTreeParseResult
+{
+  std::optional<std::vector<geometry_msgs::msg::TransformStamped>> transforms;
+  std::string error;
+
+  [[nodiscard]] bool ok() const noexcept { return transforms.has_value() && error.empty(); }
+};
+
+// Read the YAML emit_static_tf_tree_yaml() writes and rebuild the transforms,
+// so that parse -> emit -> parse is a fixed point. Rotations are converted from
+// RPY radians back to a quaternion with rpy_to_quaternion() (tf2 fixed-axis), and
+// header.stamp is left zero: the schema carries none, and the caller stamps the
+// transforms for the bag it is writing them into.
+//
+// Deliberately strict, because this is a hand-edited file at a system boundary
+// and a silently-ignored key becomes a silently-wrong sensor pose. Rejected:
+// a document that is not a mapping of mappings exactly two levels deep (a third
+// level is an error rather than being flattened); a transform missing any of
+// `x`, `y`, `z`, `roll`, `pitch`, `yaw`, or carrying any other key; a
+// non-numeric value; an empty frame id; a self edge; and any edge set that is
+// not a forest (a child with two parents, opposite edges, a cycle — see
+// validate_tf_forest). An empty document is an error too: there would be nothing
+// to write.
+//
+// `yaml_path` is opened directly so YAML::Exception can be turned into `error`
+// rather than escaping.
+[[nodiscard]] StaticTfTreeParseResult parse_static_tf_tree_yaml(
+  const std::filesystem::path & yaml_path);
 
 }  // namespace bagwiz::core
 

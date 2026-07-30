@@ -17,8 +17,8 @@
 
 // The shared "-o vs in-place" dispatch every rewrite-style command
 // (topic drop/keep/rename, cam-info replace/recompute-p,
-// pcd concat/undistort, tf static cp, traj join) runs after validating its
-// arguments:
+// pcd concat/undistort, tf static cp, tf static join, traj join) runs after
+// validating its arguments:
 //
 //   * with -o: guard the output path (prepare_output_path), then run the
 //     command's pass with a writer factory targeting the output path.

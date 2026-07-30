@@ -181,6 +181,8 @@ add_executable(bagwiz
   src/commands/tf.cpp
   src/commands/tf_static_cp.cpp
   src/commands/tf_static_dump.cpp
+  src/commands/tf_static_inject.cpp
+  src/commands/tf_static_join.cpp
   src/commands/topic.cpp
   src/commands/topic_drop.cpp
   src/commands/topic_keep.cpp
@@ -317,11 +319,23 @@ if(BUILD_TESTING)
   target_include_directories(bagwiz_parse_error_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(bagwiz_parse_error_test ${bagwiz_test_libs} CLI11::CLI11)
 
+  # tf_static_inject.cpp holds the injection pass shared by `tf static cp` and
+  # `tf static join`; both command TUs need it compiled in.
   ament_add_gtest(bagwiz_tf_static_cp_test
     test/commands/tf_static_cp_test.cpp
-    src/commands/tf_static_cp.cpp)
+    src/commands/tf_static_cp.cpp
+    src/commands/tf_static_inject.cpp)
   target_include_directories(bagwiz_tf_static_cp_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(bagwiz_tf_static_cp_test ${bagwiz_test_libs} fmt::fmt)
+
+  # yaml-cpp: the command parses the config with it, and the test writes the
+  # fixtures it feeds in.
+  ament_add_gtest(bagwiz_tf_static_join_test
+    test/commands/tf_static_join_test.cpp
+    src/commands/tf_static_join.cpp
+    src/commands/tf_static_inject.cpp)
+  target_include_directories(bagwiz_tf_static_join_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(bagwiz_tf_static_join_test ${bagwiz_test_libs} fmt::fmt yaml-cpp)
 
   # yaml-cpp is linked only so the test can parse the emitted YAML back; the
   # command emits it directly (see core/tf/tf_static_tree_yaml.cpp).
