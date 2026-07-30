@@ -284,28 +284,116 @@ __device__ bool device_distortion_round_trip_fails(
   return hypotf(err_u, err_v) > 1.0F;
 }
 
+// FP32 mirror of core::slam::SplatFootprint and its factories
+// (colorize_splat.hpp): the screen-space ellipse { q : q^T C^-1 q <= 1 } a
+// splat covers. The derivation, the degenerate cases, and the reason the
+// footprint is elliptical at all live in that header; this is the device copy,
+// kept in lockstep the same way the distortion kernels above mirror
+// image::distort_normalized.
+struct GpuSplatFootprint
+{
+  float c_uu;
+  float c_uv;
+  float c_vv;
+};
+
+__device__ GpuSplatFootprint device_empty_footprint()
+{
+  return GpuSplatFootprint{0.0F, 0.0F, 0.0F};
+}
+
+__device__ bool device_footprint_contains(const GpuSplatFootprint & f, float du, float dv)
+{
+  const float du_sq = du * du;
+  const float dv_sq = dv * dv;
+  // Length test: bounds the collapsed direction of a singular C, which FP32
+  // cancellation in the determinant below reaches more readily than the CPU's
+  // double math does.
+  if (du_sq + dv_sq > f.c_uu + f.c_vv) {
+    return false;
+  }
+  const float quadratic = f.c_vv * du_sq - 2.0F * f.c_uv * du * dv + f.c_uu * dv_sq;
+  return quadratic <= f.c_uu * f.c_vv - f.c_uv * f.c_uv;
+}
+
+// Scales the ellipse down uniformly so its major semi-axis meets the cap.
+__device__ GpuSplatFootprint device_clamp_major_axis(const GpuSplatFootprint & f, float max_axis_px)
+{
+  if (!(max_axis_px > 0.0F)) {
+    return device_empty_footprint();
+  }
+  // Squared comparison first, so the square root stays off the common path.
+  const float mean = 0.5F * (f.c_uu + f.c_vv);
+  const float half_diff = 0.5F * (f.c_uu - f.c_vv);
+  const float spread_sq = half_diff * half_diff + f.c_uv * f.c_uv;
+  const float max_sq = max_axis_px * max_axis_px;
+  const float headroom = max_sq - mean;
+  if (headroom >= 0.0F && spread_sq <= headroom * headroom) {
+    return f;
+  }
+  const float shrink = max_sq / (mean + sqrtf(spread_sq));
+  return GpuSplatFootprint{f.c_uu * shrink, f.c_uv * shrink, f.c_vv * shrink};
+}
+
+__device__ GpuSplatFootprint device_isotropic_splat_footprint(float radius_px)
+{
+  if (!(radius_px > 0.0F)) {
+    return device_empty_footprint();
+  }
+  return GpuSplatFootprint{radius_px * radius_px, 0.0F, radius_px * radius_px};
+}
+
+__device__ GpuSplatFootprint device_surfel_splat_footprint(
+  float3 p_cam, float3 n_cam, float radius_world, float fx, float fy, float max_axis_px)
+{
+  const float z = p_cam.z;
+  if (!(z > 0.0F) || !(radius_world > 0.0F)) {
+    return device_empty_footprint();
+  }
+  const float n_norm_sq = n_cam.x * n_cam.x + n_cam.y * n_cam.y + n_cam.z * n_cam.z;
+  if (!(n_norm_sq > 0.0F)) {
+    // "No normal" sentinel: the fronto-parallel disc the rasterizers used
+    // before footprints became normal aware.
+    return device_clamp_major_axis(
+      device_isotropic_splat_footprint(0.5F * (fx + fy) * radius_world / z), max_axis_px);
+  }
+  const float a = p_cam.x / z;
+  const float b = p_cam.y / z;
+  const float scale_sq = (radius_world / z) * (radius_world / z);
+  const float kn_u = n_cam.x - a * n_cam.z;
+  const float kn_v = n_cam.y - b * n_cam.z;
+  return device_clamp_major_axis(
+    GpuSplatFootprint{
+      scale_sq * fx * fx * (1.0F + a * a - kn_u * kn_u), scale_sq * fx * fy * (a * b - kn_u * kn_v),
+      scale_sq * fy * fy * (1.0F + b * b - kn_v * kn_v)},
+    max_axis_px);
+}
+
 __device__ void device_splat_depth(
   std::uint32_t * buffer, std::uint32_t width, std::uint32_t height, float u, float v,
-  float radius_px, std::uint32_t depth_bits)
+  const GpuSplatFootprint & footprint, std::uint32_t depth_bits)
 {
   const int center_u = static_cast<int>(u);
   const int center_v = static_cast<int>(v);
   atomicMin(
     &buffer[static_cast<std::size_t>(center_v) * width + static_cast<std::uint32_t>(center_u)],
     depth_bits);
-  if (radius_px <= 0.0F) {
+  // The ellipse's axis-aligned bounding box (the sqrt of C's diagonal) bounds
+  // the scan; device_footprint_contains rejects the corners it does not cover.
+  const float half_u = sqrtf(fmaxf(0.0F, footprint.c_uu));
+  const float half_v = sqrtf(fmaxf(0.0F, footprint.c_vv));
+  if (half_u <= 0.0F && half_v <= 0.0F) {
     return;
   }
-  const int u_min = max(0, static_cast<int>(ceilf(u - radius_px)));
-  const int u_max = min(static_cast<int>(width) - 1, static_cast<int>(floorf(u + radius_px)));
-  const int v_min = max(0, static_cast<int>(ceilf(v - radius_px)));
-  const int v_max = min(static_cast<int>(height) - 1, static_cast<int>(floorf(v + radius_px)));
-  const float radius_sq = radius_px * radius_px;
+  const int u_min = max(0, static_cast<int>(ceilf(u - half_u)));
+  const int u_max = min(static_cast<int>(width) - 1, static_cast<int>(floorf(u + half_u)));
+  const int v_min = max(0, static_cast<int>(ceilf(v - half_v)));
+  const int v_max = min(static_cast<int>(height) - 1, static_cast<int>(floorf(v + half_v)));
   for (int py = v_min; py <= v_max; ++py) {
     const float dy = static_cast<float>(py) - v;
     for (int px = u_min; px <= u_max; ++px) {
       const float dx = static_cast<float>(px) - u;
-      if (dx * dx + dy * dy > radius_sq) {
+      if (!device_footprint_contains(footprint, dx, dy)) {
         continue;
       }
       atomicMin(
@@ -314,12 +402,24 @@ __device__ void device_splat_depth(
   }
 }
 
-// Projects one world point into the view. Returns true and writes (u, v, depth,
-// radius_px) when the point lands inside the image and passes the distortion
-// round-trip check.
+// Rotates a world-frame unit normal into the camera frame (the rigid
+// transform's rotation block; a translation would not change a direction).
+__device__ float3 device_normal_in_camera(float3 n, const GpuColorizeView & view)
+{
+  return make_float3(
+    view.r[0] * n.x + view.r[1] * n.y + view.r[2] * n.z,
+    view.r[3] * n.x + view.r[4] * n.y + view.r[5] * n.z,
+    view.r[6] * n.x + view.r[7] * n.y + view.r[8] * n.z);
+}
+
+// Projects one world point into the view. Returns true and writes (u, v) plus
+// the camera-frame position when the point lands inside the image and passes
+// the distortion round-trip check. The camera-frame position is carried out
+// because the splat footprint needs it: the surfel's foreshortening depends on
+// where the point sits relative to the optical axis. p_cam.z is the depth.
 __device__ bool device_project_point(
-  float3 p, const GpuColorizeView & view, float max_range_sq, float f_avg, float & out_u,
-  float & out_v, float & out_depth, float & out_radius)
+  float3 p, const GpuColorizeView & view, float max_range_sq, float & out_u, float & out_v,
+  float3 & out_p_cam)
 {
   const float x = view.r[0] * p.x + view.r[1] * p.y + view.r[2] * p.z + view.t[0];
   const float y = view.r[3] * p.x + view.r[4] * p.y + view.r[5] * p.z + view.t[1];
@@ -346,14 +446,13 @@ __device__ bool device_project_point(
   }
   out_u = u;
   out_v = v;
-  out_depth = z;
-  out_radius = 0.0F;
+  out_p_cam = make_float3(x, y, z);
   return true;
 }
 
 __global__ void project_and_splat_kernel(
-  const float3 * points, const float * spacings, std::size_t num_points, GpuColorizeView view,
-  float max_range_sq, bool splat, float splat_radius_max_px, float f_avg,
+  const float3 * points, const float * spacings, const float3 * normals, std::size_t num_points,
+  GpuColorizeView view, float max_range_sq, bool splat, float splat_radius_max_px,
   std::uint32_t * depth_buffer, GpuVisiblePoint * candidates, std::uint32_t * candidate_count,
   std::uint32_t candidate_capacity)
 {
@@ -362,21 +461,27 @@ __global__ void project_and_splat_kernel(
     return;
   }
   float u, v;
-  float depth;
-  float radius;
-  if (!device_project_point(points[i], view, max_range_sq, f_avg, u, v, depth, radius)) {
+  float3 p_cam;
+  if (!device_project_point(points[i], view, max_range_sq, u, v, p_cam)) {
     return;
   }
+  // The surfel is the disc of radius spacing/2 in the point's own surface
+  // plane; its projection is the ellipse the depth buffer gets stamped with.
+  // A null `normals` (and the {0, 0, 0} sentinel) falls back to the isotropic
+  // disc inside device_surfel_splat_footprint.
+  GpuSplatFootprint footprint = device_empty_footprint();
   if (splat && spacings != nullptr) {
-    radius = f_avg * spacings[i] / (2.0F * depth);
-    radius = fminf(fmaxf(radius, 0.0F), splat_radius_max_px);
+    const float3 n_cam = normals != nullptr ? device_normal_in_camera(normals[i], view)
+                                            : make_float3(0.0F, 0.0F, 0.0F);
+    footprint = device_surfel_splat_footprint(
+      p_cam, n_cam, 0.5F * spacings[i], view.fx, view.fy, splat_radius_max_px);
   }
-  const std::uint32_t depth_bits = __float_as_uint(depth);
-  device_splat_depth(depth_buffer, view.width, view.height, u, v, radius, depth_bits);
+  const std::uint32_t depth_bits = __float_as_uint(p_cam.z);
+  device_splat_depth(depth_buffer, view.width, view.height, u, v, footprint, depth_bits);
 
   const std::uint32_t slot = atomicAdd(candidate_count, 1U);
   if (slot < candidate_capacity) {
-    candidates[slot] = GpuVisiblePoint{static_cast<std::uint32_t>(i), u, v, depth};
+    candidates[slot] = GpuVisiblePoint{static_cast<std::uint32_t>(i), u, v, p_cam.z};
   }
 }
 
@@ -390,15 +495,18 @@ __global__ void project_and_splat_dynamic_kernel(
     return;
   }
   float u, v;
-  float depth;
-  float radius;
-  if (!device_project_point(points[i], view, max_range_sq, f_avg, u, v, depth, radius)) {
+  float3 p_cam;
+  if (!device_project_point(points[i], view, max_range_sq, u, v, p_cam)) {
     return;
   }
-  radius = f_avg * dynamic_splat_spacing / depth;
+  // Raw scan returns carry no surface orientation, so this footprint stays an
+  // isotropic disc.
+  float radius = f_avg * dynamic_splat_spacing / p_cam.z;
   radius = fminf(fmaxf(radius, dynamic_splat_radius_min_px), dynamic_splat_radius_max_px);
-  const std::uint32_t depth_bits = __float_as_uint(depth);
-  device_splat_depth(depth_buffer, view.width, view.height, u, v, radius, depth_bits);
+  const std::uint32_t depth_bits = __float_as_uint(p_cam.z);
+  device_splat_depth(
+    depth_buffer, view.width, view.height, u, v, device_isotropic_splat_footprint(radius),
+    depth_bits);
 }
 
 struct KeepVisible
@@ -436,22 +544,35 @@ class GpuColorizeRasterizer : public ColorizeRasterizer
 public:
   GpuColorizeRasterizer(
     std::span<const std::array<float, 3>> points, std::span<const float> spacings,
-    const ColorizeRasterizerConfig & config, const pointcloud::KdTree * /*tree*/)
-  : config_(config), d_points_(points.size()), d_spacings_(points.size())
+    std::span<const std::array<float, 3>> normals, const ColorizeRasterizerConfig & config,
+    const pointcloud::KdTree * /*tree*/)
+  : config_(config), d_points_(points.size()), d_spacings_(points.size()), d_normals_(points.size())
   {
+    static_assert(sizeof(std::array<float, 3>) == sizeof(float3), "float3 size mismatch");
+    auto upload =
+      [](std::span<const std::array<float, 3>> src, thrust::device_vector<float3> & dst) {
+        std::vector<float3> host(src.size());
+        std::memcpy(host.data(), src.data(), src.size() * sizeof(float3));
+        thrust::copy(host.begin(), host.end(), dst.begin());
+      };
     if (!points.empty()) {
-      static_assert(sizeof(std::array<float, 3>) == sizeof(float3), "float3 size mismatch");
-      std::vector<float3> host_pts(points.size());
-      std::memcpy(host_pts.data(), points.data(), points.size() * sizeof(float3));
-      thrust::copy(host_pts.begin(), host_pts.end(), d_points_.begin());
+      upload(points, d_points_);
     }
     if (spacings.size() == points.size()) {
       thrust::copy(spacings.begin(), spacings.end(), d_spacings_.begin());
     } else {
-      // Empty or mismatched spacings disable the data-driven splat radius; the
+      // Empty or mismatched spacings disable the data-driven splat size; the
       // kernel will splat only the center pixel.
       d_spacings_.clear();
       d_spacings_.shrink_to_fit();
+    }
+    if (!normals.empty() && normals.size() == points.size()) {
+      upload(normals, d_normals_);
+    } else {
+      // Empty or mismatched normals leave every footprint isotropic, matching
+      // the CPU rasterizer.
+      d_normals_.clear();
+      d_normals_.shrink_to_fit();
     }
   }
 
@@ -486,9 +607,10 @@ public:
 
     const std::size_t num_blocks = (d_points_.size() + kThreadsPerBlock - 1) / kThreadsPerBlock;
     const float * d_spacings_ptr = d_spacings_.empty() ? nullptr : d_spacings_.data().get();
+    const float3 * d_normals_ptr = d_normals_.empty() ? nullptr : d_normals_.data().get();
     project_and_splat_kernel<<<static_cast<int>(num_blocks), kThreadsPerBlock>>>(
-      d_points_.data().get(), d_spacings_ptr, d_points_.size(), gpu_view, max_range_sq,
-      config_.splat, static_cast<float>(config_.splat_radius_max_px), f_avg,
+      d_points_.data().get(), d_spacings_ptr, d_normals_ptr, d_points_.size(), gpu_view,
+      max_range_sq, config_.splat, static_cast<float>(config_.splat_radius_max_px),
       d_depth_buffer_.data().get(), d_candidates_.data().get(), d_candidate_count.data().get(),
       static_cast<std::uint32_t>(d_candidates_.size()));
 
@@ -554,6 +676,7 @@ private:
   ColorizeRasterizerConfig config_;
   thrust::device_vector<float3> d_points_;
   thrust::device_vector<float> d_spacings_;
+  thrust::device_vector<float3> d_normals_;  // world frame; empty = isotropic footprints
   thrust::device_vector<std::uint32_t> d_depth_buffer_;
   thrust::device_vector<std::uint32_t> d_dynamic_buffer_;
   thrust::device_vector<GpuVisiblePoint> d_candidates_;
@@ -564,7 +687,8 @@ private:
 
 std::unique_ptr<ColorizeRasterizer> make_gpu_colorize_rasterizer(
   std::span<const std::array<float, 3>> points, std::span<const float> spacings,
-  const ColorizeRasterizerConfig & config, const pointcloud::KdTree * tree)
+  std::span<const std::array<float, 3>> normals, const ColorizeRasterizerConfig & config,
+  const pointcloud::KdTree * tree)
 {
   int device_count = 0;
   if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count <= 0) {
@@ -572,7 +696,7 @@ std::unique_ptr<ColorizeRasterizer> make_gpu_colorize_rasterizer(
     return nullptr;
   }
   try {
-    return std::make_unique<GpuColorizeRasterizer>(points, spacings, config, tree);
+    return std::make_unique<GpuColorizeRasterizer>(points, spacings, normals, config, tree);
   } catch (...) {
     cudaGetLastError();
     return nullptr;

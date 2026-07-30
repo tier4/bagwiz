@@ -8,6 +8,7 @@
 
 #include "bagwiz/core/image/camera_distortion.hpp"
 #include "bagwiz/core/slam/colorize_rasterizer.hpp"
+#include "bagwiz/core/slam/colorize_splat.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -36,13 +37,26 @@ namespace
 // thread count or scheduling.
 constexpr std::uint32_t kInfinityBits = 0x7F800000U;
 
+// One point's projection into the current view. The camera-frame position is
+// carried alongside the pixel because the splat footprint needs it: the
+// surfel's foreshortening depends on where the point sits relative to the
+// optical axis, which (u, v) alone no longer determines once distortion is in
+// play.
+struct Projection
+{
+  double u = 0.0;
+  double v = 0.0;
+  std::array<double, 3> p_cam{};  // p_cam[2] is the depth [m]
+};
+
 class CpuColorizeRasterizer : public ColorizeRasterizer
 {
 public:
   CpuColorizeRasterizer(
     std::span<const std::array<float, 3>> points, std::span<const float> spacings,
-    const ColorizeRasterizerConfig & config, const pointcloud::KdTree * tree)
-  : points_(points), spacings_(spacings), config_(config), tree_(tree)
+    std::span<const std::array<float, 3>> normals, const ColorizeRasterizerConfig & config,
+    const pointcloud::KdTree * tree)
+  : points_(points), spacings_(spacings), normals_(normals), config_(config), tree_(tree)
   {
   }
 
@@ -81,6 +95,9 @@ public:
                                                         : std::numeric_limits<double>::infinity();
     const double f_avg = 0.5 * (fx + fy);
     const bool splat = config_.splat && spacings_.size() == points_.size();
+    // Normals are optional independently of spacings: without them every
+    // footprint stays the isotropic disc surfel_splat_footprint falls back to.
+    const bool oriented = normals_.size() == points_.size();
 
     // Spatial cull: with a kd-tree attached and a positive max_range, sweep
     // only the points within range of this view's camera position. The
@@ -118,10 +135,10 @@ public:
       chunk_candidates_.assign(static_cast<std::size_t>(num_threads), {});
     }
 
-    // Projects one world-frame point into the view, returning {u, v, depth};
-    // nullopt when behind the camera, beyond max_range, outside the lens
-    // model's domain (fold-back), or out of the image.
-    auto project = [&](const std::array<float, 3> & p) -> std::optional<std::array<double, 3>> {
+    // Projects one world-frame point into the view; nullopt when behind the
+    // camera, beyond max_range, outside the lens model's domain (fold-back),
+    // or out of the image.
+    auto project = [&](const std::array<float, 3> & p) -> std::optional<Projection> {
       const double x = view.r_cam_world[0] * p[0] + view.r_cam_world[1] * p[1] +
                        view.r_cam_world[2] * p[2] + view.t_cam_world[0];
       const double y = view.r_cam_world[3] * p[0] + view.r_cam_world[4] * p[1] +
@@ -151,14 +168,27 @@ public:
               nx, ny, distorted, distortion_model, cam.d, fx, fy)) {
           return std::nullopt;
         }
-        return std::array<double, 3>{u, v, z};
+        return Projection{u, v, {x, y, z}};
       }
       const double u = fx * nx + cx;
       const double v = fy * ny + cy;
       if (u < 0.0 || u >= view.width || v < 0.0 || v >= view.height) {
         return std::nullopt;
       }
-      return std::array<double, 3>{u, v, z};
+      return Projection{u, v, {x, y, z}};
+    };
+
+    // Rotates a world-frame unit normal into the camera frame (the rigid
+    // transform's rotation block; a translation would not change a direction).
+    auto normal_in_camera = [&](std::uint32_t i) -> std::array<double, 3> {
+      if (!oriented) {
+        return {0.0, 0.0, 0.0};
+      }
+      const auto & n = normals_[i];
+      return {
+        view.r_cam_world[0] * n[0] + view.r_cam_world[1] * n[1] + view.r_cam_world[2] * n[2],
+        view.r_cam_world[3] * n[0] + view.r_cam_world[4] * n[1] + view.r_cam_world[5] * n[2],
+        view.r_cam_world[6] * n[0] + view.r_cam_world[7] * n[1] + view.r_cam_world[8] * n[2]};
     };
 
     // Pass 1 (parallel over chunks of the sweep set): transform + project
@@ -175,16 +205,20 @@ public:
           if (!projected) {
             continue;
           }
-          const double u = (*projected)[0];
-          const double v = (*projected)[1];
-          const float depth = static_cast<float>((*projected)[2]);
-          candidates.push_back(VisiblePoint{i, u, v, depth});
-          const double radius_px =
-            splat ? std::clamp(
-                      f_avg * static_cast<double>(spacings_[i]) / (2.0 * (*projected)[2]), 0.0,
-                      config_.splat_radius_max_px)
-                  : 0.0;
-          splat_depth(depth_buffer_, u, v, radius_px, std::bit_cast<std::uint32_t>(depth));
+          const float depth = static_cast<float>(projected->p_cam[2]);
+          candidates.push_back(VisiblePoint{i, projected->u, projected->v, depth});
+          // The surfel is the disc of radius spacing/2 in the point's own
+          // surface plane; its projection is the ellipse the depth buffer
+          // gets stamped with. Points with no normal fall back to the
+          // isotropic disc inside surfel_splat_footprint.
+          const SplatFootprint footprint =
+            splat ? surfel_splat_footprint(
+                      projected->p_cam, normal_in_camera(i),
+                      0.5 * static_cast<double>(spacings_[i]), fx, fy, config_.splat_radius_max_px)
+                  : SplatFootprint{};
+          splat_depth(
+            depth_buffer_, projected->u, projected->v, footprint,
+            std::bit_cast<std::uint32_t>(depth));
         }
       };
     run_chunked(num_threads, sweep_count, project_chunk);
@@ -192,8 +226,9 @@ public:
     // Pass 1b (parallel over scan chunks): splat the dynamic occluders into
     // their own depth buffer, each with the depth-dependent disc radius that
     // closes the gaps between returns (see config_.dynamic_splat_spacing).
-    // No candidates are kept — the scan only gates map points in pass 2, it
-    // is never colored itself.
+    // Raw scan returns carry no surface orientation, so this footprint stays
+    // an isotropic disc. No candidates are kept — the scan only gates map
+    // points in pass 2, it is never colored itself.
     if (!dynamic_points.empty()) {
       auto splat_dynamic = [&](std::size_t begin, std::size_t end) {
         for (std::size_t i = begin; i < end; ++i) {
@@ -201,12 +236,13 @@ public:
           if (!projected) {
             continue;
           }
+          const double depth = projected->p_cam[2];
           const double radius_px = std::clamp(
-            f_avg * config_.dynamic_splat_spacing / (*projected)[2],
-            config_.dynamic_splat_radius_min_px, config_.dynamic_splat_radius_max_px);
+            f_avg * config_.dynamic_splat_spacing / depth, config_.dynamic_splat_radius_min_px,
+            config_.dynamic_splat_radius_max_px);
           splat_depth(
-            dynamic_buffer_, (*projected)[0], (*projected)[1], radius_px,
-            std::bit_cast<std::uint32_t>(static_cast<float>((*projected)[2])));
+            dynamic_buffer_, projected->u, projected->v, isotropic_splat_footprint(radius_px),
+            std::bit_cast<std::uint32_t>(static_cast<float>(depth)));
         }
       };
       run_chunked(num_threads, dynamic_points.size(), splat_dynamic);
@@ -305,13 +341,13 @@ private:
     }
   }
 
-  // Writes `depth_bits` into every pixel of `buffer` whose center lies within
-  // `radius_px` of (u, v), clamped to the image; the center pixel at
-  // (int)u, (int)v is always written, so a zero radius splats exactly one
+  // Writes `depth_bits` into every pixel of `buffer` whose center lies inside
+  // `footprint` placed at (u, v), clamped to the image; the center pixel at
+  // (int)u, (int)v is always written, so an empty footprint splats exactly one
   // pixel. Pixel centers sit on integer coordinates, matching
   // image::bilinear_sample_bgr.
   void splat_depth(
-    std::vector<std::uint32_t> & buffer, double u, double v, double radius_px,
+    std::vector<std::uint32_t> & buffer, double u, double v, const SplatFootprint & footprint,
     std::uint32_t depth_bits)
   {
     const std::int32_t center_u = static_cast<std::int32_t>(u);
@@ -320,25 +356,28 @@ private:
       buffer,
       static_cast<std::size_t>(center_v) * depth_width_ + static_cast<std::uint32_t>(center_u),
       depth_bits);
-    if (radius_px <= 0.0) {
+    // The ellipse's axis-aligned bounding box bounds the scan; contains()
+    // rejects the corners it does not actually cover.
+    const double half_u = footprint.half_extent_u();
+    const double half_v = footprint.half_extent_v();
+    if (half_u <= 0.0 && half_v <= 0.0) {
       return;
     }
     const std::int32_t u_min =
-      std::max<std::int32_t>(0, static_cast<std::int32_t>(std::ceil(u - radius_px)));
+      std::max<std::int32_t>(0, static_cast<std::int32_t>(std::ceil(u - half_u)));
     const std::int32_t u_max = std::min<std::int32_t>(
       static_cast<std::int32_t>(depth_width_) - 1,
-      static_cast<std::int32_t>(std::floor(u + radius_px)));
+      static_cast<std::int32_t>(std::floor(u + half_u)));
     const std::int32_t v_min =
-      std::max<std::int32_t>(0, static_cast<std::int32_t>(std::ceil(v - radius_px)));
+      std::max<std::int32_t>(0, static_cast<std::int32_t>(std::ceil(v - half_v)));
     const std::int32_t v_max = std::min<std::int32_t>(
       static_cast<std::int32_t>(depth_height_) - 1,
-      static_cast<std::int32_t>(std::floor(v + radius_px)));
-    const double radius_sq = radius_px * radius_px;
+      static_cast<std::int32_t>(std::floor(v + half_v)));
     for (std::int32_t py = v_min; py <= v_max; ++py) {
       const double dy = static_cast<double>(py) - v;
       for (std::int32_t px = u_min; px <= u_max; ++px) {
         const double dx = static_cast<double>(px) - u;
-        if (dx * dx + dy * dy > radius_sq) {
+        if (!footprint.contains(dx, dy)) {
           continue;
         }
         depth_min(
@@ -361,6 +400,7 @@ private:
 
   std::span<const std::array<float, 3>> points_;
   std::span<const float> spacings_;
+  std::span<const std::array<float, 3>> normals_;  // world frame, parallel to points_
   ColorizeRasterizerConfig config_;
   const pointcloud::KdTree * tree_ = nullptr;  // optional spatial cull index
   std::vector<std::uint32_t> depth_buffer_;    // float bit patterns, see kInfinityBits
@@ -375,9 +415,10 @@ private:
 
 std::unique_ptr<ColorizeRasterizer> make_cpu_colorize_rasterizer(
   std::span<const std::array<float, 3>> points, std::span<const float> spacings,
-  const ColorizeRasterizerConfig & config, const pointcloud::KdTree * tree)
+  std::span<const std::array<float, 3>> normals, const ColorizeRasterizerConfig & config,
+  const pointcloud::KdTree * tree)
 {
-  return std::make_unique<CpuColorizeRasterizer>(points, spacings, config, tree);
+  return std::make_unique<CpuColorizeRasterizer>(points, spacings, normals, config, tree);
 }
 
 }  // namespace bagwiz::core::slam

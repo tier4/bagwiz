@@ -172,9 +172,15 @@ Written under `<output_root>`:
   last kept image on that topic, and with `--cam-keyframe-blur` each gate
   interval keeps its sharpest member instead of its first — before any of
   the below runs; colorize cost is linear in the image count, so this is the
-  main throughput knob on slow-moving or stop-and-go recordings. Each point is splatted into a per-pixel depth buffer with
-  a footprint sized from its local point spacing, so occluded points are
-  rejected and sparse clouds still cover the pixels they pass in front of.
+  main throughput knob on slow-moving or stop-and-go recordings. Each point
+  is splatted into a per-pixel depth buffer over the footprint its local
+  surface covers on screen — the disc of half its local point spacing, lying
+  in the plane its normal defines, projected into the image — so occluded
+  points are rejected and sparse clouds still cover the pixels they pass in
+  front of. Projecting a disc gives an ellipse, which is what keeps grazing
+  geometry (the road ahead, facades running alongside) from occluding
+  itself: those surfaces project to slivers whose samples pile up on screen,
+  and a circular footprint made every point cull its own neighbors.
   Each surviving observation is weighted — close, front-on (surface normals
   from a local PCA), sharp (image gradient), and away from the image border
   all raise the weight — corrected by a per-image gain estimate that tracks

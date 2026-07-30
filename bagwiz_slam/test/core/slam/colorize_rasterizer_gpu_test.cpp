@@ -79,8 +79,8 @@ TEST_F(ColorizeRasterizerGpuTest, SingleCenterPointMatchesCpu)
   slam::ColorizeRasterizerConfig config;
   config.splat = false;
 
-  auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, config);
-  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, config);
+  auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, {}, config);
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, {}, config);
   ASSERT_NE(gpu, nullptr);
 
   std::vector<slam::VisiblePoint> cpu_visible;
@@ -111,8 +111,8 @@ TEST_F(ColorizeRasterizerGpuTest, OcclusionMatchesCpu)
   slam::ColorizeRasterizerConfig config;
   config.splat = false;
 
-  auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, config);
-  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, config);
+  auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, {}, config);
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, {}, config);
   ASSERT_NE(gpu, nullptr);
 
   std::vector<slam::VisiblePoint> cpu_visible;
@@ -142,8 +142,8 @@ TEST_F(ColorizeRasterizerGpuTest, SplatClosesHolesBetweenSparseOccluders)
   auto run = [&](bool splat) {
     slam::ColorizeRasterizerConfig config;
     config.splat = splat;
-    auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, config);
-    auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, config);
+    auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, {}, config);
+    auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, {}, config);
     EXPECT_NE(gpu, nullptr);
     std::vector<slam::VisiblePoint> cpu_visible;
     std::vector<slam::VisiblePoint> gpu_visible;
@@ -161,6 +161,45 @@ TEST_F(ColorizeRasterizerGpuTest, SplatClosesHolesBetweenSparseOccluders)
   EXPECT_TRUE(std::binary_search(without_splat.second.begin(), without_splat.second.end(), 4U));
 }
 
+TEST_F(ColorizeRasterizerGpuTest, EllipticalFootprintMatchesCpu)
+{
+  // The elliptical footprint runs in FP32 on the device against double on the
+  // CPU, so a grazing road surface — the geometry the ellipse exists for,
+  // where its determinant is smallest and cancellation most likely — must
+  // still produce the same visible set on both backends. The samples are
+  // staggered laterally so the off-diagonal covariance term is exercised too,
+  // and spaced so no coverage decision sits within float epsilon of the
+  // ellipse boundary: this test is about the two backends agreeing, not about
+  // where exactly the boundary falls.
+  const std::vector<std::array<float, 3>> points = {{-0.55F, 1.0F, 10.0F}, {-0.35F, 1.0F, 11.0F},
+                                                    {-0.15F, 1.0F, 12.0F}, {0.15F, 1.0F, 13.0F},
+                                                    {0.35F, 1.0F, 14.0F},  {0.55F, 1.0F, 15.0F}};
+  const std::vector<std::array<float, 3>> normals(points.size(), {0.0F, 1.0F, 0.0F});
+  const std::vector<float> spacings(points.size(), 0.5F);
+  slam::ColorizeRasterizerConfig config;
+
+  auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, normals, config);
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, normals, config);
+  ASSERT_NE(gpu, nullptr);
+
+  std::vector<slam::VisiblePoint> cpu_visible;
+  std::vector<slam::VisiblePoint> gpu_visible;
+  cpu->visible_points(make_center_view(), {}, cpu_visible);
+  gpu->visible_points(make_center_view(), {}, gpu_visible);
+  const auto oriented = sorted_indices(cpu_visible);
+  EXPECT_EQ(oriented, sorted_indices(gpu_visible));
+
+  auto isotropic_cpu = slam::make_cpu_colorize_rasterizer(points, spacings, {}, config);
+  auto isotropic_gpu = slam::make_gpu_colorize_rasterizer(points, spacings, {}, config);
+  ASSERT_NE(isotropic_gpu, nullptr);
+  isotropic_cpu->visible_points(make_center_view(), {}, cpu_visible);
+  isotropic_gpu->visible_points(make_center_view(), {}, gpu_visible);
+  const auto isotropic = sorted_indices(cpu_visible);
+  EXPECT_EQ(isotropic, sorted_indices(gpu_visible));
+
+  EXPECT_GT(oriented.size(), isotropic.size());
+}
+
 TEST_F(ColorizeRasterizerGpuTest, DynamicOccluderRejectsFarPoint)
 {
   const std::vector<std::array<float, 3>> points = {{0.0F, 0.0F, 10.0F}};
@@ -172,8 +211,8 @@ TEST_F(ColorizeRasterizerGpuTest, DynamicOccluderRejectsFarPoint)
   slam::ColorizeRasterizerConfig config;
   config.splat = false;
 
-  auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, config);
-  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, config);
+  auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, {}, config);
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, {}, config);
   ASSERT_NE(gpu, nullptr);
 
   std::vector<slam::VisiblePoint> cpu_visible;
@@ -210,8 +249,8 @@ void expect_distorted_view_matches_cpu(
   slam::ColorizeView view = make_center_view();
   view.camera = camera;
 
-  auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, config);
-  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, config);
+  auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, {}, config);
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, {}, config);
   ASSERT_NE(gpu, nullptr);
 
   std::vector<slam::VisiblePoint> cpu_visible;
@@ -290,8 +329,8 @@ TEST_F(ColorizeRasterizerGpuTest, FarFromOriginMatchesCpuWithinTolerance)
   view.width = 100;
   view.height = 100;
 
-  auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, config);
-  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, config);
+  auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, {}, config);
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, {}, config);
   ASSERT_NE(gpu, nullptr);
 
   std::vector<slam::VisiblePoint> cpu_visible;
@@ -326,7 +365,7 @@ TEST_F(ColorizeRasterizerGpuTest, DynamicReturnOnSameSurfaceKeepsPoint)
   slam::ColorizeRasterizerConfig config;
   config.splat = false;
 
-  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, config);
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, {}, config);
   ASSERT_NE(gpu, nullptr);
 
   std::vector<slam::VisiblePoint> gpu_visible;

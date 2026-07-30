@@ -149,17 +149,28 @@ TEST(MapColorizer, OcclusionBlocksFarPointBehindADenseWall)
 
 TEST(MapColorizer, SplatClosesHolesBetweenSparseOccluders)
 {
-  // Four sparse front points at z = 5 land on the four pixels diagonally
-  // around (50, 50); the far point at z = 10 projects onto (50, 50) itself.
-  // With splatting on, the front points' discs cover that pixel and occlude
-  // the far point; with splatting off the hole stays open and the far point
-  // legitimately wins its (otherwise unwritten) pixel.
-  const std::vector<std::array<float, 3>> points = {
-    {-0.05F, -0.05F, 5.0F},
-    {0.05F, -0.05F, 5.0F},
-    {-0.05F, 0.05F, 5.0F},
-    {0.05F, 0.05F, 5.0F},
-    {0.0F, 0.0F, 10.0F}};
+  // A sparse 9x9 wall at z = 5, pitch 0.1 m, whose samples land two pixels
+  // apart on half-pixel centers (42.5, 44.5, ... 58.5). The far point at
+  // z = 10 projects to (43.5, 42.5), squarely in a gap the wall's own samples
+  // never write. With splatting on the wall's footprints close that gap and
+  // occlude the far point; with splatting off the hole stays open and the far
+  // point legitimately wins its (otherwise unwritten) pixel.
+  //
+  // The wall has to be a real plane, not a handful of points: the footprint is
+  // oriented by the geometry pre-pass's normal, and a neighborhood too small
+  // to fit a plane through yields either the {0, 0, 0} sentinel or — worse — a
+  // normal fitted to the far point's own depth offset.
+  std::vector<std::array<float, 3>> points;
+  for (int ix = 0; ix < 9; ++ix) {
+    for (int iy = 0; iy < 9; ++iy) {
+      points.push_back(
+        {-0.375F + 0.1F * static_cast<float>(ix), -0.375F + 0.1F * static_cast<float>(iy), 5.0F});
+    }
+  }
+  constexpr std::size_t kFarIndex = 81;
+  points.push_back({-0.65F, -0.75F, 10.0F});
+  ASSERT_EQ(points.size(), kFarIndex + 1);
+
   const std::vector<TrajectoryPose> trajectory = {make_pose(0)};
   const auto raster = make_raster(100, 100, kRed);
 
@@ -172,13 +183,13 @@ TEST(MapColorizer, SplatClosesHolesBetweenSparseOccluders)
   };
 
   const auto with_splat = run(true);
-  EXPECT_EQ(with_splat.colors[4], kGray);
-  EXPECT_EQ(with_splat.observed[4], 0);
-  EXPECT_EQ(with_splat.colored_points, 4U);
+  EXPECT_EQ(with_splat.colors[kFarIndex], kGray);
+  EXPECT_EQ(with_splat.observed[kFarIndex], 0);
+  EXPECT_EQ(with_splat.colored_points, kFarIndex);  // the whole wall, minus the far point
 
   const auto without_splat = run(false);
-  EXPECT_EQ(without_splat.colors[4], kRed);
-  EXPECT_EQ(without_splat.colored_points, 5U);
+  EXPECT_EQ(without_splat.colors[kFarIndex], kRed);
+  EXPECT_EQ(without_splat.colored_points, kFarIndex + 1);
 }
 
 TEST(MapColorizer, AveragesObservationsAcrossImages)

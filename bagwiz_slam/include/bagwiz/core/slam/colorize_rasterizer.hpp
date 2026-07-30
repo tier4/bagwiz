@@ -66,16 +66,27 @@ struct ColorizeRasterizerConfig
   double depth_rel_tolerance = 0.02;
   double depth_abs_tolerance = 0.2;  // [m]
 
-  // Splat each projected point over a disc of pixels instead of writing only
-  // its center pixel. The map is sparser than the pixel grid, so per-pixel
-  // occlusion without splatting leaves holes a distant occluded point could
-  // slip through; splatting closes them at the cost of over-culling near
-  // depth edges.
+  // Splat each projected point over the footprint of its local surface
+  // instead of writing only its center pixel. The map is sparser than the
+  // pixel grid, so per-pixel occlusion without splatting leaves holes a
+  // distant occluded point could slip through; splatting closes them at the
+  // cost of over-culling near depth edges.
+  //
+  // The footprint is the SURFEL the point stands for — the disc of radius
+  // spacing/2 lying in the plane the point's normal defines — projected into
+  // the image, which makes it an ellipse rather than a disc (see
+  // colorize_splat.hpp). Grazing-angle geometry, which is most of what a
+  // vehicle-mounted camera sees, is where that matters: its samples pile up
+  // on screen along the tilt direction, so a circular footprint made every
+  // point occlude its own neighbors. Points with no normal (and callers that
+  // supply none) keep the isotropic disc.
   bool splat = true;
 
-  // Cap [px] on the splat disc radius (the data-driven radius grows
-  // unbounded for isolated points; the cap keeps a stray point from
-  // blanketing half the image).
+  // Cap [px] on the splat footprint's major semi-axis (the data-driven size
+  // grows unbounded for isolated points; the cap keeps a stray point from
+  // blanketing half the image). The ellipse is scaled down uniformly to meet
+  // the cap, so the cap bounds the footprint without undoing its
+  // foreshortening.
   double splat_radius_max_px = 4.0;
 
   // Where the per-image scan has a return at a point's pixel, it replaces
@@ -140,19 +151,30 @@ public:
     std::vector<VisiblePoint> & out) = 0;
 };
 
-// CPU ColorizeRasterizer, always available. `points` and `spacings` are
-// referenced, NOT copied, and must outlive the returned rasterizer; `spacings`
-// is the per-point local point spacing used for the splat footprint and must
-// be parallel to `points` (an empty span is accepted and treated as all
-// zeros, which reduces the splat to the single center pixel). When `tree`
-// (a spatial index over the same `points`) is non-null and config.max_range
-// is positive, each view first collects only the points within max_range of
-// the camera position from the tree and sweeps just those — far cheaper than
-// projecting a whole-map span per image, with an identical visible set (the
-// projection culls those points anyway). The tree is referenced, not owned.
+// CPU ColorizeRasterizer, always available. `points`, `spacings` and
+// `normals` are referenced, NOT copied, and must outlive the returned
+// rasterizer.
+//
+// `spacings` is the per-point local point spacing that sizes the splat
+// footprint and must be parallel to `points` (an empty span is accepted and
+// treated as all zeros, which reduces the splat to the single center pixel).
+// `normals` is the per-point unit surface normal in the same WORLD frame as
+// `points`, likewise parallel to them — the geometry pre-pass's
+// ColorizeGeometry::normals, sign arbitrary, {0, 0, 0} meaning "no normal".
+// It orients the elliptical splat footprint; an empty or mismatched span
+// falls back to the isotropic disc for every point, which is exactly how the
+// rasterizer behaved before footprints became normal aware.
+//
+// When `tree` (a spatial index over the same `points`) is non-null and
+// config.max_range is positive, each view first collects only the points
+// within max_range of the camera position from the tree and sweeps just
+// those — far cheaper than projecting a whole-map span per image, with an
+// identical visible set (the projection culls those points anyway). The tree
+// is referenced, not owned.
 [[nodiscard]] std::unique_ptr<ColorizeRasterizer> make_cpu_colorize_rasterizer(
   std::span<const std::array<float, 3>> points, std::span<const float> spacings,
-  const ColorizeRasterizerConfig & config, const pointcloud::KdTree * tree = nullptr);
+  std::span<const std::array<float, 3>> normals, const ColorizeRasterizerConfig & config,
+  const pointcloud::KdTree * tree = nullptr);
 
 }  // namespace bagwiz::core::slam
 
