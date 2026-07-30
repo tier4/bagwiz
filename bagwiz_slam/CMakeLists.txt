@@ -116,6 +116,7 @@ endif()
 # way.
 add_library(bagwiz_slam
   src/core/slam/cloud_filters.cpp
+  src/core/slam/colorize_keyframe.cpp
   src/core/slam/colorize_rasterizer_cpu.cpp
   src/core/slam/colorize_weight.cpp
   src/core/slam/dynamic_removal.cpp
@@ -399,6 +400,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_slam_colorize_weight_test test/core/slam/colorize_weight_test.cpp)
   target_link_libraries(bagwiz_slam_colorize_weight_test bagwiz_slam)
+
+  ament_add_gtest(bagwiz_slam_colorize_keyframe_test test/core/slam/colorize_keyframe_test.cpp)
+  target_link_libraries(bagwiz_slam_colorize_keyframe_test bagwiz_slam)
 
   ament_add_gtest(bagwiz_slam_scan_to_world_test test/core/slam/scan_to_world_test.cpp)
   target_link_libraries(bagwiz_slam_scan_to_world_test bagwiz_slam)

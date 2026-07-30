@@ -102,6 +102,27 @@ private:
         "camera from its image topic name using the standard suffix rules) or pass exactly "
         "one per --cam topic, in the same order (several after one flag and/or repeated).")
       ->needs(cam_opt);
+    auto * cam_min_dist_opt =
+      sub
+        ->add_option(
+          "--cam-min-dist", slam_args_.cam_min_dist,
+          "Keyframe gate for --cam colorization in meters (default 0 = use every image): "
+          "an image is colorized only when the interpolated pose moved at least this far "
+          "— or rotated at least 10 degrees — since the last kept image on that topic. "
+          "Consecutive frames are near-duplicates on vehicle data, so thinning cuts "
+          "colorize time roughly in proportion without visible quality loss; 1-2 m is a "
+          "good starting point. Deterministic.")
+        ->check(CLI::NonNegativeNumber)
+        ->needs(cam_opt);
+    sub
+      ->add_flag(
+        "--cam-keyframe-blur", slam_args_.cam_keyframe_blur,
+        "Refine the --cam-min-dist gate by sharpness: instead of keeping the FIRST image "
+        "of each gate interval, score every candidate (mean Sobel gradient magnitude) and "
+        "keep the sharpest, so motion-blurred frames are dropped rather than merely "
+        "down-weighted. Costs a decode per candidate image; the projection/sweep work is "
+        "still saved. Deterministic.")
+      ->needs(cam_min_dist_opt);
     sub->add_flag(
       "!--no-color-propagate", slam_args_.color_propagate,
       "Do not propagate colors to map points no camera observed; with this flag they "

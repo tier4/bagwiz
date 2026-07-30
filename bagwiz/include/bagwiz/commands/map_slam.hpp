@@ -55,6 +55,23 @@ struct MapSlamArgs
   // every camera from its image topic name using the standard suffix rules)
   // or exactly one entry per image topic, in the same order.
   std::vector<std::string> camera_info_topics;
+  // Keyframe thinning gate for the colorize pass, in meters. 0 (the default)
+  // feeds every decoded image to the colorizer; > 0 feeds an image only when
+  // the interpolated body pose moved at least this far — or rotated at least
+  // kKeyframeMinRotationDeg degrees — since the image that opened the current
+  // bucket on that topic. Consecutive vehicle-camera frames are
+  // near-duplicates (a stopped platform contributes hundreds of identical
+  // frames), so thinning cuts colorize cost roughly linearly with the frames
+  // dropped while the per-point observation reservoirs stay well fed.
+  // Deterministic. Has no effect without image_topics.
+  double cam_min_dist = 0.0;
+  // Blur refinement of the keyframe gate (requires cam_min_dist > 0): instead
+  // of keeping the FIRST image of each gate bucket, decode and score every
+  // image in the bucket (mean Sobel gradient magnitude) and keep the
+  // sharpest, so motion-blurred frames are dropped rather than merely
+  // down-weighted. Costs a decode per candidate image; the rasterize/sweep
+  // work is still saved. Deterministic.
+  bool cam_keyframe_blur = false;
   // Fill map points no camera observed with the color of the nearest observed
   // neighbor within an automatic radius (4x the median local point spacing,
   // clamped to [0.05, 5] m), so map.pcd comes out fully colored. Disabled by

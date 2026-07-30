@@ -16,6 +16,7 @@
 #include "bagwiz/core/pointcloud/color_propagation.hpp"
 #include "bagwiz/core/pointcloud/pointcloud2.hpp"
 #include "bagwiz/core/slam/cloud_mapper.hpp"
+#include "bagwiz/core/slam/colorize_keyframe.hpp"
 #include "bagwiz/core/slam/cuda_device.hpp"
 #include "bagwiz/core/slam/gnss_projector.hpp"
 #include "bagwiz/core/slam/gnss_sample.hpp"
@@ -1219,6 +1220,27 @@ private:
     // pairing must be tight (see ScanImagePairer for the queuing rule).
     core::slam::ScanImagePairer pairer;
 
+    // Keyframe gate (--cam-min-dist): one picker per camera thins that
+    // camera's stream before the colorizer sees it. Without the blur
+    // refinement the gate is decided from the pose alone BEFORE decode (in
+    // feed_image below); with --cam-keyframe-blur every candidate is decoded
+    // and scored, so the gate runs where the decode happens (this camera's
+    // worker, or the serial path). Either way a picker is driven from
+    // exactly one thread in frame order, so the result is deterministic.
+    const bool keyframe_gate = args_.cam_min_dist > 0.0;
+    const bool blur_gate = keyframe_gate && args_.cam_keyframe_blur;
+    core::slam::ColorizeKeyframeConfig keyframe_config;
+    keyframe_config.min_dist = args_.cam_min_dist;
+    keyframe_config.blur = args_.cam_keyframe_blur;
+    std::vector<std::unique_ptr<core::slam::ColorizeKeyframePicker>> pickers;
+    if (keyframe_gate) {
+      pickers.reserve(cam_count);
+      for (std::size_t cam = 0; cam < cam_count; ++cam) {
+        pickers.push_back(
+          std::make_unique<core::slam::ColorizeKeyframePicker>(keyframe_config, map.trajectory));
+      }
+    }
+
     // Camera-parallel pipeline: the reader loop below stays single-threaded
     // and hands each decided image to its camera's worker via a bounded
     // queue. A MapColorizer is touched only by its own worker, and the worker
@@ -1236,21 +1258,48 @@ private:
       for (std::size_t cam = 0; cam < cam_count; ++cam) {
         workers.emplace_back([&, cam]() {
           std::int64_t failures = 0;
+          const auto add_frame = [&](core::slam::ColorizeKeyframePicker::Frame && frame) {
+            colorizers[cam]->add_image(
+              frame.stamp_ns, frame.bgr, frame.width, frame.height, frame.dynamic_points);
+          };
           ColorizeWorkItem item;
           while (work_queues[cam]->pop(item)) {
             try {
-              const auto decoded = core::image::to_packed_raster(item.type, item.payload);
+              auto decoded = core::image::to_packed_raster(item.type, item.payload);
               if (!decoded.ok()) {
                 ++failures;
                 continue;
               }
-              const auto & raster = *decoded.raster;
+              auto & raster = *decoded.raster;
               // Prefer the capture stamp; fall back to the queue stamp (the
               // bag record time) when the publisher left header.stamp unset.
               const std::int64_t stamp =
                 raster.header_stamp_ns != 0 ? raster.header_stamp_ns : item.stamp_ns;
+              if (blur_gate) {
+                // Route the decoded frame through the picker: it buffers the
+                // current gate bucket's sharpest frame and hands back the
+                // one to colorize, if any.
+                if (
+                  auto keyframe = pickers[cam]->offer(
+                    core::slam::ColorizeKeyframePicker::Frame{
+                      stamp, std::move(raster.bgr), raster.width, raster.height,
+                      std::move(item.dynamic_points)})) {
+                  add_frame(std::move(*keyframe));
+                }
+                continue;
+              }
               colorizers[cam]->add_image(
                 stamp, raster.bgr, raster.width, raster.height, item.dynamic_points);
+            } catch (const std::exception &) {
+              ++failures;
+            }
+          }
+          // End of stream closes the final gate bucket.
+          if (blur_gate) {
+            try {
+              if (auto keyframe = pickers[cam]->flush()) {
+                add_frame(std::move(*keyframe));
+              }
             } catch (const std::exception &) {
               ++failures;
             }
@@ -1263,6 +1312,12 @@ private:
     auto feed_image = [&](
                         core::slam::ScanImagePairer::PendingImage & img,
                         std::span<const std::array<float, 3>> dynamic) {
+      // Pose-only keyframe gate (--cam-min-dist without the blur
+      // refinement): decided BEFORE the decode, so a thinned frame costs
+      // neither the decode nor, in the parallel path, the queue transfer.
+      if (keyframe_gate && !blur_gate && !pickers[img.cam]->accept(img.stamp_ns)) {
+        return;
+      }
       if (parallel) {
         work_queues[img.cam]->push(
           ColorizeWorkItem{
@@ -1270,16 +1325,29 @@ private:
             std::vector<std::array<float, 3>>(dynamic.begin(), dynamic.end())});
         return;
       }
-      const auto decoded = core::image::to_packed_raster(img.type, img.payload);
+      auto decoded = core::image::to_packed_raster(img.type, img.payload);
       if (!decoded.ok()) {
         ++decode_failures[img.cam];
         return;
       }
-      const auto & raster = *decoded.raster;
+      auto & raster = *decoded.raster;
       // Prefer the capture stamp; fall back to the queue stamp (the bag
       // record time) when the publisher left header.stamp unset.
       const std::int64_t stamp =
         raster.header_stamp_ns != 0 ? raster.header_stamp_ns : img.stamp_ns;
+      if (blur_gate) {
+        // Serial counterpart of the worker's picker routing.
+        if (
+          auto keyframe = pickers[img.cam]->offer(
+            core::slam::ColorizeKeyframePicker::Frame{
+              stamp, std::move(raster.bgr), raster.width, raster.height,
+              std::vector<std::array<float, 3>>(dynamic.begin(), dynamic.end())})) {
+          colorizers[img.cam]->add_image(
+            keyframe->stamp_ns, keyframe->bgr, keyframe->width, keyframe->height,
+            keyframe->dynamic_points);
+        }
+        return;
+      }
       colorizers[img.cam]->add_image(stamp, raster.bgr, raster.width, raster.height, dynamic);
     };
     // Feed every pending image whose nearest scan is known.
@@ -1348,11 +1416,36 @@ private:
       worker.join();
     }
 
+    // Serial blur path: end of stream closes the final gate bucket (the
+    // parallel path flushes inside each camera's worker above).
+    if (blur_gate && !parallel) {
+      for (std::size_t cam = 0; cam < cam_count; ++cam) {
+        try {
+          if (auto keyframe = pickers[cam]->flush()) {
+            colorizers[cam]->add_image(
+              keyframe->stamp_ns, keyframe->bgr, keyframe->width, keyframe->height,
+              keyframe->dynamic_points);
+          }
+        } catch (const std::exception &) {
+          ++decode_failures[cam];
+        }
+      }
+    }
+
     std::vector<core::slam::MapColorizeResult> results;
     results.reserve(cam_count);
     for (std::size_t cam = 0; cam < cam_count; ++cam) {
       results.push_back(colorizers[cam]->finish());
       const auto & result = results.back();
+      if (keyframe_gate) {
+        BAGWIZ_LOG_INFO(
+          kLogger,
+          "Colorize: %zu of %zu map points observed via '%s' (%zu image(s) used, %zu thinned "
+          "by --cam-min-dist, %zu outside the trajectory span, %" PRId64 " failed to decode)",
+          result.colored_points, map.points.size(), args_.image_topics[cam].c_str(),
+          result.images_used, pickers[cam]->skipped(), result.images_skipped, decode_failures[cam]);
+        continue;
+      }
       BAGWIZ_LOG_INFO(
         kLogger,
         "Colorize: %zu of %zu map points observed via '%s' (%zu image(s) used, %zu outside "

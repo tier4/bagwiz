@@ -972,6 +972,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //   slam:   `map`(0) `slam`(1) -i|--input <bag> --pcd <topic> -o|--output <root>
 //           [--backend <cpu|cuda|auto>] [--frame <frame_id>] [--imu <topic>]
 //           [--gnss <topic>] [--cam <topic>...] [--cam-info <topic>...]
+//           [--cam-min-dist <m>] [--cam-keyframe-blur]
 //           [--input-res <m>] [--min-range <m>] [--max-range <m>]
 //           [-j|--threads <N>] [--viewer] [-w|--overwrite]
 //           [--no-progress] [--no-warmup-fill] [--no-cooldown-fill]
@@ -1017,6 +1018,8 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
         {"--backend",
          "--cam",
          "--cam-info",
+         "--cam-keyframe-blur",
+         "--cam-min-dist",
          "--dynamic-dp",
          "--dynamic-ds",
          "--dynamic-res",
