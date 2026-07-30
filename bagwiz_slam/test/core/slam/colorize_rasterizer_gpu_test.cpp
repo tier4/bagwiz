@@ -185,6 +185,84 @@ TEST_F(ColorizeRasterizerGpuTest, DynamicOccluderRejectsFarPoint)
   EXPECT_TRUE(gpu_visible.empty());
 }
 
+// GPU/CPU agreement through a REAL distortion model: only a non-empty d
+// exercises the forward distortion, the fixed-point undistortion (the FP32
+// port loosened its convergence epsilon from 1e-10 to 1e-6), and the 1 px
+// round-trip gate along a non-degenerate path. A 9x9 grid spanning the FOV
+// out to `max_normalized_xy` must survive both backends identically and land
+// within a small fraction of a pixel of the CPU double reference.
+void expect_distorted_view_matches_cpu(
+  const bagwiz::core::image::CameraInfo & camera, double max_normalized_xy)
+{
+  constexpr float kDepth = 5.0F;
+  std::vector<std::array<float, 3>> points;
+  for (int ix = -4; ix <= 4; ++ix) {
+    for (int iy = -4; iy <= 4; ++iy) {
+      const float nx = static_cast<float>(ix) / 4.0F * static_cast<float>(max_normalized_xy);
+      const float ny = static_cast<float>(iy) / 4.0F * static_cast<float>(max_normalized_xy);
+      points.push_back({nx * kDepth, ny * kDepth, kDepth});
+    }
+  }
+  std::vector<float> spacings(points.size(), 0.05F);
+  slam::ColorizeRasterizerConfig config;
+  config.splat = false;
+
+  slam::ColorizeView view = make_center_view();
+  view.camera = camera;
+
+  auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, config);
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, config);
+  ASSERT_NE(gpu, nullptr);
+
+  std::vector<slam::VisiblePoint> cpu_visible;
+  std::vector<slam::VisiblePoint> gpu_visible;
+  cpu->visible_points(view, {}, cpu_visible);
+  gpu->visible_points(view, {}, gpu_visible);
+
+  ASSERT_EQ(sorted_indices(cpu_visible), sorted_indices(gpu_visible));
+  // The grid is sized to stay inside the image and pass the round-trip gate
+  // on the CPU reference; a shrunken set would mean the test stopped
+  // exercising the periphery.
+  ASSERT_EQ(cpu_visible.size(), points.size());
+
+  auto by_index = [](std::vector<slam::VisiblePoint> visible) {
+    std::sort(visible.begin(), visible.end(), [](const auto & a, const auto & b) {
+      return a.index < b.index;
+    });
+    return visible;
+  };
+  const auto cpu_sorted = by_index(cpu_visible);
+  const auto gpu_sorted = by_index(gpu_visible);
+  for (std::size_t i = 0; i < cpu_sorted.size(); ++i) {
+    EXPECT_NEAR(gpu_sorted[i].u, cpu_sorted[i].u, 0.05) << "index " << cpu_sorted[i].index;
+    EXPECT_NEAR(gpu_sorted[i].v, cpu_sorted[i].v, 0.05) << "index " << cpu_sorted[i].index;
+    EXPECT_NEAR(gpu_sorted[i].depth, cpu_sorted[i].depth, 1e-3F);
+  }
+}
+
+TEST_F(ColorizeRasterizerGpuTest, RationalPlumbBobDistortionMatchesCpu)
+{
+  // Realistic 8-coefficient rational plumb_bob (k1 k2 p1 p2 k3 k4 k5 k6):
+  // moderate barrel distortion with mild tangential and rational terms, so
+  // both the numerator and denominator polynomials and the tangential path
+  // carry non-trivial values through the FP32 math.
+  auto camera = make_pinhole();
+  camera.d = {-0.2, 0.05, 1e-3, -5e-4, -0.004, -0.15, 0.03, -0.002};
+  expect_distorted_view_matches_cpu(camera, 0.4);
+}
+
+TEST_F(ColorizeRasterizerGpuTest, EquidistantDistortionMatchesCpu)
+{
+  // Typical fisheye equidistant coefficients (k1..k4); the grid reaches a
+  // normalized radius of ~0.7 (incidence ~35 deg), where theta polynomial
+  // terms and the tan(theta) inversion are far from their small-angle
+  // degeneracy.
+  auto camera = make_pinhole();
+  camera.distortion_model = "equidistant";
+  camera.d = {-0.01, 0.02, -0.003, 4e-4};
+  expect_distorted_view_matches_cpu(camera, 0.5);
+}
+
 TEST_F(ColorizeRasterizerGpuTest, FarFromOriginMatchesCpuWithinTolerance)
 {
   // The device math runs in FP32 (the CPU reference in double), so agreement
