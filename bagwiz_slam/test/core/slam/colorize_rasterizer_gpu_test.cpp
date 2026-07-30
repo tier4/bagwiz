@@ -185,6 +185,61 @@ TEST_F(ColorizeRasterizerGpuTest, DynamicOccluderRejectsFarPoint)
   EXPECT_TRUE(gpu_visible.empty());
 }
 
+TEST_F(ColorizeRasterizerGpuTest, FarFromOriginMatchesCpuWithinTolerance)
+{
+  // The device math runs in FP32 (the CPU reference in double), so agreement
+  // is bounded by the float quantization of the world coordinates. Two
+  // kilometers from the origin one float ulp is ~0.24 mm, i.e. ~5e-3 px at
+  // f = 100 and z = 5 m: the visible sets must match exactly and the
+  // projected pixels must agree to a small fraction of a pixel.
+  const std::array<double, 3> center = {2000.0, -1500.0, 30.0};
+  std::vector<std::array<float, 3>> points;
+  for (const float gx : {-0.2F, -0.1F, 0.0F, 0.1F, 0.2F}) {
+    for (const float gy : {-0.2F, -0.1F, 0.0F, 0.1F, 0.2F}) {
+      points.push_back(
+        {static_cast<float>(center[0]) + gx, static_cast<float>(center[1]) + gy,
+         static_cast<float>(center[2]) + 5.0F});
+    }
+  }
+  std::vector<float> spacings(points.size(), 0.05F);
+  slam::ColorizeRasterizerConfig config;
+  config.splat = false;
+
+  slam::ColorizeView view;
+  view.r_cam_world = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  view.t_cam_world = {-center[0], -center[1], -center[2]};
+  view.camera = make_pinhole();
+  view.width = 100;
+  view.height = 100;
+
+  auto cpu = slam::make_cpu_colorize_rasterizer(points, spacings, config);
+  auto gpu = slam::make_gpu_colorize_rasterizer(points, spacings, config);
+  ASSERT_NE(gpu, nullptr);
+
+  std::vector<slam::VisiblePoint> cpu_visible;
+  std::vector<slam::VisiblePoint> gpu_visible;
+  cpu->visible_points(view, {}, cpu_visible);
+  gpu->visible_points(view, {}, gpu_visible);
+
+  ASSERT_EQ(sorted_indices(cpu_visible), sorted_indices(gpu_visible));
+  ASSERT_EQ(cpu_visible.size(), points.size());
+
+  auto by_index = [](const std::vector<slam::VisiblePoint> & visible) {
+    std::vector<slam::VisiblePoint> sorted(visible);
+    std::sort(sorted.begin(), sorted.end(), [](const auto & a, const auto & b) {
+      return a.index < b.index;
+    });
+    return sorted;
+  };
+  const auto cpu_sorted = by_index(cpu_visible);
+  const auto gpu_sorted = by_index(gpu_visible);
+  for (std::size_t i = 0; i < cpu_sorted.size(); ++i) {
+    EXPECT_NEAR(gpu_sorted[i].u, cpu_sorted[i].u, 0.05);
+    EXPECT_NEAR(gpu_sorted[i].v, cpu_sorted[i].v, 0.05);
+    EXPECT_NEAR(gpu_sorted[i].depth, cpu_sorted[i].depth, 1e-3F);
+  }
+}
+
 TEST_F(ColorizeRasterizerGpuTest, DynamicReturnOnSameSurfaceKeepsPoint)
 {
   const std::vector<std::array<float, 3>> points = {{0.0F, 0.0F, 10.0F}};
