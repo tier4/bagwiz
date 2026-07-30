@@ -402,4 +402,67 @@ TEST(VisualFrontend, DownscaleKeepsPixelAccuracy)
   EXPECT_GE(matched, 10);
 }
 
+// A decoded/republished stream can be a different resolution than its
+// CameraInfo declares (e.g. a downscaled relay), so the frontend must rescale
+// config.camera's intrinsics to the frame size it actually receives instead of
+// applying the declared-resolution fx/cx/fy/cy verbatim. Camera A declares
+// 1280x960 with fx=1000, cx=640, cy=480 but is fed 640x480 frames (half res);
+// camera B declares 640x480 with fx=fy=500, cx=320, cy=240 (make_pinhole()) and
+// is fed the identical 640x480 frames. Optically these are the same camera at
+// half the sensor resolution, so a correctly rescaling frontend must emit the
+// same normalized coordinates for both, to full precision.
+TEST(VisualFrontend, RescalesIntrinsicsToDecodedResolution)
+{
+  slam::VisualFrontendConfig declared_cfg;
+  declared_cfg.camera.width = 1280;
+  declared_cfg.camera.height = 960;
+  declared_cfg.camera.distortion_model = "plumb_bob";
+  declared_cfg.camera.d = {0, 0, 0, 0, 0};
+  declared_cfg.camera.k = {1000, 0, 640, 0, 1000, 480, 0, 0, 1};
+  declared_cfg.tracking_width = 640;  // native to the delivered 640x480 frames
+  slam::VisualFrontend declared_fe(declared_cfg);
+
+  slam::VisualFrontendConfig native_cfg;
+  native_cfg.camera = make_pinhole();  // 640x480, fx=fy=500, cx=320, cy=240
+  native_cfg.tracking_width = 640;
+  slam::VisualFrontend native_fe(native_cfg);
+
+  std::vector<std::array<int, 2>> centers;
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 4; ++col) {
+      centers.push_back({100 + col * 120, 100 + row * 120});
+    }
+  }
+  const auto frame = render_dots(640, 480, centers);
+
+  EXPECT_TRUE(declared_fe.track(0, frame, 640, 480).empty());
+  EXPECT_TRUE(native_fe.track(0, frame, 640, 480).empty());
+  const auto declared_obs = declared_fe.track(1, frame, 640, 480);
+  const auto native_obs = native_fe.track(1, frame, 640, 480);
+
+  ASSERT_GE(declared_obs.size(), 10U);
+  ASSERT_GE(native_obs.size(), 10U);
+
+  // Two independent instances tracking identical frames are deterministic but
+  // not guaranteed to assign matching track ids, so match by nearest
+  // coordinate (same approach as RationalPolynomialUndistortsObservations).
+  int matched = 0;
+  for (const auto & d : declared_obs) {
+    const slam::VisualObservation * nearest = nullptr;
+    double nearest_dist = std::numeric_limits<double>::max();
+    for (const auto & n : native_obs) {
+      const double dist = std::hypot(n.x - d.x, n.y - d.y);
+      if (dist < nearest_dist) {
+        nearest_dist = dist;
+        nearest = &n;
+      }
+    }
+    ASSERT_NE(nearest, nullptr);
+    EXPECT_NEAR(nearest->x, d.x, 1e-9);
+    EXPECT_NEAR(nearest->y, d.y, 1e-9);
+    ++matched;
+  }
+  EXPECT_GE(matched, 10);
+}
+
 }  // namespace

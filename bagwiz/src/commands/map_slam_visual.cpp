@@ -127,19 +127,20 @@ void VisualFeed::run_worker(std::size_t cam)
 
   VisualWorkItem item;
   while (queues_[cam]->pop(item)) {
-    auto decoded = core::image::to_packed_raster(item.type, item.payload);
-    if (!decoded.ok()) {
-      count_failure(decoded.error.c_str());
-      continue;
-    }
     try {
+      auto decoded = core::image::to_packed_raster(item.type, item.payload);
+      if (!decoded.ok()) {
+        count_failure(decoded.error.c_str());
+        continue;
+      }
       const auto & raster = *decoded.raster;
       const auto observations =
         frontends_[cam]->track(item.stamp_ns, raster.bgr, raster.width, raster.height);
       mapper_.insert_visual_observations(observations);
     } catch (const std::exception & e) {
-      // A frontend throw must not escape this thread (that terminates the
-      // process); the run continues with whatever the other frames yield.
+      // A decode or frontend throw must not escape this thread (that
+      // terminates the process); the run continues with whatever the other
+      // frames yield.
       count_failure(e.what());
     }
   }

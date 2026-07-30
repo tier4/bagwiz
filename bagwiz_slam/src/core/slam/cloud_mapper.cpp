@@ -1358,11 +1358,12 @@ struct CloudMapper::Impl
 
   // Heavy step: global matching-based iSAM2 optimization, then the trajectory,
   // window-fill, and map export. The optimization updates each held submap's
-  // T_world_origin in place (GlobalMapping::update_submaps). With the GNSS
-  // callback registered, the priors enter the graph in this single update. The
-  // optimize / window-fill / export phases are timed individually into the
-  // CloudMap so the command layer can log where finalization time went (endpoint
-  // fill, not this update, dominates LiDAR-only runs).
+  // T_world_origin in place (GlobalMapping::update_submaps). With the injector
+  // registered, the GNSS priors and visual rig-projection factors enter the
+  // graph in this single update. The optimize / window-fill / export phases
+  // are timed individually into the CloudMap so the command layer can log
+  // where finalization time went (endpoint fill, not this update, dominates
+  // LiDAR-only runs).
   void optimize_and_export(CloudMap & result)
   {
     const auto optimize_start = std::chrono::steady_clock::now();

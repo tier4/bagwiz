@@ -45,6 +45,18 @@ struct VisualFrontend::Impl
   const image::DistortionModel model =
     image::select_distortion_model(config.camera.distortion_model);
 
+  // Intrinsics actually used to unproject tracked pixels, rescaled from
+  // config.camera to the frame size track() receives (mirrors MapColorizer's
+  // handling of a decoded/republished stream that differs from the
+  // CameraInfo's declared resolution: same core::image::scale_camera_info
+  // call). Distortion coefficients are resolution-invariant for the
+  // supported models, so only fx/fy/cx/cy need rescaling. Recomputed only
+  // when the frame size changes from the last call; streams don't switch
+  // resolution mid-run.
+  image::CameraInfo effective_camera = config.camera;
+  std::uint32_t effective_width = 0;
+  std::uint32_t effective_height = 0;
+
   // Previous frame, downscaled to config.tracking_width, kept for the KLT
   // optical-flow step.
   cv::Mat prev_gray;
@@ -73,6 +85,19 @@ std::vector<VisualObservation> VisualFrontend::Impl::track(
   }
   if (bgr.size() != static_cast<std::size_t>(width) * height * 3) {
     return {};
+  }
+
+  if (effective_width != width || effective_height != height) {
+    effective_width = width;
+    effective_height = height;
+    effective_camera = config.camera;
+    if (
+      config.camera.width != 0 && config.camera.height != 0 &&
+      (config.camera.width != width || config.camera.height != height)) {
+      effective_camera = image::scale_camera_info(
+        config.camera, static_cast<double>(width) / config.camera.width,
+        static_cast<double>(height) / config.camera.height);
+    }
   }
 
   // OpenCV's external-data cv::Mat constructor takes a non-const void* even
@@ -165,10 +190,10 @@ std::vector<VisualObservation> VisualFrontend::Impl::track(
 
   std::vector<VisualObservation> observations;
   if (have_prev_frame) {
-    const double fx = config.camera.k[0];
-    const double cx = config.camera.k[2];
-    const double fy = config.camera.k[4];
-    const double cy = config.camera.k[5];
+    const double fx = effective_camera.k[0];
+    const double cx = effective_camera.k[2];
+    const double fy = effective_camera.k[4];
+    const double cy = effective_camera.k[5];
     observations.reserve(tracks.size());
     for (const auto & t : tracks) {
       const double u = static_cast<double>(t.x) * scale;
