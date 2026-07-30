@@ -9,6 +9,7 @@
 #ifndef BAGWIZ__CORE__SLAM__VISUAL_OBSERVATION_HPP_
 #define BAGWIZ__CORE__SLAM__VISUAL_OBSERVATION_HPP_
 
+#include <array>
 #include <cstdint>
 
 namespace bagwiz::core::slam
@@ -23,6 +24,12 @@ namespace bagwiz::core::slam
 struct VisualObservation
 {
   std::int32_t camera_id = 0;
+  // Nearest-pixel color sampled at the track's raw (pre-undistortion)
+  // pixel in the delivered frame — not the pixel obtained by re-projecting
+  // this struct's x/y, which are undistorted; the two coincide only for a
+  // zero-distortion camera. In r, g, b order. Carried for the camera-only
+  // sparse-map export (issue #376 Phase 3); factor construction ignores it.
+  std::array<std::uint8_t, 3> rgb{};
   std::uint64_t track_id = 0;
   std::int64_t stamp_ns = 0;
   double x = 0.0;

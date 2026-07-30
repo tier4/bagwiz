@@ -51,9 +51,11 @@ std::vector<std::byte> black(std::uint32_t w, std::uint32_t h)
   return std::vector<std::byte>(static_cast<std::size_t>(w) * h * 3, std::byte{0});
 }
 
-// White 5x5 squares on black at the given centers (tracking-friendly corners).
-std::vector<std::byte> render_dots(
-  std::uint32_t w, std::uint32_t h, const std::vector<std::array<int, 2>> & centers)
+// Colored 5x5 squares on black at the given centers (tracking-friendly
+// corners). The color is given as (b, g, r) to match the packed BGR24 raster.
+std::vector<std::byte> render_dots_bgr(
+  std::uint32_t w, std::uint32_t h, const std::vector<std::array<int, 2>> & centers,
+  std::array<std::uint8_t, 3> bgr)
 {
   auto img = black(w, h);
   for (const auto & c : centers) {
@@ -62,11 +64,20 @@ std::vector<std::byte> render_dots(
         const int x = c[0] + dx, y = c[1] + dy;
         if (x < 0 || y < 0 || x >= static_cast<int>(w) || y >= static_cast<int>(h)) continue;
         auto * px = &img[(static_cast<std::size_t>(y) * w + x) * 3];
-        px[0] = px[1] = px[2] = std::byte{255};
+        px[0] = std::byte{bgr[0]};
+        px[1] = std::byte{bgr[1]};
+        px[2] = std::byte{bgr[2]};
       }
     }
   }
   return img;
+}
+
+// White 5x5 squares on black at the given centers (tracking-friendly corners).
+std::vector<std::byte> render_dots(
+  std::uint32_t w, std::uint32_t h, const std::vector<std::array<int, 2>> & centers)
+{
+  return render_dots_bgr(w, h, centers, {255, 255, 255});
 }
 
 // track_id lookup by value in a VisualObservation vector; nullptr when absent.
@@ -170,6 +181,49 @@ TEST(VisualFrontend, TracksFollowTranslation)
     EXPECT_NEAR((o2->x - o1.x) * fx, 8.0, 1.0) << "track_id=" << o1.track_id;
   }
   EXPECT_GE(matched, 10);
+}
+
+// rgb must be the delivered frame's nearest pixel at the track position. The
+// test recomputes the sampling position from the reported normalized
+// coordinates (exact inverse for the zero-distortion pinhole at native
+// tracking scale) and compares against the frame it fed in, so the assertion
+// holds wherever the detector happens to place corners.
+TEST(VisualFrontend, ObservationsCarryRgbSampledAtTrackPosition)
+{
+  slam::VisualFrontendConfig cfg;
+  cfg.camera = make_pinhole();
+  cfg.tracking_width = 640;  // native scale: u = x*fx + cx round-trips exactly
+  slam::VisualFrontend fe(cfg);
+
+  std::vector<std::array<int, 2>> centers;
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 4; ++col) {
+      centers.push_back({100 + col * 120, 100 + row * 120});
+    }
+  }
+  const std::array<std::uint8_t, 3> dot_bgr{32, 64, 200};
+  const auto frame = render_dots_bgr(640, 480, centers, dot_bgr);
+
+  EXPECT_TRUE(fe.track(0, frame, 640, 480).empty());
+  const auto obs = fe.track(1, frame, 640, 480);
+  ASSERT_GE(obs.size(), 10U);
+
+  const double fx = cfg.camera.k[0], cx = cfg.camera.k[2];
+  const double fy = cfg.camera.k[4], cy = cfg.camera.k[5];
+  int colored = 0;
+  for (const auto & o : obs) {
+    const auto ix = std::clamp<std::int64_t>(std::llround(o.x * fx + cx), 0, 639);
+    const auto iy = std::clamp<std::int64_t>(std::llround(o.y * fy + cy), 0, 479);
+    const auto * px = &frame[(static_cast<std::size_t>(iy) * 640 + ix) * 3];
+    EXPECT_EQ(o.rgb[0], std::to_integer<std::uint8_t>(px[2])) << "track_id=" << o.track_id;
+    EXPECT_EQ(o.rgb[1], std::to_integer<std::uint8_t>(px[1])) << "track_id=" << o.track_id;
+    EXPECT_EQ(o.rgb[2], std::to_integer<std::uint8_t>(px[0])) << "track_id=" << o.track_id;
+    if (o.rgb != std::array<std::uint8_t, 3>{0, 0, 0}) {
+      ++colored;
+    }
+  }
+  // Corners of colored squares sample colored pixels; at least one must.
+  EXPECT_GE(colored, 1);
 }
 
 TEST(VisualFrontend, TrackIdsAreStableAndNewDetectionsGetFreshIds)

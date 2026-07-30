@@ -204,12 +204,26 @@ std::vector<VisualObservation> VisualFrontend::Impl::track(
       const double v = static_cast<double>(t.y) * scale;
       const image::NormalizedPoint p =
         image::undistort_normalized((u - cx) / fx, (v - cy) / fy, model, config.camera.d);
+      // Nearest-pixel color at the track position, from the delivered
+      // full-resolution frame. Track positions are inside the tracking-scale
+      // frame (KLT survivors are bounds-checked, detected corners are
+      // in-frame by construction), but scaling back up can land at or past
+      // width/height, so clamp.
+      const auto ix =
+        std::clamp<std::int64_t>(std::llround(u), 0, static_cast<std::int64_t>(width) - 1);
+      const auto iy =
+        std::clamp<std::int64_t>(std::llround(v), 0, static_cast<std::int64_t>(height) - 1);
+      const std::byte * px =
+        bgr.data() + (static_cast<std::size_t>(iy) * width + static_cast<std::size_t>(ix)) * 3;
       VisualObservation obs;
       obs.camera_id = config.camera_id;
       obs.track_id = t.id;
       obs.stamp_ns = stamp_ns;
       obs.x = p.x;
       obs.y = p.y;
+      obs.rgb = {
+        std::to_integer<std::uint8_t>(px[2]), std::to_integer<std::uint8_t>(px[1]),
+        std::to_integer<std::uint8_t>(px[0])};
       observations.push_back(obs);
     }
   }
