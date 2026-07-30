@@ -10,16 +10,42 @@
 #include "bagwiz/commands/command.hpp"
 #include "bagwiz/commands/completion.hpp"
 #include "bagwiz/commands/help_formatter.hpp"
+#include "bagwiz/commands/parse_error.hpp"
 #include "bagwiz/core/base/logging.hpp"
 
 #include <exception>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace
 {
 constexpr const char * kVersion = "0.1.0";
 constexpr const char * kMainLogger = "bagwiz.main";
+
+// CLI11's default failure message prints only the long form of a required
+// option ("--input is required"). Rewrite it so options with a short form
+// are reported as "-i/--input is required", then append the standard help
+// hint. This mirrors CLI11's FailureMessage::simple but applies
+// rewrite_parse_error to the diagnostic.
+std::string failure_message(const CLI::App * app, const CLI::Error & e)
+{
+  std::string header = bagwiz::commands::rewrite_parse_error(*app, e) + "\n";
+
+  std::vector<std::string> names;
+  if (app->get_help_ptr() != nullptr) {
+    names.push_back(app->get_help_ptr()->get_name());
+  }
+  if (app->get_help_all_ptr() != nullptr) {
+    names.push_back(app->get_help_all_ptr()->get_name());
+  }
+
+  if (!names.empty()) {
+    header += "Run with " + CLI::detail::join(names, " or ") + " for more information.\n";
+  }
+
+  return header;
+}
 }  // namespace
 
 int main(int argc, char ** argv) noexcept
@@ -45,6 +71,10 @@ int main(int argc, char ** argv) noexcept
     // subcommands: CLI11 hands the formatter down to each subcommand at
     // construction.
     app.formatter(std::make_shared<bagwiz::commands::HelpFormatter>());
+    // Rewrite parse errors so required options report both short and long
+    // forms (e.g. "-i/--input is required"). Subcommands inherit this callback
+    // from the top-level App.
+    app.failure_message(failure_message);
 
     const auto & registry = bagwiz::commands::Registry::instance();
     // Selected is set by the top-level subcommand callback; nested subcommands

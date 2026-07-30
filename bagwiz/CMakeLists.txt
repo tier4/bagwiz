@@ -149,6 +149,7 @@ add_executable(bagwiz
   src/main.cpp
   src/commands/registry.cpp
   src/commands/help_formatter.cpp
+  src/commands/parse_error.cpp
   src/commands/cam_info.cpp
   src/commands/cam_info_common.cpp
   src/commands/cam_info_dump.cpp
@@ -307,6 +308,12 @@ if(BUILD_TESTING)
     src/commands/help_formatter.cpp)
   target_include_directories(bagwiz_help_formatter_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(bagwiz_help_formatter_test ${bagwiz_test_libs} CLI11::CLI11)
+
+  ament_add_gtest(bagwiz_parse_error_test
+    test/commands/parse_error_test.cpp
+    src/commands/parse_error.cpp)
+  target_include_directories(bagwiz_parse_error_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(bagwiz_parse_error_test ${bagwiz_test_libs} CLI11::CLI11)
 
   ament_add_gtest(bagwiz_tf_static_cp_test
     test/commands/tf_static_cp_test.cpp
