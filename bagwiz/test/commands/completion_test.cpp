@@ -1078,11 +1078,11 @@ TEST(FlagCompletionTest, MapSubcommandPrefixNarrowsToViewer)
   EXPECT_EQ(run_completion({"bagwiz", "__complete", "2", "bagwiz", "map", "v"}), "viewer\n");
 }
 
-// `map viewer <TAB>`: the <map> positional is a path, left to shell file
+// `map viewer -i <TAB>`: the <map> value is a path, left to shell file
 // completion, so no candidates are emitted.
-TEST(FlagCompletionTest, MapViewerMapSlotDefersToShell)
+TEST(FlagCompletionTest, MapViewerInputSlotDefersToShell)
 {
-  EXPECT_EQ(run_completion({"bagwiz", "__complete", "4", "bagwiz", "map", "viewer", "-m", ""}), "");
+  EXPECT_EQ(run_completion({"bagwiz", "__complete", "4", "bagwiz", "map", "viewer", "-i", ""}), "");
 }
 
 // `map viewer -` surfaces only the implicit help flags (viewer has no other
@@ -1091,7 +1091,7 @@ TEST(FlagCompletionTest, MapViewerDashListsHelpFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "map", "viewer", "-"}),
-    "--help\n--map\n-h\n-m\n");
+    "--help\n--input\n-h\n-i\n");
 }
 
 // `map slam -` surfaces the slam action's flags plus the implicit help flags,
@@ -1465,8 +1465,8 @@ TEST_F(CompletionTest, TopicKeepBareSlotAfterInputOffersNoTopics)
     "");
 }
 
-// `topic rename <bag> <TAB>` (the <src_topic> slot) lists every topic in the
-// bag — any existing topic can be the rename source.
+// `topic rename -i <bag> --src <TAB>` lists every topic in the bag — any
+// existing topic can be the rename source.
 TEST_F(CompletionTest, TopicRenameSrcSlotListsAllTopics)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
@@ -1475,13 +1475,12 @@ TEST_F(CompletionTest, TopicRenameSrcSlotListsAllTopics)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "6", "bagwiz", "topic", "rename", "-i", "~/fixture.mcap", "-s"}),
+      {"bagwiz", "__complete", "6", "bagwiz", "topic", "rename", "-i", "~/fixture.mcap", "--src"}),
     "/bar\n/foo\n");
 }
 
-// `topic rename <bag> <src> <TAB>` is the <dst_topic> slot — a brand-new name,
-// so nothing is suggested (the binding is non-variadic and fires only at the
-// <src_topic> slot).
+// `topic rename … --dst <TAB>` is a brand-new name, so nothing is suggested
+// (the binding is non-variadic and fires only at the `--src` slot).
 TEST_F(CompletionTest, TopicRenameDstSlotOffersNothing)
 {
   const HomeEnvGuard home_guard(tmp_dir_);
@@ -1490,8 +1489,8 @@ TEST_F(CompletionTest, TopicRenameDstSlotOffersNothing)
 
   EXPECT_EQ(
     run_completion(
-      {"bagwiz", "__complete", "8", "bagwiz", "topic", "rename", "-i", "~/fixture.mcap", "-s",
-       "/foo", "-d"}),
+      {"bagwiz", "__complete", "8", "bagwiz", "topic", "rename", "-i", "~/fixture.mcap", "--src",
+       "/foo", "--dst"}),
     "");
 }
 
@@ -1501,7 +1500,7 @@ TEST(FlagCompletionTest, TopicRenameDashListsRenameFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "3", "bagwiz", "topic", "rename", "-"}),
-    "--dst-topic\n--help\n--input\n--output\n--overwrite\n--src-topic\n-d\n-h\n-i\n-o\n-s\n-w\n");
+    "--dst\n--help\n--input\n--output\n--overwrite\n--src\n-h\n-i\n-o\n-w\n");
 }
 
 // `topic keep -` surfaces the action's flags (--output/-o, --overwrite,

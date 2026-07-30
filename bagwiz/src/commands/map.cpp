@@ -287,7 +287,7 @@ private:
       "viewer", "Open the browser map viewer for an existing map.pcd (no SLAM run)");
     sub
       ->add_option(
-        "-m,--map", viewer_args_.map_path,
+        "-i,--input", viewer_args_.input_path,
         "Path to a map.pcd file, or a directory containing map.pcd (e.g. a map slam "
         "output root). Served over a loopback HTTP server with the Three.js viewer; "
         "runs until interrupted (Ctrl-C).")

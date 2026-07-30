@@ -178,7 +178,7 @@ bool write_map_outputs(
   const char * logger)
 {
   // Open the map stream before committing the trajectory so an unwritable
-  // --map path fails before either file is touched (rather than leaving an
+  // map path fails before either file is touched (rather than leaving an
   // orphaned trajectory behind).
   std::ofstream map_out(map_path, std::ios::binary);
   if (!map_out) {

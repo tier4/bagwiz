@@ -374,19 +374,19 @@ repeatable way to revisit a map produced by an earlier `map slam`.
 ### Usage
 
 ```text
-bagwiz map viewer -m|--map <map>
+bagwiz map viewer -i|--input <map>
 ```
 
 ### Options
 
-| Flag                | Description                                                                                                    |
-| ------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `-m`, `--map <map>` | Path to a `map.pcd` file, or a directory containing `map.pcd` (e.g. a `map slam` `<output_root>`). Must exist. |
+| Flag                  | Description                                                                                                    |
+| --------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `-i`, `--input <map>` | Path to a `map.pcd` file, or a directory containing `map.pcd` (e.g. a `map slam` `<output_root>`). Must exist. |
 
 ### Behavior
 
 - **File or directory.** When `<map>` is a directory, bagwiz serves `map.pcd`
-  from inside it, so `map viewer -m out/` mirrors `map slam … -o out/`; a `.pcd`
+  from inside it, so `map viewer -i out/` mirrors `map slam … -o out/`; a `.pcd`
   file path is served directly.
 - **Same viewer as `--viewer`.** Serves the map over a loopback-only HTTP server
   and opens the host's default browser. The command **blocks until you interrupt
@@ -414,10 +414,10 @@ bagwiz map viewer -m|--map <map>
 
 ```bash
 # Open a `map slam` output directory (bagwiz finds out/map.pcd).
-bagwiz map viewer -m out/
+bagwiz map viewer -i out/
 
 # Or point at the map file directly.
-bagwiz map viewer -m out/map.pcd
+bagwiz map viewer -i out/map.pcd
 ```
 
 ### Exit status
@@ -431,14 +431,17 @@ bagwiz map viewer -m out/map.pcd
 
 ## Migration
 
-All operands on `map slam` and `map viewer` are now flags:
+All operands on `map slam` and `map viewer` are now flags. The `map viewer` map
+is named `-i` / `--input` (it was briefly `-m` / `--map`), matching every other
+bagwiz command's input flag:
 
 ```bash
 bagwiz map slam drive.mcap /sensing/lidar/concatenated/pointcloud out/  # before — now an error
 bagwiz map slam -i drive.mcap --pcd /sensing/lidar/concatenated/pointcloud -o out/ # after
 
 bagwiz map viewer out/      # before — now an error
-bagwiz map viewer -m out/   # after
+bagwiz map viewer -m out/   # before — now an error
+bagwiz map viewer -i out/   # after
 ```
 
 ## Special thanks

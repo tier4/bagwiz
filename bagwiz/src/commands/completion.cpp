@@ -100,8 +100,8 @@ constexpr std::array<std::string_view, 2> kInputFlags{{"-i", "--input"}};
 // Single topic operand behind -t/--topic.
 constexpr std::array<std::string_view, 2> kSingleTopicFlags{{"-t", "--topic"}};
 
-// Source topic for `topic rename`.
-constexpr std::array<std::string_view, 2> kSrcTopicFlags{{"-s", "--src-topic"}};
+// Source topic for `topic rename` (long-form only, like `tf static cp --src`).
+constexpr std::array<std::string_view, 1> kSrcTopicFlags{{"--src"}};
 
 // PointCloud2 topic(s) for `map slam --pcd`.
 constexpr std::array<std::string_view, 1> kPcdFlags{{"--pcd"}};
@@ -143,7 +143,7 @@ constexpr std::array<TopicArgBinding, 11> kTopicBindings{{
   // `topic drop|keep -i <bag> -t/--topics <selector>...`
   {"topic", "drop", kInputFlags, kTopicsFlags, {}, true},
   {"topic", "keep", kInputFlags, kTopicsFlags, {}, true},
-  // `topic rename -i <bag> -s/--src-topic <topic>` (dst is a new name)
+  // `topic rename -i <bag> --src <topic>` (dst is a new name)
   {"topic", "rename", kInputFlags, kSrcTopicFlags, {}, false},
   // `generate video -i <bag> -t <topic>`
   {"generate", "video", kInputFlags, kSingleTopicFlags, kImageTopicTypes, false},
@@ -865,15 +865,15 @@ std::vector<std::string> complete_tf(const CompletionRequest & request)
 // `rename`. At the action slot (word 1) the candidates are those verbs.
 // Topic-name completion for `drop`/`keep` is handled earlier by
 // try_topic_completion via kTopicBindings in flag mode (every -t/--topics value
-// slot); `rename` completes only its --src-topic value slot the same way.
+// slot); `rename` completes only its --src value slot the same way.
 // Here we surface each verb's own flags for any `-` word.
 //
 //   drop:   `topic`(0) `drop`(1)   -i|--input <bag> -t|--topics <selector>...
 //           [-o <out>] [-w|--overwrite]
 //   keep:   `topic`(0) `keep`(1)   -i|--input <bag> -t|--topics <selector>...
 //           [-o <out>] [-w|--overwrite]
-//   rename: `topic`(0) `rename`(1) -i|--input <bag> -s|--src-topic <topic>
-//           -d|--dst-topic <topic> [-o <out>] [-w|--overwrite]
+//   rename: `topic`(0) `rename`(1) -i|--input <bag> --src <topic>
+//           --dst <topic> [-o <out>] [-w|--overwrite]
 std::vector<std::string> complete_topic(const CompletionRequest & request)
 {
   const auto current = current_word(request);
@@ -893,9 +893,7 @@ std::vector<std::string> complete_topic(const CompletionRequest & request)
     }
     if (verb == "rename") {
       return matching(
-        with_help(
-          {"--dst-topic", "--input", "--output", "--overwrite", "--src-topic", "-d", "-i", "-o",
-           "-s", "-w"}),
+        with_help({"--dst", "--input", "--output", "--overwrite", "--src", "-i", "-o", "-w"}),
         current);
     }
   }
@@ -980,7 +978,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 //           [--no-color-propagate] [--fill-min-inliers <f>] [--submap-keyframes <N>]
 //           [--remove-outliers] [--outlier-r <m>] [--outlier-k <N>]
 //           [--remove-dynamic] [--dynamic-res <m>] [--dynamic-ds <m>] [--dynamic-dp <N>]
-//   viewer: `map`(0) `viewer`(1) -m|--map <map>
+//   viewer: `map`(0) `viewer`(1) -i|--input <map>
 //
 // At the action slot (word 1) the candidates are `slam` and `viewer` (or the
 // help flags for a `-` word). Past it, the `--pcd` slot for `map slam` is
@@ -989,7 +987,7 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 // values of `--imu` (Imu topics), `--color` / `--cam` (image topics), and `--cam-info`
 // (the `<image_topic>` half of each `<image>=<info>` pair, completed as
 // "<topic>="; the `<info_topic>` half offers nothing) from the bag. `viewer`
-// has no value-bearing flags and its `--map` value is a path.
+// has no value-bearing flags and its `--input` value is a path.
 
 std::vector<std::string> complete_map(const CompletionRequest & request)
 {
@@ -1005,7 +1003,7 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
   const auto & verb = request.words[kFirstCommandArgWord];
   if (verb == "viewer") {
     if (current.starts_with("-")) {
-      return matching(with_help({"--map", "-m"}), current);
+      return matching(with_help({"--input", "-i"}), current);
     }
     return {};
   }

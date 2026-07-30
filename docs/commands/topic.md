@@ -179,18 +179,18 @@ Unlike `drop` / `keep`, rename is a strict 1:1 operation: `<src_topic>` and
 ### Usage
 
 ```text
-bagwiz topic rename -i <input> -s|--src-topic <src_topic> -d|--dst-topic <dst_topic> [OPTIONS]
+bagwiz topic rename -i <input> --src <src_topic> --dst <dst_topic> [OPTIONS]
 ```
 
 ### Options
 
-| Flag                            | Description                                                                                           |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `-i`, `--input <input>`         | Input ROS 2 rosbag (directory or single-file). Must exist.                                            |
-| `-s`, `--src-topic <src_topic>` | Existing topic to rename. A literal name; must match a topic exactly.                                 |
-| `-d`, `--dst-topic <dst_topic>` | New name for the topic. A literal name; must not already exist.                                       |
-| `-o`, `--output <p>`            | Write the result to a new bag instead of rewriting `<input>` in place.                                |
-| `-w`, `--overwrite`             | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place. |
+| Flag                    | Description                                                                                           |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| `-i`, `--input <input>` | Input ROS 2 rosbag (directory or single-file). Must exist.                                            |
+| `--src <src_topic>`     | Existing topic to rename. A literal name; must match a topic exactly. Long-form only.                 |
+| `--dst <dst_topic>`     | New name for the topic. A literal name; must not already exist. Long-form only.                       |
+| `-o`, `--output <p>`    | Write the result to a new bag instead of rewriting `<input>` in place.                                |
+| `-w`, `--overwrite`     | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place. |
 
 ### Behavior
 
@@ -212,19 +212,21 @@ bagwiz topic rename -i <input> -s|--src-topic <src_topic> -d|--dst-topic <dst_to
 
 ```bash
 # Rename a topic, rewriting the bag in place.
-bagwiz topic rename -i drive.mcap -s /sensing/lidar -d /sensing/laser
+bagwiz topic rename -i drive.mcap --src /sensing/lidar --dst /sensing/laser
 
 # Rename to a new bag, leaving the input untouched.
-bagwiz topic rename -i drive.mcap -s /old/name -d /new/name -o drive_renamed.mcap
+bagwiz topic rename -i drive.mcap --src /old/name --dst /new/name -o drive_renamed.mcap
 
 # Rename a topic in a directory bag.
-bagwiz topic rename -i drive_dir/ -s /camera/image_raw -d /camera/front/image_raw
+bagwiz topic rename -i drive_dir/ --src /camera/image_raw --dst /camera/front/image_raw
 ```
 
 ## Migration
 
 All operands on `topic drop`, `topic keep`, and `topic rename` are now flags.
-The old positional forms fail loudly:
+The old positional forms fail loudly. `rename`'s two topic names are `--src` /
+`--dst` (long-form only, matching `tf static cp`); they were briefly
+`-s` / `--src-topic` and `-d` / `--dst-topic`:
 
 ```bash
 bagwiz topic drop drive.mcap /sensing/lidar              # before — now an error
@@ -233,8 +235,9 @@ bagwiz topic drop -i drive.mcap -t /sensing/lidar        # after
 bagwiz topic keep drive.mcap /sensing/lidar              # before — now an error
 bagwiz topic keep -i drive.mcap -t /sensing/lidar        # after
 
-bagwiz topic rename drive.mcap /old/name /new/name       # before — now an error
-bagwiz topic rename -i drive.mcap -s /old/name -d /new/name  # after
+bagwiz topic rename drive.mcap /old/name /new/name              # before — now an error
+bagwiz topic rename -i drive.mcap -s /old/name -d /new/name     # before — now an error
+bagwiz topic rename -i drive.mcap --src /old/name --dst /new/name  # after
 ```
 
 ## Exit status

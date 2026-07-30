@@ -148,7 +148,7 @@ source ~/.config/fish/completions/bagwiz.fish
     `--rm` and `--deep`; `topic drop -<TAB>` / `topic keep -<TAB>` surface
     `--output`/`-o`, `--overwrite`/`-w`, and `--topics`/`-t` (`topic rename
 -<TAB>` surfaces `--output`/`-o` and `--overwrite`/`-w` but not `--topics`/`-t`,
-    since its topics are now `-s`/`--src-topic` and `-d`/`--dst-topic`);
+    since its topics are now `--src` and `--dst`, long-form only);
     `tf tree -<TAB>` surfaces `--input`/`-i` and `--topics`/`-t` (the flag is optional there —
     omitting it merges every TF topic); `tf static calc -<TAB>` also surfaces
     `--json`, `--of`, `--ref`, and `tf static cp -<TAB>` surfaces `--src`, `--dst`
@@ -216,7 +216,7 @@ source ~/.config/fish/completions/bagwiz.fish
     `geometry_msgs/msg/PoseWithCovarianceStamped`, `nav_msgs/msg/Odometry`);
     topics of any other type are omitted
   - `bagwiz traj join -i <input> --traj <traj_file> -t <topic>`
-  - `bagwiz topic rename -i <input> -s <src_topic> -d <dst_topic>` — every topic in the bag
+  - `bagwiz topic rename -i <input> --src <src_topic> --dst <dst_topic>` — every topic in the bag
     at the `<src_topic>` slot only; `<dst_topic>` is a new name with nothing to suggest
   - `bagwiz generate video -i <input> -t <image_topic> -o <output>` — restricted to the image
     types `generate video` operates on (`sensor_msgs/msg/Image`,

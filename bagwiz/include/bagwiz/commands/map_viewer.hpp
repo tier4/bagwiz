@@ -21,11 +21,11 @@ struct MapViewerArgs
   // Path to an existing map.pcd file, or a directory containing map.pcd (e.g. a
   // `map slam` output root). run_map_viewer resolves the directory form to
   // <dir>/map.pcd.
-  std::filesystem::path map_path;
+  std::filesystem::path input_path;
 };
 
 // Open the same browser viewer as `map slam --viewer` for an ALREADY written
-// point-cloud map, without re-running SLAM: resolve args.map_path (a .pcd file
+// point-cloud map, without re-running SLAM: resolve args.input_path (a .pcd file
 // or a directory holding map.pcd), then serve it over a loopback HTTP server and
 // open the host's default browser, blocking until interrupted (Ctrl-C). This is
 // the cheap, repeatable way to revisit a map produced by an earlier `map slam`.

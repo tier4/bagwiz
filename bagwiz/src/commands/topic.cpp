@@ -126,13 +126,9 @@ private:
     sub->add_option("-i,--input", rename_args_.input_path, "Input ROS 2 rosbag (file or directory)")
       ->required()
       ->check(CLI::ExistingPath);
-    sub
-      ->add_option(
-        "-s,--src-topic", rename_args_.src_topic, "Existing topic to rename (literal name).")
+    sub->add_option("--src", rename_args_.src_topic, "Existing topic to rename (literal name).")
       ->required();
-    sub
-      ->add_option(
-        "-d,--dst-topic", rename_args_.dst_topic, "New name for the topic (literal name).")
+    sub->add_option("--dst", rename_args_.dst_topic, "New name for the topic (literal name).")
       ->required();
     sub->add_option(
       "-o,--output", rename_args_.output_path,
