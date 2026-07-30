@@ -1,6 +1,10 @@
 {
-  "ignorePaths": [".cppcheck_suppressions"],
-  "ignoreRegExpList": ["[A-Za-z0-9+/=]{64,}"],
+  "ignorePaths": [
+    ".cppcheck_suppressions"
+  ],
+  "ignoreRegExpList": [
+    "[A-Za-z0-9+/=]{64,}"
+  ],
   "words": [
     "Amanatides",
     "antialias",
@@ -24,6 +28,7 @@
     "BWASSET",
     "BWCOMP",
     "cccl",
+    "cheirality",
     "cksum",
     "codecpar",
     "CODEMAPS",
@@ -187,6 +192,7 @@
     "shquote",
     "sigint",
     "sixel",
+    "slerps",
     "sobel",
     "sourceable",
     "splitmix",
@@ -202,17 +208,21 @@
     "Teschner",
     "tfstatic",
     "timev",
+    "triangulable",
     "Umeyama",
     "unbuildable",
     "unculled",
     "underivable",
     "underlay",
+    "undistorts",
     "unestimated",
     "unflushed",
+    "ungated",
     "unnormalised",
     "unopenable",
     "unparseable",
     "unsuffixed",
+    "untriangulable",
     "venvs",
     "vfov",
     "VGICP",
