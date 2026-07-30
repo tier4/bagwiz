@@ -21,6 +21,7 @@
 #include "bagwiz/core/slam/scan_match_fill.hpp"
 #include "bagwiz/core/slam/warmup_fill.hpp"
 #include "bagwiz/core/tf/trajectory.hpp"
+#include "visual_factors.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -2141,10 +2142,12 @@ CloudMap CloudMapper::finish()
   // Visual rig-projection factors are wired in Task 8; for now only the
   // distinct-track count is reported. drain_pipeline_and_rethrow() above has
   // already joined every producer thread, so visual_observations has no
-  // concurrent writer here and reading it needs no lock.
-  std::unordered_set<std::uint64_t> visual_track_ids;
+  // concurrent writer here and reading it needs no lock. Counted by
+  // (camera_id, track_id) — the same key build_visual_factors groups on, since
+  // track ids restart at 0 for every camera.
+  std::unordered_set<visual::TrackKey, visual::TrackKeyHash> visual_track_ids;
   for (const auto & obs : impl_->visual_observations) {
-    visual_track_ids.insert(obs.track_id);
+    visual_track_ids.insert(visual::track_key(obs));
   }
   result.visual_track_count = static_cast<std::int64_t>(visual_track_ids.size());
 

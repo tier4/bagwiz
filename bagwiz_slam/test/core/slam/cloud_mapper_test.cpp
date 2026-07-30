@@ -740,4 +740,31 @@ TEST(CloudMapper, VisualObservationCountIsReported)
   ASSERT_FALSE(map.points.empty());
 }
 
+// Track ids are unique only within a camera: each VisualFrontend numbers its own
+// tracks from 0. Two cameras reusing the same ids are 6 distinct tracks, not 3,
+// so the count must key on (camera_id, track_id).
+TEST(CloudMapper, VisualTrackCountSeparatesCamerasReusingTrackIds)
+{
+  slam::CloudMapperConfig config;
+  config.visual_cameras.push_back(slam::SensorTransform{});
+  config.visual_cameras.push_back(slam::SensorTransform{});
+  slam::CloudMapper mapper(config);
+
+  constexpr std::int64_t kDtNs = 100'000'000;  // 10 Hz
+  std::int64_t stamp = 1'000'000'000'000'000'000LL;
+  for (int i = 0; i < 120; ++i) {
+    mapper.insert(make_room_scan(stamp));
+    const auto track_id = static_cast<std::uint64_t>(i % 3);  // 3 ids, reused by both cameras
+    mapper.insert_visual_observations(
+      std::array{
+        make_visual_observation(stamp, 0, track_id, 0.01, 0.02),
+        make_visual_observation(stamp, 1, track_id, 0.03, 0.04)});
+    stamp += kDtNs;
+  }
+
+  const slam::CloudMap map = mapper.finish();
+  EXPECT_EQ(map.visual_track_count, 6);
+  ASSERT_FALSE(map.points.empty());
+}
+
 }  // namespace

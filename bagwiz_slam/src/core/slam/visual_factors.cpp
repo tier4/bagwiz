@@ -171,13 +171,15 @@ struct TrackObs
   gtsam::Point2 measurement;
 };
 
-using TrackGroups = std::unordered_map<std::uint64_t, std::vector<const VisualObservation *>>;
+// Keyed by (camera_id, track_id), never by track_id alone: see TrackKey.
+using TrackGroups =
+  std::unordered_map<TrackKey, std::vector<const VisualObservation *>, TrackKeyHash>;
 
 TrackGroups group_by_track(std::span<const VisualObservation> observations)
 {
   TrackGroups groups;
   for (const VisualObservation & obs : observations) {
-    groups[obs.track_id].push_back(&obs);
+    groups[track_key(obs)].push_back(&obs);
   }
   for (auto & entry : groups) {
     std::sort(
@@ -270,10 +272,20 @@ gtsam::TriangulationResult triangulate_world(
   return gtsam::triangulateSafe(world_cams, measurements, params);
 }
 
+// Whether the gate has host geometry to judge this submap with at all. A
+// gtsam_points cloud can be GPU-resident — num_points > 0 while the host
+// `points` array is null — and an empty cloud supports nothing anywhere, so
+// both must read as "no cloud" and make the gate abstain. Treating either as a
+// usable cloud would reject every track in that submap (or dereference null).
+bool has_host_points(const SubmapView & view)
+{
+  return view.cloud != nullptr && view.cloud->size() > 0 && view.cloud->points != nullptr;
+}
+
 bool all_clouds_present(const std::vector<TrackObs> & track, std::span<const SubmapView> views)
 {
   return std::all_of(track.begin(), track.end(), [views](const TrackObs & obs) {
-    return views[obs.view].cloud != nullptr;
+    return has_host_points(views[obs.view]);
   });
 }
 
@@ -281,8 +293,8 @@ bool all_clouds_present(const std::vector<TrackObs> & track, std::span<const Sub
 // it: purely visual points floating in free space (sky, reflections, distant
 // background) would tie the submaps together through geometry the LiDAR map
 // never saw. Requires all_clouds_present(track, views) - the gate abstains
-// rather than judges when a submap cloud is missing, so the caller checks that
-// first and this dereferences view.cloud unconditionally.
+// rather than judges when a submap has no host points, so the caller checks
+// that first and this dereferences view.cloud unconditionally.
 bool lidar_supported(
   const std::vector<TrackObs> & track, std::span<const SubmapView> views,
   const gtsam::Point3 & p_world, double voxel, std::unordered_map<std::size_t, VoxelSet> & cache)
@@ -334,13 +346,19 @@ Stats build_visual_factors(
     kRankTolerance, /*enableEPI=*/false, kLandmarkDistanceThreshold,
     kOutlierSigmas * params.obs_sigma);
 
-  // What the factor re-triangulates with at every linearization point. Same
-  // conditioning and range guards, but no reprojection gate: the seed
-  // triangulation below already rejected inconsistent tracks, and re-applying a
-  // 3-sigma threshold as the optimizer moves a submap would zero out sound
-  // factors exactly when they are pulling hardest. HESSIAN and
-  // ZERO_ON_DEGENERACY are not choices - the rig factor's constructor throws on
-  // anything else.
+  // What the factor re-triangulates with at every linearization point. HESSIAN
+  // and ZERO_ON_DEGENERACY are not choices - the rig factor's constructor throws
+  // on anything else. setRankTolerance is the load-bearing line: GTSAM's default
+  // of 1.0 is sized for pixel measurements and rejects our normalized ones as
+  // rank-deficient, so without it every factor linearizes to zero.
+  //
+  // Do NOT add setDynamicOutlierRejectionThreshold here. GTSAM's default leaves
+  // it off, and it must stay off: re-checking reprojection error at a moved
+  // linearization point zeroes exactly the factors that are pulling hardest.
+  // Measured - with a 3-sigma gate here, a 0.36 m submap perturbation does not
+  // shrink at all (every factor zeroes, so the optimizer has nothing to work
+  // with). Outlier rejection belongs to the one-shot seed triangulation below,
+  // at poses the tracks were built against.
   gtsam::SmartProjectionParams factor_params(gtsam::HESSIAN, gtsam::ZERO_ON_DEGENERACY);
   factor_params.setRankTolerance(kRankTolerance);
   factor_params.setLandmarkDistanceThreshold(kLandmarkDistanceThreshold);
@@ -351,18 +369,18 @@ Stats build_visual_factors(
   stats.tracks_total = groups.size();
 
   // The emitted factor order is part of the graph handed to global mapping, so
-  // walk the tracks in id order instead of the hash map's.
-  std::vector<std::uint64_t> track_ids;
-  track_ids.reserve(groups.size());
+  // walk the tracks in key order instead of the hash map's.
+  std::vector<TrackKey> keys;
+  keys.reserve(groups.size());
   for (const auto & entry : groups) {
-    track_ids.push_back(entry.first);
+    keys.push_back(entry.first);
   }
-  std::sort(track_ids.begin(), track_ids.end());
+  std::sort(keys.begin(), keys.end());
 
   std::unordered_map<std::size_t, VoxelSet> voxel_cache;  // per call, per submap
-  for (const std::uint64_t track_id : track_ids) {
+  for (const TrackKey & key : keys) {
     const std::vector<TrackObs> track =
-      associate(subsample(groups.at(track_id), params.max_obs_per_track), t_lidar_cams, submaps);
+      associate(subsample(groups.at(key), params.max_obs_per_track), t_lidar_cams, submaps);
     if (distinct_views(track) < 2) {
       ++stats.tracks_single_submap;  // constrains nothing: one key only
       continue;

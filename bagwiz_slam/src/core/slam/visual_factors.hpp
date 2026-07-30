@@ -6,8 +6,8 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#ifndef SLAM__VISUAL_FACTORS_HPP_
-#define SLAM__VISUAL_FACTORS_HPP_
+#ifndef CORE__SLAM__VISUAL_FACTORS_HPP_
+#define CORE__SLAM__VISUAL_FACTORS_HPP_
 
 #include "bagwiz/core/slam/visual_observation.hpp"
 
@@ -18,8 +18,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 // Src-local: builds gtsam smart-projection factors from VisualObservation
@@ -46,9 +48,33 @@ struct SubmapView
 struct Params
 {
   double obs_sigma = 1.0e-3;
-  int max_obs_per_track = 16;
+  int max_obs_per_track = 16;  // <= 0 keeps every observation (no cap)
   double gate_distance = 1.0;  // <= 0 disables the LiDAR gate
 };
+
+// What identifies one tracked feature. VisualObservation::track_id is unique
+// only WITHIN a camera — every VisualFrontend instance numbers its own tracks
+// from 0 — so anything grouping observations into tracks must key on the pair.
+// Keying on track_id alone silently fuses unrelated features from different
+// cameras into one track, which then triangulates to garbage.
+using TrackKey = std::pair<std::int32_t, std::uint64_t>;  // (camera_id, track_id)
+
+struct TrackKeyHash
+{
+  std::size_t operator()(const TrackKey & key) const noexcept
+  {
+    // Mix rather than xor: camera ids are tiny and track ids dense, so xor
+    // would pile every camera's track n into one bucket.
+    const std::size_t track = std::hash<std::uint64_t>{}(key.second);
+    const std::size_t camera = std::hash<std::int32_t>{}(key.first);
+    return track ^ (camera + 0x9e3779b97f4a7c15ULL + (track << 6) + (track >> 2));
+  }
+};
+
+[[nodiscard]] inline TrackKey track_key(const VisualObservation & obs)
+{
+  return {obs.camera_id, obs.track_id};
+}
 
 struct Stats
 {
@@ -79,4 +105,4 @@ struct Stats
 
 }  // namespace bagwiz::core::slam::visual
 
-#endif  // SLAM__VISUAL_FACTORS_HPP_
+#endif  // CORE__SLAM__VISUAL_FACTORS_HPP_

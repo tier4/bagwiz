@@ -145,6 +145,36 @@ gtsam_points::PointCloudCPU::Ptr make_cloud(
   return std::make_shared<gtsam_points::PointCloudCPU>(local);
 }
 
+// Project one camera's landmarks through every frame of both submaps. Track ids
+// restart at 0 for each camera, exactly as separate VisualFrontend instances
+// number them. `scene.t_lidar_cams[camera_id]` must already exist.
+void emit_observations(
+  Scene & scene, std::int32_t camera_id, const std::vector<Eigen::Vector3d> & landmarks_a,
+  const std::vector<Eigen::Vector3d> & landmarks_b)
+{
+  const std::vector<const std::vector<Eigen::Vector3d> *> landmarks = {&landmarks_a, &landmarks_b};
+  for (std::size_t vi = 0; vi < scene.views.size(); ++vi) {
+    const visual::SubmapView & view = scene.views[vi];
+    for (std::size_t fi = 0; fi < view.frame_stamps.size(); ++fi) {
+      const Eigen::Isometry3d T_world_cam = view.T_world_origin * view.T_origin_frames[fi] *
+                                            scene.t_lidar_cams[static_cast<std::size_t>(camera_id)];
+      for (std::size_t k = 0; k < landmarks[vi]->size(); ++k) {
+        const auto measurement = project(T_world_cam, (*landmarks[vi])[k]);
+        if (!measurement.has_value()) {
+          continue;
+        }
+        slam::VisualObservation obs;
+        obs.camera_id = camera_id;
+        obs.track_id = k;
+        obs.stamp_ns = static_cast<std::int64_t>(std::llround(view.frame_stamps[fi] * 1e9));
+        obs.x = measurement->x();
+        obs.y = measurement->y();
+        scene.observations.push_back(obs);
+      }
+    }
+  }
+}
+
 // `landmarks_a` / `landmarks_b` are the same landmark ids seen from submap A and
 // from submap B; passing different positions for one id makes that track behave
 // like a moving object.
@@ -173,27 +203,7 @@ Scene make_scene(
   }
   scene.views = {view_a, view_b};
 
-  const std::vector<const std::vector<Eigen::Vector3d> *> landmarks = {&landmarks_a, &landmarks_b};
-  for (std::size_t vi = 0; vi < scene.views.size(); ++vi) {
-    const visual::SubmapView & view = scene.views[vi];
-    for (std::size_t fi = 0; fi < view.frame_stamps.size(); ++fi) {
-      const Eigen::Isometry3d T_world_cam =
-        view.T_world_origin * view.T_origin_frames[fi] * scene.t_lidar_cams.front();
-      for (std::size_t k = 0; k < landmarks[vi]->size(); ++k) {
-        const auto measurement = project(T_world_cam, (*landmarks[vi])[k]);
-        if (!measurement.has_value()) {
-          continue;
-        }
-        slam::VisualObservation obs;
-        obs.camera_id = 0;
-        obs.track_id = k;
-        obs.stamp_ns = static_cast<std::int64_t>(std::llround(view.frame_stamps[fi] * 1e9));
-        obs.x = measurement->x();
-        obs.y = measurement->y();
-        scene.observations.push_back(obs);
-      }
-    }
-  }
+  emit_observations(scene, 0, landmarks_a, landmarks_b);
 
   if (with_clouds) {
     const auto wall = wall_cloud_points();
@@ -203,6 +213,18 @@ Scene make_scene(
     }
   }
   return scene;
+}
+
+// Bolt a second camera onto a scene: its own extrinsic, its own physical
+// landmarks, and track ids restarting at 0 - which is what makes it collide
+// with camera 0's ids.
+void add_camera(
+  Scene & scene, const Eigen::Isometry3d & t_lidar_cam,
+  const std::vector<Eigen::Vector3d> & landmarks)
+{
+  scene.t_lidar_cams.push_back(t_lidar_cam);
+  emit_observations(
+    scene, static_cast<std::int32_t>(scene.t_lidar_cams.size() - 1), landmarks, landmarks);
 }
 
 visual::Stats build(
@@ -384,6 +406,84 @@ TEST(VisualFactorsTest, LidarGateDropsUnsupportedLandmark)
   EXPECT_EQ(ungated.factors, 20u);
   EXPECT_EQ(ungated_factors.size(), 20u);
   EXPECT_EQ(ungated.tracks_gated, 0u);
+}
+
+// track_id is unique only per camera, so two cameras both numbering their tracks
+// from 0 must stay separate. Grouping on track_id alone fuses each pair into one
+// 12-observation "track" spanning two physical points 0.7 m apart, which then
+// triangulates as an outlier - so the bug shows up as 20 tracks, 0 factors.
+TEST(VisualFactorsTest, TwoCamerasWithSameTrackIdsDoNotFuse)
+{
+  Scene scene = make_scene(wall_landmarks(), wall_landmarks(), true);
+
+  // Same forward-looking optical frame, mounted 0.3 m to the right, watching a
+  // different set of 20 wall points.
+  Eigen::Isometry3d second_mount = optical_extrinsic();
+  second_mount.translation() = Eigen::Vector3d(0.0, -0.3, 0.0);
+  auto second_landmarks = wall_landmarks();
+  for (Eigen::Vector3d & landmark : second_landmarks) {
+    landmark.z() += 0.7;
+  }
+  add_camera(scene, second_mount, second_landmarks);
+
+  ASSERT_EQ(scene.t_lidar_cams.size(), 2u);
+  ASSERT_EQ(scene.observations.size(), 240u);  // 2 cameras x 20 landmarks x 6 frames
+
+  const visual::Params params;
+  std::vector<gtsam::NonlinearFactor::shared_ptr> factors;
+  const visual::Stats stats = build(scene, params, factors);
+
+  EXPECT_EQ(stats.tracks_total, 40u);
+  EXPECT_EQ(stats.factors, 40u);
+  EXPECT_EQ(factors.size(), 40u);
+  EXPECT_EQ(stats.tracks_triangulation_failed, 0u);
+  EXPECT_EQ(stats.tracks_single_submap, 0u);
+  EXPECT_EQ(stats.tracks_too_short, 0u);
+  EXPECT_EQ(stats.tracks_gated, 0u);
+}
+
+// An empty submap cloud supports nothing anywhere, so treating it as a usable
+// cloud would reject every track in that submap. The gate must abstain instead.
+TEST(VisualFactorsTest, GateAbstainsWhenSubmapCloudIsEmpty)
+{
+  Scene scene = make_scene(wall_landmarks(), wall_landmarks(), false);
+  for (visual::SubmapView & view : scene.views) {
+    scene.clouds.push_back(std::make_shared<gtsam_points::PointCloudCPU>());
+    view.cloud = scene.clouds.back().get();
+  }
+  ASSERT_EQ(scene.views.front().cloud->size(), 0u);
+
+  const visual::Params params;
+  ASSERT_GT(params.gate_distance, 0.0);
+  std::vector<gtsam::NonlinearFactor::shared_ptr> factors;
+  const visual::Stats stats = build(scene, params, factors);
+
+  EXPECT_EQ(stats.factors, 20u);
+  EXPECT_EQ(stats.tracks_gated, 0u);
+}
+
+// A GPU-resident cloud reports num_points > 0 while its host `points` array is
+// null. The gate has no host geometry to read, so it must abstain rather than
+// dereference the null pointer.
+TEST(VisualFactorsTest, GateAbstainsWhenCloudHasNoHostPoints)
+{
+  Scene scene = make_scene(wall_landmarks(), wall_landmarks(), false);
+  for (visual::SubmapView & view : scene.views) {
+    auto cloud = std::make_shared<gtsam_points::PointCloudCPU>();
+    cloud->num_points = 189;  // as if the points lived only on the GPU
+    scene.clouds.push_back(cloud);
+    view.cloud = scene.clouds.back().get();
+  }
+  ASSERT_GT(scene.views.front().cloud->size(), 0u);
+  ASSERT_EQ(scene.views.front().cloud->points, nullptr);
+
+  const visual::Params params;
+  ASSERT_GT(params.gate_distance, 0.0);
+  std::vector<gtsam::NonlinearFactor::shared_ptr> factors;
+  const visual::Stats stats = build(scene, params, factors);
+
+  EXPECT_EQ(stats.factors, 20u);
+  EXPECT_EQ(stats.tracks_gated, 0u);
 }
 
 TEST(VisualFactorsTest, FactorsImproveAPerturbedPose)
