@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <numbers>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -258,6 +259,22 @@ TEST(ColorizeKeyframePicker, EmptyTrajectoryBypassesTheGate)
   EXPECT_TRUE(picker.accept(kSecondNs));
   EXPECT_EQ(picker.kept(), 0U);
   EXPECT_EQ(picker.skipped(), 0U);
+}
+
+TEST(ColorizeKeyframePicker, WrongModeEntryPointThrows)
+{
+  const auto trajectory = make_line_trajectory(10);
+
+  // accept() is the blur-off entry point: a blur-configured picker rejects it
+  // (mixing the modes would drop frames silently, see the class comment).
+  slam::ColorizeKeyframePicker blur_picker({.min_dist = 2.0, .blur = true}, trajectory);
+  EXPECT_THROW((void)blur_picker.accept(0), std::logic_error);
+
+  // offer()/flush() are the blur entry points: a non-blur picker rejects them.
+  slam::ColorizeKeyframePicker gate_picker({.min_dist = 2.0}, trajectory);
+  EXPECT_THROW(
+    (void)gate_picker.offer(make_frame(0, make_flat_raster(32, 32, 0), 32, 32)), std::logic_error);
+  EXPECT_THROW((void)gate_picker.flush(), std::logic_error);
 }
 
 }  // namespace

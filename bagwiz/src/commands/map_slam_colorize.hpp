@@ -10,13 +10,17 @@
 #define COMMANDS__MAP_SLAM_COLORIZE_HPP_
 
 #include "bagwiz/core/image/camera_info.hpp"
+#include "bagwiz/core/slam/colorize_keyframe.hpp"
 #include "bagwiz/core/slam/map_colorizer.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
 #include "bagwiz/core/tf/trajectory.hpp"
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <span>
+#include <string_view>
 #include <vector>
 
 // Construction internals of the `map slam --cam` colorize pass, split out of
@@ -53,6 +57,31 @@ namespace bagwiz::commands
   std::span<const core::slam::SensorTransform> t_cloud_cams, double range_max, int threads,
   bool use_gpu, std::shared_ptr<const core::slam::ColorizeGeometry> geometry,
   std::span<const std::array<float, 3>> points, std::span<const core::TrajectoryPose> trajectory);
+
+// Decode one camera image message (`type` + `payload`, exactly what the bag
+// delivered) and hand the frame to `colorizer` — routed through
+// `blur_picker`'s best-of-bucket path when non-null (--cam-keyframe-blur; the
+// picker must be blur-configured), else straight to add_image. The frame is
+// stamped with the decoded header.stamp, falling back to `fallback_stamp_ns`
+// (the bag record time) when the publisher left it unset. `dynamic_points` is
+// the paired scan's occluder geometry (see ScanImagePairer); the blur path
+// copies it into the buffered frame, the direct path passes the span through.
+//
+// This is THE per-frame colorize step, shared verbatim by the serial path and
+// the per-camera worker threads so the two cannot diverge; it must be called
+// from one thread per (colorizer, picker) pair, in frame arrival order.
+// Returns false when the payload does not decode (the caller counts it);
+// exceptions from the picker or the colorizer propagate to the caller.
+[[nodiscard]] bool colorize_one_image(
+  core::slam::MapColorizer & colorizer, core::slam::ColorizeKeyframePicker * blur_picker,
+  std::string_view type, std::span<const std::byte> payload, std::int64_t fallback_stamp_ns,
+  std::span<const std::array<float, 3>> dynamic_points);
+
+// End of one camera's stream: dispatch `blur_picker`'s final gate bucket (its
+// buffered sharpest frame, if any) to `colorizer`. No-op when `blur_picker`
+// is null. Same threading rule as colorize_one_image.
+void colorize_flush_keyframes(
+  core::slam::MapColorizer & colorizer, core::slam::ColorizeKeyframePicker * blur_picker);
 
 }  // namespace bagwiz::commands
 

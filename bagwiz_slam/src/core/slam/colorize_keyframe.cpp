@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <stdexcept>
 #include <utility>
 
 namespace bagwiz::core::slam
@@ -119,6 +120,14 @@ bool ColorizeKeyframePicker::gate_open(const core::TrajectoryPose & pose) const
 
 bool ColorizeKeyframePicker::accept(std::int64_t stamp_ns)
 {
+  // Mode contract: mixing the entry points would drop frames silently — an
+  // accept() bucket never buffers a candidate, so a subsequent offer() inside
+  // that bucket discards its frame with nothing to dispatch later. Fail fast
+  // instead of relying on the caller's gating alone.
+  if (config_.blur) {
+    throw std::logic_error(
+      "ColorizeKeyframePicker::accept() called on a blur-configured picker; use offer()/flush()");
+  }
   if (config_.min_dist <= 0.0) {
     return true;
   }
@@ -137,6 +146,10 @@ bool ColorizeKeyframePicker::accept(std::int64_t stamp_ns)
 
 std::optional<ColorizeKeyframePicker::Frame> ColorizeKeyframePicker::offer(Frame frame)
 {
+  if (!config_.blur) {
+    throw std::logic_error(
+      "ColorizeKeyframePicker::offer() called on a non-blur picker; use accept()");
+  }
   if (config_.min_dist <= 0.0) {
     return frame;
   }
@@ -169,6 +182,10 @@ std::optional<ColorizeKeyframePicker::Frame> ColorizeKeyframePicker::offer(Frame
 
 std::optional<ColorizeKeyframePicker::Frame> ColorizeKeyframePicker::flush()
 {
+  if (!config_.blur) {
+    throw std::logic_error(
+      "ColorizeKeyframePicker::flush() called on a non-blur picker; use accept()");
+  }
   if (!candidate_) {
     return std::nullopt;
   }

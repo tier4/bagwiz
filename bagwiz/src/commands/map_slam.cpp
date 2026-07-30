@@ -1258,51 +1258,39 @@ private:
       for (std::size_t cam = 0; cam < cam_count; ++cam) {
         workers.emplace_back([&, cam]() {
           std::int64_t failures = 0;
-          const auto add_frame = [&](core::slam::ColorizeKeyframePicker::Frame && frame) {
-            colorizers[cam]->add_image(
-              frame.stamp_ns, frame.bgr, frame.width, frame.height, frame.dynamic_points);
+          // Surface the first colorize exception per topic at WARN — these
+          // used to vanish into the failure counter, mislabeling colorizer
+          // errors as decode failures — then only count the rest (a
+          // systematic error would otherwise spam one line per image).
+          const auto count_failure = [&](const std::exception & e) {
+            if (failures == 0) {
+              BAGWIZ_LOG_WARN(
+                kLogger,
+                "Colorizing an image on '%s' failed: %s (further failures on this topic are "
+                "only counted)",
+                args_.image_topics[cam].c_str(), e.what());
+            }
+            ++failures;
           };
+          core::slam::ColorizeKeyframePicker * blur_picker =
+            blur_gate ? pickers[cam].get() : nullptr;
           ColorizeWorkItem item;
           while (work_queues[cam]->pop(item)) {
             try {
-              auto decoded = core::image::to_packed_raster(item.type, item.payload);
-              if (!decoded.ok()) {
+              if (!colorize_one_image(
+                    *colorizers[cam], blur_picker, item.type, item.payload, item.stamp_ns,
+                    item.dynamic_points)) {
                 ++failures;
-                continue;
               }
-              auto & raster = *decoded.raster;
-              // Prefer the capture stamp; fall back to the queue stamp (the
-              // bag record time) when the publisher left header.stamp unset.
-              const std::int64_t stamp =
-                raster.header_stamp_ns != 0 ? raster.header_stamp_ns : item.stamp_ns;
-              if (blur_gate) {
-                // Route the decoded frame through the picker: it buffers the
-                // current gate bucket's sharpest frame and hands back the
-                // one to colorize, if any.
-                if (
-                  auto keyframe = pickers[cam]->offer(
-                    core::slam::ColorizeKeyframePicker::Frame{
-                      stamp, std::move(raster.bgr), raster.width, raster.height,
-                      std::move(item.dynamic_points)})) {
-                  add_frame(std::move(*keyframe));
-                }
-                continue;
-              }
-              colorizers[cam]->add_image(
-                stamp, raster.bgr, raster.width, raster.height, item.dynamic_points);
-            } catch (const std::exception &) {
-              ++failures;
+            } catch (const std::exception & e) {
+              count_failure(e);
             }
           }
           // End of stream closes the final gate bucket.
-          if (blur_gate) {
-            try {
-              if (auto keyframe = pickers[cam]->flush()) {
-                add_frame(std::move(*keyframe));
-              }
-            } catch (const std::exception &) {
-              ++failures;
-            }
+          try {
+            colorize_flush_keyframes(*colorizers[cam], blur_picker);
+          } catch (const std::exception & e) {
+            count_failure(e);
           }
           decode_failures[cam] = failures;
         });
@@ -1325,30 +1313,14 @@ private:
             std::vector<std::array<float, 3>>(dynamic.begin(), dynamic.end())});
         return;
       }
-      auto decoded = core::image::to_packed_raster(img.type, img.payload);
-      if (!decoded.ok()) {
+      // Serial path: the same per-frame step the workers run (see
+      // colorize_one_image), on the reader thread. Exceptions propagate to
+      // the reader loop's catch, which warns with the message and continues.
+      if (!colorize_one_image(
+            *colorizers[img.cam], blur_gate ? pickers[img.cam].get() : nullptr, img.type,
+            img.payload, img.stamp_ns, dynamic)) {
         ++decode_failures[img.cam];
-        return;
       }
-      auto & raster = *decoded.raster;
-      // Prefer the capture stamp; fall back to the queue stamp (the bag
-      // record time) when the publisher left header.stamp unset.
-      const std::int64_t stamp =
-        raster.header_stamp_ns != 0 ? raster.header_stamp_ns : img.stamp_ns;
-      if (blur_gate) {
-        // Serial counterpart of the worker's picker routing.
-        if (
-          auto keyframe = pickers[img.cam]->offer(
-            core::slam::ColorizeKeyframePicker::Frame{
-              stamp, std::move(raster.bgr), raster.width, raster.height,
-              std::vector<std::array<float, 3>>(dynamic.begin(), dynamic.end())})) {
-          colorizers[img.cam]->add_image(
-            keyframe->stamp_ns, keyframe->bgr, keyframe->width, keyframe->height,
-            keyframe->dynamic_points);
-        }
-        return;
-      }
-      colorizers[img.cam]->add_image(stamp, raster.bgr, raster.width, raster.height, dynamic);
     };
     // Feed every pending image whose nearest scan is known.
     auto drain_pairer = [&]() {
@@ -1421,12 +1393,11 @@ private:
     if (blur_gate && !parallel) {
       for (std::size_t cam = 0; cam < cam_count; ++cam) {
         try {
-          if (auto keyframe = pickers[cam]->flush()) {
-            colorizers[cam]->add_image(
-              keyframe->stamp_ns, keyframe->bgr, keyframe->width, keyframe->height,
-              keyframe->dynamic_points);
-          }
-        } catch (const std::exception &) {
+          colorize_flush_keyframes(*colorizers[cam], pickers[cam].get());
+        } catch (const std::exception & e) {
+          BAGWIZ_LOG_WARN(
+            kLogger, "Flushing the last keyframe on '%s' failed: %s",
+            args_.image_topics[cam].c_str(), e.what());
           ++decode_failures[cam];
         }
       }
@@ -1441,7 +1412,8 @@ private:
         BAGWIZ_LOG_INFO(
           kLogger,
           "Colorize: %zu of %zu map points observed via '%s' (%zu image(s) used, %zu thinned "
-          "by --cam-min-dist, %zu outside the trajectory span, %" PRId64 " failed to decode)",
+          "by --cam-min-dist, %zu outside the trajectory span, %" PRId64
+          " failed to decode or colorize)",
           result.colored_points, map.points.size(), args_.image_topics[cam].c_str(),
           result.images_used, pickers[cam]->skipped(), result.images_skipped, decode_failures[cam]);
         continue;
@@ -1449,7 +1421,7 @@ private:
       BAGWIZ_LOG_INFO(
         kLogger,
         "Colorize: %zu of %zu map points observed via '%s' (%zu image(s) used, %zu outside "
-        "the trajectory span, %" PRId64 " failed to decode)",
+        "the trajectory span, %" PRId64 " failed to decode or colorize)",
         result.colored_points, map.points.size(), args_.image_topics[cam].c_str(),
         result.images_used, result.images_skipped, decode_failures[cam]);
     }

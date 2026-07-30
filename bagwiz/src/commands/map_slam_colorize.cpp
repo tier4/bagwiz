@@ -8,6 +8,7 @@
 
 #include "map_slam_colorize.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
+#include "bagwiz/core/image/packed_raster.hpp"
 #include "bagwiz/core/slam/colorize_rasterizer.hpp"
 #include "map_slam_threads.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
@@ -15,7 +16,12 @@
 #include "bagwiz/core/slam/colorize_rasterizer_gpu.hpp"
 #endif
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <span>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -67,6 +73,51 @@ std::vector<std::unique_ptr<core::slam::MapColorizer>> build_camera_colorizers(
         config, geometry, points, trajectory, std::move(rasterizer)));
   }
   return colorizers;
+}
+
+bool colorize_one_image(
+  core::slam::MapColorizer & colorizer, core::slam::ColorizeKeyframePicker * blur_picker,
+  std::string_view type, std::span<const std::byte> payload, std::int64_t fallback_stamp_ns,
+  std::span<const std::array<float, 3>> dynamic_points)
+{
+  auto decoded = core::image::to_packed_raster(type, payload);
+  if (!decoded.ok()) {
+    return false;
+  }
+  auto & raster = *decoded.raster;
+  // Prefer the capture stamp; fall back to the bag record time when the
+  // publisher left header.stamp unset.
+  const std::int64_t stamp =
+    raster.header_stamp_ns != 0 ? raster.header_stamp_ns : fallback_stamp_ns;
+  if (blur_picker != nullptr) {
+    // Best-of-bucket routing: the picker buffers the current gate bucket's
+    // sharpest frame and hands back the one to colorize, if any.
+    if (
+      auto keyframe = blur_picker->offer(
+        core::slam::ColorizeKeyframePicker::Frame{
+          stamp, std::move(raster.bgr), raster.width, raster.height,
+          std::vector<std::array<float, 3>>(dynamic_points.begin(), dynamic_points.end())})) {
+      colorizer.add_image(
+        keyframe->stamp_ns, keyframe->bgr, keyframe->width, keyframe->height,
+        keyframe->dynamic_points);
+    }
+    return true;
+  }
+  colorizer.add_image(stamp, raster.bgr, raster.width, raster.height, dynamic_points);
+  return true;
+}
+
+void colorize_flush_keyframes(
+  core::slam::MapColorizer & colorizer, core::slam::ColorizeKeyframePicker * blur_picker)
+{
+  if (blur_picker == nullptr) {
+    return;
+  }
+  if (auto keyframe = blur_picker->flush()) {
+    colorizer.add_image(
+      keyframe->stamp_ns, keyframe->bgr, keyframe->width, keyframe->height,
+      keyframe->dynamic_points);
+  }
 }
 
 }  // namespace bagwiz::commands

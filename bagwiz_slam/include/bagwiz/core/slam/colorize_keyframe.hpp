@@ -67,8 +67,10 @@ struct ColorizeKeyframeConfig
 [[nodiscard]] double image_sharpness_score(
   std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height);
 
-// Per-camera keyframe picker. Exactly one of the two entry points is used
-// per instance, chosen by config.blur:
+// Per-camera keyframe picker. Exactly one of the two entry points is valid
+// per instance, chosen by config.blur — calling the other throws
+// std::logic_error (mixing them would silently drop frames: an accept()
+// bucket never buffers a candidate for a later offer() to dispatch):
 //
 //   * blur off — accept(stamp) BEFORE decoding: the gate needs only the
 //     interpolated pose, so a skipped frame never costs a decode.
