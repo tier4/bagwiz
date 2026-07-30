@@ -139,7 +139,7 @@ TEST(SurfelSplatFootprint, TiltedOffAxisFootprintIsRotatedNotAxisAligned)
   EXPECT_GT(std::abs(f.c_uv), 1e-6);    // but genuinely rotated
 
   // The minor axis matches |cos| = 0.8 of the fronto-parallel radius and the
-  // major axis is unforeshortened, whatever the ellipse's orientation.
+  // major axis keeps that radius in full, whatever the ellipse's orientation.
   const double full = kFx * 0.05 / 5.0;
   const auto axes = semi_axes(f);
   EXPECT_NEAR(axes[0], full * 0.8, 1e-9);
