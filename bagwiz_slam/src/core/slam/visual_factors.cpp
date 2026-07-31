@@ -13,6 +13,7 @@
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/geometry/triangulation.h>
 #include <gtsam/inference/Symbol.h>
+#include <gtsam/slam/SmartFactorParams.h>
 #include <gtsam/slam/SmartProjectionRigFactor.h>
 
 #include <algorithm>
@@ -78,11 +79,6 @@ std::optional<std::size_t> submap_for_stamp(std::span<const SubmapView> views, d
 namespace
 {
 
-// Dimension 6 is the rig factor's requirement: it linearizes assuming the only
-// camera unknown is a Pose3, so PinholeCamera (6 + calibration dims) will not
-// even compile against it.
-using RigCamera = gtsam::PinholePose<gtsam::Cal3_S2>;
-using RigFactor = gtsam::SmartProjectionRigFactor<RigCamera>;
 using VoxelSet = std::unordered_set<std::uint64_t>;
 using VoxelIndex = Eigen::Matrix<std::int64_t, 3, 1>;
 
@@ -108,11 +104,6 @@ constexpr double kOutlierSigmas = 3.0;
 // rank-deficient, so use triangulateDLT's own default and let the distance,
 // cheirality and reprojection checks judge quality instead.
 constexpr double kRankTolerance = 1.0e-9;
-
-gtsam::Cal3_S2::shared_ptr normalized_calibration()
-{
-  return std::make_shared<gtsam::Cal3_S2>(1.0, 1.0, 0.0, 0.0, 0.0);
-}
 
 VoxelIndex voxel_index(const Eigen::Vector3d & p, double voxel)
 {
@@ -236,10 +227,9 @@ std::vector<TrackObs> associate(
     if (!T_origin_lidar.has_value()) {
       continue;  // submap_for_stamp already bounds the stamp; defensive only
     }
-    track.push_back(
-      TrackObs{
-        *view, *T_origin_lidar * t_lidar_cams[static_cast<std::size_t>(obs->camera_id)],
-        gtsam::Point2(obs->x, obs->y)});
+    track.push_back(TrackObs{
+      *view, *T_origin_lidar * t_lidar_cams[static_cast<std::size_t>(obs->camera_id)],
+      gtsam::Point2(obs->x, obs->y)});
   }
   return track;
 }
@@ -336,6 +326,26 @@ RigFactor::shared_ptr make_factor(
 
 }  // namespace
 
+gtsam::Cal3_S2::shared_ptr normalized_calibration()
+{
+  return std::make_shared<gtsam::Cal3_S2>(1.0, 1.0, 0.0, 0.0, 0.0);
+}
+
+gtsam::SmartProjectionParams make_smart_projection_params()
+{
+  // HESSIAN + ZERO_ON_DEGENERACY are not choices — the rig factor's
+  // constructor throws on anything else. setRankTolerance(1e-9) is the
+  // load-bearing line: GTSAM's default of 1.0 is sized for pixel measurements
+  // and flags every normalized-coordinate factor as degenerate, zeroing it.
+  // Do NOT add setDynamicOutlierRejectionThreshold: a 3-sigma gate there
+  // zeroes exactly the factors pulling hardest, measured to leave a 0.36 m
+  // submap perturbation completely uncorrected.
+  gtsam::SmartProjectionParams params(gtsam::HESSIAN, gtsam::ZERO_ON_DEGENERACY);
+  params.setRankTolerance(kRankTolerance);
+  params.setLandmarkDistanceThreshold(kLandmarkDistanceThreshold);
+  return params;
+}
+
 Stats build_visual_factors(
   std::span<const VisualObservation> observations, std::span<const Eigen::Isometry3d> t_lidar_cams,
   std::span<const SubmapView> submaps, const Params & params,
@@ -346,22 +356,7 @@ Stats build_visual_factors(
     kRankTolerance, /*enableEPI=*/false, kLandmarkDistanceThreshold,
     kOutlierSigmas * params.obs_sigma);
 
-  // What the factor re-triangulates with at every linearization point. HESSIAN
-  // and ZERO_ON_DEGENERACY are not choices - the rig factor's constructor throws
-  // on anything else. setRankTolerance is the load-bearing line: GTSAM's default
-  // of 1.0 is sized for pixel measurements and rejects our normalized ones as
-  // rank-deficient, so without it every factor linearizes to zero.
-  //
-  // Do NOT add setDynamicOutlierRejectionThreshold here. GTSAM's default leaves
-  // it off, and it must stay off: re-checking reprojection error at a moved
-  // linearization point zeroes exactly the factors that are pulling hardest.
-  // Measured - with a 3-sigma gate here, a 0.36 m submap perturbation does not
-  // shrink at all (every factor zeroes, so the optimizer has nothing to work
-  // with). Outlier rejection belongs to the one-shot seed triangulation below,
-  // at poses the tracks were built against.
-  gtsam::SmartProjectionParams factor_params(gtsam::HESSIAN, gtsam::ZERO_ON_DEGENERACY);
-  factor_params.setRankTolerance(kRankTolerance);
-  factor_params.setLandmarkDistanceThreshold(kLandmarkDistanceThreshold);
+  const auto factor_params = make_smart_projection_params();
   const auto noise = gtsam::noiseModel::Isotropic::Sigma(2, params.obs_sigma);
 
   const TrackGroups groups = group_by_track(observations);

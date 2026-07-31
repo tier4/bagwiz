@@ -14,7 +14,11 @@
 #include <Eigen/Geometry>
 #include <gtsam_points/types/point_cloud.hpp>
 
+#include <gtsam/geometry/Cal3_S2.h>
+#include <gtsam/geometry/PinholePose.h>
 #include <gtsam/nonlinear/NonlinearFactor.h>
+#include <gtsam/slam/SmartFactorParams.h>
+#include <gtsam/slam/SmartProjectionRigFactor.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -30,6 +34,24 @@
 // links this TU.
 namespace bagwiz::core::slam::visual
 {
+
+// The smart-factor recipe shared by the global co-visibility factors and the
+// odometry-window factors (visual_odometry_window.cpp). PinholePose is
+// mandatory: SmartProjectionRigFactor static-asserts the camera's pose-only
+// dimension; PinholeCamera does not compile against it.
+using RigCamera = gtsam::PinholePose<gtsam::Cal3_S2>;
+using RigFactor = gtsam::SmartProjectionRigFactor<RigCamera>;
+
+// Identity pinhole: observations are undistorted normalized coordinates, so
+// the calibration is (fx, fy, s, cx, cy) = (1, 1, 0, 0, 0) and every
+// image-plane quantity below (sigma, rank tolerance, reprojection error) is
+// in normalized units.
+[[nodiscard]] gtsam::Cal3_S2::shared_ptr normalized_calibration();
+
+// The frozen SmartProjectionParams recipe (HESSIAN + ZERO_ON_DEGENERACY,
+// normalized-units rank tolerance). See the definition for why each value
+// is load-bearing and what must never be added.
+[[nodiscard]] gtsam::SmartProjectionParams make_smart_projection_params();
 
 // A snapshot of one GLIM submap as visual factor construction needs it: its
 // current world pose (the triangulation seed), the merged submap cloud for
