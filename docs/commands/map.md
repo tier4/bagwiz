@@ -8,37 +8,37 @@ actions:
 | [`slam`](#bagwiz-map-slam)     | Estimate a trajectory (and optimized map) from a PointCloud2 topic.  |
 | [`viewer`](#bagwiz-map-viewer) | Open the browser map viewer for an existing `map.pcd` (no SLAM run). |
 
-> **Build.** The `map` command group links the GLIM stack (compiled with
-> `-DBAGWIZ_WITH_SLAM=ON`) and belongs to the **full** build (`build-full`), which
-> is the default on **humble**/**jazzy**:
->
-> ```bash
-> pixi run -e humble build-full   # or: jazzy
-> ```
->
-> The first `build-full` builds the GLIM dependency stack (GTSAM, gtsam_points,
-> GLIM) into `install/<distro>/glim-deps` — a slow one-time step (tens of minutes) —
-> then compiles bagwiz with SLAM enabled. Later builds reuse the cached deps and are
-> fast. The **core** build (`pixi run -e <distro> build-core`) omits the `map`
-> command group entirely and skips the GLIM stack, so it is much faster but does
-> not expose `bagwiz map slam`.
->
-> **GPU fast path.** For the optional CUDA backend (`--backend cuda`), build the
-> full CUDA build in a `*-cuda` environment — the CUDA toolkit is pixi-managed
-> (conda-forge), so no system CUDA install is needed, only an NVIDIA driver + GPU:
->
-> ```bash
-> pixi run -e humble-cuda build-full   # or: jazzy-cuda
-> ```
->
-> The `humble-cuda` environment is the distro plus the conda CUDA toolkit (12.8:
-> nvcc, cudart, cusolver). This builds a CUDA GLIM stack (sm_86) into
-> `install/humble-cuda/glim-deps-cuda` and compiles bagwiz with
-> `-DBAGWIZ_WITH_SLAM_CUDA=ON` into `install/humble-cuda`. CUDA comes entirely from
-> `$CONDA_PREFIX` (no `/usr/local/cuda`). Run it with
-> `pixi run -e humble-cuda run -- map slam …`, or put it on your PATH with
-> `pixi run -e humble-cuda install`. The CPU environments stay CUDA-free, and
-> the CPU build, prefix, and reproducibility guarantee are untouched.
+**Build.** The `map` command group links the GLIM stack (compiled with
+`-DBAGWIZ_WITH_SLAM=ON`) and belongs to the **full** build (`build-full`), which
+is the default on **humble**/**jazzy**:
+
+```bash
+pixi run -e humble build-full   # or: jazzy
+```
+
+The first `build-full` builds the GLIM dependency stack (GTSAM, gtsam_points,
+GLIM) into `install/<distro>/glim-deps` — a slow one-time step (tens of minutes) —
+then compiles bagwiz with SLAM enabled. Later builds reuse the cached deps and are
+fast. The **core** build (`pixi run -e <distro> build-core`) omits the `map`
+command group entirely and skips the GLIM stack, so it is much faster but does
+not expose `bagwiz map slam`.
+
+**GPU fast path.** For the optional CUDA backend (`--backend cuda`), build the
+full CUDA build in a `*-cuda` environment — the CUDA toolkit is pixi-managed
+(conda-forge), so no system CUDA install is needed, only an NVIDIA driver + GPU:
+
+```bash
+pixi run -e humble-cuda build-full   # or: jazzy-cuda
+```
+
+The `humble-cuda` environment is the distro plus the conda CUDA toolkit (12.8:
+nvcc, cudart, cusolver). This builds a CUDA GLIM stack (sm_86) into
+`install/humble-cuda/glim-deps-cuda` and compiles bagwiz with
+`-DBAGWIZ_WITH_SLAM_CUDA=ON` into `install/humble-cuda`. CUDA comes entirely from
+`$CONDA_PREFIX` (no `/usr/local/cuda`). Run it with
+`pixi run -e humble-cuda run -- map slam …`, or put it on your PATH with
+`pixi run -e humble-cuda install`. The CPU environments stay CUDA-free, and
+the CPU build, prefix, and reproducibility guarantee are untouched.
 
 ---
 
