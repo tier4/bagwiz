@@ -171,14 +171,14 @@ TEST(TfStaticTreeYamlTest, KeepsTranslationPrecision)
 // must reconstruct the rotation the bag carried.
 TEST(TfStaticTreeYamlTest, RoundTripsThroughSetRpy)
 {
-  const std::vector<std::vector<double>> rpys{
+  const std::vector<std::vector<double>> rpy_cases{
     {0.0, 0.0, 0.0},
     {0.1, -0.2, 0.3},
     {-0.019885, 0.450969, 0.477995},
     {std::numbers::pi, 0.0, -std::numbers::pi / 4.0},
     {0.7, 1.2, -2.9},
   };
-  for (const auto & rpy : rpys) {
+  for (const auto & rpy : rpy_cases) {
     const auto edge = make_edge_rpy("p", "c", rpy[0], rpy[1], rpy[2]);
     const YAML::Node child = YAML::Load(emit({edge}))["p"]["c"];
     ASSERT_TRUE(child);
@@ -488,7 +488,9 @@ TEST_F(StaticTfTreeParseTest, RejectsAMissingKey)
   }
 }
 
-// A typo would otherwise leave the mistyped axis silently at 0.
+// A typo would otherwise leave the mistyped axis silently at 0. The fixture needs a
+// real misspelling, so the spell checker is told to expect this one.
+// cspell:ignore pich
 TEST_F(StaticTfTreeParseTest, RejectsAnUnknownKey)
 {
   const std::string err = error_for(

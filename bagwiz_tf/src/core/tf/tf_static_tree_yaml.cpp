@@ -289,7 +289,8 @@ std::string edge_label(const std::string & parent, const std::string & child)
 
 // Read one transform mapping into `out`. Returns false and sets `error` when a
 // key is missing, unknown, or not a number. Unknown keys are rejected rather
-// than ignored: a mistyped `pich` would otherwise leave pitch silently at 0.
+// than ignored: a key name misspelled by a letter would otherwise leave that axis
+// silently at 0.
 bool read_transform_mapping(
   const YAML::Node & node, const std::string & parent, const std::string & child,
   geometry_msgs::msg::TransformStamped & out, std::string & error)

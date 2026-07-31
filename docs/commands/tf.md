@@ -588,7 +588,8 @@ offending frame or key named:
 
 - A missing key. There is no default: a pose missing `pitch` is underspecified,
   and filling in `0` would invent a transform the author did not write.
-- Any other key. A mistyped `pich` would otherwise leave pitch silently at `0`.
+- Any other key. A key name misspelled by a letter would otherwise leave that axis
+  silently at `0`.
   This is also what catches a child nested _beside_ the six keys — the publisher
   reads the six and drops that child's transform without a word, so here `join` is
   deliberately stricter than the publisher.
