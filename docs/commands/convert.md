@@ -110,16 +110,3 @@ bagwiz convert format -i drive.mcap -o drive_dir/
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | Repack finished successfully. A warning is logged per topic whose declaration or message definition could not be resolved.                                                                                                                                                                                                                        |
 | `1`  | Argument resolution failed (bad `--storage`, ambiguous output path), the input could not be opened or used a rejected compression mode, the repack was rejected as a no-op (same storage and same layout), the output path already exists without `-w`/`--overwrite`, the output could not be opened, or a fatal read/write/close error occurred. |
-
-## Migration
-
-`convert msg` (and its only leaf, `convert msg geo`) was removed. There is no
-in-tree replacement: re-type `NavSatFix` topics with an external tool before or
-after the repack.
-
-All operands are now flags:
-
-```bash
-bagwiz convert format drive.mcap drive.db3          # before — now an error
-bagwiz convert format -i drive.mcap -o drive.db3    # after
-```

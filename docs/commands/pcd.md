@@ -113,11 +113,6 @@ bagwiz pcd undistort -i <input> --pose <pose_topic> --pcd <topic>... [OPTIONS]
 | `-w, --overwrite`       | `false`      | Replace `-o/--output` if it already exists. Has no effect in in-place mode.                                                                                                                           |
 | `-j, --threads <N>`     | `8`          | Number of worker threads for Pass 2. Accepts `0`–`256`; `0` uses the host's hardware concurrency(); `1` forces the synchronous path; in-range values above hardware concurrency are capped to it.     |
 
-> **Renamed in this release.** `--from` is now `--ref` and `--to` is now `--of`;
-> the values and results are unchanged. Note the mapping is **crossed** —
-> `--from` becomes `--ref`, **not** `--of`. `--ref` is the reference frame
-> (default `map`); `--of` is the tracked body frame (default `base_link`).
-
 ### Behavior
 
 1. **Resolve the trajectory (Pass 1).** `<input>` must have a `...tf_static`
@@ -229,17 +224,3 @@ bagwiz pcd undistort -i drive.mcap --pose /slam/tf --pcd /points -o undistorted.
 | ---- | ------------------------------------------------------------------------------------------------------- |
 | `0`  | The rewrite completed: every `--pcd` topic validated in Pass 1, and Pass 2 finished.                    |
 | `1`  | Any of the error/fatal conditions above, a writer/I/O failure, or a cloud that failed the rewrite step. |
-
-## Migration
-
-All operands are now flags. The output-topic argument on `pcd concat` is now
-`-t` / `--topic`, and the pose-topic argument on `pcd undistort` is now
-`--pose`:
-
-```bash
-bagwiz pcd concat drive.mcap /sensing/lidar/concatenated/points --pcd /front/points /rear/points  # before — now an error
-bagwiz pcd concat -i drive.mcap -t /sensing/lidar/concatenated/points --pcd /front/points /rear/points # after
-
-bagwiz pcd undistort drive.mcap /localization/kinematic_state --pcd /points  # before — now an error
-bagwiz pcd undistort -i drive.mcap --pose /localization/kinematic_state --pcd /points # after
-```

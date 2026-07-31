@@ -429,21 +429,6 @@ bagwiz map viewer -i out/map.pcd
 
 ---
 
-## Migration
-
-All operands on `map slam` and `map viewer` are now flags. The `map viewer` map
-is named `-i` / `--input` (it was briefly `-m` / `--map`), matching every other
-bagwiz command's input flag:
-
-```bash
-bagwiz map slam drive.mcap /sensing/lidar/concatenated/pointcloud out/  # before — now an error
-bagwiz map slam -i drive.mcap --pcd /sensing/lidar/concatenated/pointcloud -o out/ # after
-
-bagwiz map viewer out/      # before — now an error
-bagwiz map viewer -m out/   # before — now an error
-bagwiz map viewer -i out/   # after
-```
-
 ## Special thanks
 
 `bagwiz map slam` would not exist without [**GLIM**](https://github.com/koide3/glim)

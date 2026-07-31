@@ -284,16 +284,6 @@ because `walk` is the most decoder-centric command.
 bagwiz walk -i capture.mcap -t /sensing/imu/data
 ```
 
-## Migration
-
-`<input>` and `<topic>` used to be positional arguments. They are now
-`-i` / `--input` and `-t` / `--topic`:
-
-```bash
-bagwiz walk capture.mcap /sensing/imu/data        # before — now an error
-bagwiz walk -i capture.mcap -t /sensing/imu/data  # after
-```
-
 ## Exit status
 
 | Code | Meaning                                                                                                           |

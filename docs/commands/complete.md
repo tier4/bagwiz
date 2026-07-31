@@ -259,12 +259,3 @@ source ~/.config/fish/completions/bagwiz.fish
   `complete -o default`; the zsh script falls back to `_files`; the fish
   script registers a `-F` rule gated by an `__bagwiz_no_candidates` condition
   that matches the same behavior.
-
-## Migration
-
-`<shell>` used to be a positional argument. It is now `--shell`:
-
-```bash
-bagwiz complete bash          # before — now an error
-bagwiz complete --shell bash  # after
-```

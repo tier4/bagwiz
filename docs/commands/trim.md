@@ -146,15 +146,6 @@ bagwiz trim -i drive.mcap --start 100msg --end 1000msg -o drive_head.mcap
 bagwiz trim -i drive.db3 --align /sensing/lidar/concatenated/pointcloud -o aligned.db3
 ```
 
-## Migration
-
-`<input>` used to be a positional argument. It is now `-i` / `--input`:
-
-```bash
-bagwiz trim drive.mcap --start 5s --end 90s          # before — now an error
-bagwiz trim -i drive.mcap --start 5s --end 90s       # after
-```
-
 ## Exit status
 
 | Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |

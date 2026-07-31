@@ -74,15 +74,6 @@ bagwiz check broken -i ~/data/rosbags/ --deep
 bagwiz check broken -i ~/data/rosbags/ > broken.txt
 ```
 
-### Migration
-
-`<input>` used to be a positional argument. It is now `-i` / `--input`:
-
-```bash
-bagwiz check broken capture.mcap        # before — now an error
-bagwiz check broken -i capture.mcap     # after
-```
-
 ### Exit status
 
 | Code | Meaning                                                                                                       |

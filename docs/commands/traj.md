@@ -179,11 +179,6 @@ bagwiz traj dump -i <input> -t <topic> -o <output> [OPTIONS]
 | `-f`, `--format <F>`      | _(empty)_    | Output format id (`tum`). When omitted, the format is inferred from the output path extension (for example `*.tum` → `tum`). If you pass `-f`, it overrides the extension.                                                                                                        |
 | `-w`, `--overwrite`       | `false`      | Replace `<output>` if it already exists. Without this flag, an existing output path stops the run.                                                                                                                                                                                |
 
-> **Flag rename (migrating from `--from`/`--to`).** `--from` is now `--ref` and `--to` is now `--of`;
-> the values and results are unchanged. Note the mapping is **crossed** —
-> `--from` becomes `--ref`, **not** `--of`. `--ref` is the reference frame the
-> trajectory is expressed in; `--of` is the tracked frame it is written for.
-
 ### TF topic: how sampling works
 
 1. The bag is scanned once. Every `tf2_msgs/msg/TFMessage` topic is loaded into
@@ -303,11 +298,6 @@ bagwiz traj join -i <input> --traj <traj_file> -t <topic> [OPTIONS]
 | `--force`               | `false`                          | Allow overwriting an existing `<topic>` in `<input>`: existing messages are dropped from the output and replaced with the trajectory.             |
 | `-w`, `--overwrite`     | `false`                          | Replace `-o/--output` if it already exists. Has no effect in in-place mode (when `-o` is omitted, `<input>` is replaced atomically by design).    |
 
-> **Flag rename (migrating from `--from`/`--to`).** `--from` is now `--ref` and `--to` is now `--of`;
-> the values and results are unchanged. Note the mapping is **crossed** —
-> `--from` becomes `--ref`, **not** `--of`. `--ref` is the reference frame the
-> trajectory is expressed in; `--of` is the tracked frame it is written for.
-
 ### Behavior
 
 1. The trajectory is read into memory using the resolved format's
@@ -374,16 +364,3 @@ bagwiz traj join -i input.mcap --traj traj.tum -t /trajectory/tf \
 | ---- | --------------------------------------------------------------- |
 | `0`  | Output bag written with the trajectory injected on `<topic>`.   |
 | `1`  | Any of the error conditions above, or an I/O failure mid-write. |
-
-## Migration
-
-All operands are now flags. The message-type flag changed from
-`-t/--msg-type` to `-m/--msg-type` on `traj join`:
-
-```bash
-bagwiz traj dump capture.mcap /tf traj.tum --ref map --of base_link      # before — now an error
-bagwiz traj dump -i capture.mcap -t /tf -o traj.tum --ref map --of base_link # after
-
-bagwiz traj join input.mcap traj.tum /trajectory/tf --msg-type tf --ref map --of base_link  # before
-bagwiz traj join -i input.mcap --traj traj.tum -t /trajectory/tf -m tf --ref map --of base_link # after
-```

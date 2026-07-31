@@ -80,15 +80,6 @@ bagwiz ls -i capture.mcap | grep sensor_msgs/msg/PointCloud2
 bagwiz ls -i capture.mcap -l | grep lidar
 ```
 
-## Migration
-
-`<input>` used to be a positional argument. It is now `-i` / `--input`:
-
-```bash
-bagwiz ls capture.mcap         # before — now an error
-bagwiz ls -i capture.mcap      # after
-```
-
 ## Exit status
 
 | Code | Meaning                                   |

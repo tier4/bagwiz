@@ -90,15 +90,6 @@ bagwiz generate video -i drive.mcap -t /sensing/camera/image_raw/compressed -o o
 bagwiz generate video -i drive.mcap -t /sensing/camera/image_raw/compressed -o out.mp4 --resize 0.5
 ```
 
-## Migration
-
-All operands are now flags:
-
-```bash
-bagwiz generate video drive.mcap /sensing/camera/image_raw out.mp4  # before — now an error
-bagwiz generate video -i drive.mcap -t /sensing/camera/image_raw -o out.mp4 # after
-```
-
 ## Exit status
 
 | Code | Meaning                                                                                                                            |

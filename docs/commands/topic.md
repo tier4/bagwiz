@@ -222,25 +222,6 @@ bagwiz topic rename -i drive.mcap --src /old/name --dst /new/name -o drive_renam
 bagwiz topic rename -i drive_dir/ --src /camera/image_raw --dst /camera/front/image_raw
 ```
 
-## Migration
-
-All operands on `topic drop`, `topic keep`, and `topic rename` are now flags.
-The old positional forms fail loudly. `rename`'s two topic names are `--src` /
-`--dst` (long-form only, matching `tf static cp`); they were briefly
-`-s` / `--src-topic` and `-d` / `--dst-topic`:
-
-```bash
-bagwiz topic drop drive.mcap /sensing/lidar              # before — now an error
-bagwiz topic drop -i drive.mcap -t /sensing/lidar        # after
-
-bagwiz topic keep drive.mcap /sensing/lidar              # before — now an error
-bagwiz topic keep -i drive.mcap -t /sensing/lidar        # after
-
-bagwiz topic rename drive.mcap /old/name /new/name              # before — now an error
-bagwiz topic rename -i drive.mcap -s /old/name -d /new/name     # before — now an error
-bagwiz topic rename -i drive.mcap --src /old/name --dst /new/name  # after
-```
-
 ## Exit status
 
 | Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                      |
