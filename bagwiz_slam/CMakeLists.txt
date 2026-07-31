@@ -197,6 +197,7 @@ if(BAGWIZ_WITH_SLAM)
     src/core/slam/scan_match_fill.cpp
     src/core/slam/visual_factors.cpp
     src/core/slam/visual_odometry_grouping.cpp
+    src/core/slam/visual_odometry_window.cpp
     src/core/slam/cuda_device.cpp
     src/core/slam/progress_bar.cpp
   )
@@ -503,6 +504,16 @@ if(BUILD_TESTING)
     target_include_directories(bagwiz_slam_visual_odometry_grouping_test
       PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core/slam)
     target_link_libraries(bagwiz_slam_visual_odometry_grouping_test bagwiz_slam_glim)
+
+    # Rebuilt-window batch-LM core of the camera-only visual-inertial
+    # odometry. Src-local like visual_factors_test above, so it needs the
+    # same extra include path.
+    ament_add_gtest(bagwiz_slam_visual_odometry_window_test
+      test/core/slam/visual_odometry_window_test.cpp)
+    target_link_libraries(bagwiz_slam_visual_odometry_window_test
+      bagwiz_slam_glim glim::glim gtsam_points::gtsam_points gtsam)
+    target_include_directories(bagwiz_slam_visual_odometry_window_test
+      PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core/slam)
 
     # gtsam_points-linked (GLIM-free) registration core for the scan-matching
     # warmup/cooldown fill.
