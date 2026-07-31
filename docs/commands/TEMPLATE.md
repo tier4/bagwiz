@@ -72,10 +72,10 @@ bagwiz <cmd> -i drive.mcap -o out/
 
 ## Exit status
 
-| Code | Meaning |
-| ---- | ------- |
-| `0`  | ...     |
-| `1`  | ...     |
+| Code | Meaning                              |
+| ---- | ------------------------------------ |
+| `0`  | Success.                             |
+| `1`  | Failed — check stderr for the cause. |
 ````
 
 Command group (`topic`, `tf`, `map`, ...):
@@ -120,11 +120,10 @@ end may cover all subcommands when they share the same codes.
   semantics, frame conventions, guarantees, edge cases, and failure modes,
   each verifiable in the code. Name them after the concept, not "Notes" or
   "Behavior".
-- `Exit status` — a `| Code | Meaning |` table. `0` is success; `1` covers
-  runtime failures of the command itself. CLI parse errors (missing required
-  flags, failed validation) do not reach the command — CLI11 exits with its
-  own codes — so do not list them under `1`; add one sentence saying so when
-  the distinction matters.
+- `Exit status` — a short `| Code | Meaning |` table and nothing more:
+  `0` = success, `1` = failed (stderr names the cause). Do not enumerate
+  individual failure paths — the detail lives in the error messages and the
+  sections above.
 - Optional trailing sections as needed: `Output` / `Outputs`, `Errors`
   (situation → outcome table), `Performance`, `Environment` (env vars),
   `Requirements`. Place them before `Exit status`.
