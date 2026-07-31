@@ -756,9 +756,10 @@ function buildUI(): void {
 // ---------------------------------------------------------------------------
 // Each pose is drawn as an X/Y/Z coordinate triad built from its orientation
 // quaternion, colored to match the corner orientation gizmo (three.js
-// ViewHelper's defaults): X red, Y green, Z blue. Triads sit at a subset of the
-// actual poses, spaced by arc length, and their origins are joined by a neutral
-// "backbone" line so the path stays continuous between triads. The vehicle's
+// ViewHelper's defaults): X red, Y green, Z blue. Triads sit at every Nth
+// actual pose (TRAJ_AXIS_POSE_STRIDE, plus the last pose), and their origins
+// are joined by a neutral "backbone" line so the path stays continuous between
+// triads. The vehicle's
 // forward axis is X, so the red axis doubles as a direction-of-travel cue.
 const TRAJ_AXIS_X_COLOR = new THREE.Color(0xff4466); // gizmo X
 const TRAJ_AXIS_Y_COLOR = new THREE.Color(0x88ff44); // gizmo Y

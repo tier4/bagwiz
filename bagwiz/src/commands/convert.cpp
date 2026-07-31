@@ -146,8 +146,10 @@ private:
     // Detect the input's storage backend up-front so it can (a) feed
     // resolve_target_storage as the fallback for directory-layout outputs
     // without --storage, and (b) anchor the same-storage repack check
-    // below. Magic-byte / metadata.yaml based — never extension based —
-    // so renamed inputs still classify correctly.
+    // below. Magic-byte / metadata.yaml based, so renamed .mcap / .db3
+    // inputs still classify correctly; the extension is consulted only
+    // to resolve the inner storage of a single-file .zstd envelope,
+    // where the magic sniff cannot see past the compression.
     const auto source_format = io::detect_format(args.input_path);
 
     std::string err;

@@ -533,7 +533,9 @@ int run_trim(const TrimArgs & args)
     } else {
       // Message-count bounds rank every message on the reference clock, so
       // they need the full sorted clock list; that scan also yields the
-      // extent. Pure time bounds keep the cheap summary-based extent path.
+      // extent. Pure time bounds skip the sorted list and take the cheaper
+      // extent-only path — the storage summary under --stamp recv, a full
+      // clock scan (no summary can answer it) under --stamp header.
       const auto is_msg = [](const std::optional<WindowBound> & b) {
         return b && b->is_message_count;
       };

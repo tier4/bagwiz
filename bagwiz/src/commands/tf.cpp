@@ -639,7 +639,7 @@ private:
   // `bagwiz tf static` from doing anything without an explicit verb.
   void configure_static(CLI::App & app)
   {
-    auto * group = app.add_subcommand("static", "Static TF tree queries");
+    auto * group = app.add_subcommand("static", "Static TF tree queries and edits");
     group->require_subcommand(1);
     configure_static_calc(*group);
     configure_static_cp(*group);

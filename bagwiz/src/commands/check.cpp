@@ -71,9 +71,10 @@ bool confirm_delete(std::size_t count)
 //
 // Subcommands
 // -----------
-//   broken  Scan <input> (a single bag or a directory walked recursively) for
-//           rosbags whose storage container is corrupt / unreadable, list
-//           them, and optionally delete them (interactively, or with --rm).
+//   broken  Scan the bag or directory given via -i,--input (a directory is
+//           walked recursively) for rosbags whose storage container is
+//           corrupt / unreadable, list them, and optionally delete them
+//           (interactively, or with --rm).
 class CheckCommand : public Command
 {
 public:

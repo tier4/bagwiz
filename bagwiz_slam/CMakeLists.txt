@@ -65,13 +65,13 @@ endif()
 # task leaves this OFF.) The GLIM types stay confined to cloud_mapper.cpp
 # (pimpl); the `map` command group and its `slam` action are GLIM-free.
 option(BAGWIZ_WITH_SLAM "Build the in-process GLIM `bagwiz map slam` command" OFF)
-# GPU fast path for `bagwiz map slam --gpu` (CUDA odometry + VGICP_GPU mapping +
+# GPU fast path for `bagwiz map slam --backend cuda` (CUDA odometry + VGICP_GPU mapping +
 # GPU export voxelization). OFF by default; implies BAGWIZ_WITH_SLAM. Enabled via
 # `pixi run -e <distro>-cuda build-full` (humble-cuda/jazzy-cuda), which builds
 # the CUDA GLIM stack into install/<distro>-cuda/glim-deps-cuda and passes
 # -DBAGWIZ_WITH_SLAM_CUDA=ON plus the CUDA toolchain. A CPU build leaves this
 # OFF and links no CUDA.
-option(BAGWIZ_WITH_SLAM_CUDA "GPU-accelerate `bagwiz map slam --gpu` (implies BAGWIZ_WITH_SLAM)" OFF)
+option(BAGWIZ_WITH_SLAM_CUDA "GPU-accelerate `bagwiz map slam --backend cuda` (implies BAGWIZ_WITH_SLAM)" OFF)
 if(BAGWIZ_WITH_SLAM_CUDA)
   set(BAGWIZ_WITH_SLAM ON CACHE BOOL "Implied by BAGWIZ_WITH_SLAM_CUDA" FORCE)
 endif()
@@ -243,7 +243,7 @@ if(BAGWIZ_WITH_SLAM)
         "CMAKE_CUDA_ARCHITECTURES not set; defaulting to 86 (sm_86 / RTX 30xx). For another GPU "
         "pass -DCMAKE_CUDA_ARCHITECTURES=<arch> (e.g. 75 = RTX 20xx, 89 = RTX 40xx). The "
         "voxelize_gpu kernel falls back to CPU on an arch mismatch, but GLIM's VGICP_GPU mapping "
-        "does not — a wrong arch then fails the --gpu run. `pixi run -e humble-cuda build-full` sets 86.")
+        "does not — a wrong arch then fails the `--backend cuda` run. `pixi run -e humble-cuda build-full` sets 86.")
       set(CMAKE_CUDA_ARCHITECTURES 86)
     endif()
     enable_language(CUDA)

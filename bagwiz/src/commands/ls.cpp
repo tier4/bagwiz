@@ -126,8 +126,8 @@ public:
       ->check(CLI::ExistingPath);
     app.add_flag(
       "-l,--long", long_listing_,
-      "Show per-topic message COUNT and average HZ (scans the bag; slow on "
-      "single-file SQLite bags)");
+      "Show per-topic message COUNT and average HZ (may scan the bag; slow on "
+      "single-file SQLite bags recorded by rosbag2 older than iron)");
   }
 
   int run() override

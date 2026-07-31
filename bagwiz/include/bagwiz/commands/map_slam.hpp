@@ -70,7 +70,8 @@ struct MapSlamArgs
   std::vector<std::string> cam_topics;
   // Target live feature-track count per cam_topics camera
   // (--visual-max-features). More features = stronger constraints and more CPU
-  // per frame; fewer = faster. Must be > 0. No effect without cam_topics.
+  // per frame; fewer = faster. Must be > 0. Passing --visual-max-features
+  // without --cam is a CLI error.
   int visual_max_features = 200;
   // Explicit CameraInfo topic overrides, each entry keyed as
   // "<image_topic>=<info_topic>" (--cam-info). Serves both camera roles
@@ -88,7 +89,7 @@ struct MapSlamArgs
   // near-duplicates (a stopped platform contributes hundreds of identical
   // frames), so thinning cuts colorize cost roughly linearly with the frames
   // dropped while the per-point observation reservoirs stay well fed.
-  // Deterministic. Has no effect without color_topics.
+  // Deterministic. Passing --color-min-dist without --color is a CLI error.
   double color_min_dist = 0.0;
   // Blur refinement of the keyframe gate (requires color_min_dist > 0):
   // instead of keeping the FIRST image of each gate bucket, decode and score

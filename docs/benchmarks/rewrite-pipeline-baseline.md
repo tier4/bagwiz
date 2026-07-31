@@ -35,11 +35,11 @@ workload to iterate against. Larger bags scale roughly linearly.
 
 ## Results (warm)
 
-| Scenario       | Command                    | In-proc wall         | Read             | Process   | Write            | CPU  | Peak RSS |
-| -------------- | -------------------------- | -------------------- | ---------------- | --------- | ---------------- | ---- | -------- |
-| Full rewrite   | `topic drop /tf_static -o` | 2.469 s              | 0.787 s (31.9 %) | 0 s (0 %) | 1.682 s (68.1 %) | 99 % | 51 MB    |
-| Sparse extract | `topic keep /tf_static -o` | 0.777 s              | 0.777 s (100 %)  | 0 s       | 0 s              | —    | —        |
-| Read-only      | `check broken --deep`      | ~1.0 s (median wall) | —                | —         | —                | —    | —        |
+| Scenario       | Command                       | In-proc wall         | Read             | Process   | Write            | CPU  | Peak RSS |
+| -------------- | ----------------------------- | -------------------- | ---------------- | --------- | ---------------- | ---- | -------- |
+| Full rewrite   | `topic drop -t /tf_static -o` | 2.469 s              | 0.787 s (31.9 %) | 0 s (0 %) | 1.682 s (68.1 %) | 99 % | 51 MB    |
+| Sparse extract | `topic keep -t /tf_static -o` | 0.777 s              | 0.777 s (100 %)  | 0 s       | 0 s              | —    | —        |
+| Read-only      | `check broken --deep`         | ~1.0 s (median wall) | —                | —         | —                | —    | —        |
 
 - Read throughput ≈ **3,600 MiB/s** (decompressed payload); write throughput ≈ **1,690 MiB/s**.
 - Full-rewrite output: 2.8 GB, **1.11× expansion** (output is uncompressed).
@@ -76,13 +76,13 @@ compression is on) or overlapping output I/O. This is why the PRD sets a
 
 ## Speedup plan — per-command backend recommendation
 
-| Command class          | Commands                                                            | Cost profile                           | Recommended backend                                                  | Reorder allowed?                            |
-| ---------------------- | ------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------- |
-| Pure copy              | `topic drop`, `topic keep`, `topic rename`, `convert` (format only) | write-dominant, process=0              | **Pipelined** (read ‖ write), 2-stage                                | Emission-order only (seq key)               |
-| Transform              | _(none today — `convert msg geo` was removed)_                      | process non-trivial (decode/transform) | **Pipelined** 3-stage; consider decode workers only if process grows | Emission-order only; **no** content reorder |
-| Inject                 | `tf_static_cp`, `traj join`                                         | write-dominant + a `finish()` append   | **Pipelined** + `finish()`; injected record stays last               | **Forbidden** — strict emission order       |
-| Analysis / interactive | `ls`, `check`, `walk`, `tf tree`, `traj dump`                       | read-only / interactive                | **Unchanged** (no rewrite)                                           | n/a                                         |
-| Decode/encode-heavy    | `generate video`                                                    | CPU-bound encode                       | Out of scope here (different profile)                                | n/a                                         |
+| Command class          | Commands                                                            | Cost profile                                                                          | Recommended backend                                                  | Reorder allowed?                            |
+| ---------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------- |
+| Pure copy              | `topic drop`, `topic keep`, `topic rename`, `convert` (format only) | write-dominant, process=0                                                             | **Pipelined** (read ‖ write), 2-stage                                | Emission-order only (seq key)               |
+| Transform              | _(none today — `convert msg geo` was removed)_                      | process non-trivial (decode/transform)                                                | **Pipelined** 3-stage; consider decode workers only if process grows | Emission-order only; **no** content reorder |
+| Inject                 | `tf_static_cp`, `traj join`                                         | write-dominant + pre-serialized injections merged in time order via `InjectingWriter` | **Pipelined** + `finish()`; injected records land in time order      | **Forbidden** — strict emission order       |
+| Analysis / interactive | `ls`, `check`, `walk`, `tf tree`, `traj dump`                       | read-only / interactive                                                               | **Unchanged** (no rewrite)                                           | n/a                                         |
+| Decode/encode-heavy    | `generate video`                                                    | CPU-bound encode                                                                      | Out of scope here (different profile)                                | n/a                                         |
 
 Rationale: the pure-copy trio (MVP) gets the most from a pipeline because its write
 stage dominates and its process stage is empty, so overlapping read with write is
@@ -121,7 +121,7 @@ The pure-copy trio (`topic drop`/`keep`/`rename`) defaults to it;
 `BAGWIZ_BACKEND=sequential|pipelined` overrides per run on the same binary.
 
 Measured on the canonical 2.5 GB fixture, warm cache, same 24-core host,
-`topic drop /tf_static -o` (full rewrite), `/usr/bin/time` wall:
+`topic drop -t /tf_static -o` (full rewrite), `/usr/bin/time` wall:
 
 | Backend (`BAGWIZ_BACKEND`) | Wall (warm) | CPU                 | Peak RSS | Stage split (BAGWIZ_PROFILE)                                      |
 | -------------------------- | ----------- | ------------------- | -------- | ----------------------------------------------------------------- |

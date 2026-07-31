@@ -51,8 +51,10 @@ bagwiz convert format -i <input> -o <output> [OPTIONS]
 - Same-storage + same-layout repacks (e.g. MCAP file → MCAP file) are
   rejected; a plain `cp` is what you actually want. Format detection
   uses magic bytes (single-file inputs) or `metadata.yaml` (directory
-  layouts), never the file extension, so a renamed input is still
-  classified correctly.
+  layouts), so a renamed `.mcap` / `.db3` input is still classified
+  correctly. The one exception: for a single-file zstd envelope
+  (`.mcap.zstd` / `.db3.zstd`) the magic sniff cannot see past the
+  compression, so the inner storage is resolved from the extension.
 - Layout transitions (file ↔ directory) are supported on either
   storage backend. The output layout is derived from `<output>`: a
   path ending in `.mcap` or `.db3` produces a single-file bag, any
@@ -104,10 +106,10 @@ bagwiz convert format -i drive.mcap -o drive_dir/
 
 ## Exit status
 
-| Code | Meaning                                                                                                                                                                                                             |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | Repack finished successfully. A warning is logged per topic whose declaration or message definition could not be resolved.                                                                                          |
-| `1`  | Argument resolution failed (bad `--storage`, ambiguous output path), the input could not be opened or used a rejected compression mode, the output could not be opened, or a fatal read/write/close error occurred. |
+| Code | Meaning                                                                                                                                                                                                                                                                                                                                           |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Repack finished successfully. A warning is logged per topic whose declaration or message definition could not be resolved.                                                                                                                                                                                                                        |
+| `1`  | Argument resolution failed (bad `--storage`, ambiguous output path), the input could not be opened or used a rejected compression mode, the repack was rejected as a no-op (same storage and same layout), the output path already exists without `-w`/`--overwrite`, the output could not be opened, or a fatal read/write/close error occurred. |
 
 ## Migration
 

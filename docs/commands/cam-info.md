@@ -233,7 +233,9 @@ Fisheye is a known gap, not an oversight: its projection matrix comes from
 `cv::fisheye::estimateNewCameraMatrixForUndistortRectify`, which is different
 maths parameterized by a `balance` rather than an `alpha`. (`bagwiz`'s
 point-cloud projector does handle `equidistant`, so the asymmetry is deliberate.)
-Nothing is written when a model is rejected.
+Nothing is written when a model is rejected in YAML mode or in place; with
+`-o`, messages streamed before the first offending CameraInfo may already have
+been written, leaving a partial output bag.
 
 ### Choosing `alpha`
 
@@ -270,7 +272,9 @@ to tell apart.
 ### When it refuses
 
 Recomputing `p` from `k` is **wrong**, not merely imprecise, in these cases, so
-the run stops before anything is written:
+the run stops with an error. In YAML mode and in place nothing is written; with
+`-o`, messages streamed before the first offending CameraInfo may already have
+been written, leaving a partial output bag:
 
 | Condition                              | Why                                                                                                                                                                                                                        |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

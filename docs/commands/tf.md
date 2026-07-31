@@ -172,8 +172,10 @@ cyan/yellow):
 ## `bagwiz tf static calc`
 
 `static` is a command group for working with the bag's static TF tree. Its
-actions are `calc` (resolve a transform, below) and [`cp`](#bagwiz-tf-static-cp)
-(copy static TF between bags), so the full invocation is
+actions are `calc` (resolve a transform, below), [`cp`](#bagwiz-tf-static-cp)
+(copy static TF between bags), [`dump`](#bagwiz-tf-static-dump) (write the static
+tree as a publisher-config YAML), and [`join`](#bagwiz-tf-static-join) (embed such
+a YAML into a bag), so the full invocation is
 `bagwiz tf static calc ...`. Running `bagwiz tf static` without an action prints
 an error and the group's help.
 

@@ -174,7 +174,8 @@ private:
     sub
       ->add_option(
         "--fill-min-inliers", slam_args_.fill_min_inlier_fraction,
-        "Inlier-fraction acceptance gate (0..1, default 0.7) for warmup/cooldown pose-fill "
+        "Inlier-fraction acceptance gate (must be > 0, up to 1, default 0.7) for warmup/cooldown "
+        "pose-fill "
         "scan-matching. Higher = stricter (endpoints may stay unfilled); lower = looser (a bad "
         "fit can degrade the fill). No effect when both fills are disabled.")
       ->check(CLI::Range(0.0, 1.0));

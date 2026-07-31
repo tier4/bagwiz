@@ -204,9 +204,9 @@ glim::GlobalMappingParams make_global_mapping_params(bool enable_imu, bool use_g
 }
 
 #ifdef BAGWIZ_WITH_SLAM_CUDA
-// GLIM's GPU registration factors (VGICP_GPU — used by the --gpu odometry smoother
-// and by GPU sub/global mapping) only get batched, asynchronous GPU linearization
-// when a NonlinearFactorSetGPU is registered on gtsam_points' process-global
+// GLIM's GPU registration factors (VGICP_GPU — used by the odometry smoother
+// under `--backend cuda` and by GPU sub/global mapping) only get batched, asynchronous GPU
+// linearization when a NonlinearFactorSetGPU is registered on gtsam_points' process-global
 // LinearizationHook. GLIM registers it inside its own executables (offline_viewer,
 // ROS nodes), NOT in the library modules we construct in-process — so we must do
 // it ourselves, exactly once, before the first GLIM module is built (the odometry

@@ -73,8 +73,9 @@ Because `*` spans `/`, `/sensing/*` removes the entire `/sensing` subtree.
 bag`; pass an explicit `-o` output for those.
 - Embedded message schemas are preserved for the surviving topics so MCAP
   outputs stay self-describing.
-- MCAP attachment and metadata records are not carried into the output. When
-  the input has any, the run logs a warning naming the counts.
+- MCAP attachment and metadata records are not carried into the output. On
+  the chunk pass-through path the run logs a warning naming the counts; on
+  the decoded fallback path they are dropped silently.
 - When both the input and the output are MCAP, chunks the edit does not touch
   are copied byte-for-byte, preserving the input's chunk compression; only
   chunks that still carry both removed and surviving topics are re-encoded

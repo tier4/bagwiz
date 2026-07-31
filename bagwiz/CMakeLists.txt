@@ -26,13 +26,13 @@ endif()
 # scripts/build-glim-deps.sh and passes -DBAGWIZ_WITH_SLAM=ON plus that prefix
 # on CMAKE_PREFIX_PATH. (The `build-core` task leaves this OFF.)
 option(BAGWIZ_WITH_SLAM "Build the in-process GLIM `bagwiz map slam` command" OFF)
-# GPU fast path for `bagwiz map slam --gpu` (CUDA odometry + VGICP_GPU mapping +
+# GPU fast path for `bagwiz map slam --backend cuda` (CUDA odometry + VGICP_GPU mapping +
 # GPU export voxelization). OFF by default; implies BAGWIZ_WITH_SLAM. Enabled via
 # `pixi run -e <distro>-cuda build-full` (humble-cuda/jazzy-cuda), which builds
 # the CUDA GLIM stack into install/<distro>-cuda/glim-deps-cuda and passes
 # -DBAGWIZ_WITH_SLAM_CUDA=ON plus the CUDA toolchain. A CPU build (`pixi run
 # build-full` in a CPU env) leaves this OFF and links no CUDA.
-option(BAGWIZ_WITH_SLAM_CUDA "GPU-accelerate `bagwiz map slam --gpu` (implies BAGWIZ_WITH_SLAM)" OFF)
+option(BAGWIZ_WITH_SLAM_CUDA "GPU-accelerate `bagwiz map slam --backend cuda` (implies BAGWIZ_WITH_SLAM)" OFF)
 if(BAGWIZ_WITH_SLAM_CUDA)
   set(BAGWIZ_WITH_SLAM ON CACHE BOOL "Implied by BAGWIZ_WITH_SLAM_CUDA" FORCE)
 endif()

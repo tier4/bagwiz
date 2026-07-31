@@ -142,7 +142,9 @@ bagwiz pcd undistort -i <input> --pose <pose_topic> --pcd <topic>... [OPTIONS]
    `C == --of`). For a statically-mounted sensor — the normal case — this
    extrinsic comes from `tf_static` alone. A missing chain is fatal. Each
    topic's first message must also already carry a per-point time
-   field (checked by name: `t`, `time`, `time_stamp`, or `timestamp`); a topic
+   field (checked by name, count, and datatype: one of `t`, `time`,
+   `time_stamp`, or `timestamp` with `count == 1` and a `UINT32`, `FLOAT32`,
+   or `FLOAT64` datatype, sized to fit within `point_step`); a topic
    without one is fatal, since undistort cannot deskew without per-point time.
 3. **Rewrite (Pass 2).** Every message is copied through unchanged except
    `--pcd` topics. For each cloud on a `--pcd` topic:
@@ -165,11 +167,12 @@ bagwiz pcd undistort -i <input> --pose <pose_topic> --pcd <topic>... [OPTIONS]
      inconsistent point/row layout — aborts the whole run rather than being
      skipped; a cloud that merely fails to parse as `PointCloud2` is instead
      copied through unchanged with a warning.
-   - a cloud that reaches Pass 2 with no usable per-point time field, or whose
-     reference stamp falls outside the trajectory, is **not** an error — it is
-     written through un-deskewed and reported with a
+   - a cloud that reaches Pass 2 with no usable per-point time field is **not**
+     an error — it is written through un-deskewed and reported with a
      `had nothing deskewed … passed through un-deskewed` warning (the upfront
-     fatal check only inspects each topic's first message).
+     fatal check only inspects each topic's first message). A reference stamp
+     outside the trajectory's time span is deskewed against the nearest
+     endpoint pose, just like out-of-span points above.
    - The trajectory is built once and shared by every `--pcd` topic; only the
      extrinsic `E` changes per topic, so sensors with different mount points
      can be deskewed together in one run.
@@ -215,7 +218,7 @@ bagwiz pcd undistort -i drive.mcap --pose /slam/tf --pcd /points -o undistorted.
 | `<input>` has no `...tf_static` topic                                                                                     | Fatal — needed to resolve `--ref` → `--of` and every `--pcd` topic's extrinsic.                           |
 | `--ref` → `--of` cannot be resolved from `pose_topic` + the bag's static TF                                               | Fatal.                                                                                                    |
 | A `--pcd` topic's first message has no per-point time field                                                               | Fatal.                                                                                                    |
-| A later `--pcd` cloud has no usable time/pose                                                                             | Warning; cloud passed through un-deskewed.                                                                |
+| A later `--pcd` cloud has no usable per-point time field                                                                  | Warning; cloud passed through un-deskewed.                                                                |
 | `--of` → a `--pcd` topic's cloud frame is not reachable via `*tf_static` + `<pose_topic>`                                 | Fatal.                                                                                                    |
 | A cloud reaching the rewrite step is malformed (big-endian, missing/misshapen x/y/z, or an inconsistent point/row layout) | Aborts the run (a cloud that merely fails to _parse_ is copied through unchanged with a warning instead). |
 | `-o` output path already exists without `-w`/`--overwrite`                                                                | Error.                                                                                                    |

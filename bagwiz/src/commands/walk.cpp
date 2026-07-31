@@ -74,7 +74,7 @@ constexpr const char * kLogger = "bagwiz.cmd.walk";
 //   a             : toggle full-expansion of long primitive arrays
 //   i             : toggle in-terminal image preview (image topics on a
 //                   Kitty/Sixel-capable terminal; absent otherwise)
-//   q / Ctrl-C    : quit
+//   q / Q / Esc / Ctrl-C / Ctrl-D : quit
 // Inside the image preview the additional keys u (undistort), p (pcd overlay),
 // t (pcd topics), f/c/r (property/scheme/range), =,+/- (point size) and ]/[
 // (alpha) apply; see walk_preview.hpp / walk_overlay.hpp.

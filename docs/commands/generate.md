@@ -101,7 +101,11 @@ bagwiz generate video -i drive.mcap -t /sensing/camera/image_raw -o out.mp4 # af
 
 ## Exit status
 
-| Code | Meaning                                                                    |
-| ---- | -------------------------------------------------------------------------- |
-| `0`  | The video was written successfully.                                        |
-| `1`  | A runtime or argument error occurred. Check stderr for the specific cause. |
+| Code | Meaning                                                                                                                            |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | The video was written successfully.                                                                                                |
+| `1`  | A runtime error occurred (the topic could not be rendered or the video could not be written). Check stderr for the specific cause. |
+
+Argument and parse errors never reach the command's runtime: CLI11 exits
+directly with its own non-zero codes (e.g. 106 for a missing required
+flag, 105 for a failed validation).
