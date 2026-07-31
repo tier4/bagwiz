@@ -114,6 +114,10 @@ constexpr std::array<std::string_view, 1> kImuType{{
   "sensor_msgs/msg/Imu",
 }};
 
+constexpr std::array<std::string_view, 1> kNavSatFixType{{
+  "sensor_msgs/msg/NavSatFix",
+}};
+
 // Declarative table of commands whose topic-value slots should be completed
 // from a bag. `subcommand` is empty when the command has no subcommand level
 // (e.g. `bagwiz walk -i <bag> -t <topic>`). `input_flags` names the flag(s)
@@ -1011,10 +1015,11 @@ std::vector<std::string> complete_generate(const CompletionRequest & request)
 // help flags for a `-` word). Past it, the `--pcd` slot for `map slam` is
 // completed earlier by try_topic_completion via kTopicBindings (PointCloud2
 // topics only); here we surface `slam`'s flags for any `-` word and complete the
-// values of `--imu` (Imu topics), `--color` / `--cam` (image topics), and `--cam-info`
-// (the `<image_topic>` half of each `<image>=<info>` pair, completed as
-// "<topic>="; the `<info_topic>` half offers nothing) from the bag. `viewer`
-// has no value-bearing flags and its `--input` value is a path.
+// values of `--imu` (Imu topics), `--gnss` (NavSatFix topics), `--frame` (frame
+// ids from the bag's static TF), `--color` / `--cam` (image topics), and
+// `--cam-info` (the `<image_topic>` half of each `<image>=<info>` pair,
+// completed as "<topic>="; the `<info_topic>` half offers nothing) from the
+// bag. `viewer` has no value-bearing flags and its `--input` value is a path.
 
 std::vector<std::string> complete_map(const CompletionRequest & request)
 {
@@ -1085,18 +1090,30 @@ std::vector<std::string> complete_map(const CompletionRequest & request)
     return matching({"auto", "cpu", "cuda"}, current);
   }
 
+  // --frame takes a frame id resolved through the bag's static TF, so it
+  // completes from the bag's static-TF frame ids, like `tf static calc`.
+  if (request.cursor_word > 0 && request.words[request.cursor_word - 1] == "--frame") {
+    const auto bag_arg = find_flag_value(request, kInputFlags);
+    if (!bag_arg || bag_arg->empty() || bag_arg->starts_with("-")) {
+      return {};
+    }
+    return complete_frame_id_value(*bag_arg, current, /*static_only=*/true);
+  }
+
   // Topic-bearing flags: complete the value(s) from the bag's topics of the
-  // type(s) the flag accepts. --imu takes exactly one value, so it completes
-  // only immediately after the flag. --color, --cam and --cam-info accept
-  // several values per occurrence (CLI11 consumes every following non-flag
-  // word), so the governing flag is found by walking left past the values
-  // already typed; any other intervening flag ends that value run.
+  // type(s) the flag accepts. --imu and --gnss take exactly one value, so they
+  // complete only immediately after the flag. --color, --cam and --cam-info
+  // accept several values per occurrence (CLI11 consumes every following
+  // non-flag word), so the governing flag is found by walking left past the
+  // values already typed; any other intervening flag ends that value run.
   if (request.cursor_word == 0) {
     return {};
   }
   std::span<const std::string_view> flag_topic_types;
   if (request.words[request.cursor_word - 1] == "--imu") {
     flag_topic_types = kImuType;
+  } else if (request.words[request.cursor_word - 1] == "--gnss") {
+    flag_topic_types = kNavSatFixType;
   } else {
     std::string_view governing;
     for (std::size_t w = request.cursor_word; w > kFirstCommandArgWord;) {
