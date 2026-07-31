@@ -8,6 +8,23 @@ written. Follow it when writing a new page or revising an existing one.
 Exemplars to mirror: [`topic.md`](topic.md) (command group) and
 [`trim.md`](trim.md) (single-action command).
 
+## Reading flow
+
+Pages are written for two passes: a reader first skims `Examples` to pick up
+how the command is used in practice, then consults the `Options` table for
+details on the specific flags they need. Write to that flow:
+
+- `Examples` is the teaching surface. Cover the realistic scenarios — the
+  common case first, then the variations a user is likely to want — rather
+  than one invocation per flag.
+- The `Options` table is the reference surface. Each Description must stand
+  on its own: constraints, defaults, interactions with other flags, and
+  failure modes belong there, so a reader who jumps straight to a flag gets
+  the full story without hunting through prose sections.
+- Do not hide information a user needs in long prose sections. If a detail
+  belongs to one flag, put it in that flag's Description; reserve prose
+  sections for concepts that span several flags.
+
 ## Ground rules
 
 - The compiled behavior is the ground truth. Read the command's `configure*()`
