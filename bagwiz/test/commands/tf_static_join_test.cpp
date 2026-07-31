@@ -408,6 +408,42 @@ TEST_F(TfStaticJoinTest, ForceDoesNotPermitClobberingTheOutputPath)
   EXPECT_EQ(read_all(out), "precious\n");
 }
 
+// `.nan` is a valid YAML float, so it parses — but tf2 drops such a transform,
+// which would leave the written /tf_static well-formed and its tree empty. The
+// tree-buildable check refuses it before anything is written.
+TEST_F(TfStaticJoinTest, RejectsAConfigTf2CouldNotBuildATreeFrom)
+{
+  const auto bag = tmp_dir_ / "bag.mcap";
+  const auto out = tmp_dir_ / "out.mcap";
+  write_plain_bag(bag, 1'000'000'000LL);
+  const auto yaml = write_yaml(
+    "base_link:\n  lidar:\n"
+    "    x: .nan\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n");
+
+  EXPECT_EQ(
+    run_tf_static_join(bag, yaml, "/tf_static", out, /*force=*/false, /*overwrite=*/false), 1);
+  EXPECT_FALSE(std::filesystem::exists(out));
+}
+
+// A misspelled parent splits the rig into two trees, leaving everything below the
+// typo unreachable. Structurally valid, so it is reported rather than refused: a
+// partial config can legitimately be completed by TF the bag already carries.
+TEST_F(TfStaticJoinTest, EmbedsDisconnectedTreesButSaysSo)
+{
+  const auto bag = tmp_dir_ / "bag.mcap";
+  const auto out = tmp_dir_ / "out.mcap";
+  write_plain_bag(bag, 1'000'000'000LL);
+  const auto yaml = write_yaml(
+    "base_link:\n  drs_base_link:\n"
+    "    x: 0.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n"
+    "drs_baselink:\n  lidar_front:\n"
+    "    x: 1.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n");
+
+  ASSERT_EQ(
+    run_tf_static_join(bag, yaml, "/tf_static", out, /*force=*/false, /*overwrite=*/false), 0);
+  EXPECT_EQ(read_tf_topic(out, "/tf_static").transforms.size(), 2U);
+}
+
 TEST_F(TfStaticJoinTest, RejectsAnInvalidConfigAndLeavesTheBagAlone)
 {
   const auto bag = tmp_dir_ / "bag.mcap";

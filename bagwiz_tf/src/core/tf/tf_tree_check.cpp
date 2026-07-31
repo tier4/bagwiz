@@ -22,7 +22,9 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace bagwiz::core
 {
@@ -182,6 +184,25 @@ std::optional<std::string> validate_tf_tree(
   }
 
   return std::nullopt;
+}
+
+std::vector<std::string> tf_tree_roots(
+  std::span<const geometry_msgs::msg::TransformStamped> transforms)
+{
+  std::unordered_set<std::string> children;
+  for (const auto & t : transforms) {
+    children.insert(t.child_frame_id);
+  }
+
+  std::vector<std::string> roots;
+  std::unordered_set<std::string> emitted;
+  for (const auto & t : transforms) {
+    const auto & parent = t.header.frame_id;
+    if (children.count(parent) == 0 && emitted.insert(parent).second) {
+      roots.push_back(parent);
+    }
+  }
+  return roots;
 }
 
 }  // namespace bagwiz::core

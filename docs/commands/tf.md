@@ -616,8 +616,26 @@ rejects:
   is worse than a missing frame. The tolerance (1e-6 on the squared length) passes
   a quaternion that was stored as float32 and widened back.
 - Anything else tf2 itself refuses, and any frame that does not resolve against
-  its own tree root once loaded. Several roots (a forest) is fine — frames are
-  only ever resolved within their own tree.
+  its own tree root once loaded.
+
+### Disconnected trees
+
+Several roots is **accepted but reported**, because a partial config can
+legitimately be completed by TF the bag already carries. `join` prints a warning
+naming the roots:
+
+```text
+'rig.yaml' describes 2 disconnected trees, rooted at base_link, drs_baselink.
+No transform exists between frames in different trees, so check these are all
+meant to be roots and not a misspelled parent.
+```
+
+The reason to look twice is that the likeliest way to end up with two roots is a
+typo. Writing `drs_baselink` where the rest of the file says `drs_base_link` splits
+the rig in two: the file is structurally perfect, every transform is complete, and
+yet every sensor under the misspelling is unreachable from `base_link`
+(`tf static calc` reports "Tf has two or more unconnected trees"). A single
+connected tree warns about nothing.
 
 Note also that unlike `multi_transform_publisher`, `join` does **not** synthesize
 `camera_link → camera_optical_link` edges. It writes exactly the transforms the

@@ -14,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 // Whether a usable tf2 tree can actually be built from a set of transforms.
 // Complements the other two checks in this package, which each cover less:
@@ -55,6 +56,23 @@ namespace bagwiz::core
 //     roots is fine, as frames are only ever resolved within their own tree.
 std::optional<std::string> validate_tf_tree(
   std::span<const geometry_msgs::msg::TransformStamped> transforms, const std::string & context);
+
+// The root frames of what `transforms` describes — the frames that are nobody's
+// child — in the order they are first seen.
+//
+// A single root means one connected tree, so a transform exists between every pair
+// of frames. Several roots mean several disconnected trees, and NO transform exists
+// between frames in different ones: tf2 answers such a lookup with "Tf has two or
+// more unconnected trees". That is legal, and validate_tf_tree accepts it, because
+// a partial config can be completed by TF the bag already carries.
+//
+// It is worth reporting to the user, though, because the likeliest way to end up
+// with two roots is a typo: writing `drs_baselink` where the rest of the file says
+// `drs_base_link` silently splits the rig in two and leaves the sensors below it
+// unreachable from base_link. Callers that write transforms into a bag should say
+// so when this returns more than one root.
+std::vector<std::string> tf_tree_roots(
+  std::span<const geometry_msgs::msg::TransformStamped> transforms);
 
 }  // namespace bagwiz::core
 
