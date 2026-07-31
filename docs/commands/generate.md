@@ -45,7 +45,7 @@ bagwiz generate video -i drive.mcap -t /sensing/camera/image_raw/compressed -o o
 # Render with multiple point-cloud overlays in the same camera view.
 bagwiz generate video -i drive.mcap -t /sensing/camera/image_raw/compressed -o out.mp4 \
   --pcd /sensing/lidar/front/points \
-  --pcd /sensing/lidar/rear/points \
+        /sensing/lidar/rear/points \
   --field distance --scheme turbo --point-size 3 --alpha 0.8
 
 # Render at half resolution to reduce output file size.

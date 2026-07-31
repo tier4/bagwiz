@@ -39,7 +39,7 @@ bagwiz pcd concat -i drive.mcap -t /sensing/lidar/concatenated/points \
   --pcd /sensing/lidar/front/seyond_points /sensing/lidar/rear/seyond_points \
         /sensing/lidar/left/seyond_points  /sensing/lidar/right/seyond_points \
   --stamp-offset /sensing/lidar/left/seyond_points=50ms \
-  --stamp-offset /sensing/lidar/right/seyond_points=50ms \
+                 /sensing/lidar/right/seyond_points=50ms \
   -o concatenated.mcap
 ```
 
@@ -131,7 +131,7 @@ bagwiz pcd undistort -i drive.mcap --pose /localization/kinematic_state \
 
 # Deskew multiple topics against the same pose, into a new bag.
 bagwiz pcd undistort -i drive.mcap --pose /localization/kinematic_state \
-  --pcd /sensing/lidar/top/pointcloud --pcd /sensing/lidar/left/pointcloud \
+  --pcd /sensing/lidar/top/pointcloud /sensing/lidar/left/pointcloud \
   -o undistorted.mcap
 
 # Composition workflow: derive a trajectory with SLAM, embed it as a topic,

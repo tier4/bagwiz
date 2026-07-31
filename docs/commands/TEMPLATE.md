@@ -108,7 +108,10 @@ end may cover all subcommands when they share the same codes.
 - `Examples` — always plural, even for a single invocation. A `bash` fenced
   block where every invocation gets one `#` comment line above it describing
   the scenario. Quote globs (`'/sensing/*'`) and say so once below the block
-  when globs appear. Placed right after `Usage`, so a reader sees a working
+  when globs appear. When a flag accepts several values per occurrence
+  (e.g. `--pcd`, `-t/--topics`, `--color`), pass them in a single occurrence
+  (`--pcd a b c`), not as repeated flag-value pairs (`--pcd a --pcd b`).
+  Placed right after `Usage`, so a reader sees a working
   invocation before the full flag reference.
 - `Options` — a two-column table, `| Flag | Description |`. The Flag cell
   lists the short and long forms with a value placeholder: `` `-i`,
