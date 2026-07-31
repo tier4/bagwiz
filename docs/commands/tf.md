@@ -618,24 +618,10 @@ rejects:
 - Anything else tf2 itself refuses, and any frame that does not resolve against
   its own tree root once loaded.
 
-### Disconnected trees
-
-Several roots is **accepted but reported**, because a partial config can
-legitimately be completed by TF the bag already carries. `join` prints a warning
-naming the roots:
-
-```text
-'rig.yaml' describes 2 disconnected trees, rooted at base_link, drs_baselink.
-No transform exists between frames in different trees, so check these are all
-meant to be roots and not a misspelled parent.
-```
-
-The reason to look twice is that the likeliest way to end up with two roots is a
-typo. Writing `drs_baselink` where the rest of the file says `drs_base_link` splits
-the rig in two: the file is structurally perfect, every transform is complete, and
-yet every sensor under the misspelling is unreachable from `base_link`
-(`tf static calc` reports "Tf has two or more unconnected trees"). A single
-connected tree warns about nothing.
+Several roots — a forest rather than one connected tree — is **accepted**, as it is
+by [`tf tree`](#bagwiz-tf-tree) and by ROS itself. A partial config can be
+completed by TF the bag already carries, so a frame is only ever required to
+resolve within its own tree.
 
 Note also that unlike `multi_transform_publisher`, `join` does **not** synthesize
 `camera_link → camera_optical_link` edges. It writes exactly the transforms the

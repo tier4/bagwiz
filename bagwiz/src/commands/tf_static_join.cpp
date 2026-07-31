@@ -14,7 +14,6 @@
 #include "bagwiz/core/tf/tf_static_collect.hpp"
 #include "bagwiz/core/tf/tf_static_tree_yaml.hpp"
 #include "bagwiz/core/tf/tf_topics.hpp"
-#include "bagwiz/core/tf/tf_tree_check.hpp"
 #include "bagwiz/io/bag_io.hpp"
 #include "tf_static_inject.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
@@ -78,21 +77,6 @@ int run_tf_static_join(
       "Only the level directly above a transform is its parent.",
       yaml_path.c_str(), core::join_csv(parsed.grouping_frames).c_str());
   }
-  // parse_static_tf_tree_yaml has already established that these build a usable
-  // tf2 tree (core::validate_tf_tree). What it deliberately allows is several
-  // disconnected trees, because a partial config can be completed by TF the bag
-  // already carries — but the likeliest way to end up with two roots is a typo
-  // ('drs_baselink' where the rest of the file says 'drs_base_link'), which
-  // silently leaves every sensor below it unreachable from base_link.
-  const auto roots = core::tf_tree_roots(*parsed.transforms);
-  if (roots.size() > 1) {
-    BAGWIZ_LOG_WARN(
-      kLogger,
-      "'%s' describes %zu disconnected trees, rooted at %s. No transform exists between frames in "
-      "different trees, so check these are all meant to be roots and not a misspelled parent.",
-      yaml_path.c_str(), roots.size(), core::join_csv(roots).c_str());
-  }
-
   std::vector<core::StaticTopicTransforms> topics;
   topics.push_back({topic, *parsed.transforms});
   const auto transform_count = static_cast<std::uint64_t>(topics.front().transforms.size());

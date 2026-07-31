@@ -162,50 +162,6 @@ TEST(TfTreeCheckTest, RejectsTheStructuralFaultsTheForestCheckCovers)
   EXPECT_NE(cycle->find("directed cycle"), std::string::npos) << *cycle;
 }
 
-// ---------------------------------------------------------------------------
-// tf_tree_roots
-// ---------------------------------------------------------------------------
-
-using bagwiz::core::tf_tree_roots;
-
-std::vector<std::string> roots_of(
-  const std::vector<geometry_msgs::msg::TransformStamped> & transforms)
-{
-  return tf_tree_roots(
-    std::span<const geometry_msgs::msg::TransformStamped>(transforms.data(), transforms.size()));
-}
-
-TEST(TfTreeRootsTest, FindsTheSingleRootOfAConnectedTree)
-{
-  const auto roots = roots_of(
-    {make_edge("drs_base_link", "lidar"), make_edge("base_link", "drs_base_link"),
-     make_edge("lidar", "camera")});
-  EXPECT_EQ(roots, (std::vector<std::string>{"base_link"}));
-}
-
-// The typo case: `drs_baselink` where the rest of the file says `drs_base_link`
-// splits the rig in two, and everything below the misspelling becomes unreachable
-// from base_link. Structurally valid, which is why it needs reporting rather than
-// rejecting.
-TEST(TfTreeRootsTest, FindsEveryRootWhenATypoSplitsTheTree)
-{
-  const auto roots =
-    roots_of({make_edge("base_link", "drs_base_link"), make_edge("drs_baselink", "lidar_front")});
-  EXPECT_EQ(roots, (std::vector<std::string>{"base_link", "drs_baselink"}));
-}
-
-// A root that parents several children is still one root.
-TEST(TfTreeRootsTest, ReportsARootOnlyOnce)
-{
-  const auto roots = roots_of({make_edge("base_link", "a"), make_edge("base_link", "b")});
-  EXPECT_EQ(roots, (std::vector<std::string>{"base_link"}));
-}
-
-TEST(TfTreeRootsTest, ReturnsNothingForNoTransforms)
-{
-  EXPECT_TRUE(roots_of({}).empty());
-}
-
 // Every message names the source, so a caller does not have to prefix it.
 TEST(TfTreeCheckTest, NamesTheContextInEveryMessage)
 {

@@ -425,10 +425,10 @@ TEST_F(TfStaticJoinTest, RejectsAConfigTf2CouldNotBuildATreeFrom)
   EXPECT_FALSE(std::filesystem::exists(out));
 }
 
-// A misspelled parent splits the rig into two trees, leaving everything below the
-// typo unreachable. Structurally valid, so it is reported rather than refused: a
-// partial config can legitimately be completed by TF the bag already carries.
-TEST_F(TfStaticJoinTest, EmbedsDisconnectedTreesButSaysSo)
+// A forest is legal, as it is for `tf tree` and for ROS: a partial config can be
+// completed by TF the bag already carries, so disconnected trees are embedded as
+// given.
+TEST_F(TfStaticJoinTest, EmbedsDisconnectedTrees)
 {
   const auto bag = tmp_dir_ / "bag.mcap";
   const auto out = tmp_dir_ / "out.mcap";
