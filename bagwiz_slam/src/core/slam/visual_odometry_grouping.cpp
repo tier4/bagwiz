@@ -6,11 +6,13 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "visual_odometry_grouping.hpp"
+#include "visual_odometry_grouping.hpp"  // NOLINT(build/include_subdir) src-local header
 
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace bagwiz::core::slam
 {

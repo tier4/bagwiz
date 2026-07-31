@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "visual_odometry_window.hpp"
+#include "visual_odometry_window.hpp"  // NOLINT(build/include_subdir) src-local header
 
 #include <gtest/gtest.h>
 

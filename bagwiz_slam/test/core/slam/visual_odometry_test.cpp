@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "visual_odometry.hpp"
+#include "visual_odometry.hpp"  // NOLINT(build/include_subdir) src-local header
 
 #include <gtest/gtest.h>
 
@@ -207,7 +207,7 @@ std::vector<glim::EstimationFrame::ConstPtr> push_groups(
 // sync convention. Mutates *previous_id / *previous_stamp for the next call.
 void expect_glim_contract(
   const glim::EstimationFrame::ConstPtr & frame, const Eigen::Isometry3d & T_lidar_imu,
-  long * previous_id, double * previous_stamp)
+  std::int64_t * previous_id, double * previous_stamp)
 {
   ASSERT_NE(frame, nullptr);
   EXPECT_EQ(frame->frame_id, glim::FrameID::IMU);
@@ -287,7 +287,7 @@ TEST(VisualInertialOdometryTest, MarginalizedFramesHonorTheGlimContract)
   const auto marginalized = push_groups(estimator, t_imu_cams, landmarks, 20);
   ASSERT_GE(marginalized.size(), 2u);
 
-  long previous_id = -1;
+  std::int64_t previous_id = -1;
   double previous_stamp = -1.0;
   for (const auto & frame : marginalized) {
     expect_glim_contract(frame, config.T_lidar_imu, &previous_id, &previous_stamp);
@@ -332,7 +332,7 @@ TEST(VisualInertialOdometryTest, RemainingFramesDrainTheWindow)
   EXPECT_LE(remaining.size(), static_cast<std::size_t>(config.max_window_keyframes) + 1);
   EXPECT_GT(remaining.size(), 0u);
 
-  long previous_id = -1;
+  std::int64_t previous_id = -1;
   double previous_stamp = -1.0;
   for (const auto & frame : remaining) {
     expect_glim_contract(frame, config.T_lidar_imu, &previous_id, &previous_stamp);

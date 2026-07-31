@@ -227,9 +227,10 @@ std::vector<TrackObs> associate(
     if (!T_origin_lidar.has_value()) {
       continue;  // submap_for_stamp already bounds the stamp; defensive only
     }
-    track.push_back(TrackObs{
-      *view, *T_origin_lidar * t_lidar_cams[static_cast<std::size_t>(obs->camera_id)],
-      gtsam::Point2(obs->x, obs->y)});
+    track.push_back(
+      TrackObs{
+        *view, *T_origin_lidar * t_lidar_cams[static_cast<std::size_t>(obs->camera_id)],
+        gtsam::Point2(obs->x, obs->y)});
   }
   return track;
 }

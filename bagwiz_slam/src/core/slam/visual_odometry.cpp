@@ -6,37 +6,42 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "visual_odometry.hpp"
+#include "visual_odometry.hpp"  // NOLINT(build/include_subdir) src-local header
 
 #include <glim/odometry/callbacks.hpp>
 #include <glim/odometry/initial_state_estimation.hpp>
 #include <gtsam_points/types/point_cloud_cpu.hpp>
 
+#include <memory>
 #include <utility>
+#include <vector>
 
 namespace bagwiz::core::slam
 {
 
 VisualInertialOdometry::VisualInertialOdometry(VisualInertialOdometryConfig config)
 : config_(std::move(config)),
-  grouping_(GroupingBuffer::Config{
-    .anchor_camera_id = config_.anchor_camera_id,
-    .period_ns = config_.anchor_period_ns,
-    .camera_count = config_.t_imu_cams.size(),
-  }),
-  solver_(vio::WindowConfig{
-    .t_imu_cams = config_.t_imu_cams,
-    .window_span_ns = config_.anchor_period_ns,
-    .obs_sigma = config_.obs_sigma,
-    .max_keyframes = config_.max_window_keyframes,
-  }),
+  grouping_(
+    GroupingBuffer::Config{
+      .anchor_camera_id = config_.anchor_camera_id,
+      .period_ns = config_.anchor_period_ns,
+      .camera_count = config_.t_imu_cams.size(),
+    }),
+  solver_(
+    vio::WindowConfig{
+      .t_imu_cams = config_.t_imu_cams,
+      .window_span_ns = config_.anchor_period_ns,
+      .obs_sigma = config_.obs_sigma,
+      .max_keyframes = config_.max_window_keyframes,
+    }),
   // NaiveInitialStateEstimation reads glim's GlobalConfig
   // (config_odometry's "initialization_window_size", default 1.0 s) and
   // falls back to that default when no config file is installed -- the
   // exact path SubMappingParams's default constructor already exercises in
   // production, so no config file is required to run this class.
-  init_(std::make_unique<glim::NaiveInitialStateEstimation>(
-    config_.T_lidar_imu, Eigen::Matrix<double, 6, 1>::Zero()))
+  init_(
+    std::make_unique<glim::NaiveInitialStateEstimation>(
+      config_.T_lidar_imu, Eigen::Matrix<double, 6, 1>::Zero()))
 {
 }
 

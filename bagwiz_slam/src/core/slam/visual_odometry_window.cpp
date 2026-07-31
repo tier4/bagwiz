@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "visual_odometry_window.hpp"
+#include "visual_odometry_window.hpp"  // NOLINT(build/include_subdir) src-local header
 
 #include "visual_factors.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
@@ -26,10 +26,12 @@
 #include <algorithm>
 #include <deque>
 #include <exception>
+#include <memory>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace bagwiz::core::slam::vio
 {

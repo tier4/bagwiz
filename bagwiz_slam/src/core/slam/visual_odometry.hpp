@@ -6,11 +6,11 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#ifndef BAGWIZ__CORE__SLAM__VISUAL_ODOMETRY_HPP_
-#define BAGWIZ__CORE__SLAM__VISUAL_ODOMETRY_HPP_
+#ifndef CORE__SLAM__VISUAL_ODOMETRY_HPP_
+#define CORE__SLAM__VISUAL_ODOMETRY_HPP_
 
-#include "visual_odometry_grouping.hpp"
-#include "visual_odometry_window.hpp"
+#include "visual_odometry_grouping.hpp"  // NOLINT(build/include_subdir) src-local header
+#include "visual_odometry_window.hpp"    // NOLINT(build/include_subdir) src-local header
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -131,4 +131,4 @@ private:
 
 }  // namespace bagwiz::core::slam
 
-#endif  // BAGWIZ__CORE__SLAM__VISUAL_ODOMETRY_HPP_
+#endif  // CORE__SLAM__VISUAL_ODOMETRY_HPP_

@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#include "visual_odometry_grouping.hpp"
+#include "visual_odometry_grouping.hpp"  // NOLINT(build/include_subdir) src-local header
 
 #include <gtest/gtest.h>
 
@@ -69,8 +69,9 @@ TEST(GroupingBuffer, SimultaneousTriggersAreTheDegenerateCase)
 {
   slam::GroupingBuffer buf(three_cameras());
   for (std::int64_t k = 0; k < 3; ++k) {
-    buf.insert(std::vector<slam::VisualObservation>{
-      obs(0, 1, k * kPeriod), obs(1, 1, k * kPeriod), obs(2, 1, k * kPeriod)});
+    buf.insert(
+      std::vector<slam::VisualObservation>{
+        obs(0, 1, k * kPeriod), obs(1, 1, k * kPeriod), obs(2, 1, k * kPeriod)});
   }
   auto groups = buf.pop_ready();
   const auto rest = buf.finish();

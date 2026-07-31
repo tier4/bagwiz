@@ -6,8 +6,8 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-#ifndef BAGWIZ__CORE__SLAM__VISUAL_ODOMETRY_GROUPING_HPP_
-#define BAGWIZ__CORE__SLAM__VISUAL_ODOMETRY_GROUPING_HPP_
+#ifndef CORE__SLAM__VISUAL_ODOMETRY_GROUPING_HPP_
+#define CORE__SLAM__VISUAL_ODOMETRY_GROUPING_HPP_
 
 #include "bagwiz/core/slam/visual_observation.hpp"
 
@@ -83,4 +83,4 @@ private:
 
 }  // namespace bagwiz::core::slam
 
-#endif  // BAGWIZ__CORE__SLAM__VISUAL_ODOMETRY_GROUPING_HPP_
+#endif  // CORE__SLAM__VISUAL_ODOMETRY_GROUPING_HPP_
