@@ -10,6 +10,7 @@
 
 #include "bagwiz/core/bag/rewrite.hpp"
 #include "bagwiz/core/base/logging.hpp"
+#include "bagwiz/core/base/str_utils.hpp"
 #include "bagwiz/core/tf/tf_static_collect.hpp"
 #include "bagwiz/core/tf/tf_static_tree_yaml.hpp"
 #include "bagwiz/core/tf/tf_topics.hpp"
@@ -64,6 +65,17 @@ int run_tf_static_join(
     BAGWIZ_LOG_ERROR(
       kLogger, "Could not load static TF from '%s': %s", yaml_path.c_str(), parsed.error.c_str());
     return 1;
+  }
+  // Nesting deeper than two levels is a grouping heading, not a chain: only the
+  // level immediately above a transform names its parent. That is legal and
+  // lossless, but an author who wrote `a: {b: {c: {x: ...}}}` expecting a -> b -> c
+  // gets only b -> c, so name the keys that turned out to parent nothing.
+  if (!parsed.grouping_frames.empty()) {
+    BAGWIZ_LOG_WARN(
+      kLogger,
+      "'%s': %s named a grouping level, not a parent frame, so no transform was created for it. "
+      "Only the level directly above a transform is its parent.",
+      yaml_path.c_str(), core::join_csv(parsed.grouping_frames).c_str());
   }
   std::vector<core::StaticTopicTransforms> topics;
   topics.push_back({topic, *parsed.transforms});

@@ -60,6 +60,12 @@ struct StaticTfTreeParseResult
 {
   std::optional<std::vector<geometry_msgs::msg::TransformStamped>> transforms;
   std::string error;
+  // Keys that named a grouping heading rather than a frame: nothing directly
+  // under them was a transform, so they parent nothing (see the nesting note on
+  // parse_static_tf_tree_yaml). Legal and lossless, but reported so a caller can
+  // surface it — an author who meant a chain, not a heading, gets a signal that
+  // the key produced no transform. Empty for the two-level form `dump` writes.
+  std::vector<std::string> grouping_frames;
 
   [[nodiscard]] bool ok() const noexcept { return transforms.has_value() && error.empty(); }
 };
@@ -70,13 +76,27 @@ struct StaticTfTreeParseResult
 // header.stamp is left zero: the schema carries none, and the caller stamps the
 // transforms for the bag it is writing them into.
 //
-// Deliberately strict, because this is a hand-edited file at a system boundary
-// and a silently-ignored key becomes a silently-wrong sensor pose. Rejected:
-// a document that is not a mapping of mappings exactly two levels deep (a third
-// level is an error rather than being flattened); a transform missing any of
-// `x`, `y`, `z`, `roll`, `pitch`, `yaw`, or carrying any other key; a
-// non-numeric value; an empty frame id; a self edge; and any edge set that is
-// not a forest (a child with two parents, opposite edges, a cycle — see
+// Nesting may go arbitrarily deep, matching the reference publisher: a mapping
+// that carries transform fields is an edge from the key enclosing it, and one
+// that does not is a further level. So depth beyond two is NOT a chain — it is a
+// grouping heading, which lets a large rig config be split into sections:
+//
+//     sensors:            # a heading; parents nothing, reported in
+//       base_link:        # grouping_frames
+//         drs_base_link:
+//           x: ...        # => base_link -> drs_base_link
+//
+// Only the level immediately above a transform names its parent.
+//
+// Otherwise deliberately strict, because this is a hand-edited file at a system
+// boundary and a silently-ignored key becomes a silently-wrong sensor pose.
+// Rejected: a transform missing any of `x`, `y`, `z`, `roll`, `pitch`, `yaw`, or
+// carrying any other key (which is also how a child nested beside those keys is
+// caught — the publisher would drop that transform without a word); a value that
+// is neither a transform nor child frames; a mapping that is empty; a non-numeric
+// value; an empty frame id; a transform at the document root, which has no
+// enclosing key to be its parent; a self edge; and any edge set that is not a
+// forest (a child with two parents, opposite edges, a cycle — see
 // validate_tf_forest). An empty document is an error too: there would be nothing
 // to write.
 //

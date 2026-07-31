@@ -506,22 +506,59 @@ TEST_F(StaticTfTreeParseTest, RejectsANonNumericValue)
   EXPECT_NE(err.find("key 'x' must be a number"), std::string::npos) << err;
 }
 
-// The reference publisher recurses and silently drops the enclosing key, which
-// would put the transform under the wrong parent.
-TEST_F(StaticTfTreeParseTest, RejectsDeeperNesting)
+// Nesting deeper than two levels is a grouping heading, matching the reference
+// publisher: only the level immediately above a transform names its parent. This
+// is what lets a large rig config be split into sections.
+TEST_F(StaticTfTreeParseTest, AcceptsGroupingLevelsAtAnyDepth)
 {
-  const std::string err = error_for(
-    "group:\n  base_link:\n    drs_base_link:\n"
-    "      x: 0.0\n      y: 0.0\n      z: 0.0\n      roll: 0.0\n      pitch: 0.0\n      yaw: "
-    "0.0\n");
-  EXPECT_NE(err.find("nests a further level"), std::string::npos) << err;
+  const auto result = parse_static_tf_tree_yaml(write(
+    "sensors:\n"
+    "  base_link:\n"
+    "    drs_base_link:\n"
+    "      x: 1.0\n      y: 0.0\n      z: 0.0\n      roll: 0.0\n      pitch: 0.0\n      yaw: 0.0\n"
+    "  drs_base_link:\n"
+    "    lidar_front:\n"
+    "      x: 2.0\n      y: 0.0\n      z: 0.0\n      roll: 0.0\n      pitch: 0.0\n      yaw: "
+    "0.0\n"));
 
-  // Depth 4 is caught the same way, at the first level that is not a transform.
-  const std::string deeper = error_for(
+  ASSERT_TRUE(result.ok()) << result.error;
+  ASSERT_EQ(result.transforms->size(), 2U);
+  // `sensors` is a heading, so it parents nothing and the edges come from the
+  // level directly above each transform.
+  EXPECT_EQ((*result.transforms)[0].header.frame_id, "base_link");
+  EXPECT_EQ((*result.transforms)[0].child_frame_id, "drs_base_link");
+  EXPECT_EQ((*result.transforms)[1].header.frame_id, "drs_base_link");
+  EXPECT_EQ((*result.transforms)[1].child_frame_id, "lidar_front");
+  EXPECT_EQ(result.grouping_frames, std::vector<std::string>{"sensors"});
+}
+
+// Arbitrary depth, and the headings are reported innermost-first as the walk
+// unwinds.
+TEST_F(StaticTfTreeParseTest, AcceptsFourLevelsAndReportsEveryHeading)
+{
+  const auto result = parse_static_tf_tree_yaml(write(
     "a:\n  b:\n    c:\n      d:\n"
     "        x: 0.0\n        y: 0.0\n        z: 0.0\n"
-    "        roll: 0.0\n        pitch: 0.0\n        yaw: 0.0\n");
-  EXPECT_NE(deeper.find("nests a further level"), std::string::npos) << deeper;
+    "        roll: 0.0\n        pitch: 0.0\n        yaw: 0.0\n"));
+
+  ASSERT_TRUE(result.ok()) << result.error;
+  ASSERT_EQ(result.transforms->size(), 1U);
+  // Only `c` -> `d` is a transform; `a` and `b` are headings.
+  EXPECT_EQ(result.transforms->front().header.frame_id, "c");
+  EXPECT_EQ(result.transforms->front().child_frame_id, "d");
+  EXPECT_EQ(result.grouping_frames, (std::vector<std::string>{"b", "a"}));
+}
+
+// The two-level form `dump` writes has no headings, so nothing is reported and a
+// caller stays quiet.
+TEST_F(StaticTfTreeParseTest, ReportsNoGroupingFramesForTheTwoLevelForm)
+{
+  const auto result = parse_static_tf_tree_yaml(write(
+    "base_link:\n  lidar:\n"
+    "    x: 0.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n"));
+
+  ASSERT_TRUE(result.ok()) << result.error;
+  EXPECT_TRUE(result.grouping_frames.empty());
 }
 
 // A transform mapping that ALSO nests a child is depth 3 in disguise. The six
@@ -543,22 +580,31 @@ TEST_F(StaticTfTreeParseTest, RejectsATransformWithNoParentFrame)
 {
   const std::string err =
     error_for("lidar:\n  x: 0.0\n  y: 0.0\n  z: 0.0\n  roll: 0.0\n  pitch: 0.0\n  yaw: 0.0\n");
-  EXPECT_NE(err.find("'lidar' declares a transform directly"), std::string::npos) << err;
+  EXPECT_NE(err.find("declares a transform at the top level"), std::string::npos) << err;
   EXPECT_NE(err.find("needs a parent frame above it"), std::string::npos) << err;
 }
 
 TEST_F(StaticTfTreeParseTest, RejectsAScalarWhereAMappingBelongs)
 {
+  EXPECT_NE(error_for("base_link: 5\n").find("must be a mapping"), std::string::npos);
+  EXPECT_NE(error_for("base_link:\n  lidar: 5\n").find("must be a mapping"), std::string::npos);
+}
+
+TEST_F(StaticTfTreeParseTest, RejectsAnEmptyMapping)
+{
   EXPECT_NE(
-    error_for("base_link: 5\n").find("must hold a mapping of child frames"), std::string::npos);
-  EXPECT_NE(
-    error_for("base_link:\n  lidar: 5\n").find("must be a mapping with x, y, z"),
+    error_for("base_link: {}\n").find("declares neither a transform nor any child frames"),
     std::string::npos);
 }
 
-TEST_F(StaticTfTreeParseTest, RejectsAnEmptyDocumentBody)
+TEST_F(StaticTfTreeParseTest, RejectsNestingBeyondTheDepthCap)
 {
-  EXPECT_NE(error_for("base_link: {}\n").find("declares no child frames"), std::string::npos);
+  // 40 levels of grouping, then a transform. Legal in shape but past the guard.
+  std::string doc;
+  for (int i = 0; i < 40; ++i) {
+    doc += std::string(static_cast<std::size_t>(i) * 2, ' ') + "f" + std::to_string(i) + ":\n";
+  }
+  EXPECT_NE(error_for(doc).find("nesting is deeper than"), std::string::npos);
 }
 
 TEST_F(StaticTfTreeParseTest, RejectsASelfEdge)

@@ -344,14 +344,94 @@ bool has_transform_fields(const YAML::Node & node)
   });
 }
 
-// True when `node` is a mapping that carries none of the six transform keys,
-// i.e. a further nesting level rather than a transform. The reference publisher
-// recurses into such a node and silently drops the enclosing key; this parser
-// reports it instead, since a dropped level means a transform lands under the
-// wrong parent.
-bool is_deeper_nesting(const YAML::Node & node)
+// Guards against a pathological document exhausting the stack. No hand-written
+// rig config comes close; yaml-cpp's own parser would be the first to give up.
+constexpr int kMaxNestingDepth = 32;
+
+// State threaded through walk_level().
+struct WalkState
 {
-  return node.IsMap() && !has_transform_fields(node);
+  std::vector<geometry_msgs::msg::TransformStamped> transforms;
+  std::set<std::pair<std::string, std::string>> edges;
+  std::vector<std::string> grouping_frames;  // levels that parented no transform
+  std::string error;
+};
+
+// Walk one mapping level, where `parent` is the frame the enclosing key named
+// ("" at the document root). Mirrors the reference publisher's processYamlNode:
+// a child mapping that carries transform fields is an edge parent -> child, and
+// one that does not is a further level walked with that child as its parent.
+//
+// So nesting deeper than two levels is not a chain — it is a grouping heading,
+// and only the level immediately above each transform names its parent.
+// Returns false with `state.error` set; `made_edge` reports whether this level
+// produced any edge of its own, which is what distinguishes a real parent frame
+// from a heading.
+bool walk_level(
+  const YAML::Node & node, const std::string & parent, int depth, WalkState & state,
+  bool & made_edge)
+{
+  if (depth > kMaxNestingDepth) {
+    state.error = "nesting is deeper than " + std::to_string(kMaxNestingDepth) + " levels";
+    return false;
+  }
+
+  for (const auto & entry : node) {
+    const auto child = entry.first.as<std::string>();
+    if (child.empty()) {
+      state.error = parent.empty() ? "a top-level frame id is empty"
+                                   : "a frame id under '" + parent + "' is empty";
+      return false;
+    }
+    const YAML::Node & body = entry.second;
+    if (!body.IsMap()) {
+      // The publisher ignores a non-mapping outright, which would drop the
+      // author's intent without a word.
+      state.error =
+        "'" + child + "' must be a mapping: either x, y, z, roll, pitch, yaw, or child frames";
+      return false;
+    }
+
+    if (!has_transform_fields(body)) {
+      if (body.size() == 0) {
+        state.error = "'" + child + "' declares neither a transform nor any child frames";
+        return false;
+      }
+      bool nested_made_edge = false;
+      if (!walk_level(body, child, depth + 1, state, nested_made_edge)) {
+        return false;
+      }
+      // Nothing directly under it was a transform, so this key named a heading
+      // rather than a frame. Legal, and the caller reports it.
+      if (!nested_made_edge) {
+        state.grouping_frames.push_back(child);
+      }
+      continue;
+    }
+
+    // A transform at the document root has no enclosing key to be its parent.
+    // The publisher broadcasts it with an empty parent frame id, which is broken
+    // TF, so the author has simply left the parent out.
+    if (parent.empty()) {
+      state.error = "'" + child +
+                    "' declares a transform at the top level, so it has no parent frame; this "
+                    "schema needs a parent frame above it";
+      return false;
+    }
+    if (parent == child) {
+      state.error = "frame '" + parent + "' is its own parent";
+      return false;
+    }
+
+    geometry_msgs::msg::TransformStamped transform;
+    if (!read_transform_mapping(body, parent, child, transform, state.error)) {
+      return false;
+    }
+    state.transforms.push_back(transform);
+    state.edges.emplace(parent, child);
+    made_edge = true;
+  }
+  return true;
 }
 
 }  // namespace
@@ -409,70 +489,12 @@ StaticTfTreeParseResult parse_static_tf_tree_yaml(const std::filesystem::path & 
     return result;
   }
 
-  std::vector<geometry_msgs::msg::TransformStamped> transforms;
-  std::set<std::pair<std::string, std::string>> edges;
+  WalkState state;
   try {
-    for (const auto & parent_entry : root) {
-      const auto parent = parent_entry.first.as<std::string>();
-      if (parent.empty()) {
-        result.error = "a parent frame id is empty";
-        return result;
-      }
-      const YAML::Node & children = parent_entry.second;
-      if (!children.IsMap()) {
-        result.error = "parent frame '" + parent +
-                       "' must hold a mapping of child frames, each with x, y, z, roll, pitch, yaw";
-        return result;
-      }
-      if (children.size() == 0) {
-        result.error = "parent frame '" + parent + "' declares no child frames";
-        return result;
-      }
-      // One level too shallow: the top-level entry is itself a transform, so the
-      // parent frame is missing. Without this the loop below would report the
-      // first of the six keys as a malformed child frame, which points at the
-      // wrong thing. The reference publisher instead broadcasts the transform
-      // with an EMPTY parent frame id, which is broken TF either way.
-      if (has_transform_fields(children)) {
-        result.error = "'" + parent +
-                       "' declares a transform directly; this schema needs a parent frame above it "
-                       "(parent, then child holding x, y, z, roll, pitch, yaw)";
-        return result;
-      }
-
-      for (const auto & child_entry : children) {
-        const auto child = child_entry.first.as<std::string>();
-        if (child.empty()) {
-          result.error = "a child frame id under parent '" + parent + "' is empty";
-          return result;
-        }
-        const YAML::Node & body = child_entry.second;
-        if (!body.IsMap()) {
-          result.error = "transform " + edge_label(parent, child) +
-                         " must be a mapping with x, y, z, roll, pitch, yaw";
-          return result;
-        }
-        // A third level means the file nests deeper than this schema. The
-        // reference publisher would flatten it and drop `parent`, putting the
-        // transform under the wrong frame, so refuse instead of guessing.
-        if (is_deeper_nesting(body)) {
-          result.error = "'" + parent + "' -> '" + child +
-                         "' nests a further level; this schema is exactly two levels deep "
-                         "(parent, then child holding x, y, z, roll, pitch, yaw)";
-          return result;
-        }
-        if (parent == child) {
-          result.error = "frame '" + parent + "' is its own parent";
-          return result;
-        }
-
-        geometry_msgs::msg::TransformStamped transform;
-        if (!read_transform_mapping(body, parent, child, transform, result.error)) {
-          return result;
-        }
-        transforms.push_back(transform);
-        edges.emplace(parent, child);
-      }
+    bool made_edge = false;
+    if (!walk_level(root, /*parent=*/"", /*depth=*/1, state, made_edge)) {
+      result.error = state.error;
+      return result;
     }
   } catch (const YAML::Exception & e) {
     // A non-scalar mapping key (`? [a, b] : ...`) is the remaining way a
@@ -482,19 +504,20 @@ StaticTfTreeParseResult parse_static_tf_tree_yaml(const std::filesystem::path & 
     return result;
   }
 
-  if (transforms.empty()) {
+  if (state.transforms.empty()) {
     result.error = "static TF YAML '" + yaml_path.string() + "' declares no transforms";
     return result;
   }
   // Everything above is per-edge; this is the only check on the set as a whole,
   // and it is what rejects a child claimed by two parents, opposite edges, and
   // cycles. Same validation `bagwiz tf tree` applies to a merged bag tree.
-  if (const auto err = validate_tf_forest(edges, "in '" + yaml_path.string() + "'")) {
+  if (const auto err = validate_tf_forest(state.edges, "in '" + yaml_path.string() + "'")) {
     result.error = *err;
     return result;
   }
 
-  result.transforms = std::move(transforms);
+  result.transforms = std::move(state.transforms);
+  result.grouping_frames = std::move(state.grouping_frames);
   return result;
 }
 

@@ -29,6 +29,11 @@ inline constexpr const char * kDefaultStaticTfTopic = "/tf_static";
 // `tf static dump`; see core::parse_static_tf_tree_yaml for the accepted schema
 // and core::rpy_to_quaternion for the rotation conversion.
 //
+// Nesting may go arbitrarily deep, as it may for the reference publisher: a level
+// that holds no transform of its own is a grouping heading rather than a frame.
+// Since an author may have meant such a level as a chain link, the keys that
+// turned out to parent nothing are warned about (parse's `grouping_frames`).
+//
 // The message is stamped at `<input>`'s earliest message time — both its receive
 // time and every transform's header.stamp — which places the latched static TF at
 // the very start of the timeline, where a static transform is expected to already

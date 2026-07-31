@@ -548,31 +548,57 @@ rotation deviation was 2.5e-15 rad — a picometre over a 100 m lever arm. And
 `dump` → `join` → `dump` is byte-identical, so a config survives any number of
 trips through a bag unchanged.
 
+### Nesting
+
+A mapping that carries the six transform keys is an edge from the key enclosing
+it; one that does not is a further level. Nesting may therefore go **arbitrarily
+deep**, matching `multi_transform_publisher`, so any config that works with the
+publisher works here.
+
+Depth beyond two is **not a chain** — it is a grouping heading, which is how a
+large rig config gets split into sections:
+
+```yaml
+sensors: # a heading: parents nothing
+  base_link:
+    drs_base_link:
+      x: 0.796
+      # ... => base_link -> drs_base_link
+  drs_base_link:
+    lidar_front:
+      # ... => drs_base_link -> lidar_front
+```
+
+Only the level immediately above a transform names its parent. Because an author
+could instead have meant `a: {b: {c: {...}}}` as the chain `a → b → c` (it is
+`b → c`, with `a` a heading), `join` prints a warning naming every key that turned
+out to parent nothing. The two-level form [`static dump`](#bagwiz-tf-static-dump)
+writes has no headings and warns about nothing.
+
 ### Accepted input
 
-Strict, because this is a hand-edited file and a silently-ignored key becomes a
-silently-wrong sensor pose. The document must be a mapping of parent frames, each
-holding a mapping of child frames, each holding **exactly** the six keys `x`, `y`,
-`z`, `roll`, `pitch`, `yaw` with numeric values. Rejected, with the offending
-frame or key named:
+Otherwise strict, because this is a hand-edited file and a silently-ignored key
+becomes a silently-wrong sensor pose. A transform must carry **exactly** the six
+keys `x`, `y`, `z`, `roll`, `pitch`, `yaw` with numeric values. Rejected, with the
+offending frame or key named:
 
 - A missing key. There is no default: a pose missing `pitch` is underspecified,
   and filling in `0` would invent a transform the author did not write.
 - Any other key. A mistyped `pich` would otherwise leave pitch silently at `0`.
-- A non-numeric value, an empty frame id, or a frame that is its own parent.
-- **A third level of nesting**, at any depth. Note this is stricter than
-  `multi_transform_publisher`, which recurses and silently drops the enclosing
-  key — so `group: {base_link: {lidar: {...}}}` publishes `base_link → lidar` there
-  and is an error here, because dropping a level puts the transform under the
-  wrong parent. A transform mapping that nests a child _beside_ the six keys is
-  the same mistake and is caught as an unknown key.
-- **One level too few**: a top-level entry that is itself a transform, i.e. the
-  parent frame was forgotten. (`multi_transform_publisher` broadcasts this with an
-  empty parent frame id.)
+  This is also what catches a child nested _beside_ the six keys — the publisher
+  reads the six and drops that child's transform without a word, so here `join` is
+  deliberately stricter than the publisher.
+- A non-numeric value, an empty frame id, a value that is neither a transform nor
+  child frames, an empty mapping, or a frame that is its own parent.
+- **A transform at the document root**: there is no enclosing key to be its
+  parent, i.e. the parent frame was forgotten. (`multi_transform_publisher`
+  broadcasts this with an empty parent frame id.)
 - An edge set that is not a forest: a child claimed by two parents, both `A → B`
   and `B → A`, or a cycle. This is the same validation
   [`tf tree`](#bagwiz-tf-tree) applies to a bag's merged tree.
 - An empty document — there would be nothing to write.
+- Nesting deeper than 32 levels, a guard against a pathological document; no
+  hand-written config comes close.
 
 Note also that unlike `multi_transform_publisher`, `join` does **not** synthesize
 `camera_link → camera_optical_link` edges. It writes exactly the transforms the
