@@ -3,74 +3,81 @@
 Walk the messages of a single topic in a ROS 2 rosbag one at a time and
 render each payload as YAML, mirroring `ros2 topic echo`. Designed for
 interactive inspection: the view is a pager with vim-style scroll keys,
-backed by the reusable TUI SDK (`bagwiz::core::tui`). The header and
-footer are pinned in place — only the body region scrolls — and any
-line that does not fit the terminal width is wrapped onto continuation
-lines. Wrapped continuation lines inherit the original line's leading
-whitespace so YAML nesting stays visually intact. The view also redraws
-cleanly on terminal resize. ROS 1 `*.bag` inputs are not supported.
+backed by the reusable TUI SDK (`bagwiz::core::tui`). ROS 1 `*.bag`
+inputs are not supported.
 
 ## Usage
 
 ```text
-bagwiz walk -i <input> -t <topic> [--cam-info <cam-info-topic>]
+bagwiz walk -i <input> -t <topic> [OPTIONS]
+```
+
+## Examples
+
+```bash
+# Walk an IMU topic, paging through its messages one at a time.
+bagwiz walk -i capture.mcap -t /sensing/imu/data
 ```
 
 ## Options
 
-| Flag                    | Description                                                                                                                                                                                                                                    |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-i`, `--input <input>` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).                                                                                                                                                                        |
-| `-t`, `--topic <topic>` | Topic name to inspect. Must exist in the bag.                                                                                                                                                                                                  |
-| `--cam-info`            | Explicit `sensor_msgs/msg/CameraInfo` topic for the preview's undistort toggle and the PointCloud2 projection overlay. When omitted, bagwiz auto-resolves it from `<topic>` using the rules documented for `bagwiz generate video --cam-info`. |
+| Flag                    | Description                                                                                                                                                                                                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-i`, `--input <input>` | **Required.** ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). Must exist.                                                                                                                                                              |
+| `-t`, `--topic <topic>` | **Required.** Topic name to inspect. Must exist in the bag.                                                                                                                                                                                                    |
+| `--cam-info <topic>`    | Long-form only. Explicit `sensor_msgs/msg/CameraInfo` topic for the preview's undistort toggle and the PointCloud2 projection overlay. When omitted, bagwiz auto-resolves it from `<topic>` using the rules documented for `bagwiz generate video --cam-info`. |
 
-## Behavior
+## Decoding
 
-- Decoding goes through bagwiz's unified decoder factory. For MCAP shards
-  with a non-empty `ros2msg` schema embedded for the topic's type the
-  schema-driven backend is used directly. Otherwise (legacy MCAP / SQLite3
-  inputs) bagwiz falls back to the rosidl introspection typesupport, which
-  **requires the message package to be installed and on
-  `AMENT_PREFIX_PATH` at runtime**. If the typesupport library is missing,
-  bagwiz reports the package name to install and exits non-zero.
-- Messages are loaded lazily and cached as you advance, so `prev` is
-  always `O(1)` for anything you have already seen. Only `G` (jump to
-  last) always triggers a full-remaining scan; `.` / `>` read ahead only
-  as far as the target timestamp, which reaches the end of the topic when
-  no later message exists.
-- Pressing `→` / `Space` past the last message wraps back to the first
-  with a `(wrapped to first)` status hint.
-- Pressing `s` saves the **currently displayed** message body (the same
-  YAML string shown in the pager, not including the header lines) to a
-  file. The command prompts for an output path; press Enter with an empty
-  line to write under the process current working directory using the name
-  `<topic>_<index>.yaml`, where `<topic>` is the ROS topic with each `/`
-  replaced by `__`, and `<index>` is the same **zero-based** message index
-  as the first number in the footer line `[<index> / <last>[+]]` (see the
-  Footer section for `<last>`). Entering an existing directory (or any path
-  ending in `/`) writes the default name inside it; missing parent directories
-  are created. Aborting the prompt reports `(save cancelled)`.
-- By default, primitive arrays with more than 32 elements (e.g. the byte
-  buffer behind `sensor_msgs/Image.data` or `sensor_msgs/PointCloud2.data`)
-  are summarized as `[<N items>]` to keep the pager view scannable. Pressing
-  `a` toggles **full array expansion** for the rest of the walk session.
-  When expanded, long arrays render as a YAML block sequence (one element
-  per line under a `-` marker) so the output stays within the terminal
-  width and remains valid YAML. Short arrays (≤ 32 elements) keep their
-  inline `[a, b, c]` form either way. The toggle affects both on-screen
-  rendering and the YAML written by `s`, so saving while expanded produces
-  a full-fidelity dump of every element. Press `a` again to return to the
-  summarized view.
-- For image topics (`sensor_msgs/msg/Image` and
-  `sensor_msgs/msg/CompressedImage`), pressing `i` toggles an **in-terminal
-  image preview** that renders the actual decoded frame instead of the YAML
-  byte array. See [Image preview](#image-preview) for the supported encodings
-  and terminals.
+Decoding goes through bagwiz's unified decoder factory. For MCAP shards
+with a non-empty `ros2msg` schema embedded for the topic's type the
+schema-driven backend is used directly. Otherwise (legacy MCAP / SQLite3
+inputs) bagwiz falls back to the rosidl introspection typesupport, which
+**requires the message package to be installed and on
+`AMENT_PREFIX_PATH` at runtime**. If the typesupport library is missing,
+bagwiz reports the package name to install and exits non-zero.
+
+## Loading and caching
+
+Messages are loaded lazily and cached as you advance, so `prev` is
+always `O(1)` for anything you have already seen. Only `G` (jump to
+last) always triggers a full-remaining scan; `.` / `>` read ahead only
+as far as the target timestamp, which reaches the end of the topic when
+no later message exists.
+
+## Array expansion
+
+By default, primitive arrays with more than 32 elements (e.g. the byte
+buffer behind `sensor_msgs/Image.data` or `sensor_msgs/PointCloud2.data`)
+are summarized as `[<N items>]` to keep the pager view scannable. Pressing
+`a` toggles **full array expansion** for the rest of the walk session.
+When expanded, long arrays render as a YAML block sequence (one element
+per line under a `-` marker) so the output stays within the terminal
+width and remains valid YAML. Short arrays (≤ 32 elements) keep their
+inline `[a, b, c]` form either way. The toggle affects both on-screen
+rendering and the YAML written by `s`, so saving while expanded produces
+a full-fidelity dump of every element. Press `a` again to return to the
+summarized view.
+
+## Saving the current message
+
+Pressing `s` saves the **currently displayed** message body (the same
+YAML string shown in the pager, not including the header lines) to a
+file. The command prompts for an output path; press Enter with an empty
+line to write under the process current working directory using the name
+`<topic>_<index>.yaml`, where `<topic>` is the ROS topic with each `/`
+replaced by `__`, and `<index>` is the same **zero-based** message index
+as the first number in the footer line `[<index> / <last>[+]]` (see the
+Footer section for `<last>`). Entering an existing directory (or any path
+ending in `/`) writes the default name inside it; missing parent directories
+are created. Aborting the prompt reports `(save cancelled)`.
 
 ## Image preview
 
-Pressing `i` on an image topic switches to a dedicated preview that decodes the
-current message and draws the real image in the terminal. Navigation stays live
+For image topics (`sensor_msgs/msg/Image` and
+`sensor_msgs/msg/CompressedImage`), pressing `i` toggles an in-terminal
+image preview that decodes the current message and draws the real image
+in the terminal instead of the YAML byte array. Navigation stays live
 in the preview — `→`/`Space` (next), `←`/`b` (prev), `.` (+1s), `,` (-1s), `>`
 (+10s), `<` (-10s), `g` (first), `G` (last) re-decode and re-render the new
 frame — and the view redraws on resize. Press `q` to return to the YAML view.
@@ -173,7 +180,8 @@ image is shown without the overlay.
 
 ## Layout
 
-The visible viewport is split into three pinned regions:
+The visible viewport is split into three pinned regions — the header and
+footer are pinned in place and only the body region scrolls:
 
 ```text
 ┌─────────────────────────────────────────────────┐
@@ -195,6 +203,11 @@ the body region shrinks accordingly. The status row is always reserved
 (blank when there is no message) so the body never grows or shrinks
 underfoot when transient messages like `saved /tmp/x.yaml` or
 `(wrapped to first)` appear.
+
+Any body line that does not fit the terminal width is wrapped onto
+continuation lines, which inherit the original line's leading whitespace
+so YAML nesting stays visually intact. The view also redraws cleanly on
+terminal resize.
 
 ## Header
 
@@ -252,7 +265,8 @@ not been read into the cache yet (they get pulled in on demand).
 | `q` / `Q` / `Esc` / `Ctrl-C` / `Ctrl-D` | Quit (in the image preview, returns to the YAML view).                                                                                                                                            |
 
 When the body is taller than the visible window, a `lines X-Y of N`
-indicator is shown above the key legend.
+indicator is shown above the key legend. Wrapping past the last message
+back to the first shows a `(wrapped to first)` status hint.
 
 ## Requirements
 
@@ -278,15 +292,9 @@ because `walk` is the most decoder-centric command.
   `walk` preview would otherwise never print. An unrecognised value is ignored
   with a warning. See `bagwiz_base/src/core/base/logging.cpp`.
 
-## Example
-
-```bash
-bagwiz walk -i capture.mcap -t /sensing/imu/data
-```
-
 ## Exit status
 
-| Code | Meaning                                                                                                           |
-| ---- | ----------------------------------------------------------------------------------------------------------------- |
-| `0`  | Quit cleanly (`q`/`Q`/`Esc`/`Ctrl-C`/`Ctrl-D`), or the topic had no messages.                                     |
-| `1`  | Bag could not be opened, the topic is absent, the decoder could not be initialized, or stdin/stdout is not a TTY. |
+| Code | Meaning                              |
+| ---- | ------------------------------------ |
+| `0`  | Success.                             |
+| `1`  | Failed — check stderr for the cause. |

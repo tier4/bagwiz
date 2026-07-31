@@ -7,15 +7,37 @@ counts and average frequencies. ROS 1 `*.bag` inputs are not supported.
 ## Usage
 
 ```text
-bagwiz ls -i <input> [-l|--long]
+bagwiz ls -i <input> [OPTIONS]
+```
+
+## Examples
+
+```bash
+# List every topic in a directory-layout rosbag2 (names + types only).
+bagwiz ls -i path/to/rosbag2_2025_01_01-12_00_00/
+
+# Single-file MCAP.
+bagwiz ls -i capture.mcap
+
+# Long listing: add per-topic message counts and average Hz.
+bagwiz ls -i capture.mcap -l
+
+# Filter by topic name — column-oriented output makes this trivial.
+bagwiz ls -i capture.mcap | grep /sensors/
+
+# Filter by message type.
+bagwiz ls -i capture.mcap | grep sensor_msgs/msg/PointCloud2
+
+# Filter a long listing.
+bagwiz ls -i capture.mcap -l | grep lidar
 ```
 
 ## Options
 
-| Flag                    | Description                                                                                                                        |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `-i`, `--input <input>` | ROS 2 rosbag path: a rosbag2 directory or a single-file `*.mcap` / `*.db3`. zstd-compressed `*.db3.zstd` inputs are also accepted. |
-| `-l`, `--long`          | Add the `COUNT` and `HZ` columns. This requires a statistics pass over the bag (see Performance).                                  |
+| Flag                    | Description                                                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `-i`, `--input <input>` | **Required.** ROS 2 rosbag path: a rosbag2 directory or a single-file `*.mcap` / `*.db3`. zstd-compressed `*.db3.zstd` inputs are also accepted. |
+| `-l`, `--long`          | Add the `COUNT` and `HZ` columns. This requires a statistics pass over the bag (see Performance).                                                |
 
 ## Output
 
@@ -62,27 +84,9 @@ regardless of bag size or storage format.
   trusted, so a bag that was appended to behind bagwiz's back falls back to the
   scan rather than reporting stale numbers.
 
-## Examples
-
-```bash
-# List every topic in a directory-layout rosbag2 (names + types only).
-bagwiz ls -i path/to/rosbag2_2025_01_01-12_00_00/
-
-# Single-file MCAP.
-bagwiz ls -i capture.mcap
-
-# Long listing: add per-topic message counts and average Hz.
-bagwiz ls -i capture.mcap -l
-
-# Filter with grep — column-oriented output makes this trivial.
-bagwiz ls -i capture.mcap | grep /sensors/
-bagwiz ls -i capture.mcap | grep sensor_msgs/msg/PointCloud2
-bagwiz ls -i capture.mcap -l | grep lidar
-```
-
 ## Exit status
 
 | Code | Meaning                                   |
 | ---- | ----------------------------------------- |
 | `0`  | Success (including a bag with no topics). |
-| `1`  | Failed to open `<input>`.                 |
+| `1`  | Failed — check stderr for the cause.      |

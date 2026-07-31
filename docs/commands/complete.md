@@ -8,13 +8,26 @@ Generate a shell completion script for `bagwiz`.
 bagwiz complete --shell <shell> [--install] [-w|--overwrite]
 ```
 
+## Examples
+
+```bash
+# Print the bash completion script to stdout.
+bagwiz complete --shell bash
+
+# Install the script to the shell's standard completion directory.
+bagwiz complete --shell zsh --install
+
+# Install, replacing a previously installed script.
+bagwiz complete --shell fish --install --overwrite
+```
+
 ## Options
 
-| Flag                | Description                                                                               |
-| ------------------- | ----------------------------------------------------------------------------------------- |
-| `--shell <shell>`   | Shell completion format to emit (`bash`, `zsh`, `fish`).                                  |
-| `--install`         | Write the script to the shell's standard completion directory instead of stdout.          |
-| `-w`, `--overwrite` | Overwrite an existing file when used with `--install`. Has no effect without `--install`. |
+| Flag                | Description                                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------ |
+| `--shell <shell>`   | **Required.** Long-form only. Shell completion format to emit (`bash`, `zsh`, `fish`).           |
+| `--install`         | Long-form only. Write the script to the shell's standard completion directory instead of stdout. |
+| `-w`, `--overwrite` | Overwrite an existing file when used with `--install`. Has no effect without `--install`.        |
 
 ## Supported shells
 
@@ -31,17 +44,9 @@ shells only requires a new script renderer.
 ## Quick install
 
 `--install` writes the script to the shell's standard location, creating any
-missing parent directories:
-
-```bash
-bagwiz complete --shell bash --install
-bagwiz complete --shell zsh  --install
-bagwiz complete --shell fish --install
-```
-
-On success it prints the installed path, notes that completion becomes active in
-new terminal sessions, and shows the command to enable it in the current shell
-right away:
+missing parent directories. On success it prints the installed path, notes that
+completion becomes active in new terminal sessions, and shows the command to
+enable it in the current shell right away:
 
 ```text
 installed: /home/you/.local/share/bash-completion/completions/bagwiz
@@ -123,7 +128,7 @@ Open a new fish shell, or source the file in the current session:
 source ~/.config/fish/completions/bagwiz.fish
 ```
 
-## Behavior
+## Command and flag completion
 
 - Top-level commands and known nested subcommands are completed statically.
 - Typing `-` and pressing TAB lists the option flags available at the current
@@ -166,8 +171,14 @@ source ~/.config/fish/completions/bagwiz.fish
     completes `broken`, `generate <TAB>` completes `video`, `map <TAB>`
     completes `slam`, `viewer`, `pcd <TAB>` completes `concat`, `undistort`,
     and `topic <TAB>` completes `drop`, `keep`, `rename`
+
+## Option value completion
+
 - Selected option values are completed where bagwiz has a closed set, such as
   `--storage <mcap|sqlite3>` and `--stamp <header|recv>`.
+
+## Topic completion
+
 - Flag values that name a bag topic of a specific type are completed by opening
   `<input>` and offering only topics of that type:
   - `bagwiz generate video -i <input> ... --cam-info <topic>` — `sensor_msgs/msg/CameraInfo` topics
@@ -234,6 +245,8 @@ source ~/.config/fish/completions/bagwiz.fish
   Paths beginning with `~/` are expanded against the current user's home
   directory before opening the bag.
 
+## TF frame completion
+
 - TF frame-id positions complete to the set of distinct `header.frame_id`
   and `child_frame_id` values observed in the input bag's
   `tf2_msgs/msg/TFMessage` topics. Coverage:
@@ -254,8 +267,17 @@ source ~/.config/fish/completions/bagwiz.fish
   emit no frame ids: the first TF read would decompress the entire shard to a
   temporary `.db3`, which would hang TAB for seconds on a multi-GB bag.
 
+## Path completion
+
 - Path completion is delegated to the shell's default file completion when
   bagwiz does not provide command-specific candidates. The bash script uses
   `complete -o default`; the zsh script falls back to `_files`; the fish
   script registers a `-F` rule gated by an `__bagwiz_no_candidates` condition
   that matches the same behavior.
+
+## Exit status
+
+| Code | Meaning                              |
+| ---- | ------------------------------------ |
+| `0`  | Success.                             |
+| `1`  | Failed — check stderr for the cause. |

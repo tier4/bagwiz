@@ -37,16 +37,26 @@ other topic in the bag is copied verbatim.
 bagwiz cam-info replace -i <input> --yaml <yaml> -t|--topics <topics>... [OPTIONS]
 ```
 
-`<input>` doubles as the write-side target: without `-o` the bag is rewritten in
-place, mirroring `bagwiz traj join`. One or more
-topics are given via `-t`/`--topics`; each must be a `sensor_msgs/msg/CameraInfo`
-topic.
+### Examples
+
+```bash
+# Fix a camera's intrinsics in place.
+bagwiz cam-info replace -i drive.mcap --yaml left_camera.yaml -t /camera/left/camera_info
+
+# Write a corrected copy and also relabel the frame, leaving the input untouched.
+bagwiz cam-info replace -i drive.mcap --yaml left.yaml -t /camera/left/camera_info \
+  --frame-id camera_left_optical_frame -o drive_fixed.mcap
+
+# Apply one calibration to several CameraInfo topics in a single pass.
+bagwiz cam-info replace -i drive.mcap --yaml shared.yaml \
+  -t /camera/camera_info /camera/camera_info_throttled
+```
 
 ### Options
 
 | Flag                    | Description                                                                                                                                   |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-i`, `--input <input>` | Input ROS 2 rosbag (directory or single-file). Must exist.                                                                                    |
+| `-i`, `--input <input>` | **Required.** Input ROS 2 rosbag (directory or single-file). Must exist.                                                                      |
 | `--yaml <yaml>`         | Camera calibration YAML in the `camera_calibration` / `camera_info_manager` format. Must exist (a regular file).                              |
 | `-t`, `--topics <t>...` | **Required.** One or more CameraInfo topics to rewrite. Each type must be `sensor_msgs/msg/CameraInfo`; the same YAML applies to all of them. |
 | `--frame-id <id>`       | Override `header.frame_id` on the rewritten messages. When omitted, each message keeps its frame_id.                                          |
@@ -96,40 +106,26 @@ and is ignored. Each block's declared `rows * cols` must match its `data` length
 and `k` / `r` / `p` must yield exactly 9 / 9 / 12 values; otherwise the run stops
 with an error before the bag is touched.
 
-### Examples
+### Topic selection
 
-Fix a camera's intrinsics in place:
-
-```bash
-bagwiz cam-info replace -i drive.mcap --yaml left_camera.yaml -t /camera/left/camera_info
-```
-
-Write a corrected copy and also relabel the frame, leaving the input untouched:
-
-```bash
-bagwiz cam-info replace -i drive.mcap --yaml left.yaml -t /camera/left/camera_info \
-  --frame-id camera_left_optical_frame -o drive_fixed.mcap
-```
-
-Apply one calibration to several CameraInfo topics in a single pass:
-
-```bash
-bagwiz cam-info replace -i drive.mcap --yaml shared.yaml \
-  -t /camera/camera_info /camera/camera_info_throttled
-```
-
-### Notes
+One or more topics are given via `-t`/`--topics`; each must be a
+`sensor_msgs/msg/CameraInfo` topic.
 
 - Only the named topics are rewritten; their message type is unchanged, so the
   bag's other topics and metadata are preserved exactly.
-- The same `<calib_yaml>` is applied to every listed topic. Pass different
+- The same calibration YAML is applied to every listed topic. Pass different
   calibrations by running the command once per topic.
 - Listing a topic more than once is harmless — duplicates are de-duplicated, and
   a listed topic that carries no messages is reported with a warning.
-- The output bag is always written uncompressed (re-compress later with
-  `ros2 bag convert` if needed).
+
+### In-place vs `-o`
+
+- `<input>` doubles as the write-side target: without `-o` the bag is rewritten
+  in place, mirroring `bagwiz traj join`.
 - In-place mode replaces the input atomically via a sibling temporary bag, in the
   same storage backend and layout as the input.
+- The output bag is always written uncompressed (re-compress later with
+  `ros2 bag convert` if needed).
 
 ---
 
@@ -157,6 +153,40 @@ image needs its own focal length and principal point. `alpha` chooses how.
 bagwiz cam-info recompute-p -i <input> [-t|--topics <topics>...] [OPTIONS]
 ```
 
+### Examples
+
+```bash
+# Fix a calibration file's projection matrix in place.
+bagwiz cam-info recompute-p -i camera_info.yaml
+
+# Write a corrected copy, keeping all source pixels.
+bagwiz cam-info recompute-p -i camera_info.yaml --alpha 1.0 -o fixed.yaml
+
+# Compose with `replace` to push a corrected calibration into a bag.
+bagwiz cam-info recompute-p -i camera_info.yaml -o fixed.yaml
+bagwiz cam-info replace -i drive.mcap --yaml fixed.yaml -t /camera/camera_info
+
+# Recompute `p` directly on a bag's CameraInfo topics.
+bagwiz cam-info recompute-p -i drive.mcap -t /camera/camera_info -o drive_fixed.mcap
+
+# Pull a bag's calibration out as a YAML — that is `cam-info dump`; `recompute-p`
+# then fixes its `p` if you want.
+bagwiz cam-info dump -i drive.mcap -t /camera/camera_info -o camera_info.yaml
+bagwiz cam-info recompute-p -i camera_info.yaml
+```
+
+### Options
+
+| Flag                    | Description                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `-i`, `--input <input>` | **Required.** Calibration YAML (`camera_calibration` / `camera_info_manager` format) **or** an input ROS 2 rosbag. Must exist.       |
+| `-t`, `--topics <t>...` | Bag input only: one or more `sensor_msgs/msg/CameraInfo` topics whose `p` to recompute. **Required** for a bag, rejected for a YAML. |
+| `-a`, `--alpha <a>`     | OpenCV free-scaling parameter in `[0, 1]`. Default: `0`.                                                                             |
+| `-o`, `--output <p>`    | Write the result to a new path instead of rewriting `<input>` in place.                                                              |
+| `-w`, `--overwrite`     | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place.                                |
+
+### Input modes and output shape
+
 `<input>` says where the calibration comes from, and decides whether `--topics`
 applies:
 
@@ -180,16 +210,6 @@ For a bag, `-o`'s extension does pick the **storage format**:
 
 Without `-o` the input is rewritten in place, mirroring `cam-info replace`.
 
-### Options
-
-| Flag                    | Description                                                                                                                          |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `-i`, `--input <input>` | Calibration YAML (`camera_calibration` / `camera_info_manager` format) **or** an input ROS 2 rosbag. Must exist.                     |
-| `-t`, `--topics <t>...` | Bag input only: one or more `sensor_msgs/msg/CameraInfo` topics whose `p` to recompute. **Required** for a bag, rejected for a YAML. |
-| `-a`, `--alpha <a>`     | OpenCV free-scaling parameter in `[0, 1]`. Default `0`.                                                                              |
-| `-o`, `--output <p>`    | Write the result to a new path instead of rewriting `<input>` in place.                                                              |
-| `-w`, `--overwrite`     | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect in-place.                                |
-
 `--topics` is required for a bag rather than defaulting to every CameraInfo
 topic: rewriting topics you did not name would be a guess, and `<input>` doubles
 as the in-place target. Because the requirement depends on what `<input>` turns
@@ -203,6 +223,23 @@ recompute. Pass -t/--topics <topic>..., or pass a .yaml calibration file as <inp
 
 Tab completion offers the bag's CameraInfo topics — and only those — at every
 `--topics` value slot.
+
+**YAML mode is a re-emit, not an edit.** Values are preserved (including
+`camera_name`), but comments, key order, and incidental formatting are
+normalized. Use `-o` to keep the original file untouched.
+
+### Per-message recomputation
+
+- `--topics` accepts several topics at once
+  (`--topics /cam1/camera_info /cam2/camera_info`); each is recomputed from its
+  own intrinsics, so unlike `replace` they need not share a calibration.
+- In bag mode each message's `p` is recomputed from that **same message's** own
+  `k` / `d` / `width` / `height`, so a stream whose calibration changes mid-bag is
+  handled correctly. A constant stream is the common case and is memoized, so
+  OpenCV is consulted once rather than per message.
+- Only the named topics are rewritten. Each message's `header` (stamp and
+  `frame_id`), `binning_x` / `binning_y`, `roi`, and every other topic are copied
+  verbatim — only `p` changes.
 
 ### Supported `distortion_model` values
 
@@ -287,60 +324,12 @@ been written, leaving a partial output bag:
 When the model is Brown–Conrady but `d` is empty or all-zero there is nothing to
 undistort, so the result is exactly `[k | 0]`.
 
-### Examples
+### In-place vs `-o`
 
-Fix a calibration file's projection matrix in place:
-
-```bash
-bagwiz cam-info recompute-p -i camera_info.yaml
-```
-
-Write a corrected copy, keeping all source pixels:
-
-```bash
-bagwiz cam-info recompute-p -i camera_info.yaml --alpha 1.0 -o fixed.yaml
-```
-
-Compose with `replace` to push a corrected calibration into a bag:
-
-```bash
-bagwiz cam-info recompute-p -i camera_info.yaml -o fixed.yaml
-bagwiz cam-info replace -i drive.mcap --yaml fixed.yaml -t /camera/camera_info
-```
-
-Recompute `p` directly on a bag's CameraInfo topics:
-
-```bash
-bagwiz cam-info recompute-p -i drive.mcap -t /camera/camera_info -o drive_fixed.mcap
-```
-
-Pull a bag's calibration out as a YAML — that is `cam-info dump`, and
-`recompute-p` then fixes its `p` if you want:
-
-```bash
-bagwiz cam-info dump -i drive.mcap -t /camera/camera_info -o camera_info.yaml
-bagwiz cam-info recompute-p -i camera_info.yaml
-```
-
-### Notes
-
-- **YAML mode is a re-emit, not an edit.** Values are preserved (including
-  `camera_name`), but comments, key order, and incidental formatting are
-  normalized. Use `-o` to keep the original file untouched.
-- `--topics` accepts several topics at once
-  (`--topics /cam1/camera_info /cam2/camera_info`); each is recomputed from its
-  own intrinsics, so unlike `replace` they need not share a calibration.
-- In bag mode each message's `p` is recomputed from that **same message's** own
-  `k` / `d` / `width` / `height`, so a stream whose calibration changes mid-bag is
-  handled correctly. A constant stream is the common case and is memoized, so
-  OpenCV is consulted once rather than per message.
-- Only the named topics are rewritten. Each message's `header` (stamp and
-  `frame_id`), `binning_x` / `binning_y`, `roi`, and every other topic are copied
-  verbatim — only `p` changes.
-- The output bag is always written uncompressed (re-compress later with
-  `ros2 bag convert` if needed).
 - In-place mode replaces the input atomically: a bag via a sibling temporary bag,
   a YAML via a sibling temporary file.
+- The output bag is always written uncompressed (re-compress later with
+  `ros2 bag convert` if needed).
 
 ---
 
@@ -364,13 +353,26 @@ two compose.
 bagwiz cam-info dump -i <input> -t <topic> [OPTIONS]
 ```
 
-The bag is only ever read. Without `-o` the YAML goes to stdout.
+### Examples
+
+```bash
+# Look at what a bag recorded.
+bagwiz cam-info dump -i drive.mcap -t /camera/camera_info
+
+# Save it to a file.
+bagwiz cam-info dump -i drive.mcap -t /camera/camera_info -o camera_info.yaml
+
+# Compose with `recompute-p` to fix a stale `p`, then push it back with `replace`.
+bagwiz cam-info dump -i drive.mcap -t /camera/camera_info -o camera_info.yaml
+bagwiz cam-info recompute-p -i camera_info.yaml
+bagwiz cam-info replace -i drive.mcap --yaml camera_info.yaml -t /camera/camera_info
+```
 
 ### Options
 
 | Flag                    | Description                                                                                               |
 | ----------------------- | --------------------------------------------------------------------------------------------------------- |
-| `-i`, `--input <input>` | Input ROS 2 rosbag (directory or single-file). Must exist.                                                |
+| `-i`, `--input <input>` | **Required.** Input ROS 2 rosbag (directory or single-file). Must exist.                                  |
 | `-t`, `--topic <topic>` | The CameraInfo topic whose calibration to write. Its type must be `sensor_msgs/msg/CameraInfo`.           |
 | `-o`, `--output <p>`    | Write the YAML to this path instead of stdout.                                                            |
 | `-w`, `--overwrite`     | Replace an existing `-o` path. Without it, an existing output path stops the run. No effect without `-o`. |
@@ -381,44 +383,32 @@ calibration. Tab completion offers the bag's CameraInfo topics — and only thos
 ### YAML format
 
 The output is the standard camera calibration YAML documented under
-[`replace`](#yaml-format-and-field-mapping), minus `camera_name` (see Notes).
+[`replace`](#yaml-format-and-field-mapping), minus `camera_name`: it is not a
+CameraInfo field, so the bag cannot supply one. The key is optional, and
+inventing a name from the topic or `frame_id` would be a guess.
 
-### Examples
+### Which message is dumped
 
-Look at what a bag recorded:
+The **first** message's calibration is used. A topic whose calibration is not
+constant across the bag is reported with a warning saying so — one YAML cannot
+represent a stream that changes mid-bag.
 
-```bash
-bagwiz cam-info dump -i drive.mcap -t /camera/camera_info
-```
+### Output
 
-Save it to a file:
+Without `-o` the YAML goes to **stdout** and every diagnostic goes to stderr, so
+`bagwiz cam-info dump -i drive.mcap -t /camera/camera_info > camera_info.yaml` is
+pipe-clean. The bag is opened read-only and is never modified.
 
-```bash
-bagwiz cam-info dump -i drive.mcap -t /camera/camera_info -o camera_info.yaml
-```
+### Errors
 
-Compose with `recompute-p` to fix a stale `p`, then push it back with `replace`:
+| Situation                                                                       | Outcome                            |
+| ------------------------------------------------------------------------------- | ---------------------------------- |
+| The topic is missing, is not a `sensor_msgs/msg/CameraInfo` topic, or is empty. | The run stops; nothing is written. |
+| The `-o` path already exists and `-w` / `--overwrite` is not given.             | The run stops; nothing is written. |
 
-```bash
-bagwiz cam-info dump -i drive.mcap -t /camera/camera_info -o camera_info.yaml
-bagwiz cam-info recompute-p -i camera_info.yaml
-bagwiz cam-info replace -i drive.mcap --yaml camera_info.yaml -t /camera/camera_info
-```
+## Exit status
 
-### Notes
-
-- **`p` is copied, not recomputed.** A dump always agrees with the bag. Use
-  [`recompute-p`](#bagwiz-cam-info-recompute-p) on the dumped YAML to derive `p`
-  from the intrinsics.
-- The **first** message's calibration is used. A topic whose calibration is not
-  constant across the bag is reported with a warning saying so — one YAML cannot
-  represent a stream that changes mid-bag.
-- The output has **no `camera_name`**: it is not a CameraInfo field, so the bag
-  cannot supply one. The key is optional, and inventing a name from the topic or
-  `frame_id` would be a guess.
-- Without `-o` the YAML goes to **stdout** and every diagnostic goes to stderr, so
-  `bagwiz cam-info dump -i drive.mcap -t /camera/camera_info > camera_info.yaml` is
-  pipe-clean.
-- A topic that is missing, is not a CameraInfo topic, or carries no messages
-  stops the run; nothing is written.
-- The bag is opened read-only and is never modified.
+| Code | Meaning                              |
+| ---- | ------------------------------------ |
+| `0`  | Success.                             |
+| `1`  | Failed — check stderr for the cause. |

@@ -10,11 +10,36 @@ conversion is performed.
 bagwiz trim -i <input> [OPTIONS]
 ```
 
+## Examples
+
+```bash
+# Keep seconds 5..90 of the bag (message at exactly 90s excluded).
+bagwiz trim -i drive.mcap --start 5s --end 90s -o drive_cut.mcap
+
+# The same window, expressed as a length.
+bagwiz trim -i drive.mcap --start 5s --duration 85s -o drive_cut.mcap
+
+# Drop the first 10 seconds, rewriting the bag in place.
+bagwiz trim -i drive_dir/ --start 10s
+
+# Keep only the first half-second.
+bagwiz trim -i drive.mcap --end 500ms -o head.mcap
+
+# Cut 5 seconds off each end of the bag.
+bagwiz trim -i drive.mcap --both 5s -o drive_inner.mcap
+
+# Keep messages 101..1000 (skip the first 100, end after the 1000th).
+bagwiz trim -i drive.mcap --start 100msg --end 1000msg -o drive_head.mcap
+
+# Keep only the span where the lidar topic has data (its first to its last message, both included).
+bagwiz trim -i drive.db3 --align /sensing/lidar/concatenated/pointcloud -o aligned.db3
+```
+
 ## Options
 
 | Flag                    | Description                                                                                                                                                                                                                 |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-i`, `--input <input>` | Input ROS 2 rosbag (directory or single-file). Must exist.                                                                                                                                                                  |
+| `-i`, `--input <input>` | **Required.** Input ROS 2 rosbag (directory or single-file). Must exist.                                                                                                                                                    |
 | `--start <bound>`       | Window start: an offset from the bag start (e.g. `5s`, `500ms`) or a message count (`100msg` skips the first 100 messages). Default: bag start.                                                                             |
 | `--end <bound>`         | Window end, exclusive: an offset from the bag start (e.g. `90s`) or a message count (`500msg` keeps the first 500 messages). Default: bag end.                                                                              |
 | `--duration <len>`      | Window length measured from the window start (e.g. `30s`). Time only — no `msg`. Mutually exclusive with `--end`.                                                                                                           |
@@ -32,6 +57,11 @@ given — a windowless trim would be a plain copy, which is `cp -r`'s job.
 - Offsets are **relative to the bag's start time** (the earliest message
   timestamp), not absolute epoch times: `--start 5s` means "5 seconds into the
   bag".
+- Relative offsets need an anchor. Under `--stamp recv` with time bounds that
+  anchor is the storage's time summary, so an empty bag or an MCAP without a
+  summary index stops the run with an error. Under the default
+  `--stamp header`, and for any `msg` bound, the anchor comes from a full scan
+  instead — only a bag with no messages at all fails.
 - Every offset needs an explicit unit: `ns`, `us` (or `µs`), `ms`, or `s`.
   Fractional values are fine (`1.5s`, `0.05s`). A bare number such as
   `--start 5` is rejected — it will not be silently read as milliseconds.
@@ -65,6 +95,9 @@ given — a windowless trim would be a plain copy, which is `cp -r`'s job.
   selected topics' first and last messages are part of the output). The run
   stops with an error when a selector matches no topic, a selected topic has
   no messages, or the selected topics do not overlap in time.
+- The window is resolved against the bag's time extent before anything is
+  written; bad offsets or an out-of-range start fail the run and leave the
+  input untouched.
 
 ## Reference clock
 
@@ -82,78 +115,42 @@ even when pipeline latency pushed its record time outside it.
 - Message timestamps in the output bag are never rewritten; the clock only
   decides which messages are kept.
 - `header` mode cannot use the storage's time index (stamps live inside the
-  payloads), so the whole bag is scanned regardless of window size. Pass
-  `--stamp recv` to window on record time and get the indexed fast path —
-  right for bags without headers, or when the record order is what matters.
+  payloads), so the whole bag is scanned and filtered with a per-message keep
+  predicate, regardless of window size. Pass `--stamp recv` to window on record
+  time and get the indexed fast path — the time range is pushed down into the
+  storage layer (MCAP chunk index / SQLite `WHERE`), so out-of-range data is
+  skipped rather than read and discarded. This is right for bags without
+  headers, or when the record order is what matters.
 
-## Behavior
+## In-place vs `-o`
 
-- The window is resolved against the bag's time extent before anything is
-  written; bad offsets or an out-of-range start fail the run and leave the
-  input untouched.
-- Trim removes messages, never topics: every topic declaration is copied
-  verbatim, so a topic whose messages all fall outside the window is still
-  declared (with zero messages) in the output. A window that contains no
-  messages at all still produces a valid, empty bag, after a warning.
-- Under `--stamp recv`, the time range is pushed down into the storage layer
-  (MCAP chunk index / SQLite `WHERE`), so out-of-range data is skipped rather
-  than read and discarded. Under the default `--stamp header`, stamps live in
-  the message payloads, so the whole bag is scanned and filtered with a
-  per-message keep predicate (see Reference clock above).
-- Relative offsets need an anchor. Under `--stamp recv` with time bounds that
-  anchor is the storage's time summary, so an empty bag or an MCAP without a
-  summary index stops the run with an error. Under the default
-  `--stamp header`, and for any `msg` bound, the anchor comes from a full scan
-  instead — only a bag with no messages at all fails.
-- In-place vs `-o`. Without `-o`, `<input>` is rewritten via an atomic
-  tmp-swap that preserves its storage format and layout. With `-o`, `<input>`
-  is left untouched and the result is written to that path; the output's
-  storage follows the output extension (`.mcap` / `.db3` pick a single-file
-  backend) or, for a directory output, inherits the input bag's storage
-  backend.
-- Embedded message schemas are preserved so MCAP outputs stay self-describing.
-- Under `--stamp recv`, when both the input and the output are MCAP, chunks
-  fully inside the window are copied byte-for-byte, preserving the input's
-  chunk compression; only chunks straddling a window boundary are re-encoded
-  (with the same codec). When this fast path cannot apply — `--stamp header`,
-  non-MCAP storage, multi-shard inputs, and a few other layouts — the bag is
-  re-encoded and the output MCAP is written with `compression=none`;
-  re-compress afterwards with `ros2 bag convert` if needed.
+Without `-o`, `<input>` is rewritten via an atomic tmp-swap that preserves its
+storage format and layout. With `-o`, `<input>` is left untouched and the
+result is written to that path; the output's storage follows the output
+extension (`.mcap` / `.db3` pick a single-file backend) or, for a directory
+output, inherits the input bag's storage backend.
 
-## Examples
+## Topics and schemas
 
-```bash
-# Keep seconds 5..90 of the bag (message at exactly 90s excluded).
-bagwiz trim -i drive.mcap --start 5s --end 90s -o drive_cut.mcap
+Trim removes messages, never topics: every topic declaration is copied
+verbatim, so a topic whose messages all fall outside the window is still
+declared (with zero messages) in the output. A window that contains no
+messages at all still produces a valid, empty bag, after a warning. Embedded
+message schemas are preserved so MCAP outputs stay self-describing.
 
-# The same window, expressed as a length.
-bagwiz trim -i drive.mcap --start 5s --duration 85s -o drive_cut.mcap
+## Chunk pass-through
 
-# Drop the first 10 seconds, rewriting the bag in place.
-bagwiz trim -i drive_dir/ --start 10s
-
-# Keep only the first half-second.
-bagwiz trim -i drive.mcap --end 500ms -o head.mcap
-
-# Cut 5 seconds off each end of the bag.
-bagwiz trim -i drive.mcap --both 5s -o drive_inner.mcap
-
-# Keep messages 101..1000 (skip the first 100, end after the 1000th).
-bagwiz trim -i drive.mcap --start 100msg --end 1000msg -o drive_head.mcap
-
-# Keep only the span where the lidar topic has data (its first to its last
-# message, both included).
-bagwiz trim -i drive.db3 --align /sensing/lidar/concatenated/pointcloud -o aligned.db3
-```
+Under `--stamp recv`, when both the input and the output are MCAP, chunks
+fully inside the window are copied byte-for-byte, preserving the input's
+chunk compression; only chunks straddling a window boundary are re-encoded
+(with the same codec). When this fast path cannot apply — `--stamp header`,
+non-MCAP storage, multi-shard inputs, and a few other layouts — the bag is
+re-encoded and the output MCAP is written with `compression=none`;
+re-compress afterwards with `ros2 bag convert` if needed.
 
 ## Exit status
 
-| Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | The bag was trimmed successfully, including a window that contains no messages (a valid empty bag is written, after a warning).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `1`  | No window flag was given; `--both` was zero or would trim away the entire bag; an `--align` selector matched no topic, a selected topic had no messages, or the selected topics did not overlap in time; an offset was negative, missing its unit, or unparseable; a message count was fractional, negative, or malformed; `--duration` was given a `msg` count; the window was empty (`start >= end`); the start (offset or message count) was past the bag end; the bag had no time extent; the input could not be opened; the `-o` output path collided without `-w`/`--overwrite`; the input storage format could not be detected for an in-place rewrite; or a read/write/close error occurred. |
-
-Flag conflicts (`--end`+`--duration`, `--both`/`--align` with another window
-flag), an invalid `--stamp` value, and a missing or nonexistent `<input>` are
-rejected by the argument parser before the command runs and exit with CLI11's
-own codes (105 validation, 106 required, 108 excludes), not 1.
+| Code | Meaning                              |
+| ---- | ------------------------------------ |
+| `0`  | Success.                             |
+| `1`  | Failed — check stderr for the cause. |

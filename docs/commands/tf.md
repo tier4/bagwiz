@@ -2,11 +2,13 @@
 
 TF inspection and static-TF editing on a ROS 2 rosbag.
 
-- [`tree`](#bagwiz-tf-tree) — merge one or more `tf2_msgs/msg/TFMessage` topics into one TF frame tree, colored by static vs dynamic (`static` / `dynamic` selectors supported).
-- [`static calc`](#bagwiz-tf-static-calc) — resolve the pose of `--of` expressed in `--ref` using only the bag's static TF tree; print translation/quaternion/RPY or JSON. (`static` is a command group; `calc` is its action.)
-- [`static cp`](#bagwiz-tf-static-cp) — copy every static TF topic from `<src>` into `<dst>` (in place, or to a new bag via `-o`), preserving topic names and stamping each at `<dst>`'s start time.
-- [`static dump`](#bagwiz-tf-static-dump) — write the bag's static TF tree as nested `parent: child: {x, y, z, roll, pitch, yaw}` YAML (RPY in radians) to `-o`, or to stdout.
-- [`static join`](#bagwiz-tf-static-join) — the inverse of `static dump`: embed such a YAML into the bag as one latched `/tf_static` message stamped at the bag's start time.
+| Subcommand                              | What it does                                                                                                                                                 |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`tree`](#bagwiz-tf-tree)               | Merge one or more `tf2_msgs/msg/TFMessage` topics into one TF frame tree, colored by static vs dynamic (`static` / `dynamic` selectors supported).           |
+| [`static calc`](#bagwiz-tf-static-calc) | Resolve the pose of `--of` expressed in `--ref` using only the bag's static TF tree; print translation/quaternion/RPY or JSON.                               |
+| [`static cp`](#bagwiz-tf-static-cp)     | Copy every static TF topic from `<src>` into `<dst>` (in place, or to a new bag via `-o`), preserving topic names and stamping each at `<dst>`'s start time. |
+| [`static dump`](#bagwiz-tf-static-dump) | Write the bag's static TF tree as nested `parent: child: {x, y, z, roll, pitch, yaw}` YAML (RPY in radians) to `-o`, or to stdout.                           |
+| [`static join`](#bagwiz-tf-static-join) | The inverse of `static dump`: embed such a YAML into the bag as one latched `/tf_static` message stamped at the bag's start time.                            |
 
 ROS 1 `*.bag` inputs are not supported.
 
@@ -16,11 +18,46 @@ ROS 1 `*.bag` inputs are not supported.
 
 Merges one or more `tf2_msgs/msg/TFMessage` topics (`-t`/`--topics`) into a
 single TF frame tree built from the union of their distinct parent→child
-edges. In the merged tree each edge is colored by whether it came from a
-**static** (`*tf_static`) or a **dynamic** topic. When the tree contains both
-kinds, a legend is printed and each child frame is colored and tagged `[S]`
-(static) or `[D]` (dynamic); when only one kind is present the tree is drawn
-plain and the header names the category, e.g. `═══ TF tree (static) ═══`.
+edges, in one pass over the selected topics. In the merged tree each edge is
+colored by whether it came from a **static** (`*tf_static`) or a **dynamic**
+topic. When the tree contains both kinds, a legend is printed and each child
+frame is colored and tagged `[S]` (static) or `[D]` (dynamic); when only one
+kind is present the tree is drawn plain and the header names the category,
+e.g. `═══ TF tree (static) ═══`.
+
+### Usage
+
+```text
+bagwiz tf tree -i <input> [-t|--topics <topic-or-selector>...]
+```
+
+### Examples
+
+```bash
+# Merge every TF topic in the bag.
+bagwiz tf tree -i capture.mcap
+
+# Only the static (*tf_static) tree.
+bagwiz tf tree -i capture.mcap -t static
+
+# Only the dynamic tree.
+bagwiz tf tree -i capture.mcap -t dynamic
+
+# All dynamic topics plus /extra_tf.
+bagwiz tf tree -i capture.mcap -t dynamic /extra_tf
+
+# Explicit merge of two topics.
+bagwiz tf tree -i capture.mcap -t /tf /tf_static
+```
+
+### Options
+
+| Flag                    | Description                                                                                                                                                                                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `-i`, `--input <input>` | **Required.** ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).                                                                                                                                                      |
+| `-t`, `--topics <t>...` | Zero or more `tf2_msgs/msg/TFMessage` topics and/or the selectors `static` / `dynamic` (e.g. `/tf /tf_static`, `static`, `dynamic /extra_tf`; see [Topic selectors](#topic-selectors)). When omitted, all TF topics in the bag are merged. |
+
+### Topic selectors
 
 `-t`/`--topics` accepts two reserved selectors in addition to literal topic
 names:
@@ -32,8 +69,12 @@ They compose with each other and with literal names. For example
 `tf tree -i bag -t dynamic /extra_tf` merges all dynamic TF topics plus
 `/extra_tf`, and `tf tree -i bag -t static` shows the merged static tree alone.
 (ROS topic names start with `/`, so the bare words `static` / `dynamic` never
-collide with a real topic.) When `-t`/`--topics` is omitted, bagwiz defaults to **every**
-`tf2_msgs/msg/TFMessage` topic in the bag.
+collide with a real topic.) When `-t`/`--topics` is omitted, bagwiz defaults to
+**every** `tf2_msgs/msg/TFMessage` topic in the bag.
+
+Any other token must name a `tf2_msgs/msg/TFMessage` topic that exists in the
+bag; an unknown literal exits with an error listing the offending names and the
+bag's available TF topics on stderr.
 
 Literal `<topic>` names support TAB completion: only `tf2_msgs/msg/TFMessage`
 topics in the input bag are offered as candidates (see
@@ -75,65 +116,6 @@ When it contains **both** static and dynamic edges it writes:
    `[S]` / `[D]` tag for its edge's category, and on a TTY the child name is
    drawn in that category's color.
 
-### Terminal styling
-
-<!-- AUTO-GENERATED: `tf tree` / terminal styling (sync with `stdout_use_color`, `make_tree_glyphs` in `bagwiz/src/commands/tf.cpp`) -->
-
-- On a color-capable TTY (and when `NO_COLOR` is unset) section headers and root
-  lines are bold and branch glyphs are dim gray. In a mixed tree, dynamic edges
-  are bright cyan and static edges bright yellow; a single-category tree uses
-  the terminal's default color.
-- The `[S]` / `[D]` tags always print in a mixed tree, so the category stays
-  identifiable under `NO_COLOR` or when piped to a file.
-- `├──` / `└──` / `│` box drawing is the default. Set `BAGWIZ_TF_TREE_ASCII=1`
-  to use `|--` / `` `-- `` / `|` instead, and to drop the `●` root prefix so each
-  root line prints as the bare frame name (see [Environment](#environment)).
-
-### Environment
-
-<!-- AUTO-GENERATED: `tf tree` / terminal styling (sync with `stdout_use_color`, `make_tree_glyphs` in `bagwiz/src/commands/tf.cpp`) -->
-
-- `NO_COLOR`: if set to any value, disables ANSI colors on `tf tree`. The `[S]` / `[D]` category tags are still printed.
-- `BAGWIZ_TF_TREE_ASCII`: if set to any value, uses ASCII branch glyphs instead of Unicode box drawing (see `make_tree_glyphs` in `bagwiz/src/commands/tf.cpp`).
-
-Colors are also omitted when stdout is not a TTY (same effect as `NO_COLOR` for styling).
-
-### Usage
-
-```text
-bagwiz tf tree -i <input> [-t|--topics <topic-or-selector>...]
-```
-
-### Options
-
-| Flag                    | Description                                                                                                                                                                                       |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-i`, `--input <input>` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).                                                                                                                           |
-| `-t`, `--topics <t>...` | Zero or more `tf2_msgs/msg/TFMessage` topics and/or the selectors `static` / `dynamic` (e.g. `/tf /tf_static`, `static`, `dynamic /extra_tf`). When omitted, all TF topics in the bag are merged. |
-
-### Behavior
-
-- One pass over the selected topics; their distinct parent→child edges are
-  merged into one tree, each tagged static or dynamic by its source.
-- `static` / `dynamic` expand to all static / dynamic TF topics; any other token
-  must name a `tf2_msgs/msg/TFMessage` topic that exists in the bag. An unknown
-  literal exits with an error listing the offending names and the bag's
-  available TF topics on stderr.
-- When no `<topic>` is given, every `tf2_msgs/msg/TFMessage` topic in the bag is
-  merged.
-- Tree glyphs default to Unicode; `BAGWIZ_TF_TREE_ASCII=1` forces ASCII branch
-  characters (see [Environment](#environment)).
-
-### Examples
-
-```bash
-bagwiz tf tree -i capture.mcap                       # merge every TF topic in the bag
-bagwiz tf tree -i capture.mcap -t static             # only the static (*tf_static) tree
-bagwiz tf tree -i capture.mcap -t dynamic            # only the dynamic tree
-bagwiz tf tree -i capture.mcap -t dynamic /extra_tf  # all dynamic topics + /extra_tf
-bagwiz tf tree -i capture.mcap -t /tf /tf_static     # explicit merge
-```
-
 Single-category output, e.g. `tf tree -i capture.mcap -t dynamic` (plain):
 
 ```text
@@ -160,12 +142,28 @@ cyan/yellow):
     └── lidar [S]
 ```
 
-### Exit status
+### Terminal styling
 
-| Code | Meaning                                                                                                                                                                                                                                         |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | Tree written to stdout.                                                                                                                                                                                                                         |
-| `1`  | Bag could not be opened, has no TFMessage topic, a token is neither a TFMessage topic nor a selector, the selectors matched nothing, no transforms were decoded, a TF merge conflict, TF tree validation failed, decoder failure, or I/O error. |
+<!-- AUTO-GENERATED: `tf tree` / terminal styling (sync with `stdout_use_color`, `make_tree_glyphs` in `bagwiz/src/commands/tf.cpp`) -->
+
+- On a color-capable TTY (and when `NO_COLOR` is unset) section headers and root
+  lines are bold and branch glyphs are dim gray. In a mixed tree, dynamic edges
+  are bright cyan and static edges bright yellow; a single-category tree uses
+  the terminal's default color.
+- The `[S]` / `[D]` tags always print in a mixed tree, so the category stays
+  identifiable under `NO_COLOR` or when piped to a file.
+- `├──` / `└──` / `│` box drawing is the default. Set `BAGWIZ_TF_TREE_ASCII=1`
+  to use `|--` / `` `-- `` / `|` instead, and to drop the `●` root prefix so each
+  root line prints as the bare frame name (see [Environment](#environment)).
+
+### Environment
+
+<!-- AUTO-GENERATED: `tf tree` / terminal styling (sync with `stdout_use_color`, `make_tree_glyphs` in `bagwiz/src/commands/tf.cpp`) -->
+
+- `NO_COLOR`: if set to any value, disables ANSI colors on `tf tree`. The `[S]` / `[D]` category tags are still printed.
+- `BAGWIZ_TF_TREE_ASCII`: if set to any value, uses ASCII branch glyphs instead of Unicode box drawing (see `make_tree_glyphs` in `bagwiz/src/commands/tf.cpp`).
+
+Colors are also omitted when stdout is not a TTY (same effect as `NO_COLOR` for styling).
 
 ---
 
@@ -194,6 +192,35 @@ rejected if the topics disagree: the command exits with an error when the same
 declaring the **same** edge (same parent) are fine. This matches the merge-and-
 detect-conflicts behavior of [`bagwiz traj dump`](traj.md).
 
+### Usage
+
+```text
+bagwiz tf static calc -i <input> --of <frame> --ref <frame> [--json]
+```
+
+### Examples
+
+```bash
+# Resolve the pose of base_link expressed in the lidar frame.
+bagwiz tf static calc -i capture.mcap --of base_link --ref lidar
+
+# The same transform as JSON.
+bagwiz tf static calc -i capture.mcap --of base_link --ref lidar --json
+```
+
+### Options
+
+| Flag                    | Description                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------- |
+| `-i`, `--input <input>` | **Required.** ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). |
+| `--of <frame>`          | **Required.** Frame whose pose is resolved (`<of>`). Long-form only.                  |
+| `--ref <frame>`         | **Required.** Reference frame the pose is expressed in (`<ref>`). Long-form only.     |
+| `--json`                | Emit the transform as JSON instead of human text. Long-form only.                     |
+
+`--of` and `--ref` support TAB completion. Because `tf static calc` resolves
+only the static tree, the candidates are restricted to frame ids found in the
+bag's static `*tf_static` topics (see [`bagwiz complete`](complete.md)).
+
 ### Direction convention
 
 The printed transform is the **pose of `--of` expressed in the `--ref` frame** —
@@ -208,25 +235,6 @@ ros2 run tf2_ros tf2_echo <ref> <of>
 
 Note the operand order: `tf2_echo` takes the **reference frame first**, so its
 arguments are the reverse of the `--of` / `--ref` reading order.
-
-### Usage
-
-```text
-bagwiz tf static calc -i <input> --of <frame> --ref <frame> [--json]
-```
-
-### Options
-
-| Flag                    | Description                                                             |
-| ----------------------- | ----------------------------------------------------------------------- |
-| `-i`, `--input <input>` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`). |
-| `--of <frame>`          | Frame whose pose is resolved (`<of>`).                                  |
-| `--ref <frame>`         | Reference frame the pose is expressed in (`<ref>`).                     |
-| `--json`                | Emit the transform as JSON instead of human text.                       |
-
-`--of` and `--ref` support TAB completion. Because `tf static calc` resolves
-only the static tree, the candidates are restricted to frame ids found in the
-bag's static `*tf_static` topics (see [`bagwiz complete`](complete.md)).
 
 ### Output
 
@@ -295,20 +303,6 @@ consumers should not rely on key ordering:
 }
 ```
 
-### Examples
-
-```bash
-bagwiz tf static calc -i capture.mcap --of base_link --ref lidar
-bagwiz tf static calc -i capture.mcap --of base_link --ref lidar --json
-```
-
-### Exit status
-
-| Code | Meaning                                                                                                                                                                                                                                                                                |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | Transform written to stdout.                                                                                                                                                                                                                                                           |
-| `1`  | Bag could not be opened, no static TF topic, decode failure, a TF merge conflict between static topics (same child, different parents), the frames are not connected through the static tree, or I/O error. When a frame is unknown, the available static frames are listed on stderr. |
-
 ---
 
 ## `bagwiz tf static cp`
@@ -319,6 +313,37 @@ name. Dynamic `/tf` topics in `<src>` are ignored. Each copied topic is written
 as a single `TFMessage`: a static topic that was re-published several times in
 `<src>` collapses to one latched message carrying the final transform per
 `child_frame_id`.
+
+### Usage
+
+```text
+bagwiz tf static cp --src <src> --dst <dst> [-o <output>] [--force] [-w|--overwrite]
+```
+
+`<src>` is read; `<dst>` (or `<output>`) is the write target.
+
+### Examples
+
+```bash
+# Rewrite target.mcap in place.
+bagwiz tf static cp --src donor.mcap --dst target.mcap
+
+# Write a new bag, leaving target.mcap untouched.
+bagwiz tf static cp --src donor.mcap --dst target.mcap -o merged.mcap
+
+# Replace a colliding /tf_static in the destination.
+bagwiz tf static cp --src donor.mcap --dst target.mcap --force
+```
+
+### Options
+
+| Flag                | Description                                                                                                     |
+| ------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `--src <src>`       | **Required.** Source rosbag to copy static TF from (rosbag2 directory, `*.mcap`, `*.db3`, ...). Long-form only. |
+| `--dst <dst>`       | **Required.** Destination rosbag to copy static TF into (rewritten in place unless `-o`). Long-form only.       |
+| `-o`, `--output`    | Write the result to this new bag instead of rewriting `<dst>` in place.                                         |
+| `--force`           | Replace the messages of a colliding static topic in `<dst>`. Long-form only.                                    |
+| `-w`, `--overwrite` | Replace an existing `-o`/`--output` path. No effect in in-place mode.                                           |
 
 ### Timestamp
 
@@ -355,39 +380,6 @@ the other: clearing an output path does not also authorise replacing a bag's rea
 static TF. A collision with a destination topic of a **different** message type is
 always an error, regardless of `--force`.
 
-### Usage
-
-```text
-bagwiz tf static cp --src <src> --dst <dst> [-o <output>] [--force] [-w|--overwrite]
-```
-
-`<src>` is read; `<dst>` (or `<output>`) is the write target.
-
-### Options
-
-| Flag                | Description                                                                       |
-| ------------------- | --------------------------------------------------------------------------------- |
-| `--src <src>`       | Source rosbag to copy static TF from (rosbag2 directory, `*.mcap`, `*.db3`, ...). |
-| `--dst <dst>`       | Destination rosbag to copy static TF into (rewritten in place unless `-o`).       |
-| `-o`, `--output`    | Write the result to this new bag instead of rewriting `<dst>` in place.           |
-| `--force`           | Replace the messages of a colliding static topic in `<dst>`.                      |
-| `-w`, `--overwrite` | Replace an existing `-o`/`--output` path. No effect in in-place mode.             |
-
-### Examples
-
-```bash
-bagwiz tf static cp --src donor.mcap --dst target.mcap              # rewrite target.mcap in place
-bagwiz tf static cp --src donor.mcap --dst target.mcap -o merged.mcap  # write a new bag
-bagwiz tf static cp --src donor.mcap --dst target.mcap --force  # replace a colliding /tf_static
-```
-
-### Exit status
-
-| Code | Meaning                                                                                                                                                                                                                                                      |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | Static TF copied; `<dst>` rewritten or `<output>` written.                                                                                                                                                                                                   |
-| `1`  | A bag could not be opened, `<src>` has no static TF topic carrying transforms, a decode/serialize failure, an unresolved conflict (a colliding topic without `--force`, an existing output without `-w`/`--overwrite`, or a type mismatch), or an I/O error. |
-
 ---
 
 ## `bagwiz tf static dump`
@@ -420,6 +412,41 @@ drs_base_link:
     pitch: 0.018911
     yaw: 1.574117
 ```
+
+### Usage
+
+```text
+bagwiz tf static dump -i <input> [-o <output>] [-w|--overwrite]
+```
+
+### Examples
+
+```bash
+# Print to stdout.
+bagwiz tf static dump -i capture.mcap
+
+# Write a file.
+bagwiz tf static dump -i capture.mcap -o tf_static.yaml
+
+# Replace an existing file.
+bagwiz tf static dump -i capture.mcap -o tf_static.yaml -w
+
+# Equivalent to -o (stdout redirect).
+bagwiz tf static dump -i capture.mcap > tf_static.yaml
+```
+
+### Options
+
+| Flag                    | Description                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------- |
+| `-i`, `--input <input>` | **Required.** ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).  |
+| `-o`, `--output <path>` | Write the YAML to this file. When omitted, it goes to stdout.                          |
+| `-w`, `--overwrite`     | Replace an existing `-o`/`--output` path. Without it, an existing path aborts the run. |
+
+Without `-o` the YAML is written to stdout and every diagnostic to stderr, so
+`bagwiz tf static dump -i <bag> > tf_static.yaml` is pipe-clean. The output path
+is claimed only after the read succeeds, so a bag with no static TF cannot
+destroy an existing `-o` file under `-w`/`--overwrite`.
 
 ### Rotation convention
 
@@ -491,41 +518,6 @@ null rather than a string (`no`, `y`, `true`, `null`), is emitted as an escaped
 double-quoted scalar. Ordinary ROS frame ids (`base_link`,
 `camera0/camera_link`) stay unquoted.
 
-### Usage
-
-```text
-bagwiz tf static dump -i <input> [-o <output>] [-w|--overwrite]
-```
-
-### Options
-
-| Flag                    | Description                                                                            |
-| ----------------------- | -------------------------------------------------------------------------------------- |
-| `-i`, `--input <input>` | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).                |
-| `-o`, `--output <path>` | Write the YAML to this file. When omitted, it goes to stdout.                          |
-| `-w`, `--overwrite`     | Replace an existing `-o`/`--output` path. Without it, an existing path aborts the run. |
-
-Without `-o` the YAML is written to stdout and every diagnostic to stderr, so
-`bagwiz tf static dump -i <bag> > tf_static.yaml` is pipe-clean. The output path
-is claimed only after the read succeeds, so a bag with no static TF cannot
-destroy an existing `-o` file under `-w`/`--overwrite`.
-
-### Examples
-
-```bash
-bagwiz tf static dump -i capture.mcap                          # print to stdout
-bagwiz tf static dump -i capture.mcap -o tf_static.yaml        # write a file
-bagwiz tf static dump -i capture.mcap -o tf_static.yaml -w     # replace it
-bagwiz tf static dump -i capture.mcap > tf_static.yaml         # equivalent to -o
-```
-
-### Exit status
-
-| Code | Meaning                                                                                                                                                                                                         |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | Static TF tree written to `<output>` or stdout.                                                                                                                                                                 |
-| `1`  | Bag could not be opened, has no static TF topic carrying transforms, a decode failure, two static topics giving one child different parents, an existing `-o` path without `-w`/`--overwrite`, or an I/O error. |
-
 ---
 
 ## `bagwiz tf static join`
@@ -539,6 +531,43 @@ Together the two close the loop: `dump` recovers a config from a recorded rig, a
 `join` puts a config into a bag that is missing its static TF, or replaces one that
 is wrong. A bag trimmed to start after `/tf_static` was last published, for
 instance, has no static tree at all until you join one back in.
+
+### Usage
+
+```text
+bagwiz tf static join -i <input> --yaml <file> [-t <topic>] [-o <output>] [--force] [-w|--overwrite]
+```
+
+### Examples
+
+```bash
+# Rewrite capture.mcap in place, embedding the config on /tf_static.
+bagwiz tf static join -i capture.mcap --yaml multi_tf_static.yaml
+
+# Write a new bag instead of touching the input.
+bagwiz tf static join -i capture.mcap --yaml multi_tf_static.yaml -o with_tf.mcap
+
+# Replace a /tf_static the bag already carries.
+bagwiz tf static join -i capture.mcap --yaml multi_tf_static.yaml --force
+
+# Embed under a different static topic.
+bagwiz tf static join -i capture.mcap --yaml sensing.yaml -t /sensing/tf_static
+
+# Round trip: recover a rig's config from one bag, put it into another.
+bagwiz tf static dump -i donor.mcap -o rig.yaml
+bagwiz tf static join -i target.mcap --yaml rig.yaml
+```
+
+### Options
+
+| Flag                    | Description                                                                                                 |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `-i`, `--input <input>` | **Required.** ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).                       |
+| `--yaml <file>`         | **Required.** Static TF YAML to embed, in the schema `tf static dump` writes. Long-form only.               |
+| `-t`, `--topic <topic>` | Topic to embed the transforms under. Default: `/tf_static`.                                                 |
+| `-o`, `--output <OUT>`  | Write the result to this new bag instead of rewriting `<input>` in place.                                   |
+| `--force`               | Replace `<topic>`'s existing messages in `<input>`; otherwise a populated `<topic>` aborts. Long-form only. |
+| `-w`, `--overwrite`     | Replace an existing `-o`/`--output` path. No effect in in-place mode.                                       |
 
 ### Rotation convention
 
@@ -677,46 +706,9 @@ publishes under. The YAML carries no topic name, so a default is needed; pass
 (`tf static dump`, `tf static calc`, `tf tree -t static`, `tf static cp`) selects
 topics by that suffix and would treat the topic as dynamic.
 
-### Usage
+## Exit status
 
-```text
-bagwiz tf static join -i <input> --yaml <file> [-t <topic>] [-o <output>] [--force] [-w|--overwrite]
-```
-
-### Options
-
-| Flag                    | Default      | Description                                                                                 |
-| ----------------------- | ------------ | ------------------------------------------------------------------------------------------- |
-| `-i`, `--input <input>` | _(required)_ | ROS 2 rosbag path (rosbag2 directory, `*.mcap`, `*.db3`, `*.db3.zstd`).                     |
-| `--yaml <file>`         | _(required)_ | Static TF YAML to embed, in the schema `tf static dump` writes.                             |
-| `-t`, `--topic <topic>` | `/tf_static` | Topic to embed the transforms under.                                                        |
-| `-o`, `--output <OUT>`  | _(unset)_    | Write the result to this new bag instead of rewriting `<input>` in place.                   |
-| `--force`               | `false`      | Replace `<topic>`'s existing messages in `<input>`; otherwise a populated `<topic>` aborts. |
-| `-w`, `--overwrite`     | `false`      | Replace an existing `-o`/`--output` path. No effect in in-place mode.                       |
-
-### Examples
-
-```bash
-# Rewrite capture.mcap in place, embedding the config on /tf_static.
-bagwiz tf static join -i capture.mcap --yaml multi_tf_static.yaml
-
-# Write a new bag instead of touching the input.
-bagwiz tf static join -i capture.mcap --yaml multi_tf_static.yaml -o with_tf.mcap
-
-# Replace a /tf_static the bag already carries.
-bagwiz tf static join -i capture.mcap --yaml multi_tf_static.yaml --force
-
-# Embed under a different static topic.
-bagwiz tf static join -i capture.mcap --yaml sensing.yaml -t /sensing/tf_static
-
-# Round trip: recover a rig's config from one bag, put it into another.
-bagwiz tf static dump -i donor.mcap -o rig.yaml
-bagwiz tf static join -i target.mcap --yaml rig.yaml
-```
-
-### Exit status
-
-| Code | Meaning                                                                                                                                                                                                                                                                |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | Static TF embedded; `<input>` rewritten or `<output>` written.                                                                                                                                                                                                         |
-| `1`  | The YAML could not be read or was rejected (see [Accepted input](#accepted-input)), the bag could not be opened, `<topic>` is populated without `--force` or has another type, an existing `-o` path without `-w`/`--overwrite`, a serialize failure, or an I/O error. |
+| Code | Meaning                              |
+| ---- | ------------------------------------ |
+| `0`  | Success.                             |
+| `1`  | Failed — check stderr for the cause. |
