@@ -53,10 +53,6 @@ bagwiz <cmd> -i drive.mcap -o out/
 
 ## <command-specific semantics> (optional; e.g. "Time window semantics")
 
-## Behavior
-
-- One bullet per guaranteed behavior, edge case, or failure mode.
-
 ## Exit status
 
 | Code | Meaning |
@@ -102,12 +98,11 @@ end may cover all subcommands when they share the same codes.
 `--input <input>` ``; note "Long-form only." when there is no short form.
   Start the Description with `**Required.**` for required flags. Give
   defaults inline as `Default: <value>.` — do not add a Default column.
-- Command-specific semantics — optional sections between Options and Behavior
-  for anything the user must understand before the behavior list (selector
-  syntax, window semantics, frame conventions). Name them after the concept,
-  not "Notes".
-- `Behavior` — bullets (or a numbered list for an ordered pipeline) covering
-  guarantees, edge cases, and failure modes, each verifiable in the code.
+- Command-specific semantics — optional sections after Options for anything
+  the user must understand beyond the flag reference: selector syntax, window
+  semantics, frame conventions, guarantees, edge cases, and failure modes,
+  each verifiable in the code. Name them after the concept, not "Notes" or
+  "Behavior".
 - `Exit status` — a `| Code | Meaning |` table. `0` is success; `1` covers
   runtime failures of the command itself. CLI parse errors (missing required
   flags, failed validation) do not reach the command — CLI11 exits with its
@@ -115,4 +110,4 @@ end may cover all subcommands when they share the same codes.
   the distinction matters.
 - Optional trailing sections as needed: `Output` / `Outputs`, `Errors`
   (situation → outcome table), `Performance`, `Environment` (env vars),
-  `Requirements`. Place them after `Behavior`, before `Exit status`.
+  `Requirements`. Place them before `Exit status`.
