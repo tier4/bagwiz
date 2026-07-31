@@ -93,12 +93,18 @@ struct FoldedObs
 // All of WindowSolver's state. Defined entirely in this TU (see the header's
 // class comment): besides glim, a WindowKeyframe's preintegrated IMU
 // measurement is a gtsam::PreintegratedImuMeasurements (gtsam/navigation/
-// ImuFactor.h), and last_tracks_ keys on visual::TrackKey (visual_factors.hpp)
+// ImuFactor.h), and last_tracks keys on visual::TrackKey (visual_factors.hpp)
 // -- neither of which the public interface needs to expose.
 struct WindowSolver::Impl
 {
   explicit Impl(WindowConfig config_in)
-  : config(std::move(config_in)), imu_integration(std::make_unique<glim::IMUIntegration>())
+  : config(std::move(config_in)),
+    // Default-constructs IMUIntegrationParams, which reads glim's
+    // GlobalConfig ("config_sensors"'s imu_acc_noise/imu_gyro_noise/
+    // imu_int_noise, defaulting to 0.01/0.001/0.001 when no config file is
+    // installed) -- the same GlobalConfig-fallback hazard documented at
+    // visual_odometry.cpp:33-37 for NaiveInitialStateEstimation.
+    imu_integration(std::make_unique<glim::IMUIntegration>())
   {
     // push_keyframe() indexes window.back() unconditionally and
     // marginalize()'s while-loop pops until window.size() <=
@@ -302,7 +308,7 @@ void WindowSolver::Impl::solve()
     // No logger exists on this class; keep the pre-solve seed values rather
     // than propagate the exception out of push_keyframe -- the keyframes'
     // nav/bias below simply don't move this round, and
-    // last_graph_/last_values_ still stash the attempted graph with every
+    // last_graph/last_values still stash the attempted graph with every
     // current key present (as the SEED, not a solved point), so
     // triangulation and the next rebuild's Marginals lookup don't break.
     result = values;
@@ -409,7 +415,7 @@ std::vector<MarginalizedKeyframe> WindowSolver::Impl::marginalize()
 
   std::vector<MarginalizedKeyframe> out;
   while (window.size() > static_cast<std::size_t>(config.max_keyframes)) {
-    // Triangulate BEFORE popping: last_tracks_/last_values_ still hold the
+    // Triangulate BEFORE popping: last_tracks/last_values still hold the
     // just-solved graph including this keyframe's own factors and values.
     const WindowKeyframe popped = window.front();
     out.push_back(collect_keyframe(popped));
@@ -438,9 +444,11 @@ std::vector<MarginalizedKeyframe> WindowSolver::Impl::marginalize()
       set_initial_edge_noises();
     }
 
-    // Prune IMU history strictly before the new oldest keyframe's own
-    // anchor: nothing before it is needed by any future integrate_imu() call,
-    // which always starts its scan from the front of the queue.
+    // Prune IMU history at or before the new oldest keyframe's own anchor
+    // (find_imu_data's cursor includes the sample AT that anchor too; a
+    // dt = 0 first step in any future integrate_imu() call is harmless):
+    // nothing before it is needed by any future integrate_imu() call, which
+    // always starts its scan from the front of the queue.
     std::vector<double> delta_times;
     std::vector<Eigen::Matrix<double, 7, 1>> imu_data;
     const int cursor = imu_integration->find_imu_data(

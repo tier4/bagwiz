@@ -89,7 +89,8 @@ void feed_imu(slam::VisualInertialOdometry & estimator, std::int64_t from_ns, st
 }
 
 // A purely static (non-accelerating) IMU feed: acc = (0, 0, 9.81), no
-// horizontal component. Not one of Task 3's copied helpers -- added because
+// horizontal component. Not one of the helpers copied from
+// visual_odometry_window_test.cpp -- added because
 // glim::NaiveInitialStateEstimation's gravity alignment (see its header
 // comment: "would not work well when the sensor is moving") naively treats
 // its own averaged accelerometer reading as pure gravity. Feeding it
@@ -132,8 +133,9 @@ using PoseFn = Eigen::Isometry3d (*)(std::int64_t);
 // One group: for each (camera_id, stamp offset) render every visible wall
 // landmark through that camera at the true pose; track_id = landmark index.
 // Copied verbatim from visual_odometry_window_test.cpp (the yawing-world
-// pose_fn parameter is kept for fidelity to the original, but every test
-// below uses only the default gt_pose).
+// pose_fn parameter is kept for fidelity to the original; no test below
+// uses it -- NoFramesBeforeGravityAlignmentCompletes uses the default
+// gt_pose directly, the rest pass gt_pose_shifted via push_groups()).
 slam::ObservationGroup make_group(
   std::int64_t anchor_ns, const std::vector<std::pair<std::int32_t, std::int64_t>> & cams,
   const std::vector<Eigen::Isometry3d> & t_imu_cams, const std::vector<Eigen::Vector3d> & landmarks,

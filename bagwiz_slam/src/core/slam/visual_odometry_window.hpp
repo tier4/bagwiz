@@ -22,8 +22,8 @@
 
 // Src-local, like visual_factors.hpp and visual_odometry_grouping.hpp: the
 // rebuilt-window batch-LM core of the camera-only visual-inertial odometry
-// (issue #376 Phase 3). Not installed; only the odometry estimator wrapper
-// (Phase 3's next task) links this TU.
+// (issue #376 Phase 3). Not installed; only visual_odometry.cpp links this
+// TU.
 namespace bagwiz::core::slam::vio
 {
 
@@ -91,8 +91,11 @@ public:
   [[nodiscard]] std::optional<Eigen::Isometry3d> predict_T_world_imu(std::int64_t stamp_ns);
   // Current in-window keyframes, oldest first (drained by get_remaining_frames).
   // Landmarks are triangulated exactly as in marginalization, so a snapshot
-  // entry is a valid EstimationFrame source. Non-const: triangulation reuses
-  // the fold cache and may recompute it.
+  // entry is a valid EstimationFrame source. Non-const: runs a full rebuild
+  // + LM solve of the window (same as push_keyframe()) before triangulating,
+  // so every entry is consistent even without an intervening push -- callers
+  // that don't need a fresh solve (nothing changed since the last push)
+  // should avoid calling this on a hot path.
   [[nodiscard]] std::vector<MarginalizedKeyframe> window_snapshot();
 
 private:

@@ -101,8 +101,11 @@ private:
   // solver and appending any keyframes that left the window to
   // marginalized_states. Shared by insert_visual_observations() and
   // get_remaining_frames() (the latter drives it from grouping_.finish()
-  // instead of pop_ready()).
-  void process_group(
+  // instead of pop_ready()). Returns true iff the group was accepted as a
+  // keyframe (i.e. push_keyframe() ran and the window's solved state may
+  // have changed) -- callers use this to know whether latest_frame_ needs
+  // refreshing.
+  bool process_group(
     const ObservationGroup & group,
     std::vector<glim::EstimationFrame::ConstPtr> & marginalized_states);
 
@@ -114,6 +117,14 @@ private:
   bool has_keyframe_ = false;
   Eigen::Isometry3d last_keyframe_pose_ = Eigen::Isometry3d::Identity();
   long next_frame_id_ = 0;  // NOLINT(runtime/int) matches glim::EstimationFrame::id's type
+  // Cache of insert_visual_observations()'s last return value: only
+  // push_keyframe() (via process_group()) can change the window's solved
+  // state or its landmark set, so re-deriving this via a full
+  // window_snapshot() (window_snapshot() re-solves the whole window on
+  // every call, see visual_odometry_window.hpp) on batches that accepted no
+  // keyframe would be exact but wasteful. Refreshed only when at least one
+  // keyframe was accepted this call.
+  glim::EstimationFrame::ConstPtr latest_frame_;
 
   Stats stats_;
 };

@@ -258,11 +258,10 @@ TEST(VisualOdometryWindowTest, StaggeredSecondCameraFoldsCorrectly)
   // The yawing world: a translation-only world's Delta-mislocation is mostly
   // absorbable by re-triangulating the landmark at a shifted depth (see the
   // corrected story on gt_pose above), so it does not actually discriminate
-  // an unfolded implementation -- verified in this review round by forcing
-  // Delta = Identity in add_visual_factors() and confirming this test still
-  // PASSED against the translation-only world (see task-3-report.md). The
-  // yaw rate makes Delta carry a rotation instead, which no landmark
-  // placement at any depth can explain away.
+  // an unfolded implementation. Verified by forcing Delta = Identity in
+  // add_visual_factors(): this test still PASSED against the
+  // translation-only world. The yaw rate makes Delta carry a rotation
+  // instead, which no landmark placement at any depth can explain away.
   feed_imu_yawing(solver, 0, 3 * kPeriod);
 
   constexpr std::int64_t kStagger = 40'000'000;  // camera 1 triggers 40 ms into each group
@@ -386,10 +385,10 @@ TEST(VisualOdometryWindowTest, EmptyGroupsRideTheImuChain)
 
 // Robustness smoke test for the "empty group + too-few-IMU-samples gap"
 // scenario: X(cur) would otherwise have zero rows/columns in the linear
-// system (see solve()'s comment on the pose BetweenFactor fallback). Note:
-// reviewed empirically in this round -- forcing the exact same scenario
-// with that fallback temporarily removed did NOT reproduce
-// IndeterminantLinearSystemException, even with 3 preceding real keyframes
+// system (see solve()'s comment on the pose BetweenFactor fallback).
+// Verified empirically: forcing the exact same scenario with that fallback
+// temporarily removed did NOT reproduce IndeterminantLinearSystemException,
+// even with 3 preceding real keyframes
 // forcing a genuinely nonzero-residual solve (gtsam's default
 // LevenbergMarquardtParams uses additive, not diagonal-scaled, damping,
 // which happens to tolerate a fully disconnected variable gracefully). This

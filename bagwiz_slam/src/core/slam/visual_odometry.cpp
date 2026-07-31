@@ -58,7 +58,7 @@ void VisualInertialOdometry::insert_imu(
   }
 }
 
-void VisualInertialOdometry::process_group(
+bool VisualInertialOdometry::process_group(
   const ObservationGroup & group,
   std::vector<glim::EstimationFrame::ConstPtr> & marginalized_states)
 {
@@ -71,7 +71,7 @@ void VisualInertialOdometry::process_group(
       // group is the frontend's concern, not ours -- these observations are
       // simply never seen again.
       ++stats_.groups_before_init;
-      return;
+      return false;
     }
     solver_.initialize(
       group.anchor_stamp_ns, init_frame->T_world_imu, Eigen::Vector3d::Zero(),
@@ -96,7 +96,7 @@ void VisualInertialOdometry::process_group(
   }
 
   if (!is_keyframe) {
-    return;  // displacement gate not met: discard (not fed to the solver)
+    return false;  // displacement gate not met: discard (not fed to the solver)
   }
 
   ++stats_.keyframes;
@@ -121,6 +121,7 @@ void VisualInertialOdometry::process_group(
   // fallback returns that keyframe's solved pose directly -- the window
   // cannot be empty here, we just pushed into it.
   last_keyframe_pose_ = solver_.predict_T_world_imu(group.anchor_stamp_ns).value();
+  return true;
 }
 
 glim::EstimationFrame::ConstPtr VisualInertialOdometry::insert_visual_observations(
@@ -130,8 +131,9 @@ glim::EstimationFrame::ConstPtr VisualInertialOdometry::insert_visual_observatio
   grouping_.insert(observations);
 
   const std::size_t batch_start = marginalized_states.size();
+  bool any_keyframe_accepted = false;
   for (const ObservationGroup & group : grouping_.pop_ready()) {
-    process_group(group, marginalized_states);
+    any_keyframe_accepted = process_group(group, marginalized_states) || any_keyframe_accepted;
   }
 
   // Fire on_marginalized_frames once per batch (mirroring
@@ -145,14 +147,17 @@ glim::EstimationFrame::ConstPtr VisualInertialOdometry::insert_visual_observatio
     glim::OdometryEstimationCallbacks::on_marginalized_frames(new_frames);
   }
 
-  if (!solver_.initialized()) {
-    return nullptr;
+  // Only push_keyframe() (inside process_group(), when it accepts a group)
+  // can change the window's solved state or its landmark set, so
+  // window_snapshot() -- which re-solves the whole window every call, see
+  // its declaration -- only needs to run again when this batch actually
+  // accepted a keyframe (which implies solver_.initialized()). Otherwise
+  // latest_frame_ from the last such refresh is still exact.
+  if (any_keyframe_accepted) {
+    const std::vector<vio::MarginalizedKeyframe> snapshot = solver_.window_snapshot();
+    latest_frame_ = snapshot.empty() ? nullptr : to_estimation_frame(snapshot.back());
   }
-  const std::vector<vio::MarginalizedKeyframe> snapshot = solver_.window_snapshot();
-  if (snapshot.empty()) {
-    return nullptr;
-  }
-  return to_estimation_frame(snapshot.back());
+  return latest_frame_;
 }
 
 std::vector<glim::EstimationFrame::ConstPtr> VisualInertialOdometry::get_remaining_frames()
@@ -206,8 +211,8 @@ glim::EstimationFrame::Ptr VisualInertialOdometry::to_estimation_frame(
   // The sparse landmark cloud is what satisfies GLIM's non-null frame
   // requirement downstream; points are sensor-local (the frame_id frame). A
   // keyframe can legitimately carry zero landmarks (textureless window) --
-  // it is still emitted, with an empty cloud; the submapping configuration
-  // owns that policy (PR ③'s concern).
+  // it is still emitted, with an empty cloud; that policy is owned by the
+  // camera-only CloudMapper wiring, not this class.
   std::vector<Eigen::Vector4d> points;
   points.reserve(kf.landmarks_world.size());
   const Eigen::Isometry3d T_imu_world = kf.T_world_imu.inverse();
