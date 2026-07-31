@@ -195,7 +195,8 @@ TEST_F(TfStaticCpTest, CopiesStaticTfToOutputStampedAtDstStart)
   write_src_bag(src);
   write_dst_bag(dst, kDstStart);
 
-  const int rc = bagwiz::commands::run_tf_static_cp(src, dst, out, /*overwrite=*/false);
+  const int rc =
+    bagwiz::commands::run_tf_static_cp(src, dst, out, /*force=*/false, /*overwrite=*/false);
   ASSERT_EQ(rc, 0);
 
   const auto copied = read_tf_topic(out, "/tf_static");
@@ -254,7 +255,8 @@ TEST_F(TfStaticCpTest, InjectedStaticTfIsEmittedInTimestampOrder)
     writer->close();
   }
 
-  ASSERT_EQ(bagwiz::commands::run_tf_static_cp(src, dst, out, /*overwrite=*/false), 0);
+  ASSERT_EQ(
+    bagwiz::commands::run_tf_static_cp(src, dst, out, /*force=*/false, /*overwrite=*/false), 0);
 
   // Storage order must be non-decreasing in timestamp, so a reader that walks
   // the rows physically sees the same sequence as one that sorts by time.
@@ -294,7 +296,8 @@ TEST_F(TfStaticCpTest, InPlaceAddsStaticTfToDestination)
   write_src_bag(src);
   write_dst_bag(dst, kDstStart);
 
-  const int rc = bagwiz::commands::run_tf_static_cp(src, dst, std::nullopt, /*overwrite=*/false);
+  const int rc = bagwiz::commands::run_tf_static_cp(
+    src, dst, std::nullopt, /*force=*/false, /*overwrite=*/false);
   ASSERT_EQ(rc, 0);
 
   const auto copied = read_tf_topic(dst, "/tf_static");
@@ -320,13 +323,16 @@ TEST_F(TfStaticCpTest, NoStaticTfInSourceFails)
   }
   write_dst_bag(dst, 1'000'000'000LL);
 
-  EXPECT_EQ(bagwiz::commands::run_tf_static_cp(src, dst, out, /*overwrite=*/false), 1);
+  EXPECT_EQ(
+    bagwiz::commands::run_tf_static_cp(src, dst, out, /*force=*/false, /*overwrite=*/false), 1);
   EXPECT_FALSE(std::filesystem::exists(out));
 }
 
-// A static topic already present in the destination aborts without --overwrite
-// and is replaced with it.
-TEST_F(TfStaticCpTest, CollidingTopicHonoursOverwrite)
+// A static topic already present in the destination aborts without --force and is
+// replaced with it. -w/--overwrite must NOT stand in for it: the two conflicts are
+// separate permissions (as in `traj join` / `tf static join`), so clearing a path
+// does not also authorise replacing a bag's real static TF.
+TEST_F(TfStaticCpTest, CollidingTopicHonoursForceAndNotOverwrite)
 {
   const auto src = tmp_dir_ / "src.mcap";
   const auto dst = tmp_dir_ / "dst.mcap";
@@ -341,12 +347,19 @@ TEST_F(TfStaticCpTest, CollidingTopicHonoursOverwrite)
     writer->close();
   }
 
-  // Without --overwrite the collision aborts and no output is produced.
-  EXPECT_EQ(bagwiz::commands::run_tf_static_cp(src, dst, out, /*overwrite=*/false), 1);
+  // Without --force the collision aborts and no output is produced.
+  EXPECT_EQ(
+    bagwiz::commands::run_tf_static_cp(src, dst, out, /*force=*/false, /*overwrite=*/false), 1);
   EXPECT_FALSE(std::filesystem::exists(out));
 
-  // With --overwrite the source's static TF replaces the destination's.
-  ASSERT_EQ(bagwiz::commands::run_tf_static_cp(src, dst, out, /*overwrite=*/true), 0);
+  // -w alone does not permit it either.
+  EXPECT_EQ(
+    bagwiz::commands::run_tf_static_cp(src, dst, out, /*force=*/false, /*overwrite=*/true), 1);
+  EXPECT_FALSE(std::filesystem::exists(out));
+
+  // With --force the source's static TF replaces the destination's.
+  ASSERT_EQ(
+    bagwiz::commands::run_tf_static_cp(src, dst, out, /*force=*/true, /*overwrite=*/false), 0);
   const auto copied = read_tf_topic(out, "/tf_static");
   ASSERT_TRUE(copied.present);
   EXPECT_EQ(copied.message_count, 1);
@@ -354,8 +367,9 @@ TEST_F(TfStaticCpTest, CollidingTopicHonoursOverwrite)
   EXPECT_EQ(copied.transforms[0].child_frame_id, "odom");
 }
 
-// An existing output path aborts without --overwrite and is replaced with it.
-TEST_F(TfStaticCpTest, ExistingOutputHonoursOverwrite)
+// An existing output path aborts without -w/--overwrite and is replaced with it.
+// --force does not stand in for it, the mirror of the case above.
+TEST_F(TfStaticCpTest, ExistingOutputHonoursOverwriteAndNotForce)
 {
   const auto src = tmp_dir_ / "src.mcap";
   const auto dst = tmp_dir_ / "dst.mcap";
@@ -364,8 +378,12 @@ TEST_F(TfStaticCpTest, ExistingOutputHonoursOverwrite)
   write_dst_bag(dst, 1'000'000'000LL);
   write_dst_bag(out, 8'000'000'000LL);  // pre-existing output
 
-  EXPECT_EQ(bagwiz::commands::run_tf_static_cp(src, dst, out, /*overwrite=*/false), 1);
-  ASSERT_EQ(bagwiz::commands::run_tf_static_cp(src, dst, out, /*overwrite=*/true), 0);
+  EXPECT_EQ(
+    bagwiz::commands::run_tf_static_cp(src, dst, out, /*force=*/false, /*overwrite=*/false), 1);
+  EXPECT_EQ(
+    bagwiz::commands::run_tf_static_cp(src, dst, out, /*force=*/true, /*overwrite=*/false), 1);
+  ASSERT_EQ(
+    bagwiz::commands::run_tf_static_cp(src, dst, out, /*force=*/false, /*overwrite=*/true), 0);
   EXPECT_TRUE(topic_present(out, "/tf_static"));
 }
 

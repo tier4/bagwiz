@@ -815,7 +815,7 @@ TEST(FlagCompletionTest, TfStaticCpDashListsCpFlags)
 {
   EXPECT_EQ(
     run_completion({"bagwiz", "__complete", "4", "bagwiz", "tf", "static", "cp", "-"}),
-    "--dst\n--help\n--output\n--overwrite\n--src\n-h\n-o\n-w\n");
+    "--dst\n--force\n--help\n--output\n--overwrite\n--src\n-h\n-o\n-w\n");
 }
 
 // `tf static dump -` surfaces the dump action's flags (-i/--input, -o/--output,

@@ -26,10 +26,17 @@ namespace bagwiz::commands
 // left untouched and the result (<dst>'s messages plus the copied static TF) is
 // written to that path.
 //
-// `overwrite` permits clobbering of either conflict: a pre-existing -o output
-// path is replaced, and a static topic in <dst> whose name collides with one
-// being copied has its existing messages replaced. Without it, either conflict
-// aborts with an explanatory error.
+// The two conflicts have separate permissions, matching `bagwiz traj join` and
+// `bagwiz tf static join`:
+//
+//   * `force` — a static topic in <dst> whose name collides with one being copied
+//     has its existing messages dropped and replaced by <src>'s.
+//   * `overwrite` — a pre-existing `-o` output path is replaced. No effect in
+//     in-place mode, where <dst> is the target by definition.
+//
+// Without the matching flag, either conflict aborts with an explanatory error. A
+// collision with a destination topic of a different message type is always an
+// error, regardless of `force`.
 //
 // Returns the process exit code: 0 on success, 1 on any error (bag could not be
 // opened, <src> has no static TF, decode/serialize failure, an unresolved
@@ -38,7 +45,7 @@ namespace bagwiz::commands
 // here so tf.cpp can call it.
 int run_tf_static_cp(
   const std::filesystem::path & src_path, const std::filesystem::path & dst_path,
-  const std::optional<std::filesystem::path> & output_path, bool overwrite);
+  const std::optional<std::filesystem::path> & output_path, bool force, bool overwrite);
 
 }  // namespace bagwiz::commands
 

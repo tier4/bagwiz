@@ -31,7 +31,7 @@ constexpr const char * kLogger = "bagwiz.cmd.tf.static.cp";
 
 int run_tf_static_cp(
   const std::filesystem::path & src_path, const std::filesystem::path & dst_path,
-  const std::optional<std::filesystem::path> & output_path, bool overwrite)
+  const std::optional<std::filesystem::path> & output_path, bool force, bool overwrite)
 {
   // 1. Gather the static TF topics + transforms from the source bag.
   std::vector<core::StaticTopicTransforms> src_topics;
@@ -66,9 +66,9 @@ int run_tf_static_cp(
   inject_opts.logger = kLogger;
   inject_opts.label = "tf static cp";
   inject_opts.profile_label = "tf_static_cp";
-  // `cp` folds both conflicts into one -w/--overwrite: replacing an existing -o
-  // path and replacing a colliding topic in <dst>.
-  inject_opts.replace_existing_topic = overwrite;
+  // --force covers replacing a colliding topic in <dst>; -w/--overwrite covers only
+  // the -o path (handled by run_bag_rewrite below).
+  inject_opts.replace_existing_topic = force;
   return core::run_bag_rewrite(
     dst_path, output_path, overwrite, rewrite_opts, [&](const io::WriterFactory & open_writer) {
       return inject_static_tf_pass(dst_path, src_topics, inject_opts, open_writer);

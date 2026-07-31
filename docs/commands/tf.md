@@ -337,50 +337,54 @@ timeline, where a static transform is expected to already hold.
   single-file backend, and any other path produces a **directory-layout MCAP**
   bag — a directory output does not inherit `<dst>`'s storage backend.
 
-### `-w`, `--overwrite`
+### `--force` vs `-w`, `--overwrite`
 
-A single flag that permits clobbering either conflict:
+Two separate permissions, as on [`static join`](#bagwiz-tf-static-join) and
+[`traj join`](traj.md#bagwiz-traj-join):
 
-- The `-o <output>` path already exists — it is replaced.
-- `<dst>` already contains a static topic whose name collides with one being
-  copied — its existing messages are dropped and replaced by `<src>`'s.
+- `--force` — `<dst>` already contains a static topic whose name collides with one
+  being copied. Its existing messages are dropped and replaced by `<src>`'s.
+- `-w`, `--overwrite` — the `-o <output>` path already exists; it is replaced. No
+  effect in in-place mode, where `<dst>` is the target by definition.
 
-Without `-w`/`--overwrite`, either conflict aborts the run with an explanatory
-error and leaves `<dst>` (and any existing output) untouched. A collision with a
-destination topic of a **different** message type is always an error, regardless
-of the flag.
+Without the matching flag, either conflict aborts the run with an explanatory error
+and leaves `<dst>` (and any existing output) untouched. Neither flag stands in for
+the other: clearing an output path does not also authorise replacing a bag's real
+static TF. A collision with a destination topic of a **different** message type is
+always an error, regardless of `--force`.
 
 ### Usage
 
 ```text
-bagwiz tf static cp --src <src> --dst <dst> [-o <output>] [-w|--overwrite]
+bagwiz tf static cp --src <src> --dst <dst> [-o <output>] [--force] [-w|--overwrite]
 ```
 
 `<src>` is read; `<dst>` (or `<output>`) is the write target.
 
 ### Options
 
-| Flag                | Description                                                                                             |
-| ------------------- | ------------------------------------------------------------------------------------------------------- |
-| `--src <src>`       | Source rosbag to copy static TF from (rosbag2 directory, `*.mcap`, `*.db3`, ...).                       |
-| `--dst <dst>`       | Destination rosbag to copy static TF into (rewritten in place unless `-o`).                             |
-| `-o`, `--output`    | Write the result to this new bag instead of rewriting `<dst>` in place.                                 |
-| `-w`, `--overwrite` | Replace an existing `-o`/`--output` path, and replace any colliding static topic's messages in `<dst>`. |
+| Flag                | Description                                                                       |
+| ------------------- | --------------------------------------------------------------------------------- |
+| `--src <src>`       | Source rosbag to copy static TF from (rosbag2 directory, `*.mcap`, `*.db3`, ...). |
+| `--dst <dst>`       | Destination rosbag to copy static TF into (rewritten in place unless `-o`).       |
+| `-o`, `--output`    | Write the result to this new bag instead of rewriting `<dst>` in place.           |
+| `--force`           | Replace the messages of a colliding static topic in `<dst>`.                      |
+| `-w`, `--overwrite` | Replace an existing `-o`/`--output` path. No effect in in-place mode.             |
 
 ### Examples
 
 ```bash
 bagwiz tf static cp --src donor.mcap --dst target.mcap              # rewrite target.mcap in place
 bagwiz tf static cp --src donor.mcap --dst target.mcap -o merged.mcap  # write a new bag
-bagwiz tf static cp --src donor.mcap --dst target.mcap -w  # replace a colliding /tf_static
+bagwiz tf static cp --src donor.mcap --dst target.mcap --force  # replace a colliding /tf_static
 ```
 
 ### Exit status
 
-| Code | Meaning                                                                                                                                                                                                                                 |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | Static TF copied; `<dst>` rewritten or `<output>` written.                                                                                                                                                                              |
-| `1`  | A bag could not be opened, `<src>` has no static TF topic carrying transforms, a decode/serialize failure, an unresolved conflict (existing output or colliding topic without `-w`/`--overwrite`, or a type mismatch), or an I/O error. |
+| Code | Meaning                                                                                                                                                                                                                                                      |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | Static TF copied; `<dst>` rewritten or `<output>` written.                                                                                                                                                                                                   |
+| `1`  | A bag could not be opened, `<src>` has no static TF topic carrying transforms, a decode/serialize failure, an unresolved conflict (a colliding topic without `--force`, an existing output without `-w`/`--overwrite`, or a type mismatch), or an I/O error. |
 
 ---
 
@@ -715,6 +719,24 @@ bagwiz tf static join -i target.mcap --yaml rig.yaml
 | `1`  | The YAML could not be read or was rejected (see [Accepted input](#accepted-input)), the bag could not be opened, `<topic>` is populated without `--force` or has another type, an existing `-o` path without `-w`/`--overwrite`, a serialize failure, or an I/O error. |
 
 ## Migration
+
+**`tf static cp`: replacing a colliding topic is now `--force`, not `-w`.** The
+single `-w`/`--overwrite` that used to permit both conflicts has been split, so
+`cp` matches [`static join`](#bagwiz-tf-static-join) and
+[`traj join`](traj.md#bagwiz-traj-join): `--force` covers a colliding static topic
+in `<dst>`, and `-w`/`--overwrite` now covers only an existing `-o` path. Neither
+stands in for the other, so clearing an output path no longer also authorises
+replacing a bag's real static TF.
+
+```bash
+# before: -w permitted both
+bagwiz tf static cp --src donor.mcap --dst target.mcap -w
+
+# after: name the conflict being permitted
+bagwiz tf static cp --src donor.mcap --dst target.mcap --force            # colliding topic
+bagwiz tf static cp --src donor.mcap --dst target.mcap -o out.mcap -w     # existing output
+bagwiz tf static cp --src donor.mcap --dst target.mcap -o out.mcap --force -w  # both
+```
 
 `tf walk` was removed. `tf static calc` covers the static-tree query; there is
 no in-tree replacement for stepping through a dynamic TF timeline.

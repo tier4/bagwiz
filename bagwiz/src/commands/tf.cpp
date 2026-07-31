@@ -392,7 +392,8 @@ std::string format_category_legend(bool use_color)
 //                (or JSON). 'static' is a command group; 'calc' is its action.
 //   static cp    Copy every static TF topic from <src> into <dst> (in place, or
 //                to a new bag via -o), preserving topic names and stamping each
-//                at <dst>'s start time.
+//                at <dst>'s start time. --force replaces a colliding topic in
+//                <dst>; -w only an existing -o path.
 //   static dump  Write the bag's static TF tree as nested
 //                parent -> child -> {x,y,z,roll,pitch,yaw} YAML (RPY in radians,
 //                tf2 fixed-axis) to -o, or to stdout when -o is omitted. Every
@@ -458,6 +459,7 @@ private:
     std::filesystem::path src_path;
     std::filesystem::path dst_path;
     std::optional<std::filesystem::path> output_path;
+    bool force = false;
     bool overwrite = false;
   } static_cp_args_;
 
@@ -681,9 +683,12 @@ private:
       "-o,--output", static_cp_args_.output_path,
       "Write the result to this new bag instead of rewriting <dst> in place.");
     sub->add_flag(
+      "--force", static_cp_args_.force,
+      "Replace the messages of any static topic in <dst> whose name collides with one being "
+      "copied; otherwise a collision aborts.");
+    sub->add_flag(
       "-w,--overwrite", static_cp_args_.overwrite,
-      "Permit clobbering: replace an existing -o/--output path, and replace any static topic in "
-      "<dst> whose name collides with one being copied. Without it, either conflict aborts.");
+      "Replace an existing -o/--output path. Has no effect in in-place mode.");
     sub->callback([this]() { selected_ = Subcommand::kStaticCp; });
   }
 
@@ -848,7 +853,8 @@ private:
   int run_static_cp()
   {
     const auto & args = static_cp_args_;
-    return run_tf_static_cp(args.src_path, args.dst_path, args.output_path, args.overwrite);
+    return run_tf_static_cp(
+      args.src_path, args.dst_path, args.output_path, args.force, args.overwrite);
   }
 
   int run_static_dump()
