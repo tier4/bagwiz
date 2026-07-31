@@ -560,11 +560,15 @@ frame or key named:
   and filling in `0` would invent a transform the author did not write.
 - Any other key. A mistyped `pich` would otherwise leave pitch silently at `0`.
 - A non-numeric value, an empty frame id, or a frame that is its own parent.
-- **A third level of nesting.** Note this is stricter than
+- **A third level of nesting**, at any depth. Note this is stricter than
   `multi_transform_publisher`, which recurses and silently drops the enclosing
   key — so `group: {base_link: {lidar: {...}}}` publishes `base_link → lidar` there
   and is an error here, because dropping a level puts the transform under the
-  wrong parent.
+  wrong parent. A transform mapping that nests a child _beside_ the six keys is
+  the same mistake and is caught as an unknown key.
+- **One level too few**: a top-level entry that is itself a transform, i.e. the
+  parent frame was forgotten. (`multi_transform_publisher` broadcasts this with an
+  empty parent frame id.)
 - An edge set that is not a forest: a child claimed by two parents, both `A → B`
   and `B → A`, or a cycle. This is the same validation
   [`tf tree`](#bagwiz-tf-tree) applies to a bag's merged tree.

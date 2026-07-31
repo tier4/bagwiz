@@ -515,6 +515,36 @@ TEST_F(StaticTfTreeParseTest, RejectsDeeperNesting)
     "      x: 0.0\n      y: 0.0\n      z: 0.0\n      roll: 0.0\n      pitch: 0.0\n      yaw: "
     "0.0\n");
   EXPECT_NE(err.find("nests a further level"), std::string::npos) << err;
+
+  // Depth 4 is caught the same way, at the first level that is not a transform.
+  const std::string deeper = error_for(
+    "a:\n  b:\n    c:\n      d:\n"
+    "        x: 0.0\n        y: 0.0\n        z: 0.0\n"
+    "        roll: 0.0\n        pitch: 0.0\n        yaw: 0.0\n");
+  EXPECT_NE(deeper.find("nests a further level"), std::string::npos) << deeper;
+}
+
+// A transform mapping that ALSO nests a child is depth 3 in disguise. The six
+// keys are present, so the nesting check passes and the unknown-key check catches
+// it instead.
+TEST_F(StaticTfTreeParseTest, RejectsANestedChildBesideTheTransformKeys)
+{
+  const std::string err = error_for(
+    "base_link:\n  lidar:\n"
+    "    x: 0.0\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n"
+    "    camera:\n      x: 1.0\n");
+  EXPECT_NE(err.find("unknown key 'camera'"), std::string::npos) << err;
+}
+
+// One level too shallow: forgetting the parent frame. Reporting the first of the
+// six keys as a malformed child frame would point at the wrong thing. (The
+// reference publisher instead broadcasts this with an empty parent frame id.)
+TEST_F(StaticTfTreeParseTest, RejectsATransformWithNoParentFrame)
+{
+  const std::string err =
+    error_for("lidar:\n  x: 0.0\n  y: 0.0\n  z: 0.0\n  roll: 0.0\n  pitch: 0.0\n  yaw: 0.0\n");
+  EXPECT_NE(err.find("'lidar' declares a transform directly"), std::string::npos) << err;
+  EXPECT_NE(err.find("needs a parent frame above it"), std::string::npos) << err;
 }
 
 TEST_F(StaticTfTreeParseTest, RejectsAScalarWhereAMappingBelongs)

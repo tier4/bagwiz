@@ -335,6 +335,15 @@ bool read_transform_mapping(
   return true;
 }
 
+// True when `node` carries at least one of the six transform keys, i.e. it is
+// meant to be a transform rather than a further nesting level.
+bool has_transform_fields(const YAML::Node & node)
+{
+  return std::any_of(kTransformKeys.begin(), kTransformKeys.end(), [&node](std::string_view key) {
+    return static_cast<bool>(node[std::string(key)]);
+  });
+}
+
 // True when `node` is a mapping that carries none of the six transform keys,
 // i.e. a further nesting level rather than a transform. The reference publisher
 // recurses into such a node and silently drops the enclosing key; this parser
@@ -342,12 +351,7 @@ bool read_transform_mapping(
 // wrong parent.
 bool is_deeper_nesting(const YAML::Node & node)
 {
-  if (!node.IsMap()) {
-    return false;
-  }
-  return std::none_of(kTransformKeys.begin(), kTransformKeys.end(), [&node](std::string_view key) {
-    return static_cast<bool>(node[std::string(key)]);
-  });
+  return node.IsMap() && !has_transform_fields(node);
 }
 
 }  // namespace
@@ -422,6 +426,17 @@ StaticTfTreeParseResult parse_static_tf_tree_yaml(const std::filesystem::path & 
       }
       if (children.size() == 0) {
         result.error = "parent frame '" + parent + "' declares no child frames";
+        return result;
+      }
+      // One level too shallow: the top-level entry is itself a transform, so the
+      // parent frame is missing. Without this the loop below would report the
+      // first of the six keys as a malformed child frame, which points at the
+      // wrong thing. The reference publisher instead broadcasts the transform
+      // with an EMPTY parent frame id, which is broken TF either way.
+      if (has_transform_fields(children)) {
+        result.error = "'" + parent +
+                       "' declares a transform directly; this schema needs a parent frame above it "
+                       "(parent, then child holding x, y, z, roll, pitch, yaw)";
         return result;
       }
 
