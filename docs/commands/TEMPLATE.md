@@ -115,6 +115,10 @@ end may cover all subcommands when they share the same codes.
 `--input <input>` ``; note "Long-form only." when there is no short form.
   Start the Description with `**Required.**` for required flags. Give
   defaults inline as `Default: <value>.` — do not add a Default column.
+  Keep each Description to the key points a user needs to pick and use the
+  flag — at most ~500 characters even for the most involved flag. If a
+  description grows past that, the detail belongs in a semantics section
+  (linked from the Description), not in the table cell.
 - Command-specific semantics — optional sections after Options for anything
   the user must understand beyond the flag reference: selector syntax, window
   semantics, frame conventions, guarantees, edge cases, and failure modes,
