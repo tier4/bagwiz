@@ -198,6 +198,7 @@ if(BAGWIZ_WITH_SLAM)
     src/core/slam/visual_factors.cpp
     src/core/slam/visual_odometry_grouping.cpp
     src/core/slam/visual_odometry_window.cpp
+    src/core/slam/visual_odometry.cpp
     src/core/slam/cuda_device.cpp
     src/core/slam/progress_bar.cpp
   )
@@ -513,6 +514,16 @@ if(BUILD_TESTING)
     target_link_libraries(bagwiz_slam_visual_odometry_window_test
       bagwiz_slam_glim glim::glim gtsam_points::gtsam_points gtsam)
     target_include_directories(bagwiz_slam_visual_odometry_window_test
+      PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core/slam)
+
+    # glim::OdometryEstimationBase shell tying the grouping buffer and window
+    # solver together (issue #376 Phase 3). Src-local like the two tests
+    # above, so it needs the same extra include path.
+    ament_add_gtest(bagwiz_slam_visual_odometry_test
+      test/core/slam/visual_odometry_test.cpp)
+    target_link_libraries(bagwiz_slam_visual_odometry_test
+      bagwiz_slam_glim glim::glim gtsam_points::gtsam_points gtsam)
+    target_include_directories(bagwiz_slam_visual_odometry_test
       PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core/slam)
 
     # gtsam_points-linked (GLIM-free) registration core for the scan-matching
