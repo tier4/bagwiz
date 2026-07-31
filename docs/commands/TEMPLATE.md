@@ -37,6 +37,13 @@ One or two sentences: what the command does, in plain terms.
 bagwiz <cmd> -i <input> [OPTIONS]
 ```
 
+## Examples
+
+```bash
+# One comment line per invocation, describing the scenario.
+bagwiz <cmd> -i drive.mcap -o out/
+```
+
 ## Options
 
 | Flag                    | Description                            |
@@ -49,13 +56,6 @@ bagwiz <cmd> -i <input> [OPTIONS]
 ## Behavior
 
 - One bullet per guaranteed behavior, edge case, or failure mode.
-
-## Examples
-
-```bash
-# One comment line per invocation, describing the scenario.
-bagwiz <cmd> -i drive.mcap -o out/
-```
 
 ## Exit status
 
@@ -92,6 +92,11 @@ end may cover all subcommands when they share the same codes.
   `configure()`. Required flags listed explicitly, optional ones collapsed
   into `[OPTIONS]`. No positional operands (bagwiz takes all operands as
   flags).
+- `Examples` — always plural, even for a single invocation. A `bash` fenced
+  block where every invocation gets one `#` comment line above it describing
+  the scenario. Quote globs (`'/sensing/*'`) and say so once below the block
+  when globs appear. Placed right after `Usage`, so a reader sees a working
+  invocation before the full flag reference.
 - `Options` — a two-column table, `| Flag | Description |`. The Flag cell
   lists the short and long forms with a value placeholder: `` `-i`,
 `--input <input>` ``; note "Long-form only." when there is no short form.
@@ -103,10 +108,6 @@ end may cover all subcommands when they share the same codes.
   not "Notes".
 - `Behavior` — bullets (or a numbered list for an ordered pipeline) covering
   guarantees, edge cases, and failure modes, each verifiable in the code.
-- `Example` / `Examples` — a `bash` fenced block; heading is `Example` for a
-  single invocation, `Examples` for more. Every invocation gets one `#`
-  comment line above it describing the scenario. Quote globs (`'/sensing/*'`)
-  and say so once below the block when globs appear.
 - `Exit status` — a `| Code | Meaning |` table. `0` is success; `1` covers
   runtime failures of the command itself. CLI parse errors (missing required
   flags, failed validation) do not reach the command — CLI11 exits with its
@@ -114,4 +115,4 @@ end may cover all subcommands when they share the same codes.
   the distinction matters.
 - Optional trailing sections as needed: `Output` / `Outputs`, `Errors`
   (situation → outcome table), `Performance`, `Environment` (env vars),
-  `Requirements`. Place them after `Behavior`, before `Examples`.
+  `Requirements`. Place them after `Behavior`, before `Exit status`.
