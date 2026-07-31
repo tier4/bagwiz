@@ -8,8 +8,8 @@
 
 #include "bagwiz/core/tf/tf_static_tree_yaml.hpp"
 
-#include "bagwiz/core/tf/tf_forest_check.hpp"
 #include "bagwiz/core/tf/tf_transform_format.hpp"
+#include "bagwiz/core/tf/tf_tree_check.hpp"
 
 #include <yaml-cpp/yaml.h>
 
@@ -508,10 +508,13 @@ StaticTfTreeParseResult parse_static_tf_tree_yaml(const std::filesystem::path & 
     result.error = "static TF YAML '" + yaml_path.string() + "' declares no transforms";
     return result;
   }
-  // Everything above is per-edge; this is the only check on the set as a whole,
-  // and it is what rejects a child claimed by two parents, opposite edges, and
-  // cycles. Same validation `bagwiz tf tree` applies to a merged bag tree.
-  if (const auto err = validate_tf_forest(state.edges, "in '" + yaml_path.string() + "'")) {
+  // Everything above is per-key. This is the check on the result as a whole: that
+  // tf2 can actually build a usable tree from these transforms, not merely that
+  // the keys parsed. It subsumes the forest check and additionally rejects values
+  // tf2 would silently drop — a non-finite number reaches this point happily,
+  // since `.nan` is a valid YAML float, and would leave the written /tf_static
+  // well-formed but empty as far as tf2 is concerned.
+  if (const auto err = validate_tf_tree(state.transforms, "in '" + yaml_path.string() + "'")) {
     result.error = *err;
     return result;
   }

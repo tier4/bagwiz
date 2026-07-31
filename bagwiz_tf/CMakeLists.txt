@@ -70,6 +70,7 @@ add_library(bagwiz_tf
   src/core/tf/tf_topics.cpp
   src/core/tf/tf_trajectory_sample.cpp
   src/core/tf/tf_transform_format.cpp
+  src/core/tf/tf_tree_check.cpp
   src/core/tf/tf_value_extract.cpp
   src/core/tf/trajectory.cpp
 )
@@ -184,6 +185,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(bagwiz_tf_static_tree_yaml_test test/core/tf/tf_static_tree_yaml_test.cpp)
   target_link_libraries(bagwiz_tf_static_tree_yaml_test bagwiz_tf yaml-cpp)
+
+  ament_add_gtest(bagwiz_tf_tree_check_test test/core/tf/tf_tree_check_test.cpp)
+  target_link_libraries(bagwiz_tf_tree_check_test bagwiz_tf)
 
   ament_add_gtest(bagwiz_tf_transform_format_test test/core/tf/tf_transform_format_test.cpp)
   target_link_libraries(

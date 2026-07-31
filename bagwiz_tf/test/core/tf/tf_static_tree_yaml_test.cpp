@@ -498,6 +498,25 @@ TEST_F(StaticTfTreeParseTest, RejectsAnUnknownKey)
   EXPECT_NE(err.find("unknown key 'pich'"), std::string::npos) << err;
 }
 
+// `.nan` and `.inf` are valid YAML floats, so they parse fine — but tf2 drops
+// such a transform, leaving a well-formed /tf_static whose tree is empty. The
+// tree-buildable check is what catches it. (The emitter writes these spellings for
+// a corrupt bag, so this is also the path a dump -> join of a corrupt bag takes.)
+TEST_F(StaticTfTreeParseTest, RejectsValuesTf2WouldDrop)
+{
+  for (const char * bad : {".nan", ".inf", "-.inf"}) {
+    const std::string err = error_for(
+      std::string("base_link:\n  lidar:\n    x: ") + bad +
+      "\n    y: 0.0\n    z: 0.0\n    roll: 0.0\n    pitch: 0.0\n    yaw: 0.0\n");
+    EXPECT_NE(err.find("non-finite translation.x"), std::string::npos) << bad << ": " << err;
+  }
+  // A non-finite angle reaches the rotation through rpy_to_quaternion.
+  const std::string rot = error_for(
+    "base_link:\n  lidar:\n"
+    "    x: 0.0\n    y: 0.0\n    z: 0.0\n    roll: .nan\n    pitch: 0.0\n    yaw: 0.0\n");
+  EXPECT_NE(rot.find("non-finite rotation"), std::string::npos) << rot;
+}
+
 TEST_F(StaticTfTreeParseTest, RejectsANonNumericValue)
 {
   const std::string err = error_for(

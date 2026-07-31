@@ -593,12 +593,31 @@ offending frame or key named:
 - **A transform at the document root**: there is no enclosing key to be its
   parent, i.e. the parent frame was forgotten. (`multi_transform_publisher`
   broadcasts this with an empty parent frame id.)
-- An edge set that is not a forest: a child claimed by two parents, both `A → B`
-  and `B → A`, or a cycle. This is the same validation
-  [`tf tree`](#bagwiz-tf-tree) applies to a bag's merged tree.
 - An empty document — there would be nothing to write.
 - Nesting deeper than 32 levels, a guard against a pathological document; no
   hand-written config comes close.
+
+Finally the parsed transforms are checked to be a **buildable tf tree**, since a
+file can parse cleanly and still be unusable. This is the same
+`core::validate_tf_tree` any bagwiz code writing transforms can call, and it
+rejects:
+
+- **A child claimed by two parents, both `A → B` and `B → A`, or a cycle** — the
+  same forest validation [`tf tree`](#bagwiz-tf-tree) applies to a bag's merged
+  tree.
+- **A non-finite value.** `.nan` and `.inf` are valid YAML floats, so they parse
+  happily, but `tf2::BufferCore` _drops_ such a transform (logging
+  `TF_NAN_INPUT`). Without this check `join` would write a perfectly well-formed
+  `/tf_static` whose tree is empty the moment anything used it — and `tf tree`
+  would still draw it, since that reads the raw edges.
+- **A rotation that is not unit length.** tf2 does _not_ reject this one: it keeps
+  the quaternion, and `tf2::Matrix3x3` builds its matrix from the raw components
+  without normalising, so the transform comes out skewed. Silently wrong geometry
+  is worse than a missing frame. The tolerance (1e-6 on the squared length) passes
+  a quaternion that was stored as float32 and widened back.
+- Anything else tf2 itself refuses, and any frame that does not resolve against
+  its own tree root once loaded. Several roots (a forest) is fine — frames are
+  only ever resolved within their own tree.
 
 Note also that unlike `multi_transform_publisher`, `join` does **not** synthesize
 `camera_link → camera_optical_link` edges. It writes exactly the transforms the
