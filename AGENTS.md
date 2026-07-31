@@ -38,7 +38,10 @@ to keep this file itself consistent over time.
   fenced code blocks, rather than as ASCII art or committed image
   files. GitHub renders both natively in its Markdown, so they stay as
   plain-text source that is easy to review and edit. Reach for a static
-  image only when a diagram genuinely cannot be expressed in Mermaid.
+  image only when a diagram genuinely cannot be expressed in Mermaid —
+  notably spatial / 3D-geometry figures in the command documentation,
+  which are committed as plain SVG under `docs/commands/assets/` (see
+  `docs/commands/TEMPLATE.md`).
 - Never write phrases that only make sense within the context of an
   AI–developer conversation. A future contributor or user reading the
   source must be able to understand the reasoning from the code and
