@@ -62,7 +62,7 @@ to keep this file itself consistent over time.
   in any generated code, commit messages, pull request descriptions,
   documentation, or other output.
 
-### 3. Commit Messages & Branch Names
+### 3. Commits & Branch Names
 
 - Follow the [Conventional Commits](https://www.conventionalcommits.org/)
   specification for every commit message. Use one of the standard types
@@ -72,6 +72,24 @@ to keep this file itself consistent over time.
 - Use the same type as the branch prefix when creating a branch for a
   pull request (e.g. `feat/multi-topic-inspect`, `fix/hesai-sop-order`).
   Do not use tool- or author-specific prefixes such as `claude/*`.
+- Prefer a new commit over rewriting an existing one. History rewrites
+  (`git commit --amend`, interactive rebase, and the rest) are for a
+  commit you created moments ago that nothing has seen yet: no reviewer
+  read it, no CI ran on it, no push happened, and its hash is recorded
+  nowhere. Outside that window, correct the work with a follow-up
+  commit. A branch that shows the correction as its own commit is
+  easier to review than one whose history was quietly edited to look
+  right.
+- Never amend to fold in review feedback. The value of a review is that
+  the reviewed state and the correction are both visible; amending
+  destroys the commit the reviewer actually read and silently
+  invalidates the hash they cited.
+- Never rewrite a commit that has already been pushed. Undoing that
+  needs a force-push, which rule 6 forbids without explicit approval.
+- The real remedy is getting the commit right the first time: stage
+  deliberately, run the hooks, and read the diff before committing,
+  rather than committing early and repairing afterwards. Repeated
+  amends are a symptom of committing too soon, not a workflow.
 
 ### 4. Pre-commit Hooks
 
