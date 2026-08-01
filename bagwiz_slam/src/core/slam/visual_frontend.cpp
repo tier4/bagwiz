@@ -32,6 +32,8 @@
 
 namespace bagwiz::core::slam
 {
+namespace
+{
 
 using Clock = std::chrono::steady_clock;
 
@@ -39,6 +41,8 @@ std::int64_t ns_since(Clock::time_point start)
 {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count();
 }
+
+}  // namespace
 
 struct VisualFrontend::Impl
 {
