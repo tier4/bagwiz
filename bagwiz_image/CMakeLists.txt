@@ -127,8 +127,12 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_raw_image_test test/core/image/raw_image_test.cpp)
   target_link_libraries(bagwiz_raw_image_test bagwiz_image)
 
+  # The decoder-overload test synthesizes a real PNG via the shared fixture
+  # helper (bagwiz_image_test_fixture); libav is linked explicitly for the same
+  # static-link reason image_decoder_test re-links it below.
   ament_add_gtest(bagwiz_packed_raster_test test/core/image/packed_raster_test.cpp)
-  target_link_libraries(bagwiz_packed_raster_test bagwiz_image)
+  target_link_libraries(
+    bagwiz_packed_raster_test bagwiz_image bagwiz_image_test_fixture PkgConfig::LIBAV)
 
   ament_add_gtest(bagwiz_camera_info_test test/core/image/camera_info_test.cpp)
   target_link_libraries(bagwiz_camera_info_test bagwiz_image)

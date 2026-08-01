@@ -8,6 +8,9 @@
 
 #include "bagwiz/core/image/packed_raster.hpp"
 
+#include "bagwiz/core/image/image_decoder.hpp"
+#include "core/image/image_fixture.hpp"
+
 #include <gtest/gtest.h>
 
 #include <cstddef>
@@ -19,8 +22,10 @@
 
 namespace
 {
+using bagwiz::core::image::ImageDecoder;
 using bagwiz::core::image::is_supported_image_type;
 using bagwiz::core::image::to_packed_raster;
+using bagwiz::test::encode_still_image;
 
 constexpr const char * kImageType = "sensor_msgs/msg/Image";
 constexpr const char * kCompressedImageType = "sensor_msgs/msg/CompressedImage";
@@ -203,6 +208,22 @@ TEST(ToPackedRasterTest, CompressedGarbageBitstreamIsError)
   const auto r = to_packed_raster(kCompressedImageType, {payload.data(), payload.size()});
   EXPECT_FALSE(r.ok());
   EXPECT_FALSE(r.error.empty());
+}
+
+TEST(PackedRasterTest, DecoderOverloadMatchesFreeFunction)
+{
+  const auto png = encode_still_image("png", 4, 4, /*r=*/10, /*g=*/20, /*b=*/30);
+  ASSERT_FALSE(png.empty()) << "PNG encoder unavailable";
+  const auto payload = make_compressed("png", {png.data(), png.size()});
+
+  ImageDecoder decoder;
+  const auto with_decoder =
+    to_packed_raster(kCompressedImageType, {payload.data(), payload.size()}, decoder);
+  const auto reference = to_packed_raster(kCompressedImageType, {payload.data(), payload.size()});
+  ASSERT_TRUE(with_decoder.ok()) << with_decoder.error;
+  ASSERT_TRUE(reference.ok()) << reference.error;
+  EXPECT_EQ(with_decoder.raster->bgr, reference.raster->bgr);
+  EXPECT_EQ(with_decoder.raster->width, reference.raster->width);
 }
 
 TEST(ToPackedRasterTest, IsSupportedImageTypeMatchesDispatch)

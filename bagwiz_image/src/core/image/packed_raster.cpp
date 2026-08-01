@@ -93,7 +93,7 @@ PackedRasterResult from_raw(std::span<const std::byte> payload)
 
 // sensor_msgs/msg/CompressedImage -> canonical packed BGR24 via the libav-backed
 // decoder, which already emits packed BGR24.
-PackedRasterResult from_compressed(std::span<const std::byte> payload)
+PackedRasterResult from_compressed(std::span<const std::byte> payload, ImageDecoder & decoder)
 {
   PackedRasterResult result;
   const auto compressed = extract_compressed_image(payload);
@@ -101,7 +101,7 @@ PackedRasterResult from_compressed(std::span<const std::byte> payload)
     result.error = compressed.error;
     return result;
   }
-  auto decoded = decode_compressed_image(compressed.image->data, compressed.image->format);
+  auto decoded = decoder.decode(compressed.image->data, compressed.image->format);
   if (!decoded.ok()) {
     result.error = decoded.error;
     return result;
@@ -118,18 +118,26 @@ PackedRasterResult from_compressed(std::span<const std::byte> payload)
 }
 }  // namespace
 
-PackedRasterResult to_packed_raster(std::string_view type, std::span<const std::byte> payload)
+PackedRasterResult to_packed_raster(
+  std::string_view type, std::span<const std::byte> payload, ImageDecoder & decoder)
 {
   if (type == kImageType) {
     return from_raw(payload);
   }
   if (type == kCompressedImageType) {
-    return from_compressed(payload);
+    return from_compressed(payload, decoder);
   }
   PackedRasterResult result;
   result.error = "unsupported image message type '" + std::string(type) +
                  "'; expected sensor_msgs/msg/Image or sensor_msgs/msg/CompressedImage";
   return result;
+}
+
+// cppcheck-suppress passedByValue  // string_view is the canonical by-value idiom
+PackedRasterResult to_packed_raster(std::string_view type, std::span<const std::byte> payload)
+{
+  ImageDecoder decoder;
+  return to_packed_raster(type, payload, decoder);
 }
 
 // cppcheck-suppress passedByValue  // string_view is the canonical by-value idiom

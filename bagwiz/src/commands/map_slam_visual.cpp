@@ -149,13 +149,17 @@ void VisualFeed::run_worker(std::size_t cam)
     ++failures;
   };
 
+  // One persistent decoder per worker: this camera's frames share one FFmpeg
+  // codec/sws context instead of paying the setup cost per frame.
+  core::image::ImageDecoder decoder;
+
   std::int64_t decode_ns = 0;
   std::int64_t track_ns = 0;
   VisualWorkItem item;
   while (queues_[cam]->pop(item)) {
     try {
       auto t = std::chrono::steady_clock::now();
-      auto decoded = core::image::to_packed_raster(item.type, item.payload);
+      auto decoded = core::image::to_packed_raster(item.type, item.payload, decoder);
       decode_ns += ns_since(t);
       if (!decoded.ok()) {
         count_failure(decoded.error.c_str());

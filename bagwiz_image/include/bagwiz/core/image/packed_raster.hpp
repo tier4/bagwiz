@@ -9,6 +9,8 @@
 #ifndef BAGWIZ__CORE__IMAGE__PACKED_RASTER_HPP_
 #define BAGWIZ__CORE__IMAGE__PACKED_RASTER_HPP_
 
+#include "bagwiz/core/image/image_decoder.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -61,6 +63,13 @@ struct PackedRasterResult
 // yields an error result rather than throwing.
 [[nodiscard]] PackedRasterResult to_packed_raster(
   std::string_view type, std::span<const std::byte> payload);
+
+// Same as to_packed_raster(type, payload) but compressed payloads decode
+// through `decoder`, reusing its FFmpeg contexts across calls. For per-frame
+// streams (one decoder per camera/thread); pixels are identical to the
+// decoder-less overload.
+[[nodiscard]] PackedRasterResult to_packed_raster(
+  std::string_view type, std::span<const std::byte> payload, ImageDecoder & decoder);
 
 // True when `type` is a message type to_packed_raster() can decode (raw
 // "sensor_msgs/msg/Image" or "sensor_msgs/msg/CompressedImage"). Callers use it
