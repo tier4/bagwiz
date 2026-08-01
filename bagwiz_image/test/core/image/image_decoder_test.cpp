@@ -114,3 +114,60 @@ TEST(ImageDecoderTest, CorruptJpegIsError)
   EXPECT_FALSE(result.ok());
   EXPECT_FALSE(result.error.empty());
 }
+
+TEST(ImageDecoderTest, ReusedDecoderMatchesFreeFunction)
+{
+  const auto jpeg = encode_still_image("jpeg", 16, 16, 200, 100, 50);
+  ASSERT_FALSE(jpeg.empty());
+  bagwiz::core::image::ImageDecoder decoder;
+  const auto first = decoder.decode({jpeg.data(), jpeg.size()}, "jpeg");
+  const auto second = decoder.decode({jpeg.data(), jpeg.size()}, "jpeg");
+  const auto reference = decode_compressed_image({jpeg.data(), jpeg.size()}, "jpeg");
+  ASSERT_TRUE(first.ok()) << first.error;
+  ASSERT_TRUE(second.ok()) << second.error;
+  ASSERT_TRUE(reference.ok()) << reference.error;
+  EXPECT_EQ(first.image->bgr, second.image->bgr);     // no state leak frame-to-frame
+  EXPECT_EQ(first.image->bgr, reference.image->bgr);  // same pixels as the one-shot path
+}
+
+TEST(ImageDecoderTest, ReusedDecoderHandlesSizeChange)
+{
+  const auto big = encode_still_image("jpeg", 32, 32, 10, 20, 30);
+  const auto small = encode_still_image("jpeg", 16, 8, 10, 20, 30);
+  ASSERT_FALSE(big.empty());
+  ASSERT_FALSE(small.empty());
+  bagwiz::core::image::ImageDecoder decoder;
+  const auto r1 = decoder.decode({big.data(), big.size()});
+  const auto r2 = decoder.decode({small.data(), small.size()});
+  ASSERT_TRUE(r1.ok()) << r1.error;
+  ASSERT_TRUE(r2.ok()) << r2.error;
+  EXPECT_EQ(r1.image->width, 32U);
+  EXPECT_EQ(r2.image->width, 16U);
+  EXPECT_EQ(r2.image->height, 8U);
+  EXPECT_EQ(r2.image->bgr.size(), 16U * 8U * 3U);
+}
+
+TEST(ImageDecoderTest, ReusedDecoderSwitchesCodecs)
+{
+  const auto jpeg = encode_still_image("jpeg", 8, 8, 0, 0, 0);
+  const auto png = encode_still_image("png", 8, 8, 10, 20, 30);
+  ASSERT_FALSE(jpeg.empty());
+  ASSERT_FALSE(png.empty());
+  bagwiz::core::image::ImageDecoder decoder;
+  EXPECT_TRUE(decoder.decode({jpeg.data(), jpeg.size()}).ok());
+  const auto png_result = decoder.decode({png.data(), png.size()});
+  ASSERT_TRUE(png_result.ok()) << png_result.error;
+  EXPECT_EQ(static_cast<int>(png_result.image->bgr[0]), 30);  // blue channel exact for PNG
+}
+
+TEST(ImageDecoderTest, ReusedDecoderRecoversAfterCorruptInput)
+{
+  const auto good = encode_still_image("jpeg", 8, 8, 0, 0, 0);
+  ASSERT_FALSE(good.empty());
+  const std::vector<std::byte> corrupt{std::byte{0xFF}, std::byte{0xD8}, std::byte{0xFF},
+                                       std::byte{0xAA}, std::byte{0xBB}, std::byte{0xCC}};
+  bagwiz::core::image::ImageDecoder decoder;
+  EXPECT_TRUE(decoder.decode({good.data(), good.size()}).ok());
+  EXPECT_FALSE(decoder.decode({corrupt.data(), corrupt.size()}).ok());
+  EXPECT_TRUE(decoder.decode({good.data(), good.size()}).ok());  // context still usable
+}

@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -53,6 +54,30 @@ struct DecodeResult
 // codec, a missing decoder in this FFmpeg build, or a corrupt bitstream.
 [[nodiscard]] DecodeResult decode_compressed_image(
   std::span<const std::byte> data, std::string_view format = {});
+
+// A reusable decoder that keeps its FFmpeg codec context, packet/frame
+// buffers, swscale context, and output buffer alive across frames, so a
+// per-frame stream (e.g. one camera's images) pays the setup cost once
+// instead of per decode. decode() is exactly decode_compressed_image() in
+// behavior — same accepted inputs, same pixels, same errors — and the
+// contexts are re-created transparently when the codec, geometry, or pixel
+// format changes mid-stream. Not thread-safe; use one instance per thread.
+class ImageDecoder
+{
+public:
+  ImageDecoder();
+  ~ImageDecoder();
+  ImageDecoder(ImageDecoder &&) noexcept;
+  ImageDecoder & operator=(ImageDecoder &&) noexcept;
+  ImageDecoder(const ImageDecoder &) = delete;
+  ImageDecoder & operator=(const ImageDecoder &) = delete;
+
+  [[nodiscard]] DecodeResult decode(std::span<const std::byte> data, std::string_view format = {});
+
+private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
 
 }  // namespace bagwiz::core::image
 

@@ -22,6 +22,7 @@ extern "C" {
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -86,22 +87,26 @@ AVPixelFormat normalize_pixel_format(AVPixelFormat fmt, bool & full_range)
   }
 }
 
-// RAII for the libav decode handles, so every early return frees them.
-struct DecodeContext
+}  // namespace
+
+// Holds the libav decode handles across decode() calls. Same members and frees
+// as the one-shot DecodeContext this replaces, plus the keys needed to tell
+// whether a context can be reused as-is or must be rebuilt for the new frame.
+struct ImageDecoder::Impl
 {
   AVCodecContext * codec = nullptr;
-  AVPacket * pkt = nullptr;
-  AVFrame * frame = nullptr;
+  AVCodecID open_id = AV_CODEC_ID_NONE;  // codec the context was opened for
+  AVPacket * pkt = nullptr;              // allocated once, unref'd per frame
+  AVFrame * frame = nullptr;             // allocated once, unref'd per frame
   SwsContext * sws = nullptr;
-  std::uint8_t * dst_buf = nullptr;  // av_image_alloc'd swscale destination
+  int sws_w = 0, sws_h = 0;  // geometry/format the sws context was built for
+  AVPixelFormat sws_fmt = AV_PIX_FMT_NONE;
+  bool sws_full_range = false;
+  std::uint8_t * dst_buf = nullptr;  // av_image_alloc'd, reused while (w,h) unchanged
+  std::array<int, 4> dst_linesize{};
+  int dst_w = 0, dst_h = 0;
 
-  DecodeContext() = default;
-  DecodeContext(const DecodeContext &) = delete;
-  DecodeContext & operator=(const DecodeContext &) = delete;
-  DecodeContext(DecodeContext &&) = delete;
-  DecodeContext & operator=(DecodeContext &&) = delete;
-
-  ~DecodeContext()
+  ~Impl()
   {
     if (dst_buf != nullptr) {
       av_freep(&dst_buf);
@@ -121,10 +126,16 @@ struct DecodeContext
   }
 };
 
-}  // namespace
-
-DecodeResult decode_compressed_image(std::span<const std::byte> data, std::string_view format)
+ImageDecoder::ImageDecoder() : impl_(std::make_unique<Impl>())
 {
+}
+ImageDecoder::~ImageDecoder() = default;
+ImageDecoder::ImageDecoder(ImageDecoder &&) noexcept = default;
+ImageDecoder & ImageDecoder::operator=(ImageDecoder &&) noexcept = default;
+
+DecodeResult ImageDecoder::decode(std::span<const std::byte> data, std::string_view format)
+{
+  Impl & ctx = *impl_;
   DecodeResult result;
 
   if (data.empty()) {
@@ -150,25 +161,49 @@ DecodeResult decode_compressed_image(std::span<const std::byte> data, std::strin
     return result;
   }
 
-  DecodeContext ctx;
-  ctx.codec = avcodec_alloc_context3(decoder);
-  if (ctx.codec == nullptr) {
-    result.error = "could not allocate decoder context";
-    return result;
+  // Reopen only when the codec changes; a same-codec stream (the common case)
+  // reuses the already-open context.
+  if (ctx.open_id != id) {
+    if (ctx.codec != nullptr) {
+      avcodec_free_context(&ctx.codec);
+    }
+    ctx.open_id = AV_CODEC_ID_NONE;  // not valid again until avcodec_open2 succeeds below
+    ctx.codec = avcodec_alloc_context3(decoder);
+    if (ctx.codec == nullptr) {
+      result.error = "could not allocate decoder context";
+      return result;
+    }
+    if (int ret = avcodec_open2(ctx.codec, decoder, nullptr); ret < 0) {
+      avcodec_free_context(&ctx.codec);
+      result.error = "could not open decoder: " + av_err(ret);
+      return result;
+    }
+    ctx.open_id = id;
   }
-  if (int ret = avcodec_open2(ctx.codec, decoder, nullptr); ret < 0) {
-    result.error = "could not open decoder: " + av_err(ret);
-    return result;
+
+  if (ctx.pkt == nullptr) {
+    ctx.pkt = av_packet_alloc();
+    if (ctx.pkt == nullptr) {
+      result.error = "could not allocate packet";
+      return result;
+    }
   }
+  if (ctx.frame == nullptr) {
+    ctx.frame = av_frame_alloc();
+    if (ctx.frame == nullptr) {
+      result.error = "could not allocate frame";
+      return result;
+    }
+  }
+
+  // Drop the previous call's decoded frame now, not after this call finishes —
+  // a zero-copy view of it (added in a later task) must stay valid until the
+  // next decode() call starts, not just until this one ends.
+  av_frame_unref(ctx.frame);
 
   // avcodec_send_packet reads up to AV_INPUT_BUFFER_PADDING_SIZE bytes past the
   // end, so the bitstream must live in an av_malloc'd, zero-padded buffer.
-  // av_packet_from_data takes ownership; av_packet_free releases it.
-  ctx.pkt = av_packet_alloc();
-  if (ctx.pkt == nullptr) {
-    result.error = "could not allocate packet";
-    return result;
-  }
+  // av_packet_from_data takes ownership; av_packet_unref below releases it.
   const int data_size = static_cast<int>(data.size());
   auto * buf = static_cast<std::uint8_t *>(
     av_malloc(static_cast<std::size_t>(data_size) + AV_INPUT_BUFFER_PADDING_SIZE));
@@ -184,11 +219,22 @@ DecodeResult decode_compressed_image(std::span<const std::byte> data, std::strin
     return result;
   }
 
-  ctx.frame = av_frame_alloc();
-  if (ctx.frame == nullptr) {
-    result.error = "could not allocate frame";
-    return result;
-  }
+  // From here on ctx.pkt owns `buf` and the codec is about to receive it, so
+  // every remaining return path — success or error — must release the
+  // packet's buffer and flush the codec. Without the unconditional flush, the
+  // EAGAIN path below (which sends a NULL packet to force a still frame out)
+  // would leave this persistent context stuck in draining mode and reject the
+  // next frame's packet.
+  struct DecodeCleanup
+  {
+    AVPacket * pkt;
+    AVCodecContext * codec;
+    ~DecodeCleanup()
+    {
+      av_packet_unref(pkt);
+      avcodec_flush_buffers(codec);
+    }
+  } cleanup{ctx.pkt, ctx.codec};
 
   if (int ret = avcodec_send_packet(ctx.codec, ctx.pkt); ret < 0) {
     result.error = "decoder send_packet failed: " + av_err(ret);
@@ -218,39 +264,61 @@ DecodeResult decode_compressed_image(std::span<const std::byte> data, std::strin
   const AVPixelFormat src_fmt =
     normalize_pixel_format(static_cast<AVPixelFormat>(ctx.frame->format), full_range);
 
-  ctx.sws = sws_getContext(
-    width, height, src_fmt, width, height, AV_PIX_FMT_BGR24, SWS_BILINEAR, nullptr, nullptr,
-    nullptr);
-  if (ctx.sws == nullptr) {
-    result.error = "failed to create swscale context for the decoded image";
-    return result;
-  }
-  if (full_range) {
-    // Tell swscale the source uses the JPEG (full 0-255) range so a remapped
-    // YUVJ* frame keeps its original luma/chroma scaling. brightness/contrast/
-    // saturation use swscale's 16.16 fixed-point identity (0 / 1.0 / 1.0).
-    const int * coeffs = sws_getCoefficients(SWS_CS_DEFAULT);
-    sws_setColorspaceDetails(
-      ctx.sws, coeffs, /*srcRange=*/1, coeffs, /*dstRange=*/1, /*brightness=*/0,
-      /*contrast=*/1 << 16, /*saturation=*/1 << 16);
+  if (
+    ctx.sws == nullptr || ctx.sws_w != width || ctx.sws_h != height || ctx.sws_fmt != src_fmt ||
+    ctx.sws_full_range != full_range) {
+    if (ctx.sws != nullptr) {
+      sws_freeContext(ctx.sws);
+      ctx.sws = nullptr;
+    }
+    ctx.sws = sws_getContext(
+      width, height, src_fmt, width, height, AV_PIX_FMT_BGR24, SWS_BILINEAR, nullptr, nullptr,
+      nullptr);
+    if (ctx.sws == nullptr) {
+      result.error = "failed to create swscale context for the decoded image";
+      return result;
+    }
+    if (full_range) {
+      // Tell swscale the source uses the JPEG (full 0-255) range so a remapped
+      // YUVJ* frame keeps its original luma/chroma scaling. brightness/contrast/
+      // saturation use swscale's 16.16 fixed-point identity (0 / 1.0 / 1.0).
+      const int * coeffs = sws_getCoefficients(SWS_CS_DEFAULT);
+      sws_setColorspaceDetails(
+        ctx.sws, coeffs, /*srcRange=*/1, coeffs, /*dstRange=*/1, /*brightness=*/0,
+        /*contrast=*/1 << 16, /*saturation=*/1 << 16);
+    }
+    ctx.sws_w = width;
+    ctx.sws_h = height;
+    ctx.sws_fmt = src_fmt;
+    ctx.sws_full_range = full_range;
   }
 
   // sws_scale's SIMD paths can write past the end of a tightly-packed row, so
   // give it an aligned, padded destination via av_image_alloc rather than
   // writing straight into a width*3-strided buffer (which overflows for small
-  // widths). The packed rows are copied out afterward.
+  // widths). The packed rows are copied out afterward. Reused across calls
+  // while (width, height) stay the same.
   std::array<std::uint8_t *, 4> dst_data{};
-  std::array<int, 4> dst_linesize{};
-  const int alloc =
-    av_image_alloc(dst_data.data(), dst_linesize.data(), width, height, AV_PIX_FMT_BGR24, 16);
-  if (alloc < 0) {
-    result.error = "could not allocate decode output buffer: " + av_err(alloc);
-    return result;
+  if (ctx.dst_buf == nullptr || ctx.dst_w != width || ctx.dst_h != height) {
+    if (ctx.dst_buf != nullptr) {
+      av_freep(&ctx.dst_buf);
+    }
+    const int alloc =
+      av_image_alloc(dst_data.data(), ctx.dst_linesize.data(), width, height, AV_PIX_FMT_BGR24, 16);
+    if (alloc < 0) {
+      result.error = "could not allocate decode output buffer: " + av_err(alloc);
+      return result;
+    }
+    ctx.dst_buf = dst_data[0];  // owned by Impl; freed on the next resize or on destruction
+    ctx.dst_w = width;
+    ctx.dst_h = height;
+  } else {
+    dst_data[0] = ctx.dst_buf;
   }
-  ctx.dst_buf = dst_data[0];  // owned by DecodeContext; freed on any return below
 
   const int scaled = sws_scale(
-    ctx.sws, ctx.frame->data, ctx.frame->linesize, 0, height, dst_data.data(), dst_linesize.data());
+    ctx.sws, ctx.frame->data, ctx.frame->linesize, 0, height, dst_data.data(),
+    ctx.dst_linesize.data());
   if (scaled != height) {
     result.error = "swscale produced an unexpected number of rows";
     return result;
@@ -262,18 +330,22 @@ DecodeResult decode_compressed_image(std::span<const std::byte> data, std::strin
   const int row_bytes = width * 3;
   image.bgr.assign(
     static_cast<std::size_t>(row_bytes) * static_cast<std::size_t>(height), std::byte{0});
-  // Copy the packed rows out of the (possibly over-strided) swscale buffer. Read
-  // through ctx.dst_buf — the same pointer as dst_data[0] — so the owning member
-  // is used in-function, not only in the destructor.
+  // Copy the packed rows out of the (possibly over-strided) swscale buffer.
   for (int y = 0; y < height; ++y) {
     std::memcpy(
       image.bgr.data() + static_cast<std::ptrdiff_t>(y) * row_bytes,
-      ctx.dst_buf + static_cast<std::ptrdiff_t>(y) * dst_linesize[0],
+      ctx.dst_buf + static_cast<std::ptrdiff_t>(y) * ctx.dst_linesize[0],
       static_cast<std::size_t>(row_bytes));
   }
 
   result.image = std::move(image);
   return result;
+}
+
+DecodeResult decode_compressed_image(std::span<const std::byte> data, std::string_view format)
+{
+  ImageDecoder decoder;
+  return decoder.decode(data, format);
 }
 
 }  // namespace bagwiz::core::image
