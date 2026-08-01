@@ -148,8 +148,8 @@ std::vector<VisualObservation> VisualFrontend::Impl::track(
   if (have_prev_frame && !tracks.empty()) {
     std::vector<cv::Point2f> prev_pts;
     prev_pts.reserve(tracks.size());
-    for (const auto & track : tracks) {
-      prev_pts.emplace_back(track.x, track.y);
+    for (const auto & trk : tracks) {
+      prev_pts.emplace_back(trk.x, trk.y);
     }
 
     std::vector<cv::Point2f> next_pts;
@@ -203,10 +203,9 @@ std::vector<VisualObservation> VisualFrontend::Impl::track(
     t = Clock::now();
     cv::Mat mask(resized.size(), CV_8UC1, cv::Scalar(255));
     const int mask_radius = static_cast<int>(std::lround(config.min_feature_distance));
-    for (const auto & t_loop : tracks) {
+    for (const auto & trk : tracks) {
       cv::circle(
-        mask,
-        cv::Point(static_cast<int>(std::lround(t_loop.x)), static_cast<int>(std::lround(t_loop.y))),
+        mask, cv::Point(static_cast<int>(std::lround(trk.x)), static_cast<int>(std::lround(trk.y))),
         mask_radius, cv::Scalar(0), cv::FILLED);
     }
 
@@ -229,9 +228,9 @@ std::vector<VisualObservation> VisualFrontend::Impl::track(
     const double fy = effective_camera.k[4];
     const double cy = effective_camera.k[5];
     observations.reserve(tracks.size());
-    for (const auto & track : tracks) {
-      const double u = static_cast<double>(track.x) * scale;
-      const double v = static_cast<double>(track.y) * scale;
+    for (const auto & trk : tracks) {
+      const double u = static_cast<double>(trk.x) * scale;
+      const double v = static_cast<double>(trk.y) * scale;
       const image::NormalizedPoint p =
         image::undistort_normalized((u - cx) / fx, (v - cy) / fy, model, config.camera.d);
       // Nearest-pixel color at the track position, from the delivered
@@ -247,7 +246,7 @@ std::vector<VisualObservation> VisualFrontend::Impl::track(
         bgr.data() + (static_cast<std::size_t>(iy) * width + static_cast<std::size_t>(ix)) * 3;
       VisualObservation obs;
       obs.camera_id = config.camera_id;
-      obs.track_id = track.id;
+      obs.track_id = trk.id;
       obs.stamp_ns = stamp_ns;
       obs.x = p.x;
       obs.y = p.y;
