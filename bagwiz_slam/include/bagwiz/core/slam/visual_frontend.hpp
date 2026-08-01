@@ -39,6 +39,23 @@ struct VisualFrontendConfig
   double forward_backward_max = 1.0;   // px at tracking scale, FB-check gate
 };
 
+// Accumulated per-stage wall time of one VisualFrontend instance. Nanosecond
+// counters cover every frame accepted so far (rejected frames — zero size or a
+// mismatched raster — count nothing). Read via VisualFrontend::stats(); like
+// track() itself this is not thread-safe, so callers read it only after the
+// tracking thread is done (VisualFeed reads it after joining its worker).
+struct VisualFrontendStats
+{
+  std::int64_t frames = 0;           // accepted track() calls
+  std::int64_t gray_ns = 0;          // BGR -> gray conversion
+  std::int64_t resize_ns = 0;        // downscale to tracking width
+  std::int64_t klt_forward_ns = 0;   // forward optical flow
+  std::int64_t klt_backward_ns = 0;  // backward (FB-check) optical flow
+  std::int64_t detect_ns = 0;        // mask build + goodFeaturesToTrack
+  std::int64_t detect_calls = 0;     // frames on which detection actually ran
+  std::int64_t emit_ns = 0;          // undistort + rgb sampling + emission
+};
+
 class VisualFrontend
 {
 public:
@@ -58,6 +75,9 @@ public:
   [[nodiscard]] std::vector<VisualObservation> track(
     std::int64_t stamp_ns, std::span<const std::byte> bgr, std::uint32_t width,
     std::uint32_t height);
+
+  // Accumulated per-stage timing. Not thread-safe; read after tracking is done.
+  [[nodiscard]] const VisualFrontendStats & stats() const noexcept;
 
 private:
   struct Impl;

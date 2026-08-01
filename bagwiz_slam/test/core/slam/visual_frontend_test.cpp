@@ -519,4 +519,43 @@ TEST(VisualFrontend, RescalesIntrinsicsToDecodedResolution)
   EXPECT_GE(matched, 10);
 }
 
+TEST(VisualFrontend, StatsAccumulatePerStage)
+{
+  slam::VisualFrontendConfig cfg;
+  cfg.camera = make_pinhole();
+  cfg.tracking_width = 640;
+  slam::VisualFrontend fe(cfg);
+
+  std::vector<std::array<int, 2>> centers;
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 4; ++col) {
+      centers.push_back({100 + col * 120, 100 + row * 120});
+    }
+  }
+  const auto frame = render_dots(640, 480, centers);
+  EXPECT_TRUE(fe.track(0, frame, 640, 480).empty());
+  const auto obs = fe.track(1, frame, 640, 480);
+  ASSERT_FALSE(obs.empty());
+
+  const auto & s = fe.stats();
+  EXPECT_EQ(s.frames, 2);
+  EXPECT_GT(s.gray_ns, 0);
+  EXPECT_GT(s.resize_ns, 0);
+  EXPECT_GT(s.klt_forward_ns, 0);  // second frame flowed
+  EXPECT_GT(s.klt_backward_ns, 0);
+  EXPECT_GE(s.detect_calls, 1);
+  EXPECT_GT(s.detect_ns, 0);
+  EXPECT_GT(s.emit_ns, 0);
+}
+
+TEST(VisualFrontend, StatsIgnoreRejectedFrames)
+{
+  slam::VisualFrontendConfig cfg;
+  cfg.camera = make_pinhole();
+  slam::VisualFrontend fe(cfg);
+  const auto frame = black(640, 480);
+  EXPECT_TRUE(fe.track(0, frame, 320, 240).empty());  // size mismatch: rejected
+  EXPECT_EQ(fe.stats().frames, 0);
+}
+
 }  // namespace
