@@ -92,11 +92,11 @@ if(BUILD_TESTING)
   ament_add_gtest(bagwiz_terminal_input_test test/core/base/terminal_input_test.cpp)
   target_link_libraries(bagwiz_terminal_input_test bagwiz_base)
 
-  ament_add_gtest(bagwiz_topic_match_test test/core/base/topic_match_test.cpp)
-  target_link_libraries(bagwiz_topic_match_test bagwiz_base)
-
   ament_add_gtest(bagwiz_tolerance_test test/core/base/tolerance_test.cpp)
   target_link_libraries(bagwiz_tolerance_test bagwiz_base)
+
+  ament_add_gtest(bagwiz_topic_match_test test/core/base/topic_match_test.cpp)
+  target_link_libraries(bagwiz_topic_match_test bagwiz_base)
 endif()
 
 ament_package()

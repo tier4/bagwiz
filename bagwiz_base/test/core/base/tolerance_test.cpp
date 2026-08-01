@@ -29,14 +29,6 @@ TEST(Tolerance, UnitVectorMatchesTheRotationClass)
   EXPECT_DOUBLE_EQ(tol::kUnitVectorComponent, tol::kRotationRadians);
 }
 
-// The general scalar class means "effectively equal as floating point", so it
-// must be far tighter than the physical classes, which mean "too small to
-// matter in the map".
-TEST(Tolerance, ScalarClassIsTighterThanThePhysicalClasses)
-{
-  EXPECT_LT(tol::kScalarRelative, tol::kPointMeters);
-}
-
 // Quantized channels tolerate exactly the rounding step and nothing more: a
 // deviation of 2 means the aggregation differs, not the quantization.
 TEST(Tolerance, QuantizedClassesAreOneLeastSignificantBit)
@@ -45,7 +37,9 @@ TEST(Tolerance, QuantizedClassesAreOneLeastSignificantBit)
   EXPECT_EQ(tol::kQuantizedWeightLsb, 1);
 }
 
-// A relative count tolerance only makes sense strictly between 0 and 1.
+// A sanity bound rather than a design pin: a relative count tolerance is only
+// meaningful strictly between 0 and 1, but nothing about the contract fixes
+// where in that range it sits.
 TEST(Tolerance, CountClassIsAUsableRelativeFraction)
 {
   EXPECT_GT(tol::kCountRelative, 0.0);

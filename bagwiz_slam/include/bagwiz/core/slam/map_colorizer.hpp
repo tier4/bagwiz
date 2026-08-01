@@ -295,7 +295,8 @@ private:
   // Worker count for the per-image sweeps: the configured thread count
   // clamped to [1, max(1, visible count)] so an empty or tiny visible set
   // spawns no idle workers. The sweeps merge per-chunk results in chunk
-  // order, keeping the result deterministic for any thread count.
+  // order, but that order is not load-bearing — see run_parallel in
+  // map_colorizer.cpp for why the split does not change the result.
   int num_sweep_threads() const;
 
   MapColorizerConfig config_;

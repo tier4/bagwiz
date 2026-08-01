@@ -8,6 +8,7 @@
 
 #include "bagwiz/core/slam/cloud_mapper.hpp"
 
+#include "bagwiz/core/base/tolerance.hpp"
 #include "bagwiz/core/slam/imu_sample.hpp"
 #include "bagwiz/core/slam/lidar_scan.hpp"
 #include "bagwiz/core/slam/sensor_transform.hpp"
@@ -34,6 +35,7 @@
 namespace
 {
 namespace slam = bagwiz::core::slam;
+namespace tol = bagwiz::core::base::tolerance;
 
 // A 10 x 10 x ~3 m "room": a floor grid plus four walls. Dense enough geometric
 // structure for scan-to-model matching, expressed in the (static) sensor frame.
@@ -650,9 +652,11 @@ TEST(CloudMapper, PipelineMatchesSerialImu)
 
   ASSERT_FALSE(serial_map.points.empty());
   ASSERT_FALSE(serial_map.trajectory.empty());
-  // 1 mm / 1e-3 quat: ~1000x above GLIM's run-to-run noise, far below any real
-  // ordering bug.
-  expect_trajectories_close(serial_map, pipeline_map, 1e-3, 1e-3);
+  // The point and unit-vector tolerance classes: ~1000x above GLIM's run-to-run
+  // noise, far below any real ordering bug. The second argument is the unit-vector
+  // class, not the rotation one, because despite the parameter's name it is compared
+  // against quaternion components — a unit 4-vector — rather than against radians.
+  expect_trajectories_close(serial_map, pipeline_map, tol::kPointMeters, tol::kUnitVectorComponent);
   // The map must still be produced and sane (point geometry tracks the poses, so a
   // tolerance-equal trajectory yields a near-equal map; assert non-empty + finite).
   ASSERT_FALSE(pipeline_map.points.empty());

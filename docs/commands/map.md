@@ -201,10 +201,12 @@ The default `auto` backend uses CUDA when the binary was built with
 specific backend with `--backend cpu` or `--backend cuda`.
 
 The two backends do not produce bit-identical numbers, and neither does one
-backend across different `-j, --threads` values. The difference is bounded
-rather than arbitrary: see AGENTS.md "Numerical Reproducibility" for the
-per-quantity tolerances. Message order inside a bag and the byte identity of
-the written file are unaffected.
+backend across different `-j, --threads` values — `map.pcd` in particular is
+not byte-identical across thread counts, because the parallel voxelizer sums
+in a different order. The difference is bounded rather than arbitrary: see
+AGENTS.md "Numerical Reproducibility" for the per-quantity tolerances. What
+does not vary is the discrete decisions: which images the `--color` keyframe
+gate keeps, and which points `--remove-dynamic` drops.
 
 ### Output frame (`--frame`)
 

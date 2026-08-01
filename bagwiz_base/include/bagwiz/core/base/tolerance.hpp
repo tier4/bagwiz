@@ -55,7 +55,8 @@ inline constexpr int kQuantizedWeightLsb = 1;
 // data only. Unit tests over synthetic input must compare counts exactly: a
 // count that moves with the thread count there means the input sits on a
 // tolerance boundary, which is a defect in the test input, not drift to be
-// absorbed.
+// absorbed. Reserved for future real-bag end-to-end comparisons; no consumer
+// today.
 inline constexpr double kCountRelative = 1e-3;
 
 }  // namespace bagwiz::core::base::tolerance

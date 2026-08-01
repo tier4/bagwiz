@@ -317,8 +317,10 @@ gtsam::SharedNoiseModel make_gnss_noise_model(
 // stays byte-identical to the historical output). In use_gpu mode it is
 // int16-quantized about the frame's own centroid (Tier-1c), roughly halving the
 // host stash held across the whole run on a large bag; the quantization error
-// (< ~1 mm at LiDAR range) is far below input_resolution, so it cannot move a
-// point into a different voxel. Exactly one of `f` / `q` is populated.
+// (< ~1 mm at LiDAR range) is far below input_resolution, so a point shifts by
+// a small fraction of a voxel; one sitting on a voxel boundary may land in the
+// neighbouring one, which is inside the tolerance contract (AGENTS.md
+// "Numerical Reproducibility"). Exactly one of `f` / `q` is populated.
 struct FramePoints
 {
   std::vector<std::array<float, 3>> f;         // float, populated when !use_gpu
