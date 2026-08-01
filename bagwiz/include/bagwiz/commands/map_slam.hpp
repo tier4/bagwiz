@@ -196,13 +196,14 @@ struct MapSlamArgs
   // SLAM backend selection: "auto" (default), "cpu", or "cuda".
   //  - auto: use the CUDA GPU backend when this binary was built with
   //    -DBAGWIZ_WITH_SLAM_CUDA AND a CUDA device is visible; otherwise CPU.
-  //  - cpu: force the CPU backend (the reproducibility-guaranteed path).
+  //  - cpu: force the CPU backend.
   //  - cuda: force the CUDA GPU backend; error on a non-CUDA build or no device.
   // The GPU backend = GLIM's GPU LiDAR-IMU odometry (with --imu; CT without it,
   // since GLIM has no GPU LiDAR-only backend), GPU VGICP registration in
   // sub/global mapping, GPU export-map voxelization, and GPU --color colorization
-  // (the CUDA colorize rasterizer). It is OUTSIDE the CPU reproducibility
-  // guarantee. The effective choice is resolved in run_map_slam.
+  // (the CUDA colorize rasterizer). Its numbers are not bit-identical to the
+  // CPU backend's; the difference is bounded by AGENTS.md "Numerical
+  // Reproducibility". The effective choice is resolved in run_map_slam.
   std::string backend = "auto";
 };
 

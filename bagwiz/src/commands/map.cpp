@@ -277,7 +277,7 @@ private:
         "SLAM backend (default 'auto'). 'auto' uses the CUDA GPU backend when this "
         "binary was built with CUDA support AND a CUDA device is visible, else CPU. "
         "'cuda' forces it (errors on a non-CUDA build / no device). 'cpu' forces the "
-        "CPU backend (the reproducibility-guaranteed path).")
+        "CPU backend. The two backends' numbers are not bit-identical.")
       ->check(CLI::IsMember({"auto", "cpu", "cuda"}));
     sub->callback([this]() { selected_ = Subcommand::kSlam; });
   }
