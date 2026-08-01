@@ -295,6 +295,52 @@ are allowed.
   really about the other package's own behavior, put the test there
   instead.
 
+### 6. Numerical Reproducibility
+
+Applies to any bagwiz code whose output is a number a user consumes —
+map points, trajectory poses, colors, weights, normals — and to the
+tests that assert on those numbers.
+
+- Bit-exact agreement of numeric output is not a requirement. The same
+  input may produce slightly different numbers on the CPU and the CUDA
+  backend, and at different `-j, --threads` values. The difference is
+  acceptable while it stays inside the tolerance class for that
+  quantity. The values live in
+  `bagwiz_base/include/bagwiz/core/base/tolerance.hpp`, one `constexpr`
+  per class, each documented with the reason for its magnitude. Cite
+  the class, do not re-derive a number at the call site.
+- Pick the class by what the number is: `kPointMeters` for coordinates
+  and translations, `kRotationRadians` for rotations,
+  `kUnitVectorComponent` for normals and other unit vectors,
+  `kScalarRelative` for general real scalars (ratios, scores,
+  residuals), `kColorChannelLsb` and `kQuantizedWeightLsb` for values
+  already quantized to `uint8`.
+- Three things stay strict and are outside this relaxation. Message
+  order inside a bag is downstream semantics rather than error —
+  reordering has broken Foxglove before. The byte identity of an output
+  file across `--threads` values (the parallel mcap write path)
+  underpins output caching and diff-based checks. Discrete decisions —
+  keep or drop, ok or error, which topic was selected — are behavior,
+  so a flip is a bug, not drift.
+- Counts and point totals are compared exactly in unit tests over
+  synthetic input. A count that moves with the thread count there means
+  the input sits on a tolerance boundary: fix the input, not the
+  assertion. Only end-to-end comparisons over real bag data may use
+  `kCountRelative`.
+- Never trade performance for exact agreement. That a static chunking
+  or a fixed merge order makes the result independent of the thread
+  count is not by itself a reason to keep it; choose the fastest
+  schedule and let the numbers land inside tolerance.
+- A test may assert exact agreement only where that agreement is
+  algorithmically guaranteed, never merely observed. Two shapes
+  qualify: a commutative and associative reduction (`min` over floats,
+  a monotone OR, integer addition), and a per-element computation that
+  reads only immutable input. Anything else — in particular a
+  floating-point accumulation whose order follows the work split — is
+  asserted within tolerance instead. When a test does assert exact
+  agreement, state in the test which of the two shapes justifies it, so
+  a later change that breaks the premise is visible in review.
+
 ## Maintaining These Guidelines
 
 - Keep the rules in this file free of duplication. Each topic should
