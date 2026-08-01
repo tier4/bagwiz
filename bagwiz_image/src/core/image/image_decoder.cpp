@@ -17,7 +17,9 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -106,6 +108,14 @@ struct ImageDecoder::Impl
   std::array<int, 4> dst_linesize{};
   int dst_w = 0, dst_h = 0;
 
+  // Codec select/open, packet wrap, send/receive/flush — shared by decode()
+  // and decode_to_yuv(). On success `frame` holds a valid, positively-sized
+  // decoded frame; on failure `error` explains why and `frame` must not be
+  // read. Flushes the codec unconditionally before returning either way (see
+  // the DecodeCleanup comment at the call site), so the returned frame's
+  // validity relies on it holding its own ref rather than on codec state.
+  bool receive_frame(std::span<const std::byte> data, std::string_view format, std::string & error);
+
   ~Impl()
   {
     if (dst_buf != nullptr) {
@@ -133,73 +143,70 @@ ImageDecoder::~ImageDecoder() = default;
 ImageDecoder::ImageDecoder(ImageDecoder &&) noexcept = default;
 ImageDecoder & ImageDecoder::operator=(ImageDecoder &&) noexcept = default;
 
-DecodeResult ImageDecoder::decode(std::span<const std::byte> data, std::string_view format)
+bool ImageDecoder::Impl::receive_frame(
+  std::span<const std::byte> data, std::string_view format, std::string & error)
 {
-  Impl & ctx = *impl_;
-  DecodeResult result;
-
   if (data.empty()) {
-    result.error = "empty compressed image data";
-    return result;
+    error = "empty compressed image data";
+    return false;
   }
   if (data.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-    result.error = "compressed image exceeds the supported maximum size";
-    return result;
+    error = "compressed image exceeds the supported maximum size";
+    return false;
   }
 
   const AVCodecID id = codec_from_magic(data);
   if (id == AV_CODEC_ID_NONE) {
-    result.error = "unrecognized compressed image format (expected JPEG or PNG)" +
-                   (format.empty() ? std::string{} : "; format='" + std::string(format) + "'");
-    return result;
+    error = "unrecognized compressed image format (expected JPEG or PNG)" +
+            (format.empty() ? std::string{} : "; format='" + std::string(format) + "'");
+    return false;
   }
 
   const AVCodec * decoder = avcodec_find_decoder(id);
   if (decoder == nullptr) {
-    result.error =
-      std::string("decoder not available in this FFmpeg build: ") + avcodec_get_name(id);
-    return result;
+    error = std::string("decoder not available in this FFmpeg build: ") + avcodec_get_name(id);
+    return false;
   }
 
   // Reopen only when the codec changes; a same-codec stream (the common case)
   // reuses the already-open context.
-  if (ctx.open_id != id) {
-    if (ctx.codec != nullptr) {
-      avcodec_free_context(&ctx.codec);
+  if (open_id != id) {
+    if (codec != nullptr) {
+      avcodec_free_context(&codec);
     }
-    ctx.open_id = AV_CODEC_ID_NONE;  // not valid again until avcodec_open2 succeeds below
-    ctx.codec = avcodec_alloc_context3(decoder);
-    if (ctx.codec == nullptr) {
-      result.error = "could not allocate decoder context";
-      return result;
+    open_id = AV_CODEC_ID_NONE;  // not valid again until avcodec_open2 succeeds below
+    codec = avcodec_alloc_context3(decoder);
+    if (codec == nullptr) {
+      error = "could not allocate decoder context";
+      return false;
     }
-    if (int ret = avcodec_open2(ctx.codec, decoder, nullptr); ret < 0) {
-      avcodec_free_context(&ctx.codec);
-      result.error = "could not open decoder: " + av_err(ret);
-      return result;
+    if (int ret = avcodec_open2(codec, decoder, nullptr); ret < 0) {
+      avcodec_free_context(&codec);
+      error = "could not open decoder: " + av_err(ret);
+      return false;
     }
-    ctx.open_id = id;
+    open_id = id;
   }
 
-  if (ctx.pkt == nullptr) {
-    ctx.pkt = av_packet_alloc();
-    if (ctx.pkt == nullptr) {
-      result.error = "could not allocate packet";
-      return result;
+  if (pkt == nullptr) {
+    pkt = av_packet_alloc();
+    if (pkt == nullptr) {
+      error = "could not allocate packet";
+      return false;
     }
   }
-  if (ctx.frame == nullptr) {
-    ctx.frame = av_frame_alloc();
-    if (ctx.frame == nullptr) {
-      result.error = "could not allocate frame";
-      return result;
+  if (frame == nullptr) {
+    frame = av_frame_alloc();
+    if (frame == nullptr) {
+      error = "could not allocate frame";
+      return false;
     }
   }
 
   // Drop the previous call's decoded frame now, not after this call finishes —
-  // a zero-copy view of it (added in a later task) must stay valid until the
-  // next decode() call starts, not just until this one ends.
-  av_frame_unref(ctx.frame);
+  // a zero-copy view of it (DecodedYuvView) must stay valid until the next
+  // decode()/decode_to_yuv() call starts, not just until this one ends.
+  av_frame_unref(frame);
 
   // avcodec_send_packet reads up to AV_INPUT_BUFFER_PADDING_SIZE bytes past the
   // end, so the bitstream must live in an av_malloc'd, zero-padded buffer.
@@ -208,23 +215,25 @@ DecodeResult ImageDecoder::decode(std::span<const std::byte> data, std::string_v
   auto * buf = static_cast<std::uint8_t *>(
     av_malloc(static_cast<std::size_t>(data_size) + AV_INPUT_BUFFER_PADDING_SIZE));
   if (buf == nullptr) {
-    result.error = "could not allocate decode input buffer";
-    return result;
+    error = "could not allocate decode input buffer";
+    return false;
   }
   std::memcpy(buf, data.data(), data.size());
   std::memset(buf + data_size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
-  if (int ret = av_packet_from_data(ctx.pkt, buf, data_size); ret < 0) {
+  if (int ret = av_packet_from_data(pkt, buf, data_size); ret < 0) {
     av_free(buf);
-    result.error = "could not wrap decode input: " + av_err(ret);
-    return result;
+    error = "could not wrap decode input: " + av_err(ret);
+    return false;
   }
 
-  // From here on ctx.pkt owns `buf` and the codec is about to receive it, so
+  // From here on pkt owns `buf` and the codec is about to receive it, so
   // every remaining return path — success or error — must release the
   // packet's buffer and flush the codec. Without the unconditional flush, the
   // EAGAIN path below (which sends a NULL packet to force a still frame out)
   // would leave this persistent context stuck in draining mode and reject the
-  // next frame's packet.
+  // next frame's packet. The flush is safe for a zero-copy view of `frame`:
+  // the frame holds its own ref, so its data survives the flush and stays
+  // valid until the next receive_frame() call's av_frame_unref above.
   struct DecodeCleanup
   {
     AVPacket * pkt;
@@ -234,30 +243,42 @@ DecodeResult ImageDecoder::decode(std::span<const std::byte> data, std::string_v
       av_packet_unref(pkt);
       avcodec_flush_buffers(codec);
     }
-  } cleanup{ctx.pkt, ctx.codec};
+  } cleanup{pkt, codec};
 
-  if (int ret = avcodec_send_packet(ctx.codec, ctx.pkt); ret < 0) {
-    result.error = "decoder send_packet failed: " + av_err(ret);
-    return result;
+  if (int ret = avcodec_send_packet(codec, pkt); ret < 0) {
+    error = "decoder send_packet failed: " + av_err(ret);
+    return false;
   }
-  int ret = avcodec_receive_frame(ctx.codec, ctx.frame);
+  int ret = avcodec_receive_frame(codec, frame);
   if (ret == AVERROR(EAGAIN)) {
     // A single still frame may need an explicit flush before it surfaces.
-    if (int flush = avcodec_send_packet(ctx.codec, nullptr); flush < 0 && flush != AVERROR_EOF) {
-      result.error = "decoder flush failed: " + av_err(flush);
-      return result;
+    if (int flush = avcodec_send_packet(codec, nullptr); flush < 0 && flush != AVERROR_EOF) {
+      error = "decoder flush failed: " + av_err(flush);
+      return false;
     }
-    ret = avcodec_receive_frame(ctx.codec, ctx.frame);
+    ret = avcodec_receive_frame(codec, frame);
   }
   if (ret < 0) {
-    result.error = "decoder receive_frame failed: " + av_err(ret);
+    error = "decoder receive_frame failed: " + av_err(ret);
+    return false;
+  }
+
+  if (frame->width <= 0 || frame->height <= 0) {
+    error = "decoded image has invalid dimensions";
+    return false;
+  }
+  return true;
+}
+
+DecodeResult ImageDecoder::decode(std::span<const std::byte> data, std::string_view format)
+{
+  Impl & ctx = *impl_;
+  DecodeResult result;
+
+  if (!ctx.receive_frame(data, format, result.error)) {
     return result;
   }
 
-  if (ctx.frame->width <= 0 || ctx.frame->height <= 0) {
-    result.error = "decoded image has invalid dimensions";
-    return result;
-  }
   const int width = ctx.frame->width;
   const int height = ctx.frame->height;
   bool full_range = false;
@@ -340,6 +361,77 @@ DecodeResult ImageDecoder::decode(std::span<const std::byte> data, std::string_v
 
   result.image = std::move(image);
   return result;
+}
+
+DecodeYuvResult ImageDecoder::decode_to_yuv(
+  std::span<const std::byte> data, std::string_view format)
+{
+  Impl & ctx = *impl_;
+  DecodeYuvResult result;
+
+  if (!ctx.receive_frame(data, format, result.error)) {
+    return result;
+  }
+
+  bool full_range = false;
+  const AVPixelFormat src_fmt =
+    normalize_pixel_format(static_cast<AVPixelFormat>(ctx.frame->format), full_range);
+
+  DecodedYuvView view;
+  switch (src_fmt) {
+    case AV_PIX_FMT_YUV420P:
+      view.chroma = YuvChroma::k420;
+      break;
+    case AV_PIX_FMT_YUV422P:
+      view.chroma = YuvChroma::k422;
+      break;
+    case AV_PIX_FMT_YUV444P:
+      view.chroma = YuvChroma::k444;
+      break;
+    case AV_PIX_FMT_GRAY8:
+      view.chroma = YuvChroma::kGray;
+      break;
+    default:
+      result.error = "decoded pixel format is not planar YUV";
+      return result;
+  }
+
+  view.width = static_cast<std::uint32_t>(ctx.frame->width);
+  view.height = static_cast<std::uint32_t>(ctx.frame->height);
+  view.full_range = full_range;
+  view.y = ctx.frame->data[0];
+  view.y_stride = ctx.frame->linesize[0];
+  if (view.chroma != YuvChroma::kGray) {
+    view.u = ctx.frame->data[1];
+    view.u_stride = ctx.frame->linesize[1];
+    view.v = ctx.frame->data[2];
+    view.v_stride = ctx.frame->linesize[2];
+  }
+
+  result.view = view;
+  return result;
+}
+
+std::array<std::uint8_t, 3> sample_rgb(
+  const DecodedYuvView & view, std::uint32_t x, std::uint32_t y)
+{
+  const auto clamp8 = [](double v) {
+    return static_cast<std::uint8_t>(std::lround(std::clamp(v, 0.0, 255.0)));
+  };
+  const int luma = view.y[static_cast<std::size_t>(y) * view.y_stride + x];
+  double yv = view.full_range ? luma : (luma - 16) * (255.0 / 219.0);
+  double cb = 0.0, cr = 0.0;
+  if (view.chroma != YuvChroma::kGray) {
+    const int hs = view.chroma == YuvChroma::k444 ? 0 : 1;  // horizontal shift
+    const int vs = view.chroma == YuvChroma::k420 ? 1 : 0;  // vertical shift
+    const std::size_t ci = static_cast<std::size_t>(y >> vs) * view.u_stride + (x >> hs);
+    const std::size_t cj = static_cast<std::size_t>(y >> vs) * view.v_stride + (x >> hs);
+    const double scale = view.full_range ? 1.0 : 255.0 / 224.0;
+    cb = (view.u[ci] - 128) * scale;
+    cr = (view.v[cj] - 128) * scale;
+  }
+  return {
+    clamp8(yv + 1.402 * cr), clamp8(yv - 0.344136 * cb - 0.714136 * cr), clamp8(yv + 1.772 * cb)};
 }
 
 DecodeResult decode_compressed_image(std::span<const std::byte> data, std::string_view format)

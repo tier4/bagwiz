@@ -171,3 +171,44 @@ TEST(ImageDecoderTest, ReusedDecoderRecoversAfterCorruptInput)
   EXPECT_FALSE(decoder.decode({corrupt.data(), corrupt.size()}).ok());
   EXPECT_TRUE(decoder.decode({good.data(), good.size()}).ok());  // context still usable
 }
+
+TEST(ImageDecoderTest, DecodeToYuvExposesLumaPlane)
+{
+  const auto jpeg = encode_still_image("jpeg", 16, 16, 200, 100, 50);
+  ASSERT_FALSE(jpeg.empty());
+  bagwiz::core::image::ImageDecoder decoder;
+  const auto result = decoder.decode_to_yuv({jpeg.data(), jpeg.size()}, "jpeg");
+  ASSERT_TRUE(result.ok()) << result.error;
+  EXPECT_EQ(result.view->width, 16U);
+  EXPECT_EQ(result.view->height, 16U);
+  ASSERT_NE(result.view->y, nullptr);
+  // BT.601 luma of (r=200, g=100, b=50) ≈ 0.299*200 + 0.587*100 + 0.114*50 ≈ 124.
+  EXPECT_NEAR(static_cast<int>(result.view->y[0]), 124, 12);
+}
+
+TEST(ImageDecoderTest, SampleRgbMatchesBgrDecode)
+{
+  const auto jpeg = encode_still_image("jpeg", 16, 16, 200, 100, 50);
+  ASSERT_FALSE(jpeg.empty());
+  bagwiz::core::image::ImageDecoder decoder;
+  const auto yuv = decoder.decode_to_yuv({jpeg.data(), jpeg.size()});
+  ASSERT_TRUE(yuv.ok()) << yuv.error;
+  const auto rgb = bagwiz::core::image::sample_rgb(*yuv.view, 8, 8);
+  const auto bgr = decode_compressed_image({jpeg.data(), jpeg.size()});
+  ASSERT_TRUE(bgr.ok());
+  // Compare against the swscale-converted pixel at (8, 8): r/g/b within ±4 LSB
+  // (independent fixed-point pipelines).
+  EXPECT_NEAR(rgb[0], bgr_at(*bgr.image, 8, 8, 2), 4);
+  EXPECT_NEAR(rgb[1], bgr_at(*bgr.image, 8, 8, 1), 4);
+  EXPECT_NEAR(rgb[2], bgr_at(*bgr.image, 8, 8, 0), 4);
+}
+
+TEST(ImageDecoderTest, DecodeToYuvRejectsPng)
+{
+  const auto png = encode_still_image("png", 8, 8, 10, 20, 30);
+  ASSERT_FALSE(png.empty());
+  bagwiz::core::image::ImageDecoder decoder;
+  const auto result = decoder.decode_to_yuv({png.data(), png.size()}, "png");
+  EXPECT_FALSE(result.ok());  // PNG decodes to RGB — caller falls back to decode()
+  EXPECT_FALSE(result.error.empty());
+}

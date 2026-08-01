@@ -9,6 +9,7 @@
 #ifndef BAGWIZ__CORE__IMAGE__IMAGE_DECODER_HPP_
 #define BAGWIZ__CORE__IMAGE__IMAGE_DECODER_HPP_
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -55,6 +56,43 @@ struct DecodeResult
 [[nodiscard]] DecodeResult decode_compressed_image(
   std::span<const std::byte> data, std::string_view format = {});
 
+// Chroma layout of a DecodedYuvView: how much the U/V planes are subsampled
+// relative to Y. kGray means the frame has no chroma planes (u/v are null).
+enum class YuvChroma { k420, k422, k444, kGray };
+
+// Zero-copy view of a decoded frame's YUV planes, for consumers that need the
+// luma image (tracking) plus a handful of sampled colors — skipping the
+// full-frame BGR conversion decode() performs. Points into the decoder's
+// internal frame: valid only until the next decode()/decode_to_yuv() call on
+// (or destruction of) the same ImageDecoder.
+struct DecodedYuvView
+{
+  std::uint32_t width = 0;  // luma geometry
+  std::uint32_t height = 0;
+  const std::uint8_t * y = nullptr;
+  int y_stride = 0;
+  const std::uint8_t * u = nullptr;  // null when chroma == kGray
+  int u_stride = 0;
+  const std::uint8_t * v = nullptr;
+  int v_stride = 0;
+  YuvChroma chroma = YuvChroma::k420;
+  bool full_range = false;  // JPEG (full 0-255) vs MPEG (16-235) range
+};
+
+// Outcome of ImageDecoder::decode_to_yuv(). Not-YUV sources (e.g. PNG → RGB)
+// are an error here by design: the caller falls back to decode().
+struct DecodeYuvResult
+{
+  std::optional<DecodedYuvView> view;
+  std::string error;
+  [[nodiscard]] bool ok() const noexcept { return view.has_value() && error.empty(); }
+};
+
+// Nearest-pixel color at luma coordinates (x, y), converted BT.601 YUV→RGB
+// with the view's range handling. Returns {r, g, b}.
+[[nodiscard]] std::array<std::uint8_t, 3> sample_rgb(
+  const DecodedYuvView & view, std::uint32_t x, std::uint32_t y);
+
 // A reusable decoder that keeps its FFmpeg codec context, packet/frame
 // buffers, swscale context, and output buffer alive across frames, so a
 // per-frame stream (e.g. one camera's images) pays the setup cost once
@@ -73,6 +111,12 @@ public:
   ImageDecoder & operator=(const ImageDecoder &) = delete;
 
   [[nodiscard]] DecodeResult decode(std::span<const std::byte> data, std::string_view format = {});
+
+  // Decodes into a zero-copy view of the frame's YUV planes instead of a
+  // packed BGR raster (see DecodedYuvView). Errors (including "not planar
+  // YUV", e.g. a PNG source) mean the caller should fall back to decode().
+  [[nodiscard]] DecodeYuvResult decode_to_yuv(
+    std::span<const std::byte> data, std::string_view format = {});
 
 private:
   struct Impl;
