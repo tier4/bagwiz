@@ -682,4 +682,38 @@ TEST(VisualFrontend, GrayEntryMatchesBgrEntryOnEquivalentInput)
   }
 }
 
+TEST(VisualFrontend, DetectionSkippedWhileTracksAboveRefillFloor)
+{
+  slam::VisualFrontendConfig cfg;
+  cfg.camera = make_pinhole();
+  cfg.tracking_width = 640;
+  cfg.max_features = 8;  // refill floor = 6 with kRefillRatio 0.75
+  slam::VisualFrontend fe(cfg);
+
+  std::vector<std::array<int, 2>> many;
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 4; ++col) {
+      many.push_back({100 + col * 120, 100 + row * 120});
+    }
+  }
+  const auto frame_many = render_dots(640, 480, many);
+  (void)fe.track(0, frame_many, 640, 480);  // seed: detection fills to 8
+  const auto settled = fe.track(1, frame_many, 640, 480);
+  ASSERT_EQ(settled.size(), 8U);
+  const auto detect_calls_settled = fe.stats().detect_calls;
+
+  // Same frame again: 8 live tracks >= floor 6, so detection must NOT run and
+  // no new track ids may appear.
+  const auto again = fe.track(2, frame_many, 640, 480);
+  EXPECT_EQ(fe.stats().detect_calls, detect_calls_settled);
+  for (const auto & obs : again) {
+    EXPECT_NE(find_by_id(settled, obs.track_id), nullptr);
+  }
+
+  // Drop most dots: survivors fall below the floor, detection refills.
+  const auto frame_few = render_dots(640, 480, {many[0], many[1]});
+  (void)fe.track(3, frame_few, 640, 480);
+  EXPECT_GT(fe.stats().detect_calls, detect_calls_settled);
+}
+
 }  // namespace

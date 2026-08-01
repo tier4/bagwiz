@@ -46,6 +46,14 @@ std::int64_t ns_since(Clock::time_point start)
 const cv::Size kKltWindow(21, 21);
 constexpr int kKltMaxLevel = 3;
 
+// Detection is a full-image min-eigenvalue pass — the expensive part is
+// independent of how many corners are requested — so it only runs once the
+// live-track count has actually decayed, not on any one-track deficit. 0.75
+// keeps the factor graph's track density within a few percent of
+// detect-every-frame on the validation bags while skipping the pass on the
+// large majority of frames.
+constexpr double kRefillRatio = 0.75;
+
 }  // namespace
 
 struct VisualFrontend::Impl
@@ -234,7 +242,9 @@ std::vector<VisualObservation> VisualFrontend::Impl::track_gray(
   // Top off with fresh corners when there is room, masking out a
   // min_feature_distance disc around every surviving track so detection
   // does not just rediscover the same corners.
-  if (static_cast<int>(tracks.size()) < config.max_features) {
+  const int refill_floor =
+    static_cast<int>(std::lround(static_cast<double>(config.max_features) * kRefillRatio));
+  if (static_cast<int>(tracks.size()) < refill_floor) {
     t = Clock::now();
     cv::Mat mask(resized.size(), CV_8UC1, cv::Scalar(255));
     const int mask_radius = static_cast<int>(std::lround(config.min_feature_distance));
