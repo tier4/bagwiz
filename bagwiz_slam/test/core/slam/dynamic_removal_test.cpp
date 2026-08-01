@@ -345,6 +345,10 @@ std::vector<std::uint8_t> classify_scene(const Scene & scene, int integrate_thre
 
 TEST(VoidRegionClassifier, ClassificationIsIdenticalAcrossThreadCounts)
 {
+  // Exact equality is legitimate here per AGENTS.md "Numerical
+  // Reproducibility": the free-space marking is a monotone OR, a reduction
+  // that is exactly commutative and associative, so no work split can change
+  // the outcome.
   const Scene scene = make_scene();
   const std::vector<std::uint8_t> serial = classify_scene(scene, 1);
   const std::vector<std::uint8_t> threaded = classify_scene(scene, 4);

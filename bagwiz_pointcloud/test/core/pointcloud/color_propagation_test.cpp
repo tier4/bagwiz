@@ -158,6 +158,10 @@ TEST(ColorPropagation, DoesNotCascadeWithinOnePass)
 
 TEST(ColorPropagation, ThreadCountIndependent)
 {
+  // Exact equality is legitimate here per AGENTS.md "Numerical
+  // Reproducibility": only points that were already observed act as color
+  // sources, so a worker's writes never feed another worker's reads, and ties
+  // break on point index.
   std::mt19937 rng(9);
   std::uniform_real_distribution<float> pos(0.0f, 10.0f);
   std::uniform_int_distribution<int> channel(0, 255);

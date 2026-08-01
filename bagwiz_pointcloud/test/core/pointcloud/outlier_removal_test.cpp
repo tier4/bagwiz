@@ -148,6 +148,10 @@ TEST(OutlierRemoval, MatchesBruteForceReference)
 
 TEST(OutlierRemoval, ThreadCountIndependent)
 {
+  // Exact equality is legitimate here per AGENTS.md "Numerical
+  // Reproducibility": each point's keep/drop decision is computed
+  // independently from immutable input and a deterministic KdTree, so it
+  // reads nothing another worker may have written.
   std::mt19937 rng(23);
   std::uniform_real_distribution<float> pos(0.0f, 10.0f);
   std::vector<std::array<float, 3>> points;

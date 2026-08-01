@@ -660,8 +660,16 @@ TEST(MapColorizerMerge, EmptyInputYieldsEmptyResult)
 TEST(MapColorizer, MultithreadedRunMatchesSingleThread)
 {
   // A deterministic spread of points in front of the camera, colored from a
-  // gradient raster with splatting on (the default path); the per-point
-  // result must not depend on the thread count.
+  // gradient raster with splatting on (the default path). Exact equality is
+  // asserted, which AGENTS.md "Numerical Reproducibility" allows only where
+  // the agreement is algorithmically guaranteed. It is, on both counts: every
+  // sweep is a per-point computation over a chunk split that never crosses
+  // points, and the one cross-chunk step — the gain vote — combines its
+  // per-chunk votes with a median taken after a sort. Observations reach a
+  // point in add_image order, which the chunk split does not touch. If a
+  // future change introduces a cross-chunk floating-point accumulation, this
+  // premise dies and the assertion must move to the tolerance classes in
+  // bagwiz/core/base/tolerance.hpp.
   std::vector<std::array<float, 3>> points;
   for (int i = 0; i < 500; ++i) {
     const float x = static_cast<float>((i % 25) - 12) * 0.1F;

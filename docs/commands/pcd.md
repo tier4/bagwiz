@@ -92,7 +92,9 @@ zstd default. Expect a larger output file than the input.
 CPU-only, no GLIM — deterministic output for a given input. When `--threads` is
 greater than 1, group assembly runs in parallel but a single collector thread
 serializes output, so bag message order — and the output itself — is identical
-to the synchronous path.
+to the synchronous path. Message order is outside the numeric tolerance
+contract in AGENTS.md "Numerical Reproducibility": it is held strictly, at any
+thread count.
 
 ---
 
@@ -227,7 +229,9 @@ mid-pass failure leaves the original bag untouched.
 
 No SLAM is involved, and the same input always produces the same output. When
 `--threads` is greater than 1, deskew work runs in parallel but a single
-collector thread serializes output, so bag message order is preserved.
+collector thread serializes output, so bag message order is preserved. Message
+order is outside the numeric tolerance contract in AGENTS.md "Numerical
+Reproducibility": it is held strictly, at any thread count.
 
 ### Errors
 
