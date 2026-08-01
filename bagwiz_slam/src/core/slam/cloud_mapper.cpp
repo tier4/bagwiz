@@ -317,8 +317,8 @@ gtsam::SharedNoiseModel make_gnss_noise_model(
 // stays byte-identical to the historical output). In use_gpu mode it is
 // int16-quantized about the frame's own centroid (Tier-1c), roughly halving the
 // host stash held across the whole run on a large bag; the quantization error
-// (< ~1 mm at LiDAR range) is far below input_resolution and the GPU path is
-// outside the reproducibility guarantee. Exactly one of `f` / `q` is populated.
+// (< ~1 mm at LiDAR range) is far below input_resolution, so it cannot move a
+// point into a different voxel. Exactly one of `f` / `q` is populated.
 struct FramePoints
 {
   std::vector<std::array<float, 3>> f;         // float, populated when !use_gpu
@@ -1892,8 +1892,10 @@ struct CloudMapper::Impl
   }
 
   // Single-grid streaming voxelization in entries/frames order. This is the
-  // historical path, byte-identical to it; used when num_threads <= 1 so the
-  // `--threads 1` reproducibility guarantee is preserved exactly.
+  // historical path and stays byte-identical to it; used when num_threads <= 1.
+  // That byte-identity is no longer required (AGENTS.md "Numerical
+  // Reproducibility") — it is simply what the simplest serial implementation
+  // produces.
   void fill_map_streaming(CloudMap & result, bool with_intensity) const
   {
     VoxelGrid grid(config.input_resolution, with_intensity);

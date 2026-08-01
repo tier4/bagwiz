@@ -212,8 +212,9 @@ struct CloudMapperConfig
   // CT (no GPU LiDAR-only backend exists) but sub/global mapping still enable
   // GPU VGICP. Honored only in a BAGWIZ_WITH_SLAM_CUDA build; constructing with
   // use_gpu=true in a non-CUDA build throws. The per-frame host stash is int16-
-  // quantized in this mode to roughly halve host memory on large bags. Outside
-  // the CPU reproducibility guarantee.
+  // quantized in this mode to roughly halve host memory on large bags. Its
+  // numbers are not bit-identical to the CPU backend's; the difference is
+  // bounded by AGENTS.md "Numerical Reproducibility".
   bool use_gpu = false;
 
   // When false (default), insert() runs a two-stage pipeline: the caller thread

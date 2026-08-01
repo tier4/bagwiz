@@ -36,8 +36,7 @@ namespace bagwiz::core::slam
 // Memory is bounded by the number of *occupied* voxels, not by the number of
 // points added, so an arbitrarily large, heavily-overlapping input collapses to
 // one entry per voxel. Output order is the order voxels were first seen, which is
-// deterministic for a deterministic input stream (preserving the CPU
-// reproducibility guarantee).
+// deterministic for a deterministic input stream.
 class VoxelGrid
 {
 public:

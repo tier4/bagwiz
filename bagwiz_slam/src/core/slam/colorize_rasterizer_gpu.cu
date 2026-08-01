@@ -47,8 +47,8 @@ namespace
 // The one place double genuinely matters — composing T_cam_world from the
 // interpolated trajectory pose and the extrinsic — happens host-side in
 // MapColorizer::resolve_colorize_view; only the final composed view is
-// narrowed to float here. The CUDA backend is explicitly outside the CPU
-// reproducibility guarantee (docs/commands/map.md).
+// narrowed to float here. This rasterizer is not expected to match the CPU
+// rasterizer bit-for-bit; see AGENTS.md "Numerical Reproducibility".
 
 // Bit pattern of +infinity, matching the CPU rasterizer's depth sentinel.
 constexpr std::uint32_t kInfinityBits = 0x7F800000U;

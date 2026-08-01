@@ -28,8 +28,7 @@
 // links it in a CUDA build and uses the CPU VoxelGrid otherwise.
 //
 // Output order is sorted voxel-key order (NOT VoxelGrid's first-seen order); a
-// PCD point cloud is unordered and the GPU path is outside the reproducibility
-// guarantee, so this is intentional and harmless.
+// PCD point cloud is unordered, so this is intentional and harmless.
 namespace bagwiz::core::slam
 {
 

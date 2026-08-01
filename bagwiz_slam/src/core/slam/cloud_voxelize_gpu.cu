@@ -49,9 +49,10 @@ struct AccumPlus
 
 // floor(coord / resolution) per axis, packed into a signed 64-bit voxel key
 // (21 bits per axis). 21 signed bits => +/-2^20 voxels; at a 0.2 m voxel that is
-// +/-200 km, beyond any real map. Coordinates past that are clamped (they would
-// only collide at the very edge of an implausibly large map), which is safe
-// because the GPU path is outside the reproducibility guarantee.
+// +/-200 km, beyond any real map. Coordinates past that are clamped, which is
+// safe because the clamp is unreachable in practice: it only bites at the very
+// edge of a map larger than any bag produces, and a colliding key there would
+// merge two voxels 200 km from the origin.
 struct PointToKey
 {
   float inv_res;

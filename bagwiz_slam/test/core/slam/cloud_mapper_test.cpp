@@ -597,7 +597,7 @@ void expect_trajectories_close(
 // The default pipeline must be bit-identical to the serial path (CloudMapperConfig
 // disable_pipeline = true): the consumer processes events in the same bag order, so
 // odometry/sub/global see identical input. Pinned to num_threads = 1 (GLIM's
-// reproducibility-guaranteed path) so any difference is attributable to the pipeline,
+// bit-reproducible path) so any difference is attributable to the pipeline,
 // not GLIM's own multithreaded non-determinism.
 TEST(CloudMapper, PipelineMatchesSerialLidarOnly)
 {

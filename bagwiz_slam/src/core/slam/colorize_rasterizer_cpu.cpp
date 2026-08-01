@@ -286,8 +286,11 @@ public:
     };
     run_chunked(num_threads, filter_chunk);
 
-    // Merge in chunk order (each chunk kept its sweep order), so the output
-    // is deterministic for any thread count.
+    // Merge in chunk order (each chunk kept its sweep order) so the emitted
+    // sequence is stable. The visible set itself does not depend on the
+    // split: the depth buffer is built with an atomic min, which is exactly
+    // commutative and associative over floats, and this pass then filters
+    // each candidate against the finished buffer.
     for (const auto & candidates : chunk_candidates_) {
       out.insert(out.end(), candidates.begin(), candidates.end());
     }

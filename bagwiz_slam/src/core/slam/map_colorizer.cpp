@@ -153,8 +153,13 @@ std::shared_ptr<const ColorizeGeometry> make_owned_geometry(
 
 // Runs `fn(begin, end, chunk_index)` over `count` items split into
 // num_threads contiguous chunks, one chunk per worker thread; serial when
-// num_threads <= 1 or count == 0. Deterministic for any thread count when
-// per-chunk results are merged in chunk order.
+// num_threads <= 1 or count == 0. Callers merge per-chunk output in chunk
+// order, but that order is not load-bearing: every consumer here is either
+// per-point or an order-independent reduction (see estimate_image_gain, whose
+// votes are median-combined after a sort). Results therefore do not depend on
+// the split, which is a property of this code rather than a requirement on it
+// — AGENTS.md "Numerical Reproducibility" permits a different schedule if a
+// faster one appears.
 template <typename Fn>
 void run_parallel(int num_threads, std::size_t count, Fn && fn)
 {
@@ -474,9 +479,9 @@ bool MapColorizer::add_image(
     return false;
   }
   // The per-image sweeps are independent per point, so each runs over
-  // num_sweep_threads() chunks (merged in chunk order, keeping the result
-  // deterministic for any thread count): weight + sample, gain vote, then
-  // gain-apply + reservoir-add.
+  // num_sweep_threads() chunks (see run_parallel for why the split does not
+  // change the result): weight + sample, gain vote, then gain-apply +
+  // reservoir-add.
   weight_and_sample(bgr, width, height, resolved->cam_center);
   const std::array<double, 3> gain = estimate_image_gain();
   reservoir_add_all(gain);
