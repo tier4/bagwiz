@@ -9,6 +9,7 @@
 #include "map_slam_visual.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #include "bagwiz/core/base/logging.hpp"
+#include "bagwiz/core/image/compressed_image.hpp"
 #include "bagwiz/core/image/packed_raster.hpp"
 
 #include <chrono>
@@ -19,6 +20,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -158,18 +160,47 @@ void VisualFeed::run_worker(std::size_t cam)
   VisualWorkItem item;
   while (queues_[cam]->pop(item)) {
     try {
-      auto t = std::chrono::steady_clock::now();
-      auto decoded = core::image::to_packed_raster(item.type, item.payload, decoder);
-      decode_ns += ns_since(t);
-      if (!decoded.ok()) {
-        count_failure(decoded.error.c_str());
-        continue;
+      constexpr std::string_view kCompressedType = "sensor_msgs/msg/CompressedImage";
+      std::vector<core::slam::VisualObservation> observations;
+      bool tracked = false;
+      if (item.type == kCompressedType) {
+        // Fast path: decode to planar YUV and track straight off the luma
+        // plane — no full-frame BGR conversion. Non-YUV payloads (PNG) fall
+        // through to the BGR path below.
+        auto t = std::chrono::steady_clock::now();
+        const auto compressed = core::image::extract_compressed_image(item.payload);
+        core::image::DecodeYuvResult yuv;
+        if (compressed.ok()) {
+          yuv = decoder.decode_to_yuv(compressed.image->data, compressed.image->format);
+        }
+        decode_ns += ns_since(t);
+        if (yuv.ok()) {
+          const core::slam::GrayView gray{
+            yuv.view->y, yuv.view->width, yuv.view->height,
+            static_cast<std::size_t>(yuv.view->y_stride)};
+          const auto sampler = [view = *yuv.view](std::uint32_t x, std::uint32_t y) {
+            return core::image::sample_rgb(view, x, y);
+          };
+          t = std::chrono::steady_clock::now();
+          observations = frontends_[cam]->track(item.stamp_ns, gray, sampler);
+          track_ns += ns_since(t);
+          tracked = true;
+        }
       }
-      const auto & raster = *decoded.raster;
-      t = std::chrono::steady_clock::now();
-      const auto observations =
-        frontends_[cam]->track(item.stamp_ns, raster.bgr, raster.width, raster.height);
-      track_ns += ns_since(t);
+      if (!tracked) {
+        auto t = std::chrono::steady_clock::now();
+        auto decoded = core::image::to_packed_raster(item.type, item.payload, decoder);
+        decode_ns += ns_since(t);
+        if (!decoded.ok()) {
+          count_failure(decoded.error.c_str());
+          continue;
+        }
+        const auto & raster = *decoded.raster;
+        t = std::chrono::steady_clock::now();
+        observations =
+          frontends_[cam]->track(item.stamp_ns, raster.bgr, raster.width, raster.height);
+        track_ns += ns_since(t);
+      }
       mapper_.insert_visual_observations(observations);
     } catch (const std::exception & e) {
       // A decode or frontend throw must not escape this thread (that

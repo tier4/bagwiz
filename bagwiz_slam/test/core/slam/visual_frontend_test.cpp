@@ -89,6 +89,24 @@ const slam::VisualObservation * find_by_id(
   return it == obs.end() ? nullptr : &*it;
 }
 
+// Grayscale analogue of render_dots(): 5x5 white (255) squares on black (0) at
+// the given centers, packed single-channel with stride == w.
+std::vector<std::uint8_t> render_dots_gray(
+  std::uint32_t w, std::uint32_t h, const std::vector<std::array<int, 2>> & centers)
+{
+  std::vector<std::uint8_t> img(static_cast<std::size_t>(w) * h, 0);
+  for (const auto & c : centers) {
+    for (int dy = -2; dy <= 2; ++dy) {
+      for (int dx = -2; dx <= 2; ++dx) {
+        const int x = c[0] + dx, y = c[1] + dy;
+        if (x < 0 || y < 0 || x >= static_cast<int>(w) || y >= static_cast<int>(h)) continue;
+        img[static_cast<std::size_t>(y) * w + x] = 255;
+      }
+    }
+  }
+  return img;
+}
+
 TEST(VisualFrontend, BlackFrameYieldsNoTracks)
 {
   slam::VisualFrontendConfig cfg;
@@ -590,6 +608,76 @@ TEST(VisualFrontend, RepeatedRunsAreIdentical)
   for (std::size_t i = 0; i < a.size(); ++i) {
     EXPECT_EQ(a[i].track_id, b[i].track_id);
     EXPECT_EQ(a[i].x, b[i].x);  // exact: same code on same input
+    EXPECT_EQ(a[i].y, b[i].y);
+  }
+}
+
+TEST(VisualFrontend, GrayEntryTracksTranslationAndSamplesRgb)
+{
+  slam::VisualFrontendConfig cfg;
+  cfg.camera = make_pinhole();
+  cfg.tracking_width = 640;
+  slam::VisualFrontend fe(cfg);
+
+  std::vector<std::array<int, 2>> centers;
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 4; ++col) {
+      centers.push_back({100 + col * 120, 100 + row * 120});
+    }
+  }
+  std::vector<std::array<int, 2>> shifted;
+  for (const auto & c : centers) shifted.push_back({c[0] + 8, c[1]});
+  const auto g1 = render_dots_gray(640, 480, centers);
+  const auto g2 = render_dots_gray(640, 480, shifted);
+  const slam::GrayView v1{g1.data(), 640, 480, 640};
+  const slam::GrayView v2{g2.data(), 640, 480, 640};
+  const auto sampler = [](std::uint32_t, std::uint32_t) {
+    return std::array<std::uint8_t, 3>{7, 8, 9};
+  };
+
+  EXPECT_TRUE(fe.track(0, v1, sampler).empty());
+  const auto obs1 = fe.track(1, v1, sampler);
+  const auto obs2 = fe.track(2, v2, sampler);
+  ASSERT_GE(obs2.size(), 10U);
+  EXPECT_EQ(obs2.front().rgb, (std::array<std::uint8_t, 3>{7, 8, 9}));
+
+  const double fx = cfg.camera.k[0];
+  int matched = 0;
+  for (const auto & o1 : obs1) {
+    const auto * o2 = find_by_id(obs2, o1.track_id);
+    if (o2 == nullptr) continue;
+    ++matched;
+    EXPECT_NEAR((o2->x - o1.x) * fx, 8.0, 1.0);  // +8 px translation in x
+    EXPECT_NEAR((o2->y - o1.y) * fx, 0.0, 1.0);
+  }
+  EXPECT_GE(matched, 10);
+}
+
+TEST(VisualFrontend, GrayEntryMatchesBgrEntryOnEquivalentInput)
+{
+  // The same dots as BGR white squares and as gray 255 squares must produce
+  // identical observations (BGR->gray of pure white is 255).
+  std::vector<std::array<int, 2>> centers = {{100, 100}, {220, 100}, {340, 220}, {100, 340}};
+  const auto bgr1 = render_dots(640, 480, centers);
+  const auto gray1 = render_dots_gray(640, 480, centers);
+
+  slam::VisualFrontendConfig cfg;
+  cfg.camera = make_pinhole();
+  cfg.tracking_width = 640;
+  slam::VisualFrontend bgr_fe(cfg);
+  slam::VisualFrontend gray_fe(cfg);
+  const slam::GrayView gv{gray1.data(), 640, 480, 640};
+  const auto sampler = [](std::uint32_t, std::uint32_t) {
+    return std::array<std::uint8_t, 3>{255, 255, 255};
+  };
+
+  (void)bgr_fe.track(0, bgr1, 640, 480);
+  (void)gray_fe.track(0, gv, sampler);
+  const auto a = bgr_fe.track(1, bgr1, 640, 480);
+  const auto b = gray_fe.track(1, gv, sampler);
+  ASSERT_EQ(a.size(), b.size());
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    EXPECT_EQ(a[i].x, b[i].x);
     EXPECT_EQ(a[i].y, b[i].y);
   }
 }

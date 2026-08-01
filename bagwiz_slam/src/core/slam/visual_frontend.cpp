@@ -22,6 +22,7 @@
 #include <opencv2/video/tracking.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -54,6 +55,15 @@ struct VisualFrontend::Impl
   [[nodiscard]] std::vector<VisualObservation> track(
     std::int64_t stamp_ns, std::span<const std::byte> bgr, std::uint32_t width,
     std::uint32_t height);
+
+  // Shared tracking core: everything from the intrinsics rescale onward, run
+  // against a full-resolution (or uniformly downscaled) grayscale frame.
+  // `sampler` fills each emitted observation's rgb field instead of a raw
+  // pixel read off a packed BGR raster, so this same code path serves both
+  // the BGR entry (sampler reads the converted-from raster) and the
+  // zero-copy Y-plane entry (sampler reads the decoder's chroma planes).
+  [[nodiscard]] std::vector<VisualObservation> track_gray(
+    std::int64_t stamp_ns, const cv::Mat & gray_full, const RgbSampler & sampler);
 
   VisualFrontendConfig config;
 
@@ -111,6 +121,32 @@ std::vector<VisualObservation> VisualFrontend::Impl::track(
     return {};
   }
 
+  // OpenCV's external-data cv::Mat constructor takes a non-const void* even
+  // for read-only input; cvtColor does not mutate the source, so const_cast
+  // is safe.
+  const cv::Mat packed(
+    static_cast<int>(height), static_cast<int>(width), CV_8UC3,
+    const_cast<std::byte *>(bgr.data()));
+  cv::Mat gray;
+  auto t = Clock::now();
+  cv::cvtColor(packed, gray, cv::COLOR_BGR2GRAY);
+  stats.gray_ns += ns_since(t);
+
+  const auto sampler = [bgr, width](std::uint32_t x, std::uint32_t y) {
+    const std::byte * px = bgr.data() + (static_cast<std::size_t>(y) * width + x) * 3;
+    return std::array<std::uint8_t, 3>{
+      std::to_integer<std::uint8_t>(px[2]), std::to_integer<std::uint8_t>(px[1]),
+      std::to_integer<std::uint8_t>(px[0])};
+  };
+  return track_gray(stamp_ns, gray, sampler);
+}
+
+std::vector<VisualObservation> VisualFrontend::Impl::track_gray(
+  std::int64_t stamp_ns, const cv::Mat & gray_full, const RgbSampler & sampler)
+{
+  const auto width = static_cast<std::uint32_t>(gray_full.cols);
+  const auto height = static_cast<std::uint32_t>(gray_full.rows);
+
   ++stats.frames;
 
   if (effective_width != width || effective_height != height) {
@@ -126,24 +162,13 @@ std::vector<VisualObservation> VisualFrontend::Impl::track(
     }
   }
 
-  // OpenCV's external-data cv::Mat constructor takes a non-const void* even
-  // for read-only input; cvtColor does not mutate the source, so const_cast
-  // is safe.
-  const cv::Mat packed(
-    static_cast<int>(height), static_cast<int>(width), CV_8UC3,
-    const_cast<std::byte *>(bgr.data()));
-  cv::Mat gray;
-  auto t = Clock::now();
-  cv::cvtColor(packed, gray, cv::COLOR_BGR2GRAY);
-  stats.gray_ns += ns_since(t);
-
   const int tracking_width = std::max(1, config.tracking_width);
   scale = static_cast<double>(width) / static_cast<double>(tracking_width);
   const int tracking_height =
     std::max(1, static_cast<int>(std::lround(static_cast<double>(height) / scale)));
   cv::Mat resized;
-  t = Clock::now();
-  cv::resize(gray, resized, cv::Size(tracking_width, tracking_height), 0, 0, cv::INTER_AREA);
+  auto t = Clock::now();
+  cv::resize(gray_full, resized, cv::Size(tracking_width, tracking_height), 0, 0, cv::INTER_AREA);
   std::vector<cv::Mat> cur_pyramid;
   // Build pyramid once per frame for reuse in forward and backward flow calls;
   // pyramid construction cost is folded into resize_ns.
@@ -252,17 +277,13 @@ std::vector<VisualObservation> VisualFrontend::Impl::track(
         std::clamp<std::int64_t>(std::llround(u), 0, static_cast<std::int64_t>(width) - 1);
       const auto iy =
         std::clamp<std::int64_t>(std::llround(v), 0, static_cast<std::int64_t>(height) - 1);
-      const std::byte * px =
-        bgr.data() + (static_cast<std::size_t>(iy) * width + static_cast<std::size_t>(ix)) * 3;
       VisualObservation obs;
       obs.camera_id = config.camera_id;
       obs.track_id = trk.id;
       obs.stamp_ns = stamp_ns;
       obs.x = p.x;
       obs.y = p.y;
-      obs.rgb = {
-        std::to_integer<std::uint8_t>(px[2]), std::to_integer<std::uint8_t>(px[1]),
-        std::to_integer<std::uint8_t>(px[0])};
+      obs.rgb = sampler(static_cast<std::uint32_t>(ix), static_cast<std::uint32_t>(iy));
       observations.push_back(obs);
     }
     stats.emit_ns += ns_since(t);
@@ -286,6 +307,18 @@ std::vector<VisualObservation> VisualFrontend::track(
   std::int64_t stamp_ns, std::span<const std::byte> bgr, std::uint32_t width, std::uint32_t height)
 {
   return impl_->track(stamp_ns, bgr, width, height);
+}
+
+std::vector<VisualObservation> VisualFrontend::track(
+  std::int64_t stamp_ns, const GrayView & gray, const RgbSampler & sampler)
+{
+  if (gray.data == nullptr || gray.width == 0 || gray.height == 0) {
+    return {};
+  }
+  const cv::Mat mat(
+    static_cast<int>(gray.height), static_cast<int>(gray.width), CV_8UC1,
+    const_cast<std::uint8_t *>(gray.data), gray.stride);
+  return impl_->track_gray(stamp_ns, mat, sampler);
 }
 
 const VisualFrontendStats & VisualFrontend::stats() const noexcept

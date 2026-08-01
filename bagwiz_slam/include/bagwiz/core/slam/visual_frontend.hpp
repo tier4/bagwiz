@@ -12,8 +12,10 @@
 #include "bagwiz/core/image/camera_info.hpp"
 #include "bagwiz/core/slam/visual_observation.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <vector>
@@ -56,6 +58,23 @@ struct VisualFrontendStats
   std::int64_t emit_ns = 0;          // undistort + rgb sampling + emission
 };
 
+// Zero-copy view of one 8-bit grayscale (luma) plane, e.g. a decoded frame's Y
+// plane. `stride` is bytes per row (may exceed width for a padded/planar
+// buffer), so the plane does not need to be copied into a tightly packed
+// buffer before tracking.
+struct GrayView
+{
+  const std::uint8_t * data = nullptr;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  std::size_t stride = 0;
+};
+
+// Fills in an observation's rgb field for a pixel position, e.g. sampling a
+// decoded frame's chroma planes without a full-frame BGR conversion. Returns
+// {r, g, b}.
+using RgbSampler = std::function<std::array<std::uint8_t, 3>(std::uint32_t x, std::uint32_t y)>;
+
 class VisualFrontend
 {
 public:
@@ -75,6 +94,17 @@ public:
   [[nodiscard]] std::vector<VisualObservation> track(
     std::int64_t stamp_ns, std::span<const std::byte> bgr, std::uint32_t width,
     std::uint32_t height);
+
+  // Track one frame from a zero-copy grayscale view instead of a packed BGR
+  // raster — e.g. a decoded frame's Y plane, skipping the BGR conversion the
+  // other overload performs. `gray` must be the full-resolution frame (or a
+  // uniformly downscaled substitute — same semantics as the BGR overload's
+  // width/height). `sampler` is called with pixel coordinates in `gray`'s
+  // resolution to fill each observation's rgb field. Frames must arrive in
+  // stamp order per instance. Not thread-safe; use one instance per
+  // camera/thread.
+  [[nodiscard]] std::vector<VisualObservation> track(
+    std::int64_t stamp_ns, const GrayView & gray, const RgbSampler & sampler);
 
   // Accumulated per-stage timing. Not thread-safe; read after tracking is done.
   [[nodiscard]] const VisualFrontendStats & stats() const noexcept;
