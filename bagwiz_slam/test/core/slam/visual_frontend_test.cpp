@@ -421,9 +421,9 @@ TEST(VisualFrontend, DimensionMismatchReturnsEmpty)
 
   EXPECT_TRUE(fe.track(2, undersized_frame, 640, 480).empty());
 
-  // prev_gray must still hold frame1: if the rejected call had clobbered it,
-  // tracking against frame2 below would restart from garbage instead of
-  // following the translation.
+  // prev_pyramid must still hold frame1's optical-flow pyramid: if the rejected
+  // call had clobbered it, tracking against frame2 below would restart from
+  // garbage instead of following the translation.
   const auto obs2 = fe.track(3, frame2, 640, 480);
   ASSERT_GE(obs2.size(), 10U);
 

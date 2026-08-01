@@ -35,8 +35,8 @@ std::string av_err(int errnum)
   return std::string(buf.data());
 }
 
-// RAII for the libav encode handles, so every early return frees them. Mirrors
-// DecodeContext in image_decoder.cpp.
+// RAII bundle of libav encode handles (codec, frame, packet), freed on destruction
+// to ensure early returns never leak.
 struct EncodeContext
 {
   AVCodecContext * codec = nullptr;
