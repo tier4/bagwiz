@@ -1246,14 +1246,17 @@ struct CloudMapper::Impl
     params.max_obs_per_track = config.visual_max_obs_per_track;
     params.gate_distance = config.visual_gate_distance;
 
+    const auto build_start = std::chrono::steady_clock::now();
     const visual::Stats stats = visual::build_visual_factors(
       visual_observations, t_lidar_cams, views, params, pending_global_factors);
+    const double build_seconds =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
     BAGWIZ_LOG_INFO(
       kLogger,
       "visual constraints: %zu factors from %zu tracks over %zu submaps (dropped: %zu "
-      "single-submap, %zu too-short, %zu untriangulable, %zu unsupported by LiDAR)",
+      "single-submap, %zu too-short, %zu untriangulable, %zu unsupported by LiDAR) in %.1fs",
       stats.factors, stats.tracks_total, views.size(), stats.tracks_single_submap,
-      stats.tracks_too_short, stats.tracks_triangulation_failed, stats.tracks_gated);
+      stats.tracks_too_short, stats.tracks_triangulation_failed, stats.tracks_gated, build_seconds);
     return stats.factors;
   }
 

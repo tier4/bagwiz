@@ -11,6 +11,7 @@
 #include "bagwiz/core/base/logging.hpp"
 #include "bagwiz/core/image/packed_raster.hpp"
 
+#include <chrono>
 #include <cinttypes>
 #include <cstddef>
 #include <cstdint>
@@ -31,6 +32,14 @@ namespace
 // camera.
 constexpr std::size_t kQueueCapacityWeight = 8;
 constexpr std::size_t kItemWeight = 1;
+
+using Clock = std::chrono::steady_clock;
+
+std::int64_t ns_since(Clock::time_point start)
+{
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count();
+}
+
 }  // namespace
 
 VisualFeed::VisualFeed(
@@ -41,6 +50,9 @@ VisualFeed::VisualFeed(
   const std::size_t count = image_topics_.size();
   images_.assign(count, 0);
   failures_.assign(count, 0);
+  wait_ns_.assign(count, 0);
+  decode_ns_.assign(count, 0);
+  track_ns_.assign(count, 0);
   frontends_.reserve(count);
   queues_.reserve(count);
   workers_.reserve(count);
@@ -82,8 +94,11 @@ VisualFeed::~VisualFeed()
 void VisualFeed::push(
   std::size_t cam, std::int64_t stamp_ns, std::string type, std::vector<std::byte> payload)
 {
-  if (queues_[cam]->push(
-        VisualWorkItem{stamp_ns, std::move(type), std::move(payload)}, kItemWeight)) {
+  const auto t = std::chrono::steady_clock::now();
+  const bool pushed =
+    queues_[cam]->push(VisualWorkItem{stamp_ns, std::move(type), std::move(payload)}, kItemWeight);
+  wait_ns_[cam] += ns_since(t);
+  if (pushed) {
     ++images_[cam];
   }
 }
@@ -105,6 +120,15 @@ void VisualFeed::finish()
       logger_,
       "Visual tracking: fed %" PRId64 " image(s) from '%s' (%" PRId64 " failed to decode or track)",
       images_[cam], image_topics_[cam].c_str(), failures_[cam]);
+    const auto sec = [](std::int64_t ns) { return static_cast<double>(ns) * 1e-9; };
+    const core::slam::VisualFrontendStats & fs = frontends_[cam]->stats();
+    BAGWIZ_LOG_INFO(
+      logger_,
+      "Visual timing '%s': decode %.1fs, track %.1fs (gray %.1fs, resize %.1fs, klt %.1fs+%.1fs, "
+      "detect %.1fs/%" PRId64 ", emit %.1fs), reader waited %.1fs",
+      image_topics_[cam].c_str(), sec(decode_ns_[cam]), sec(track_ns_[cam]), sec(fs.gray_ns),
+      sec(fs.resize_ns), sec(fs.klt_forward_ns), sec(fs.klt_backward_ns), sec(fs.detect_ns),
+      fs.detect_calls, sec(fs.emit_ns), sec(wait_ns_[cam]));
   }
 }
 
@@ -125,17 +149,23 @@ void VisualFeed::run_worker(std::size_t cam)
     ++failures;
   };
 
+  std::int64_t decode_ns = 0;
+  std::int64_t track_ns = 0;
   VisualWorkItem item;
   while (queues_[cam]->pop(item)) {
     try {
+      auto t = std::chrono::steady_clock::now();
       auto decoded = core::image::to_packed_raster(item.type, item.payload);
+      decode_ns += ns_since(t);
       if (!decoded.ok()) {
         count_failure(decoded.error.c_str());
         continue;
       }
       const auto & raster = *decoded.raster;
+      t = std::chrono::steady_clock::now();
       const auto observations =
         frontends_[cam]->track(item.stamp_ns, raster.bgr, raster.width, raster.height);
+      track_ns += ns_since(t);
       mapper_.insert_visual_observations(observations);
     } catch (const std::exception & e) {
       // A decode or frontend throw must not escape this thread (that
@@ -145,6 +175,8 @@ void VisualFeed::run_worker(std::size_t cam)
     }
   }
   failures_[cam] = failures;
+  decode_ns_[cam] = decode_ns;
+  track_ns_[cam] = track_ns;
 }
 
 }  // namespace bagwiz::commands

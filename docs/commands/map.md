@@ -386,12 +386,14 @@ independently — an existing `traj.tum`/`map.pcd` stops the run unless
 With `--cam`, the run also logs a summary of the visual constraints applied
 (no file output — `traj.tum`/`map.pcd` are unaffected by whether any were
 found): a per-camera `Visual tracking: fed <N> image(s) from '<topic>' (<M>
-failed to decode or track)` line, a `visual constraints: <N> factors from <M>
-tracks over <K> submaps (dropped: ...)` breakdown from the constraint-building
-pass, and a closing `Applied <N> visual constraint(s) from <M> track(s)
-across <K> --cam camera(s)` line (a WARN instead when zero constraints were
-applied). See [Camera constraints](#camera-constraints---cam) for what drives
-those counts.
+failed to decode or track)` line, a per-camera `Visual timing: …` breakdown
+of where the tracking time went (decode, KLT, detection) and how long the bag
+reader waited on that camera, a `visual constraints: <N> factors from <M>
+tracks over <K> submaps (dropped: ...) in <T>s` breakdown from the
+constraint-building pass, and a closing `Applied <N> visual constraint(s)
+from <M> track(s) across <K> --cam camera(s)` line (a WARN instead when zero
+constraints were applied). See [Camera constraints](#camera-constraints---cam)
+for what drives those counts.
 
 With `--viewer`, the written `map.pcd` is served in the browser viewer — see
 [`bagwiz map viewer`](#bagwiz-map-viewer). Since `traj.tum` is always written

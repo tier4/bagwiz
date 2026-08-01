@@ -98,6 +98,12 @@ private:
   // decode or track (its own worker only, published when that worker joins).
   std::vector<std::int64_t> images_;
   std::vector<std::int64_t> failures_;
+  // Per camera: nanoseconds the reader spent inside push() (≈ blocked on a full
+  // queue), and the worker's decode / track time (each written by its single
+  // writer thread, read in finish() after the join).
+  std::vector<std::int64_t> wait_ns_;
+  std::vector<std::int64_t> decode_ns_;
+  std::vector<std::int64_t> track_ns_;
   bool finished_ = false;
 };
 
