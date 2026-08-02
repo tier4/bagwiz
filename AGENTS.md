@@ -56,13 +56,23 @@ to keep this file itself consistent over time.
   to a tracked, in-repo document (e.g. an ADR file under `docs/`),
   not to a private conversation.
 
-### 2. Attribution
+### 2. Public Communication
+
+- Write all GitHub-facing communication in English. This includes pull
+  request titles and descriptions, issue titles and bodies, review
+  comments, inline code comments on PRs, GitHub Discussions, and any
+  other text posted through GitHub's interface. The only exception is
+  non-English content that is intentionally committed or included as
+  test data, fixtures, or samples (for example, a multi-language
+  string used to exercise encoding handling).
+
+### 3. Attribution
 
 - Do NOT include AI agent signatures (e.g. `Co-Authored-By: <agent name> ...`)
   in any generated code, commit messages, pull request descriptions,
   documentation, or other output.
 
-### 3. Commits & Branch Names
+### 4. Commits & Branch Names
 
 - Follow the [Conventional Commits](https://www.conventionalcommits.org/)
   specification for every commit message. Use one of the standard types
@@ -85,13 +95,13 @@ to keep this file itself consistent over time.
   destroys the commit the reviewer actually read and silently
   invalidates the hash they cited.
 - Never rewrite a commit that has already been pushed. Undoing that
-  needs a force-push, which rule 6 forbids without explicit approval.
+  needs a force-push, which rule 7 forbids without explicit approval.
 - The real remedy is getting the commit right the first time: stage
   deliberately, run the hooks, and read the diff before committing,
   rather than committing early and repairing afterwards. Repeated
   amends are a symptom of committing too soon, not a workflow.
 
-### 4. Pre-commit Hooks
+### 5. Pre-commit Hooks
 
 - Before committing, inspect staged and unstaged changes and ensure the
   commit does not include secrets, credentials, private keys, tokens,
@@ -107,7 +117,7 @@ to keep this file itself consistent over time.
   `// NOLINT(...)`, `// cppcheck-suppress`, or equivalent
   hook-specific directive scoped to the smallest unit possible).
 
-### 5. GitHub Actions / CI
+### 6. GitHub Actions / CI
 
 - Be mindful of the GitHub Actions workflows configured in this
   repository; ensure changes do not cause them to fail.
@@ -116,7 +126,7 @@ to keep this file itself consistent over time.
   the actual logs. Base bug fixes on evidence from those logs, not on
   assumptions.
 
-### 6. Remote Repository Operations
+### 7. Remote Repository Operations
 
 - Always obtain explicit developer approval before making any changes
   to the remote repository — pushing commits, creating/closing pull
@@ -137,7 +147,7 @@ to keep this file itself consistent over time.
   concise: cover the problem, the solution, and the test plan without
   unnecessary verbosity.
 
-### 7. Resource Management
+### 8. Resource Management
 
 - When writing code that acquires or releases a resource (memory, file
   handles, sockets, mutex locks, terminal modes, ROS handles, etc.),
@@ -149,7 +159,7 @@ to keep this file itself consistent over time.
   calls scattered through the body, or `try` / `catch` blocks whose
   only job is cleanup.
 
-### 8. Temporary Scratch Files
+### 9. Temporary Scratch Files
 
 - When you generate code or data purely for temporary, single-use
   purposes — throwaway scripts, scratch experiments, synthetic or
