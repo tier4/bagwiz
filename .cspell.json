@@ -40,6 +40,8 @@
     "crossorigin",
     "Ctrl",
     "CUDACXX",
+    "CUDAHOSTCXX",
+    "CUDAToolkit",
     "cudafe",
     "cusolver",
     "datum",
