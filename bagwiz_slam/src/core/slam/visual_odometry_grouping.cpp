@@ -100,7 +100,8 @@ std::vector<ObservationGroup> GroupingBuffer::pop_ready()
   // Ready when every camera has passed the window end, or when any camera is
   // max_lag_periods past it (a silent camera must not stall the pipeline).
   std::int64_t limit = std::numeric_limits<std::int64_t>::min();
-  for (const auto & [anchor, group] : groups_) {
+  for (const auto & kv : groups_) {
+    const std::int64_t anchor = kv.first;
     const std::int64_t window_end = anchor + config_.period_ns;
     if (
       min_head >= window_end ||
