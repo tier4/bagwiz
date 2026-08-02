@@ -583,7 +583,7 @@ TEST(VisualFactorsTest, TriangulateLandmarksCarriesFirstObservationRgb)
 // The export applies the same track selection as factor construction:
 // single-submap tracks qualify for nothing, and a moved landmark fails
 // triangulation — so neither becomes a map point.
-TEST(VisualFactorsTest, TriangulateLandmarksDropsUnqualifyingTracks)
+TEST(VisualFactorsTest, TriangulateLandmarksDropsIneligibleTracks)
 {
   const Scene full = make_scene(wall_landmarks(), wall_landmarks(), false);
   const visual::Params params;
