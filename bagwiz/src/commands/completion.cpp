@@ -185,15 +185,6 @@ const std::vector<ShellDefinition> & shell_definitions()
   return kDefinitions;
 }
 
-std::vector<std::string_view> supported_shell_names()
-{
-  std::vector<std::string_view> names;
-  for (const auto & definition : shell_definitions()) {
-    names.push_back(definition.name);
-  }
-  return names;
-}
-
 std::vector<std::string> supported_shell_name_strings()
 {
   std::vector<std::string> names;

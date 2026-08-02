@@ -111,14 +111,20 @@ elif [ "${cuda}" -eq 1 ]; then
     # CUDA deps. Both are sub-second no-ops once their stamped prefixes exist.
     bash "${SCRIPT_DIR}/build-glim-deps.sh"
     bash "${SCRIPT_DIR}/build-glim-deps.sh" --cuda
+    # Pass the CUDA toolchain through environment variables instead of -D flags.
+    # colcon forwards --cmake-args to every package, so -DCMAKE_CUDA_COMPILER and
+    # friends would trigger "Manually-specified variables were not used" warnings
+    # in packages that do not enable the CUDA language. CMake recognises CUDACXX,
+    # CUDAHOSTCXX and CUDAToolkit_ROOT, and only the package that calls
+    # enable_language(CUDA) / find_package(CUDAToolkit) consumes them.
+    export CUDACXX="${CONDA_PREFIX}/bin/nvcc"
+    export CUDAHOSTCXX="${CXX}"
+    export CUDAToolkit_ROOT="${CONDA_PREFIX}"
     cmake_args+=(
         -DBAGWIZ_WITH_SLAM_CUDA=ON
         -DBAGWIZ_WITH_MAP_VIEWER=ON
         "-DCMAKE_PREFIX_PATH=${REPO}/install/${ENV_NAME}/glim-deps-cuda;${REPO}/install/${ENV_NAME}/glim-deps"
-        -DCMAKE_CUDA_COMPILER="${CONDA_PREFIX}/bin/nvcc"
-        "-DCMAKE_CUDA_HOST_COMPILER=${CXX}"
         -DCMAKE_CUDA_ARCHITECTURES=86
-        -DCUDAToolkit_ROOT="${CONDA_PREFIX}"
     )
 elif [ "${slam}" -eq 1 ]; then
     # build-full (CPU SLAM).

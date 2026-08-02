@@ -354,14 +354,14 @@ TEST(ComposeTfBridgedSample, UnresolvableBridgeThrows)
   buffer.setTransform(make_tf("map", "odom", 0, 1.0), "test", true);
 
   EXPECT_THROW(
-    bagwiz::core::compose_tf_bridged_sample(
-      buffer, "map", "ghost", std::nullopt, "", make_pose(0.0, 0.0, 0.0), 0),
+    static_cast<void>(bagwiz::core::compose_tf_bridged_sample(
+      buffer, "map", "ghost", std::nullopt, "", make_pose(0.0, 0.0, 0.0), 0)),
     tf2::TransformException);
 
   const std::optional<std::string> of{"ghost"};
   EXPECT_THROW(
-    bagwiz::core::compose_tf_bridged_sample(
-      buffer, "odom", "odom", of, "base_link", make_pose(0.0, 0.0, 0.0), 0),
+    static_cast<void>(bagwiz::core::compose_tf_bridged_sample(
+      buffer, "odom", "odom", of, "base_link", make_pose(0.0, 0.0, 0.0), 0)),
     tf2::TransformException);
 }
 

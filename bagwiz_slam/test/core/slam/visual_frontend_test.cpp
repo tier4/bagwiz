@@ -595,7 +595,7 @@ TEST(VisualFrontend, RepeatedRunsAreIdentical)
     cfg.tracking_width = 640;
     slam::VisualFrontend fe(cfg);
     std::vector<slam::VisualObservation> all;
-    for (const auto obs :
+    for (const auto & obs :
          {fe.track(0, frame1, 640, 480), fe.track(1, frame1, 640, 480),
           fe.track(2, frame2, 640, 480)}) {
       all.insert(all.end(), obs.begin(), obs.end());

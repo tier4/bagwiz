@@ -26,7 +26,10 @@ version = "0.1.0"
 # higher-priority robostack-<distro> channel so the ROS packages come from
 # RoboStack and win ties over conda-forge.
 channels = ["conda-forge"]
-platforms = ["linux-64"]
+platforms = [
+  "linux-64",
+  { name = "linux-64-cuda", platform = "linux-64", cuda = "12" },
+]
 
 # ---------------------------------------------------------------------------
 # Default feature: distro-agnostic build toolchain + non-ROS libraries. It is
@@ -233,15 +236,15 @@ eigen = "3.4.*"
 # cusolver/cublas — gtsam_points' GPU code uses cusolver) so the GPU SLAM build
 # is fully pixi-managed (no system /usr/local/cuda). Combined with a distro
 # feature into a *-cuda environment; CPU environments stay CUDA-free and lean.
-# system-requirements.cuda declares the host driver supports CUDA 12.x so the
+# The linux-64-cuda platform declares the host driver supports CUDA 12.x so the
 # conda CUDA runtime packages solve.
 # ---------------------------------------------------------------------------
+[feature.gpu]
+platforms = ["linux-64-cuda"]
+
 [feature.gpu.dependencies]
 cuda-toolkit = "12.8.*"
 cuda-version = "12.8.*"
-
-[feature.gpu.system-requirements]
-cuda = "12"
 
 # ---------------------------------------------------------------------------
 # One environment per distro. Each solves independently against its own
