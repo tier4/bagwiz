@@ -22,7 +22,8 @@
 #include "bagwiz/core/slam/scan_match_fill.hpp"
 #include "bagwiz/core/slam/warmup_fill.hpp"
 #include "bagwiz/core/tf/trajectory.hpp"
-#include "visual_factors.hpp"  // NOLINT(build/include_subdir) src-local shared header
+#include "visual_factors.hpp"   // NOLINT(build/include_subdir) src-local shared header
+#include "visual_odometry.hpp"  // NOLINT(build/include_subdir) src-local shared header
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -60,6 +61,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -176,7 +178,8 @@ std::vector<Eigen::Vector3d> preprocessed_xyz(const glim::PreprocessedFrame::Ptr
 // (built on a CUDA voxelmap). enable_gpu lets GLIM allocate the GPU stream/buffers.
 // Both fall back to GLIM's stock CPU VGICP when use_gpu is false, so the CPU path
 // is byte-for-byte unchanged.
-glim::SubMappingParams make_sub_mapping_params(bool enable_imu, bool use_gpu, int max_num_keyframes)
+glim::SubMappingParams make_sub_mapping_params(
+  bool enable_imu, bool use_gpu, int max_num_keyframes, bool camera_only)
 {
   glim::SubMappingParams params;
   params.enable_imu = enable_imu;
@@ -186,21 +189,115 @@ glim::SubMappingParams make_sub_mapping_params(bool enable_imu, bool use_gpu, in
   // the submap count, hence loop-closure granularity and (via GNSS-covered submap
   // count) whether GNSS priors can be built. Default 15 == GLIM stock.
   params.max_num_keyframes = max_num_keyframes;
+  if (camera_only) {
+    // Thin relative-pose layer over the visual-inertial odometry (issue #376
+    // Phase 3): keyframe on displacement (the sparse landmark frames have no
+    // usable overlap signal) with no minimum point count, and replace every
+    // scan-matching factor with an odometry-delta BetweenFactor ("NONE") —
+    // GICP/VGICP against landmark clouds would inject garbage constraints.
+    // GLIM warns once per keyframe pair about the unknown registration error
+    // factor type; the camera-only feed path mutes that expected-by-design
+    // chatter (see Impl::ScopedCameraModeSilence).
+    params.keyframe_update_strategy = "DISPLACEMENT";
+    params.keyframe_update_min_points = 0;
+    params.between_registration_type = "NONE";
+    params.registration_error_factor_type = "NONE";
+    return params;
+  }
   if (use_gpu) {
     params.enable_gpu = true;
     params.registration_error_factor_type = "VGICP_GPU";
   }
   return params;
 }
-glim::GlobalMappingParams make_global_mapping_params(bool enable_imu, bool use_gpu)
+glim::GlobalMappingParams make_global_mapping_params(
+  bool enable_imu, bool use_gpu, bool camera_only)
 {
   glim::GlobalMappingParams params;
   params.enable_imu = enable_imu;
+  if (camera_only) {
+    // No VGICP matching-cost factors between landmark-cloud submaps: a zero
+    // implicit-loop distance silently skips every candidate pair at
+    // GlobalMapping's distance check. Consecutive-submap connectivity then
+    // comes from GLIM's built-in isolated-submap fallback, which adds exactly
+    // one odometry-delta BetweenFactor (precision 1e6) per submap — so
+    // enable_between_factors stays false (its "NONE" branch would register
+    // the identical factor a second time). The fallback's "small overlap"
+    // warning is expected by design; the camera-only path mutes it.
+    params.enable_between_factors = false;
+    params.max_implicit_loop_distance = 0.0;
+    return params;
+  }
   if (use_gpu) {
     params.enable_gpu = true;
     params.registration_error_factor_type = "VGICP_GPU";
   }
   return params;
+}
+
+// Validate and adjust the config for camera-only mode (see
+// CloudMapperConfig::camera_only). The mode requires the IMU extrinsic
+// (carrying T_cam0_imu) and at least one camera, and rejects use_gpu: the
+// visual-inertial odometry is CPU-only and every scan-matching factor is
+// suppressed, so no GPU backend has anything left to accelerate. The
+// LiDAR-specific features are force-disabled: the visual gate (meaningless
+// against landmark clouds) and the scan-driven endpoint fill / dynamic-point
+// removal (no scans exist).
+CloudMapperConfig normalize_config(CloudMapperConfig cfg)
+{
+  if (!cfg.camera_only) {
+    return cfg;
+  }
+  if (!cfg.t_lidar_imu.has_value()) {
+    throw std::invalid_argument(
+      "CloudMapperConfig: camera_only requires t_lidar_imu (= T_cam0_imu; the IMU "
+      "extrinsic is mandatory in camera-only mode)");
+  }
+  if (cfg.visual_cameras.empty()) {
+    throw std::invalid_argument(
+      "CloudMapperConfig: camera_only requires at least one visual_cameras entry");
+  }
+  if (cfg.use_gpu) {
+    throw std::invalid_argument(
+      "CloudMapperConfig: camera_only does not support use_gpu (the visual-inertial "
+      "odometry is CPU-only and no scan-matching factors remain to accelerate)");
+  }
+  cfg.visual_gate_distance = 0.0;
+  cfg.fill_start = false;
+  cfg.fill_end = false;
+  cfg.remove_dynamic_points = false;
+  return cfg;
+}
+
+// Build the odometry backend. LiDAR modes delegate to
+// detail::make_odometry_estimator (CT / CPU / GPU by extrinsic and backend);
+// camera-only mode builds the visual-inertial estimator, deriving its
+// per-camera rig extrinsics (p_imu = T_imu_cam * p_cam) from t_lidar_imu
+// (= T_cam0_imu) and visual_cameras (= T_cam0_cam_i):
+// T_imu_cam_i = T_imu_cam0 * T_cam0_cam_i. vio_out receives the same object
+// typed for the camera-only feed path (nullptr in LiDAR modes).
+std::unique_ptr<glim::OdometryEstimationBase> make_odometry(
+  const CloudMapperConfig & cfg, VisualInertialOdometry ** vio_out)
+{
+  if (!cfg.camera_only) {
+    *vio_out = nullptr;
+    return detail::make_odometry_estimator(cfg.t_lidar_imu, cfg.num_threads, cfg.use_gpu);
+  }
+  VisualInertialOdometryConfig vio_config;
+  const Eigen::Isometry3d t_imu_cam0 = detail::to_isometry(*cfg.t_lidar_imu).inverse();
+  vio_config.t_imu_cams.reserve(cfg.visual_cameras.size());
+  for (const SensorTransform & extrinsic : cfg.visual_cameras) {
+    vio_config.t_imu_cams.push_back(t_imu_cam0 * detail::to_isometry(extrinsic));
+  }
+  vio_config.T_lidar_imu = detail::to_isometry(*cfg.t_lidar_imu);  // = T_cam0_imu
+  vio_config.anchor_period_ns = cfg.visual_anchor_period_ns;
+  vio_config.keyframe_min_trans = cfg.visual_keyframe_min_trans;
+  vio_config.keyframe_min_rot = cfg.visual_keyframe_min_rot;
+  vio_config.max_window_keyframes = cfg.visual_max_window_keyframes;
+  vio_config.obs_sigma = cfg.visual_obs_sigma;
+  auto vio = std::make_unique<VisualInertialOdometry>(vio_config);
+  *vio_out = vio.get();
+  return vio;
 }
 
 #ifdef BAGWIZ_WITH_SLAM_CUDA
@@ -422,7 +519,12 @@ struct CloudMapper::Impl
   const CloudMapperConfig config;  // Con.4: set once at construction, never mutated
   glim::TimeKeeper time_keeper;
   glim::CloudPreprocessor preprocessor;
-  // CT (LiDAR-only) or CPU (LiDAR-IMU) behind the common base interface.
+  // CT (LiDAR-only), CPU/GPU (LiDAR-IMU), or the visual-inertial estimator
+  // (camera-only) behind the common base interface. vio is the same object as
+  // odometry typed for the camera-only feed path, nullptr in LiDAR modes;
+  // declared BEFORE odometry so the constructor's make_odometry() call can set
+  // it while building the estimator.
+  VisualInertialOdometry * vio = nullptr;
   std::unique_ptr<glim::OdometryEstimationBase> odometry;
   std::unique_ptr<glim::SubMapping> sub_mapping;
   std::unique_ptr<glim::GlobalMapping> global_mapping;
@@ -505,10 +607,19 @@ struct CloudMapper::Impl
   // (config.visual_cameras only). Guarded by visual_mutex because, unlike
   // gnss_points, the visual frontend may run on its own thread and call
   // insert_visual_observations concurrently with insert()/insert_imu() on the
-  // feed thread. Consumed only in finish(), after drain_pipeline_and_rethrow()
+  // feed thread (in camera-only mode the appends happen under
+  // camera_feed_mutex instead, inside consume_visual). Consumed only in
+  // finish(), after drain_pipeline_and_rethrow()
   // has joined every producer thread, so no lock is needed there.
   std::mutex visual_mutex;
   std::vector<VisualObservation> visual_observations;
+
+  // Camera-only mode only: serializes the visual-inertial feed. insert_imu()
+  // and insert_visual_observations() may arrive on different threads (the bag
+  // reader and the per-camera frontend workers), but VisualInertialOdometry
+  // is single-threaded and requires mutually ordered IMU / observation calls,
+  // so both feed paths take this mutex. Never taken in LiDAR modes.
+  std::mutex camera_feed_mutex;
 
   // Global-graph-only factors built in finish() — GNSS translation priors and
   // visual rig-projection factors — and injected into the global factor graph
@@ -682,6 +793,35 @@ struct CloudMapper::Impl
     global_mapping->insert_imu(stamp, acc, gyro);
   }
 
+  // Camera-only IMU feed: the pipeline never runs in this mode (no scans), so
+  // the sample is consumed synchronously, serialized with consume_visual on
+  // camera_feed_mutex to keep the estimator's IMU / observation call order.
+  void consume_imu_camera_only(
+    double stamp, const Eigen::Vector3d & acc, const Eigen::Vector3d & gyro)
+  {
+    const std::lock_guard<std::mutex> lock(camera_feed_mutex);
+    consume_imu(stamp, acc, gyro);
+  }
+
+  // Camera-only observation feed: buffer the batch for the global-pass
+  // factors exactly as the LiDAR-mode ingest does, then ALSO drive the
+  // visual-inertial odometry with it and route any marginalized keyframes to
+  // sub mapping — the double delivery issue #376 Phase 3 requires (the
+  // estimator's internal GroupingBuffer absorbs the cross-camera reorder, so
+  // no separate reorder buffer exists here). Serialized with
+  // consume_imu_camera_only on camera_feed_mutex.
+  void consume_visual(const std::span<const VisualObservation> observations)
+  {
+    const std::lock_guard<std::mutex> lock(camera_feed_mutex);
+    visual_observations.insert(visual_observations.end(), observations.begin(), observations.end());
+    std::vector<glim::EstimationFrame::ConstPtr> marginalized;
+    vio->insert_visual_observations(observations, marginalized);
+    for (const auto & frame : marginalized) {
+      feed_sub_mapping(frame);
+    }
+    drain_submaps();
+  }
+
   // T2 body: pop odom_queue, run odometry, and forward the marginalized frames +
   // IMU/GNSS to map_queue in order, then close map_queue. The smoother's *remaining*
   // (in-window) frames are NOT flushed here — finish() flushes them via
@@ -816,22 +956,24 @@ struct CloudMapper::Impl
   }
 
   explicit Impl(const CloudMapperConfig & cfg)
-  : config(cfg),
-    preprocessor(make_preprocessor_params(cfg)),
-    odometry(detail::make_odometry_estimator(cfg.t_lidar_imu, cfg.num_threads, cfg.use_gpu)),
+  : config(normalize_config(cfg)),
+    preprocessor(make_preprocessor_params(config)),
+    odometry(make_odometry(config, &vio)),
     sub_mapping(
       std::make_unique<glim::SubMapping>(make_sub_mapping_params(
-        cfg.t_lidar_imu.has_value(), cfg.use_gpu, cfg.submap_max_keyframes))),
+        config.t_lidar_imu.has_value(), config.use_gpu, config.submap_max_keyframes,
+        config.camera_only))),
     global_mapping(
-      std::make_unique<glim::GlobalMapping>(
-        make_global_mapping_params(cfg.t_lidar_imu.has_value(), cfg.use_gpu)))
+      std::make_unique<glim::GlobalMapping>(make_global_mapping_params(
+        config.t_lidar_imu.has_value(), config.use_gpu, config.camera_only)))
   {
     // Warmup / cooldown fill scan-matches the window scans against the
     // optimized map, so it runs in LiDAR-only mode too; a LiDAR-IMU extrinsic only
     // adds the IMU init/fallback path inside fill_*_window(). Gated solely on the
-    // fill_start / fill_end toggles.
-    warmup.active = cfg.fill_start;
-    cooldown.active = cfg.fill_end;
+    // fill_start / fill_end toggles (both forced off by normalize_config in
+    // camera-only mode, where no scans exist).
+    warmup.active = config.fill_start;
+    cooldown.active = config.fill_end;
   }
 
   // Copy a frame's full LiDAR-frame points (and intensities, if any) out of GLIM
@@ -886,13 +1028,46 @@ struct CloudMapper::Impl
     stash[frame->id] = std::move(stashed);
   }
 
+  // RAII guard: mutes GLIM's logger for its lifetime in camera-only mode and
+  // does nothing in LiDAR modes. In camera-only mode the
+  // SubMapping/GlobalMapping configurations deliberately use settings GLIM
+  // warns about on every call ("unknown registration error factor type" once
+  // per keyframe pair for the suppressed VGICP factors; "previous submap has
+  // only a small overlap" per submap for the fallback between factor). Those
+  // warnings are expected by design, so mute GLIM's logger around the scoped
+  // call that emits them. Used only on the camera-only feed path (serialized
+  // on camera_feed_mutex) and in finish() (after the workers join), so the
+  // shared-logger level flip cannot race another GLIM call.
+  class ScopedCameraModeSilence
+  {
+  public:
+    explicit ScopedCameraModeSilence(bool camera_only)
+    : silence_(camera_only ? std::make_unique<detail::ScopedLoggerSilence>() : nullptr)
+    {
+    }
+
+  private:
+    std::unique_ptr<detail::ScopedLoggerSilence> silence_;
+  };
+
   // Stash the frame's full points, then hand it to sub mapping.
   void feed_sub_mapping(const glim::EstimationFrame::ConstPtr & frame)
   {
     if (!frame) {
       return;
     }
+    // A camera-only keyframe whose window solve triangulated no landmarks
+    // carries an empty cloud. GLIM requires a non-null, non-empty
+    // EstimationFrame::frame downstream, and an empty frame contributes
+    // nothing anyway (keyframe_update_min_points=0 still requires size > 0),
+    // so the wiring drops it — visual_odometry.cpp leaves this policy to the
+    // caller.
+    if (config.camera_only && (!frame->frame || frame->frame->size() == 0)) {
+      return;
+    }
     stash_frame(frame);
+    // cppcheck-suppress unreadVariable  // RAII guard: the mute IS the side effect
+    const ScopedCameraModeSilence silence(config.camera_only);
     sub_mapping->insert_frame(frame);
   }
 
@@ -1031,6 +1206,10 @@ struct CloudMapper::Impl
       entry.frames.push_back(std::move(ref));
     }
     entries.push_back(std::move(entry));
+    // Mute the camera-only fallback-between-factor warnings (see
+    // ScopedCameraModeSilence); a no-op guard in LiDAR modes.
+    // cppcheck-suppress unreadVariable  // RAII guard: the mute IS the side effect
+    const ScopedCameraModeSilence silence(config.camera_only);
     global_mapping->insert_submap(submap);
   }
 
@@ -1191,7 +1370,8 @@ struct CloudMapper::Impl
   // Snapshot the captured submaps as the views visual factor construction reads:
   // the submap's current (pre-global-optimization) world pose as the
   // triangulation seed, its per-frame LiDAR trajectory in the submap's own
-  // origin frame, and the merged submap cloud for the LiDAR-support gate. A
+  // origin frame (the cam0 trajectory in camera-only mode), and the merged
+  // submap cloud for the LiDAR-support gate. A
   // submap with no frames carries no trajectory to hang an observation on, so it
   // is dropped. Sorted by span start because build_visual_factors binary-searches
   // the spans; `entries` is already in submap-completion (ascending stamp) order,
@@ -1313,6 +1493,10 @@ struct CloudMapper::Impl
     // submap out of whatever odometry frames remain; it builds a fresh submap
     // rather than pulling from that queue, so there is no overlap.
     drain_submaps();
+    // Mute the camera-only warnings the forced final submap's construction can
+    // emit (see ScopedCameraModeSilence); a no-op guard in LiDAR modes.
+    // cppcheck-suppress unreadVariable  // RAII guard: the mute IS the side effect
+    const ScopedCameraModeSilence silence(config.camera_only);
     for (const auto & submap : sub_mapping->submit_end_of_sequence()) {
       if (submap) {
         capture_and_insert(submap);
@@ -1361,6 +1545,38 @@ struct CloudMapper::Impl
     return GlobalFactorInjection{gnss_count, visual_count, ScopedGlobalFactorCallback{slot_id}};
   }
 
+  // Camera-only map export: re-triangulate every qualifying track at the
+  // FINAL optimized submap poses (build_submap_views() re-reads each submap's
+  // T_world_origin after GlobalMapping::optimize() rewrote it) instead of
+  // merging submap clouds, which would duplicate every landmark once per
+  // keyframe that observed it. The landmarks replace CloudMap::points and
+  // carry their frontend-sampled rgb into CloudMap::colors; intensities stay
+  // empty. Called from optimize_and_export() after the global optimization.
+  void export_sparse_landmarks(CloudMap & result)
+  {
+    std::vector<Eigen::Isometry3d> t_lidar_cams;
+    t_lidar_cams.reserve(config.visual_cameras.size());
+    for (const SensorTransform & extrinsic : config.visual_cameras) {
+      t_lidar_cams.push_back(detail::to_isometry(extrinsic));
+    }
+    const std::vector<visual::SubmapView> views = build_submap_views();
+    visual::Params params;
+    params.obs_sigma = config.visual_obs_sigma;
+    params.max_obs_per_track = config.visual_max_obs_per_track;
+    params.gate_distance = 0.0;  // no LiDAR geometry to gate against
+    const std::vector<visual::Landmark> landmarks =
+      visual::triangulate_landmarks(visual_observations, t_lidar_cams, views, params);
+    result.points.reserve(landmarks.size());
+    result.colors.reserve(landmarks.size());
+    for (const visual::Landmark & landmark : landmarks) {
+      result.points.push_back(landmark.point);
+      result.colors.push_back(landmark.rgb);
+    }
+    BAGWIZ_LOG_INFO(
+      kLogger, "camera-only map: %zu re-triangulated landmarks over %zu submaps", landmarks.size(),
+      views.size());
+  }
+
   // Heavy step: global matching-based iSAM2 optimization, then the trajectory,
   // window-fill, and map export. The optimization updates each held submap's
   // T_world_origin in place (GlobalMapping::update_submaps). With the injector
@@ -1397,7 +1613,11 @@ struct CloudMapper::Impl
         std::chrono::duration<double>(std::chrono::steady_clock::now() - dynamic_start).count();
     }
     const auto export_start = std::chrono::steady_clock::now();
-    fill_map(result);
+    if (config.camera_only) {
+      export_sparse_landmarks(result);
+    } else {
+      fill_map(result);
+    }
     result.export_seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - export_start).count();
   }
@@ -2129,7 +2349,13 @@ void CloudMapper::insert_imu(const ImuSample & imu)
   // Route to all three stages (no-ops in LiDAR-only mode): odometry estimates
   // motion from it; sub/global mapping use it for their own IMU factors. In
   // pipeline mode the sample is queued so the consumer interleaves it with scans
-  // in exact bag order (the order each preintegrator requires).
+  // in exact bag order (the order each preintegrator requires). Camera-only
+  // mode has no pipeline; the sample is consumed synchronously under the
+  // camera feed mutex instead.
+  if (impl_->config.camera_only) {
+    impl_->consume_imu_camera_only(stamp, linear_acc, angular_vel);
+    return;
+  }
   if (impl_->config.disable_pipeline) {
     impl_->consume_imu(stamp, linear_acc, angular_vel);
     return;
@@ -2151,7 +2377,10 @@ void CloudMapper::insert_gnss(const GnssPoint & gnss)
   if (!impl_->config.enable_gnss) {
     return;
   }
-  if (impl_->config.disable_pipeline) {
+  // Camera-only mode runs no pipeline; buffer directly (same as the serial
+  // path). No lock: insert_gnss is called from the single bag-read thread and
+  // gnss_points is otherwise touched only in finish(), after feeding ends.
+  if (impl_->config.camera_only || impl_->config.disable_pipeline) {
     impl_->add_gnss(gnss);
     return;
   }
@@ -2172,6 +2401,13 @@ void CloudMapper::insert_visual_observations(std::span<const VisualObservation> 
   if (impl_->config.visual_cameras.empty()) {
     return;
   }
+  // Camera-only mode: the batch additionally drives the visual-inertial
+  // odometry (the double delivery); consume_visual takes the camera feed
+  // mutex, which also guards the buffer append.
+  if (impl_->config.camera_only) {
+    impl_->consume_visual(observations);
+    return;
+  }
   const std::lock_guard<std::mutex> lock(impl_->visual_mutex);
   impl_->visual_observations.insert(
     impl_->visual_observations.end(), observations.begin(), observations.end());
@@ -2179,6 +2415,13 @@ void CloudMapper::insert_visual_observations(std::span<const VisualObservation> 
 
 void CloudMapper::insert(const LidarScan & scan)
 {
+  // Camera-only mode has no LiDAR path at all: a scan here means the caller
+  // wired the mode wrong, so fail loudly rather than silently dropping data.
+  if (impl_->config.camera_only) {
+    throw std::logic_error(
+      "CloudMapper::insert() called in camera-only mode; feed insert_imu() and "
+      "insert_visual_observations() only");
+  }
   if (impl_->config.disable_pipeline) {
     // Fully synchronous path: preprocess + odometry + sub/global on the caller
     // thread. GLIM's LiDAR-IMU init bootstrap dumps an LM iteration table to
@@ -2232,6 +2475,14 @@ CloudMap CloudMapper::finish()
   CloudMap result;
   result.gnss_factor_count = injection.gnss_count;
   result.visual_factor_count = static_cast<std::int64_t>(injection.visual_count);
+
+  // Camera-only odometry diagnostics (grouping drops, keyframe count) for the
+  // command layer's log line; both stay 0 in LiDAR modes (vio is null).
+  if (impl_->vio != nullptr) {
+    const VisualInertialOdometry::Stats vio_stats = impl_->vio->stats();
+    result.visual_dropped_observation_count = vio_stats.dropped_observations;
+    result.visual_odom_keyframe_count = vio_stats.keyframes;
+  }
 
   // How many distinct tracks were received, whether or not a factor came out of
   // them. drain_pipeline_and_rethrow() above has already joined every producer

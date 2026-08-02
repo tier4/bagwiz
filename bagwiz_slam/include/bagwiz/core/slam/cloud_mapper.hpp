@@ -28,7 +28,9 @@
 // frames through GLIM's SubMapping -> GlobalMapping — the same pipeline
 // glim_rosbag uses for its final globally-optimized output — and then reading
 // back the optimized global point-cloud map plus the globally-optimized
-// per-scan trajectory.
+// per-scan trajectory. A camera-only mode (CloudMapperConfig::camera_only)
+// swaps the odometry layer for the visual-inertial estimator and exports a
+// sparse landmark map instead, sharing the sub/global mapping machinery.
 //
 // Every GLIM / Eigen / GTSAM type is hidden behind a
 // pimpl so this header (and the `slam` command that drives it) stays free of
@@ -36,8 +38,9 @@
 // unit is compiled only when BAGWIZ_WITH_SLAM is on. No ROS node / pub-sub is
 // involved — GLIM's modules are called directly.
 //
-// Usage: feed scans in timestamp order with insert(), then call finish() once
-// to flush, run the global optimization, and obtain the map + trajectory.
+// Usage: feed scans in timestamp order with insert() (or IMU + visual
+// observations in camera-only mode), then call finish() once to flush, run
+// the global optimization, and obtain the map + trajectory.
 namespace bagwiz::core::slam
 {
 
@@ -68,6 +71,9 @@ struct CloudMapperConfig
   // disabled in sub/global mapping). A value → LiDAR-IMU CPU odometry with that
   // extrinsic, and IMU enabled in sub/global mapping; feed IMU via insert_imu().
   // Convention is GLIM's T_lidar_imu (p_lidar = T_lidar_imu * p_imu).
+  // In camera-only mode (camera_only below) this carries T_cam0_imu instead —
+  // the first camera's frame takes the "lidar" role, so GLIM's T_world_lidar IS
+  // T_world_cam0 and the exported trajectory is the first camera's.
   std::optional<SensorTransform> t_lidar_imu;
 
   // Fill in poses for the SLAM initialization ("start") window. GLIM's odometry
@@ -189,7 +195,9 @@ struct CloudMapperConfig
 
   // Visual-constraint cameras (map slam --cam): per-camera cloud<-camera
   // optical extrinsic, indexed by VisualObservation::camera_id. Empty (the
-  // default): no visual constraints, zero overhead.
+  // default): no visual constraints, zero overhead. In camera-only mode the
+  // "cloud frame" is the first camera's, so entry i is T_cam0_cam_i and this
+  // list also defines the odometry rig.
   std::vector<SensorTransform> visual_cameras;
 
   // Isotropic measurement sigma in normalized image units (~pixel sigma / fx).
@@ -200,7 +208,40 @@ struct CloudMapperConfig
 
   // LiDAR-support gate: a triangulated landmark must fall within this distance
   // of the involved submaps' points (voxel hash lookup). <= 0 disables.
+  // Meaningless in camera-only mode (submap clouds are landmark clouds there),
+  // so the mode forces it to 0 at construction.
   double visual_gate_distance = 1.0;
+
+  // Camera-only mode (issue #376 Phase 3): run SLAM from visual observations +
+  // IMU alone, with no LiDAR scans. The odometry layer becomes the
+  // visual-inertial estimator (VisualInertialOdometry) instead of a GLIM
+  // LiDAR backend; sub/global mapping are GLIM's stock modules reconfigured
+  // for a thin relative-pose layer (odometry-delta between factors + IMU
+  // factors, no scan-matching factors anywhere). Requires t_lidar_imu
+  // (= T_cam0_imu) and a non-empty visual_cameras (= T_cam0_cam_i, i.e. the
+  // "cloud frame" is the first camera's); use_gpu is rejected. insert() must
+  // never be called in this mode (throws std::logic_error); feed
+  // insert_imu() + insert_visual_observations() instead. The LiDAR-specific
+  // features are force-disabled at construction (endpoint fill, dynamic-point
+  // removal, the visual gate). finish() exports the
+  // re-triangulated sparse landmark set into CloudMap::points/colors instead
+  // of a merged submap cloud.
+  bool camera_only = false;
+
+  // Anchor-window period [ns] of the camera-only odometry's observation
+  // grouping (VisualInertialOdometryConfig::anchor_period_ns). Set to the
+  // first camera's nominal frame period; ignored unless camera_only.
+  std::int64_t visual_anchor_period_ns = 100'000'000;
+
+  // Camera-only keyframe gate: a grouped observation set becomes a keyframe
+  // when the IMU-predicted displacement from the last keyframe exceeds either
+  // threshold. Ignored unless camera_only.
+  double visual_keyframe_min_trans = 0.25;  // m
+  double visual_keyframe_min_rot = 0.17;    // rad (~10 deg)
+
+  // Camera-only window size: keyframes kept in the rebuilt-window batch
+  // smoother before marginalization. Ignored unless camera_only.
+  int visual_max_window_keyframes = 10;
 
   // Number of CPU threads passed to GLIM and to the scan-matching endpoint
   // fill's per-registration work (covariance estimation + GICP
@@ -224,6 +265,8 @@ struct CloudMapperConfig
   // path — it only overlaps the CPU preprocess (and bag read) with the GPU
   // odometry/mapping to cut wall-clock. Set true to force the fully synchronous
   // single-thread path (e.g. for A/B timing or a strictly serial run).
+  // Irrelevant in camera-only mode, which never starts the pipeline (there are
+  // no scans to preprocess).
   bool disable_pipeline = false;
 };
 
@@ -297,6 +340,19 @@ struct CloudMap
   // ignored at ingest).
   std::int64_t visual_track_count = 0;
 
+  // Per-point rgb, parallel to `points`. Populated only in camera-only mode,
+  // where finish() exports the re-triangulated sparse landmark set (each
+  // landmark's color sampled by the visual frontend at its track position);
+  // empty otherwise (LiDAR maps are colorized by the command layer instead).
+  std::vector<std::array<std::uint8_t, 3>> colors;
+
+  // Camera-only odometry diagnostics (VisualInertialOdometry::Stats): how
+  // many grouped observations the cross-camera grouping dropped (uncovered
+  // windows, late arrivals past a silent camera) and how many keyframes the
+  // estimator produced. Both 0 outside camera-only mode.
+  std::int64_t visual_dropped_observation_count = 0;
+  std::int64_t visual_odom_keyframe_count = 0;
+
   // Wall-clock breakdown of finish(), for the command layer's log line: the
   // global iSAM2 optimization, the scan-matching endpoint fill (start + end
   // windows together), and the export map fill. Diagnostic only — without the
@@ -321,10 +377,11 @@ public:
   CloudMapper(CloudMapper &&) noexcept;
   CloudMapper & operator=(CloudMapper &&) noexcept;
 
-  // Feed one IMU sample (LiDAR-IMU mode only; a no-op in LiDAR-only mode).
-  // Forwarded to the odometry and the sub/global mapping stages, all of which
-  // buffer it for their own preintegration. Samples must arrive in
-  // non-decreasing timestamp order, interleaved with scans.
+  // Feed one IMU sample (LiDAR-IMU and camera-only modes; a no-op in
+  // LiDAR-only mode). Forwarded to the odometry and the sub/global mapping
+  // stages, all of which buffer it for their own preintegration. Samples must
+  // arrive in non-decreasing timestamp order, interleaved with scans (with
+  // observation batches in camera-only mode).
   void insert_imu(const ImuSample & imu);
 
   // Feed one GNSS fix, already projected to the local metric frame (see
@@ -338,11 +395,16 @@ public:
   // from a dedicated visual-frontend thread. Buffered and turned into
   // rig-projection factors in finish(); a no-op when config.visual_cameras is
   // empty (no cameras configured, so the ingest cost is skipped entirely).
+  // In camera-only mode the batch additionally drives the visual-inertial
+  // odometry (serialized with insert_imu() on an internal mutex, so the
+  // estimator's single-threaded contract holds across concurrent callers);
+  // per-camera streams must be stamp-non-decreasing across calls.
   void insert_visual_observations(std::span<const VisualObservation> observations);
 
   // Feed one scan. Scans must arrive in non-decreasing timestamp order. A scan
   // with no per-point time is fed with explicit zero per-point times (treated
   // as already motion-undistorted), bypassing GLIM's pseudo-time synthesis.
+  // Must never be called in camera-only mode (throws std::logic_error).
   void insert(const LidarScan & scan);
 
   // Flush the remaining in-flight frames, run the global optimization, and

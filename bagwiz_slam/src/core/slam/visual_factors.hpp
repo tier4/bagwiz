@@ -20,6 +20,7 @@
 #include <gtsam/slam/SmartFactorParams.h>
 #include <gtsam/slam/SmartProjectionRigFactor.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -57,6 +58,9 @@ using RigFactor = gtsam::SmartProjectionRigFactor<RigCamera>;
 // current world pose (the triangulation seed), the merged submap cloud for
 // the LiDAR-support gate, and the per-frame LiDAR trajectory (in the submap's
 // own origin frame, so it stays valid across global-mapping re-optimization).
+// In camera-only mode the "LiDAR" poses are the first camera's (the cam0
+// frame takes the lidar role) and the cloud is a landmark cloud, which the
+// gate must not be applied to.
 struct SubmapView
 {
   std::uint64_t id = 0;                            // gtsam key = X(id)
@@ -124,6 +128,28 @@ struct Stats
   std::span<const Eigen::Isometry3d> t_lidar_cams,  // by camera_id
   std::span<const SubmapView> submaps, const Params & params,
   std::vector<gtsam::NonlinearFactor::shared_ptr> & out);
+
+// One re-triangulated feature track: the world-frame landmark position and
+// the color the frontend sampled at the track position (see
+// VisualObservation::rgb).
+struct Landmark
+{
+  std::array<float, 3> point;
+  std::array<std::uint8_t, 3> rgb;
+};
+
+// Re-triangulate every qualifying track at the submaps' current poses (the
+// caller passes post-optimization views for the final map) and return the
+// landmarks in deterministic track-key order. Track selection mirrors
+// build_visual_factors (>= 3 associated observations, >= 2 distinct submaps,
+// the same triangulation quality gates) so the exported set is exactly the
+// geometry that constrained the trajectory; the LiDAR-support gate is NOT
+// applied (camera-only submaps carry landmark clouds, not LiDAR geometry).
+// Each landmark's rgb comes from its track's first associated observation.
+[[nodiscard]] std::vector<Landmark> triangulate_landmarks(
+  std::span<const VisualObservation> observations,
+  std::span<const Eigen::Isometry3d> t_lidar_cams,  // by camera_id
+  std::span<const SubmapView> submaps, const Params & params);
 
 }  // namespace bagwiz::core::slam::visual
 

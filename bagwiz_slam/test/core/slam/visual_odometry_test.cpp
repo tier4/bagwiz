@@ -212,6 +212,9 @@ void expect_glim_contract(
   ASSERT_NE(frame, nullptr);
   EXPECT_EQ(frame->frame_id, glim::FrameID::IMU);
   ASSERT_NE(frame->frame, nullptr);
+  // gtsam_points' voxel accumulation (SubMapping::insert_keyframe) reads
+  // per-point covariances unconditionally; the placeholder covs must be there.
+  EXPECT_TRUE(frame->frame->has_covs());
   EXPECT_EQ(frame->raw_frame, nullptr);
   EXPECT_GT(frame->id, *previous_id);
   EXPECT_GT(frame->stamp, *previous_stamp);

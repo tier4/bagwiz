@@ -17,6 +17,7 @@
 #include <gtsam/slam/SmartProjectionRigFactor.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <memory>
 #include <unordered_map>
@@ -154,12 +155,15 @@ bool voxel_set_covers(const VoxelSet & occupied, const Eigen::Vector3d & p, doub
 
 // One observation once it has been tied to a submap: the camera pose it was
 // taken from, expressed in that submap's own origin frame (so it stays valid
-// when global mapping re-optimizes the origin), plus the measurement.
+// when global mapping re-optimizes the origin), plus the measurement and the
+// observation's sampled color (used only by the landmark export; factor
+// construction ignores it).
 struct TrackObs
 {
   std::size_t view = 0;
   Eigen::Isometry3d T_origin_cam;
   gtsam::Point2 measurement;
+  std::array<std::uint8_t, 3> rgb{};
 };
 
 // Keyed by (camera_id, track_id), never by track_id alone: see TrackKey.
@@ -230,7 +234,7 @@ std::vector<TrackObs> associate(
     track.push_back(
       TrackObs{
         *view, *T_origin_lidar * t_lidar_cams[static_cast<std::size_t>(obs->camera_id)],
-        gtsam::Point2(obs->x, obs->y)});
+        gtsam::Point2(obs->x, obs->y), obs->rgb});
   }
   return track;
 }
@@ -403,6 +407,50 @@ Stats build_visual_factors(
     ++stats.factors;
   }
   return stats;
+}
+
+std::vector<Landmark> triangulate_landmarks(
+  std::span<const VisualObservation> observations, std::span<const Eigen::Isometry3d> t_lidar_cams,
+  std::span<const SubmapView> submaps, const Params & params)
+{
+  const auto calibration = normalized_calibration();
+  const gtsam::TriangulationParameters seed_params(
+    kRankTolerance, /*enableEPI=*/false, kLandmarkDistanceThreshold,
+    kOutlierSigmas * params.obs_sigma);
+
+  const TrackGroups groups = group_by_track(observations);
+
+  // Same deterministic track order as build_visual_factors, so the exported
+  // landmark set is stable across runs over identical input.
+  std::vector<TrackKey> keys;
+  keys.reserve(groups.size());
+  for (const auto & entry : groups) {
+    keys.push_back(entry.first);
+  }
+  std::sort(keys.begin(), keys.end());
+
+  std::vector<Landmark> landmarks;
+  landmarks.reserve(keys.size());
+  for (const TrackKey & key : keys) {
+    const std::vector<TrackObs> track =
+      associate(subsample(groups.at(key), params.max_obs_per_track), t_lidar_cams, submaps);
+    // Same selection as factor construction: a track qualifies only with
+    // enough parallax (>= 2 submaps) and enough observations to triangulate.
+    if (distinct_views(track) < 2 || track.size() < kMinObservations) {
+      continue;
+    }
+    const gtsam::TriangulationResult point =
+      triangulate_world(track, submaps, calibration, seed_params);
+    if (!point.valid()) {
+      continue;
+    }
+    landmarks.push_back(
+      Landmark{
+        {static_cast<float>(point->x()), static_cast<float>(point->y()),
+         static_cast<float>(point->z())},
+        track.front().rgb});
+  }
+  return landmarks;
 }
 
 }  // namespace bagwiz::core::slam::visual

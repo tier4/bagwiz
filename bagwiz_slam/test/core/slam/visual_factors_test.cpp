@@ -17,6 +17,7 @@
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -532,4 +533,75 @@ TEST(VisualFactorsTest, FactorsImproveAPerturbedPose)
       .angle());
   EXPECT_LT(translation_error, 0.05) << "initial was " << initial_translation_error;
   EXPECT_LT(rotation_error, 0.5 * M_PI / 180.0);
+}
+
+// The camera-only sparse-map export: one landmark per qualifying track,
+// re-triangulated at the submaps' poses. Track selection mirrors factor
+// construction, so the same scene yields exactly the 20 wall points — in
+// track-key order, which for this single-camera scene is track-id order, and
+// track_id is the landmark index. Exact agreement is asserted because the
+// input is noiseless: DLT triangulation of exact projections through exact
+// poses is a per-element computation over immutable input (AGENTS.md
+// "Numerical Reproducibility"), so any deviation is a bug, not drift.
+TEST(VisualFactorsTest, TriangulateLandmarksRecoversWallPoints)
+{
+  const Scene scene = make_scene(wall_landmarks(), wall_landmarks(), false);
+  const visual::Params params;
+
+  const std::vector<visual::Landmark> landmarks =
+    visual::triangulate_landmarks(scene.observations, scene.t_lidar_cams, scene.views, params);
+
+  const std::vector<Eigen::Vector3d> truth = wall_landmarks();
+  ASSERT_EQ(landmarks.size(), truth.size());
+  for (std::size_t i = 0; i < landmarks.size(); ++i) {
+    const Eigen::Vector3d p(landmarks[i].point[0], landmarks[i].point[1], landmarks[i].point[2]);
+    EXPECT_LT((p - truth[i]).norm(), 1e-6) << "landmark " << i << " p=" << p.transpose();
+  }
+}
+
+// Each landmark's color comes from its track's FIRST associated observation.
+// Encoding the observation's stamp (seconds + 1) in the red channel makes the
+// first observation red 1 (t=0) and the last red 4 (t=3), so any other rgb
+// source fails this.
+TEST(VisualFactorsTest, TriangulateLandmarksCarriesFirstObservationRgb)
+{
+  Scene scene = make_scene(wall_landmarks(), wall_landmarks(), false);
+  for (slam::VisualObservation & obs : scene.observations) {
+    obs.rgb = {static_cast<std::uint8_t>(obs.stamp_ns / 1'000'000'000 + 1), 20, 30};
+  }
+  const visual::Params params;
+
+  const std::vector<visual::Landmark> landmarks =
+    visual::triangulate_landmarks(scene.observations, scene.t_lidar_cams, scene.views, params);
+
+  ASSERT_EQ(landmarks.size(), 20u);
+  for (const visual::Landmark & landmark : landmarks) {
+    EXPECT_EQ(landmark.rgb, (std::array<std::uint8_t, 3>{1, 20, 30}));
+  }
+}
+
+// The export applies the same track selection as factor construction:
+// single-submap tracks qualify for nothing, and a moved landmark fails
+// triangulation — so neither becomes a map point.
+TEST(VisualFactorsTest, TriangulateLandmarksDropsUnqualifyingTracks)
+{
+  const Scene full = make_scene(wall_landmarks(), wall_landmarks(), false);
+  const visual::Params params;
+
+  std::vector<slam::VisualObservation> only_a;
+  for (const slam::VisualObservation & obs : full.observations) {
+    if (obs.stamp_ns <= 1'000'000'000) {
+      only_a.push_back(obs);
+    }
+  }
+  ASSERT_EQ(only_a.size(), 60u);  // 20 landmarks x 3 frames of submap A
+  EXPECT_TRUE(visual::triangulate_landmarks(only_a, full.t_lidar_cams, full.views, params).empty());
+
+  auto moved = wall_landmarks();
+  moved.front().y() += 0.5;  // the tracked object slid sideways
+  const Scene scene = make_scene(wall_landmarks(), moved, false);
+  EXPECT_EQ(
+    visual::triangulate_landmarks(scene.observations, scene.t_lidar_cams, scene.views, params)
+      .size(),
+    19u);
 }

@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 // Integration test that drives the real GLIM SubMapping -> GlobalMapping
@@ -957,6 +958,268 @@ TEST(CloudMapper, GnssAndVisualCoexist)
   EXPECT_LE(map.visual_factor_count, 10);
   ASSERT_FALSE(map.points.empty());
   ASSERT_FALSE(map.trajectory.empty());
+}
+
+// ---------------------------------------------------------------------------
+// Camera-only mode (issue #376 Phase 3): CloudMapper driven by insert_imu() +
+// insert_visual_observations() alone, with the visual-inertial odometry as
+// the odometry layer and no LiDAR scans anywhere. The synthetic world mirrors
+// visual_odometry_test.cpp: z-up with gravity (0,0,-9.81), the IMU frame
+// axis-aligned with the world and accelerating diagonally, one forward-looking
+// camera watching a wall of landmarks.
+// ---------------------------------------------------------------------------
+
+constexpr std::int64_t kCamOnlyBaseStamp = 1'000'000'000'000'000'000LL;
+constexpr std::int64_t kCamOnlyPeriodNs = 100'000'000;  // 10 Hz observation groups
+constexpr double kCamOnlyImuRate = 200.0;
+// Static calibration phase: comfortably past NaiveInitialStateEstimation's
+// ~1 s init window (see visual_odometry_test.cpp's feed_static_imu comment for
+// why the accelerating reading must not be fed during alignment).
+constexpr std::int64_t kCamOnlyMotionStartNs = 1'200'000'000;
+constexpr double kCamOnlyWallX = 15.0;
+
+// Ground-truth T_world_imu at `elapsed_ns` past the motion start: translation
+// (s, s, 0) with s = t + 0.25 t^2 (v0 = (1,1,0), a = (0.5,0.5,0)), identity
+// rotation. The camera mount has no lever arm, so the cam0 position equals
+// the IMU position.
+Eigen::Isometry3d cam_only_gt_pose(std::int64_t elapsed_ns)
+{
+  const double t = 1e-9 * static_cast<double>(elapsed_ns);
+  const double s = t + 0.25 * t * t;
+  Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+  pose.translation() = Eigen::Vector3d(s, s, 0.0);
+  return pose;
+}
+
+// 20 landmarks on the x = 15 wall (same layout as visual_odometry_test).
+std::vector<Eigen::Vector3d> cam_only_wall_landmarks()
+{
+  std::vector<Eigen::Vector3d> landmarks;
+  for (const double y : {-5.0, -2.5, 0.0, 2.5, 5.0}) {
+    for (const double z : {1.0, 2.0, 3.0, 4.0}) {
+      landmarks.emplace_back(kCamOnlyWallX, y, z);
+    }
+  }
+  return landmarks;
+}
+
+slam::ImuSample make_imu_sample(std::int64_t stamp_ns, double ax, double ay, double az)
+{
+  slam::ImuSample sample;
+  sample.stamp_ns = stamp_ns;
+  sample.frame_id = "imu";
+  sample.linear_acceleration = {ax, ay, az};
+  sample.angular_velocity = {0.0, 0.0, 0.0};
+  return sample;
+}
+
+// The full IMU stream: pure gravity (static) until the motion start so the
+// gravity alignment converges on the true up axis, then the accelerating
+// reading (0.5, 0.5, 0) + gravity, matching cam_only_gt_pose.
+void feed_camera_only_imu(slam::CloudMapper & mapper, std::int64_t from_ns, std::int64_t to_ns)
+{
+  const std::int64_t step = static_cast<std::int64_t>(1e9 / kCamOnlyImuRate);
+  const std::int64_t motion = kCamOnlyBaseStamp + kCamOnlyMotionStartNs;
+  for (std::int64_t t = from_ns; t <= to_ns; t += step) {
+    if (t < motion) {
+      mapper.insert_imu(make_imu_sample(t, 0.0, 0.0, 9.81));
+    } else {
+      mapper.insert_imu(make_imu_sample(t, 0.5, 0.5, 9.81));
+    }
+  }
+}
+
+slam::CloudMapperConfig make_camera_only_config()
+{
+  slam::CloudMapperConfig config;
+  config.camera_only = true;
+  // t_lidar_imu carries T_cam0_imu in camera-only mode; the camera mount is
+  // the forward-looking optical frame, so T_cam0_imu = inverse(T_imu_cam0).
+  const Eigen::Quaterniond q(forward_camera_pose().inverse().rotation());
+  slam::SensorTransform t_cam0_imu;
+  t_cam0_imu.rotation_xyzw = {q.x(), q.y(), q.z(), q.w()};
+  t_cam0_imu.translation = {0.0, 0.0, 0.0};
+  config.t_lidar_imu = t_cam0_imu;
+  // The rig's only camera IS cam0, so its cloud<-camera extrinsic is the
+  // identity (the "cloud frame" is cam0's optical frame in camera-only mode).
+  config.visual_cameras.push_back(slam::SensorTransform{});
+  // Loose sigma, absorbing the estimator's deviation from the ground-truth
+  // poses the observations are projected through (cf. make_visual_config).
+  config.visual_obs_sigma = 1e-2;
+  config.visual_max_obs_per_track = 0;  // keep every observation
+  config.visual_keyframe_min_trans = 0.15;
+  config.visual_max_window_keyframes = 3;
+  // Small submaps, so the run yields several of them and tracks become
+  // co-visible across submap boundaries (the factor path needs >= 2 submaps).
+  config.submap_max_keyframes = 2;
+  return config;
+}
+
+// Feed `group_count` observation groups starting at group index `first_group`:
+// each group projects every visible wall landmark through the ground-truth
+// cam0 pose at its anchor stamp (track_id = landmark index). Returns the last
+// anchor stamp fed.
+std::int64_t feed_camera_only_motion(slam::CloudMapper & mapper, int first_group, int group_count)
+{
+  const Eigen::Isometry3d T_imu_cam0 = forward_camera_pose();
+  const std::vector<Eigen::Vector3d> landmarks = cam_only_wall_landmarks();
+  const std::int64_t motion = kCamOnlyBaseStamp + kCamOnlyMotionStartNs;
+
+  std::int64_t last_stamp = motion;
+  for (int i = first_group; i < first_group + group_count; ++i) {
+    const std::int64_t stamp = motion + static_cast<std::int64_t>(i) * kCamOnlyPeriodNs;
+    const Eigen::Isometry3d T_cam0_world =
+      (cam_only_gt_pose(stamp - motion) * T_imu_cam0).inverse();
+
+    std::vector<slam::VisualObservation> batch;
+    batch.reserve(landmarks.size());
+    for (std::size_t track = 0; track < landmarks.size(); ++track) {
+      const Eigen::Vector3d p_cam = T_cam0_world * landmarks[track];
+      if (p_cam.z() <= 0.0) {
+        continue;
+      }
+      auto obs =
+        make_visual_observation(stamp, 0, track, p_cam.x() / p_cam.z(), p_cam.y() / p_cam.z());
+      obs.rgb = {static_cast<std::uint8_t>(track), 20, 30};
+      batch.push_back(obs);
+    }
+    mapper.insert_visual_observations(batch);
+    last_stamp = stamp;
+  }
+  return last_stamp;
+}
+
+// The end-to-end claim of camera-only mode: with no scans at all, the run
+// produces a ground-truth-following cam0 trajectory, co-visibility visual
+// factors in the global graph, and a sparse landmark map with parallel rgb.
+TEST(CloudMapper, CameraOnlyRunsVisualInertialPipeline)
+{
+  slam::CloudMapper mapper(make_camera_only_config());
+
+  const std::int64_t motion = kCamOnlyBaseStamp + kCamOnlyMotionStartNs;
+  constexpr int kGroups = 40;  // 4 s of motion
+  feed_camera_only_imu(mapper, kCamOnlyBaseStamp, motion + kGroups * kCamOnlyPeriodNs);
+  feed_camera_only_motion(mapper, 0, kGroups);
+
+  const slam::CloudMap map = mapper.finish();
+
+  EXPECT_EQ(map.visual_track_count, 20);
+  EXPECT_GE(map.visual_factor_count, 1);  // co-visibility factors across submaps
+  EXPECT_GT(map.visual_odom_keyframe_count, 0);
+  // Single camera with no frame gaps: the grouping drops nothing.
+  EXPECT_EQ(map.visual_dropped_observation_count, 0);
+
+  // Trajectory: time-ascending cam0 poses following the ground truth. The
+  // bound is deliberately looser than the odometry unit tests' (the poses
+  // here have been through sub + global mapping), but far tighter than any
+  // frame-convention mixup would produce.
+  ASSERT_GT(map.trajectory.size(), 1u);
+  for (std::size_t i = 1; i < map.trajectory.size(); ++i) {
+    EXPECT_GT(map.trajectory[i].timestamp_ns, map.trajectory[i - 1].timestamp_ns);
+  }
+  for (const auto & pose : map.trajectory) {
+    const Eigen::Vector3d p(pose.tx, pose.ty, pose.tz);
+    const Eigen::Vector3d gt = cam_only_gt_pose(pose.timestamp_ns - motion).translation();
+    EXPECT_LT((p - gt).norm(), 0.5) << "stamp=" << pose.timestamp_ns;
+  }
+
+  // Sparse landmark map: finite points + parallel rgb, no intensities, each
+  // point near a ground-truth wall landmark.
+  ASSERT_FALSE(map.points.empty());
+  EXPECT_EQ(map.colors.size(), map.points.size());
+  EXPECT_TRUE(map.intensities.empty());
+  const std::vector<Eigen::Vector3d> landmarks = cam_only_wall_landmarks();
+  for (const auto & point : map.points) {
+    ASSERT_TRUE(std::isfinite(point[0]) && std::isfinite(point[1]) && std::isfinite(point[2]));
+    const Eigen::Vector3d p(point[0], point[1], point[2]);
+    double nearest = std::numeric_limits<double>::max();
+    for (const auto & landmark : landmarks) {
+      nearest = std::min(nearest, (p - landmark).norm());
+    }
+    EXPECT_LT(nearest, 0.5);
+  }
+}
+
+// Keyframes whose window solve triangulated no landmarks carry an empty
+// cloud and must never reach SubMapping (GLIM requires a non-empty
+// EstimationFrame::frame). Feed a good phase, then a phase where every group
+// starts brand-new tracks (one observation each — untriangulable), so every
+// keyframe accepted there is landmark-less: the trajectory must not grow
+// past the good phase even though the estimator keeps keyframing on
+// displacement.
+TEST(CloudMapper, CameraOnlyDropsEmptyLandmarkKeyframes)
+{
+  slam::CloudMapper mapper(make_camera_only_config());
+  const std::int64_t motion = kCamOnlyBaseStamp + kCamOnlyMotionStartNs;
+  constexpr int kGoodGroups = 20;
+  constexpr int kBadGroups = 15;
+  feed_camera_only_imu(
+    mapper, kCamOnlyBaseStamp, motion + (kGoodGroups + kBadGroups) * kCamOnlyPeriodNs);
+  const std::int64_t last_good = feed_camera_only_motion(mapper, 0, kGoodGroups);
+
+  const Eigen::Isometry3d T_imu_cam0 = forward_camera_pose();
+  const std::vector<Eigen::Vector3d> landmarks = cam_only_wall_landmarks();
+  std::uint64_t next_track = 1000;  // fresh ids: no track lives past one group
+  for (int i = kGoodGroups; i < kGoodGroups + kBadGroups; ++i) {
+    const std::int64_t stamp = motion + static_cast<std::int64_t>(i) * kCamOnlyPeriodNs;
+    const Eigen::Isometry3d T_cam0_world =
+      (cam_only_gt_pose(stamp - motion) * T_imu_cam0).inverse();
+    std::vector<slam::VisualObservation> batch;
+    for (const auto & landmark : landmarks) {
+      const Eigen::Vector3d p_cam = T_cam0_world * landmark;
+      if (p_cam.z() <= 0.0) {
+        continue;
+      }
+      batch.push_back(make_visual_observation(
+        stamp, 0, next_track++, p_cam.x() / p_cam.z(), p_cam.y() / p_cam.z()));
+    }
+    mapper.insert_visual_observations(batch);
+  }
+
+  const slam::CloudMap map = mapper.finish();
+
+  ASSERT_FALSE(map.trajectory.empty());
+  for (const auto & pose : map.trajectory) {
+    EXPECT_LE(pose.timestamp_ns, last_good) << "an empty-landmark keyframe leaked into sub mapping";
+  }
+  // The estimator DID keep accepting keyframes in the bad phase (displacement
+  // never stops firing) — they just never reached sub mapping, so the
+  // estimator's keyframe count exceeds the frames in the trajectory.
+  EXPECT_GT(map.visual_odom_keyframe_count, static_cast<std::int64_t>(map.trajectory.size()));
+}
+
+TEST(CloudMapper, CameraOnlyConfigIsValidated)
+{
+  // Missing the IMU extrinsic (T_cam0_imu): camera-only is visual-INERTIAL.
+  {
+    slam::CloudMapperConfig config;
+    config.camera_only = true;
+    config.visual_cameras.push_back(slam::SensorTransform{});
+    EXPECT_THROW(slam::CloudMapper mapper(config), std::invalid_argument);
+  }
+  // No cameras: nothing to estimate from.
+  {
+    slam::CloudMapperConfig config;
+    config.camera_only = true;
+    config.t_lidar_imu = slam::SensorTransform{};  // identity
+    EXPECT_THROW(slam::CloudMapper mapper(config), std::invalid_argument);
+  }
+  // use_gpu: the visual-inertial odometry is CPU-only and no scan-matching
+  // factors remain to accelerate. normalize_config rejects this before any
+  // GLIM module is built, so the exception type holds in CUDA builds too.
+  {
+    slam::CloudMapperConfig config = make_camera_only_config();
+    config.use_gpu = true;
+    EXPECT_THROW(slam::CloudMapper mapper(config), std::invalid_argument);
+  }
+}
+
+// insert() has no meaning in camera-only mode and must fail loudly rather
+// than silently drop a scan.
+TEST(CloudMapper, CameraOnlyRejectsScans)
+{
+  slam::CloudMapper mapper(make_camera_only_config());
+  EXPECT_THROW(mapper.insert(make_room_scan(kCamOnlyBaseStamp)), std::logic_error);
 }
 
 }  // namespace

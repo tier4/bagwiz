@@ -224,7 +224,18 @@ glim::EstimationFrame::Ptr VisualInertialOdometry::to_estimation_frame(
   for (const auto & p_world : kf.landmarks_world) {
     points.emplace_back((T_imu_world * p_world).homogeneous());
   }
-  frame->frame = std::make_shared<gtsam_points::PointCloudCPU>(points);
+  auto cloud = std::make_shared<gtsam_points::PointCloudCPU>(points);
+  // gtsam_points' voxel accumulation (IncrementalVoxelMap::insert, run from
+  // SubMapping::insert_keyframe) reads per-point covariances UNCONDITIONALLY,
+  // so a points-only cloud segfaults there. Attach a constant isotropic
+  // placeholder: in camera-only mode every covariance consumer downstream
+  // (VGICP factors, overlap estimation) is suppressed by configuration, so
+  // the magnitude is immaterial -- it satisfies the container contract, it
+  // does not weight anything.
+  Eigen::Matrix4d placeholder_cov = Eigen::Matrix4d::Zero();
+  placeholder_cov.topLeftCorner<3, 3>() = 0.01 * Eigen::Matrix3d::Identity();  // (0.1 m)^2
+  cloud->add_covs(std::vector<Eigen::Matrix4d>(points.size(), placeholder_cov));
+  frame->frame = cloud;
   return frame;
 }
 
