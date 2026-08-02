@@ -48,11 +48,11 @@ constexpr int kKltMaxLevel = 3;
 
 // Detection is a full-image min-eigenvalue pass — the expensive part is
 // independent of how many corners are requested — so it only runs once the
-// live-track count has actually decayed, not on any one-track deficit. 0.75
-// keeps the factor graph's track density within a few percent of
-// detect-every-frame on the validation bags while skipping the pass on the
-// large majority of frames.
-constexpr double kRefillRatio = 0.75;
+// live-track count has actually decayed, not on any one-track deficit.
+// Measured on the 11-camera validation bag: 0.75 skipped ~half the detection
+// calls but cost ~11% of the co-visibility factors; 0.85 trades a little of
+// that skip rate back for factor density closer to detect-every-frame.
+constexpr double kRefillRatio = 0.85;
 
 }  // namespace
 

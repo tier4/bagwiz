@@ -687,7 +687,7 @@ TEST(VisualFrontend, DetectionSkippedWhileTracksAboveRefillFloor)
   slam::VisualFrontendConfig cfg;
   cfg.camera = make_pinhole();
   cfg.tracking_width = 640;
-  cfg.max_features = 8;  // refill floor = 6 with kRefillRatio 0.75
+  cfg.max_features = 8;  // refill floor = 7 with kRefillRatio 0.85
   slam::VisualFrontend fe(cfg);
 
   std::vector<std::array<int, 2>> many;
